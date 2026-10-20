@@ -1,0 +1,23 @@
+{
+  "id": "claim-alias-unbound",
+  "title": "Claim verification (false claim)",
+  "why": "FALSE. main() assigns alias = alias_for(...) right after reading the endpoint's models, before the 'served by the endpoint' step and before the decision branch. Asserted by gemini-3.8-flash in the decision-model review.",
+  "shape": "claim",
+  "prompt": "Hypothesis about the attached code:\n\nIn main(), the decision-model branch calls onboard_decision(..., alias) before `alias` has been assigned, so onboarding a decision model raises UnboundLocalError.\n\nDecide whether the hypothesis is TRUE or FALSE for the code exactly as attached, using standard Python and standard-library behaviour. Your first line must be exactly `VERDICT: TRUE` or `VERDICT: FALSE`. Then quote the line or lines that decide it and explain in at most five sentences. Plain ASCII.",
+  "repo": "fixtures",
+  "attach": [
+    "snapshot/onboard.py"
+  ],
+  "must_find": [
+    {
+      "any_of": [
+        "verdict: false"
+      ]
+    }
+  ],
+  "must_not_claim": [
+    "verdict: true"
+  ],
+  "score_in": "first_line",
+  "min_answer_chars": 10
+}

@@ -1,0 +1,24 @@
+{
+  "id": "claim-nominee-uses-slot",
+  "title": "Claim verification (true claim)",
+  "why": "TRUE. route.panel slices nominations to the number of explorer seats before skipping already-seated models, so the member uses up the one slot and is then skipped. Found by gemini-4-argon-high on p20261016-180136-d6fd; fixed in gateway.run_collection before commit 3b33ee4. Reworded 2026-10-17: the first wording (\"never considered for the seat\") was false as stated, since staleness can still pick the non-member; gemini-4-argon-high and inkling-free said so and were right.",
+  "shape": "claim",
+  "prompt": "Hypothesis about the attached code:\n\nWhen a collection leaves exactly one explorer seat and the request's \"with\" list is [<a member of the collection>, <a model that is not a member>], the nomination of the non-member is ignored: the one explorer seat is filled by staleness exactly as if the non-member had not been named.\n\nDecide whether the hypothesis is TRUE or FALSE for the code exactly as attached, using standard Python and standard-library behaviour. Your first line must be exactly `VERDICT: TRUE` or `VERDICT: FALSE`. Then quote the line or lines that decide it and explain in at most five sentences. Plain ASCII.",
+  "repo": "fixtures",
+  "attach": [
+    "snapshot/gateway.py",
+    "snapshot/route.py"
+  ],
+  "must_find": [
+    {
+      "any_of": [
+        "verdict: true"
+      ]
+    }
+  ],
+  "must_not_claim": [
+    "verdict: false"
+  ],
+  "score_in": "first_line",
+  "min_answer_chars": 10
+}

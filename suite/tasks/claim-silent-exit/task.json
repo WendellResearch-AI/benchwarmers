@@ -1,0 +1,23 @@
+{
+  "id": "claim-silent-exit",
+  "title": "Claim verification (true claim)",
+  "why": "TRUE. ask_seat computes error from stderr only when returncode is non-zero; empty stderr gives error == \"\", so status falls through to empty/ok. Found by gemini-3.8-flash and gemini-4-argon-high on p20261016-165636-afd6; fixed before commit a25dd86.",
+  "shape": "claim",
+  "prompt": "Hypothesis about the attached code:\n\nIf the `llm` subprocess exits with a non-zero code but writes nothing to stderr, the seat is reported as \"ok\" or \"empty\" rather than as an error.\n\nDecide whether the hypothesis is TRUE or FALSE for the code exactly as attached, using standard Python and standard-library behaviour. Your first line must be exactly `VERDICT: TRUE` or `VERDICT: FALSE`. Then quote the line or lines that decide it and explain in at most five sentences. Plain ASCII.",
+  "repo": "fixtures",
+  "attach": [
+    "snapshot/gateway.py"
+  ],
+  "must_find": [
+    {
+      "any_of": [
+        "verdict: true"
+      ]
+    }
+  ],
+  "must_not_claim": [
+    "verdict: false"
+  ],
+  "score_in": "first_line",
+  "min_answer_chars": 10
+}

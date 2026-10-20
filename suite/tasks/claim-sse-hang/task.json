@@ -1,0 +1,23 @@
+{
+  "id": "claim-sse-hang",
+  "title": "Claim verification (false claim)",
+  "why": "FALSE. The handler subclasses BaseHTTPRequestHandler without setting protocol_version, so it answers as HTTP/1.0 and the server closes the connection after each response; curl finished in 0.1 s on 2026-10-16. Asserted by two of four panel seats (gemini-3.8-flash, gemini-4-argon-high) on panel p20261016-165636-afd6.",
+  "shape": "claim",
+  "prompt": "Hypothesis about the attached code:\n\nWhen a client sends \"stream\": true, the server writes the event-stream chunks and the final `data: [DONE]` line but never closes the connection, so a client that reads until end of stream waits forever.\n\nDecide whether the hypothesis is TRUE or FALSE for the code exactly as attached, using standard Python and standard-library behaviour. Your first line must be exactly `VERDICT: TRUE` or `VERDICT: FALSE`. Then quote the line or lines that decide it and explain in at most five sentences. Plain ASCII.",
+  "repo": "fixtures",
+  "attach": [
+    "snapshot/gateway.py"
+  ],
+  "must_find": [
+    {
+      "any_of": [
+        "verdict: false"
+      ]
+    }
+  ],
+  "must_not_claim": [
+    "verdict: true"
+  ],
+  "score_in": "first_line",
+  "min_answer_chars": 10
+}

@@ -1,0 +1,25 @@
+/* Hardwood: the benchwarmer's gym. Maple floor and cream, varsity crimson,
+   scoreboard amber, court-line navy. Named for the gym, not a film.
+   Crimson is decoration only (button shadows, meters, step marks): OK stays
+   green and errors a burnt orange, so neither is mistaken for the brand. */
+:root {
+  --ink: #1f1a16;
+  --ink-2: #2e2620;
+  --ink-deep: #14100c;
+  --paper: #f7efe1;
+  --paper-2: #fffaf2;
+  --band: #ecd8b4;
+  --signal: #ffb000;
+  --link: #1d3f6e;
+  --muted: #5f5346;
+  --muted-dark: #c4b59c;
+  --line: #e0caa3;
+  --line-dark: #4a3e31;
+  --brand: #9e1b32;
+  --primary: #2f6b34;
+  --primary-bright: #4f9a55;
+  --primary-deep: #1d4a22;
+  --sky: #7fb2de;
+  --warn: #7a4d00;
+  --err: #b0400c;
+}

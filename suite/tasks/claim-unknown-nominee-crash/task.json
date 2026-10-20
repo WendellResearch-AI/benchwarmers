@@ -1,0 +1,24 @@
+{
+  "id": "claim-unknown-nominee-crash",
+  "title": "Claim verification (false claim)",
+  "why": "FALSE. The nomination loop handles row is None: ad hoc models are seated, excluded ones are seated with a note, and anything else gets a note and `continue`. Asserted by gemini-3.8-flash on p20261016-180136-d6fd.",
+  "shape": "claim",
+  "prompt": "Hypothesis about the attached code:\n\nIf a request's \"with\" list names an alias that is not a known model, route.panel raises a TypeError while seating explorers.\n\nDecide whether the hypothesis is TRUE or FALSE for the code exactly as attached, using standard Python and standard-library behaviour. Your first line must be exactly `VERDICT: TRUE` or `VERDICT: FALSE`. Then quote the line or lines that decide it and explain in at most five sentences. Plain ASCII.",
+  "repo": "fixtures",
+  "attach": [
+    "snapshot/gateway.py",
+    "snapshot/route.py"
+  ],
+  "must_find": [
+    {
+      "any_of": [
+        "verdict: false"
+      ]
+    }
+  ],
+  "must_not_claim": [
+    "verdict: true"
+  ],
+  "score_in": "first_line",
+  "min_answer_chars": 10
+}

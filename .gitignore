@@ -1,0 +1,34 @@
+*.bak
+*.*.bak
+# metrics/paths.py: this checkout's pointer to its data folder (one per machine)
+.benchwarmers-home
+# An install's own data, when its data folder is the checkout itself (the
+# default until `init` exists): never committed by accident. Files already
+# tracked here (this private repo's history) are unaffected.
+/config/
+/metrics/*.json
+/metrics/*.jsonl
+/perf/history.csv
+/runs/
+# metrics/locked.py: lock files beside the JSON they guard, and temp files mid-write
+*.json.lock
+.*.part
+keys.json
+__pycache__/
+suite/tasks/*/output/
+.venv/
+floor/results/
+evalplus_results/
+funcbench/tool/.venv/
+funcbench/results/
+funcbench/tool/
+repoqa/results/
+runs/gateway/
+runs/cooldowns.json
+runs/cache/
+runs/discover-seen.json
+runs/scheduler.log
+runs/scheduler-state.json
+runs/scheduler.lock
+.archify/**/*.json
+!.archify/**/candidate.json

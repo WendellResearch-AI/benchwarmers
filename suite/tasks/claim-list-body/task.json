@@ -1,0 +1,23 @@
+{
+  "id": "claim-list-body",
+  "title": "Claim verification (true claim)",
+  "why": "TRUE. do_POST parses the body and calls body.get(...) with no isinstance check, so a list raises AttributeError. Found on p20261016-165636-afd6; fixed before commit a25dd86.",
+  "shape": "claim",
+  "prompt": "Hypothesis about the attached code:\n\nA POST whose JSON body is a list rather than an object makes the handler raise an exception instead of returning an HTTP 400 error.\n\nDecide whether the hypothesis is TRUE or FALSE for the code exactly as attached, using standard Python and standard-library behaviour. Your first line must be exactly `VERDICT: TRUE` or `VERDICT: FALSE`. Then quote the line or lines that decide it and explain in at most five sentences. Plain ASCII.",
+  "repo": "fixtures",
+  "attach": [
+    "snapshot/gateway.py"
+  ],
+  "must_find": [
+    {
+      "any_of": [
+        "verdict: true"
+      ]
+    }
+  ],
+  "must_not_claim": [
+    "verdict: false"
+  ],
+  "score_in": "first_line",
+  "min_answer_chars": 10
+}

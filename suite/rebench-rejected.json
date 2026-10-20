@@ -1,0 +1,8 @@
+{
+  "aristanetworks__anta-1250": "2026-10-17: a feature (accept Dps1 interfaces), not a bug visible in the file",
+  "getmoto__moto-9005": "2026-10-17: a missing validation rule; needs DynamoDB's semantics, not visible in the file",
+  "kozea__weasyprint-2494": "2026-10-17: a missing margin adjustment in layout arithmetic; not visible without the layout model",
+  "bluesky__bluesky-1932": "2026-10-17: iteration order of a set vs a deque; too subtle to call a fault line",
+  "pymc-devs__pymc-7809": "2026-10-17: a missing early return; the duplicate it causes is far below the change",
+  "pymc-devs__pymc-7858": "2026-10-17: the fix redesigns a whole method; the key spans four lines of a different approach"
+}

@@ -1,0 +1,24 @@
+{
+  "id": "claim-member-nominated-twice",
+  "title": "Claim verification (false claim)",
+  "why": "FALSE. route.panel adds the members to `chosen`, and its nomination loop skips any row whose model is in `chosen` (\"already seated\") before seating it. Asserted by gemini-3.8-flash and nemotron-3.5-super-vl-120b-a12b on p20261016-180136-d6fd.",
+  "shape": "claim",
+  "prompt": "Hypothesis about the attached code:\n\nIf a request's \"with\" list names a model that is already a member of the requested collection, that model is asked the same prompt twice: once as a member and once in an explorer seat.\n\nDecide whether the hypothesis is TRUE or FALSE for the code exactly as attached, using standard Python and standard-library behaviour. Your first line must be exactly `VERDICT: TRUE` or `VERDICT: FALSE`. Then quote the line or lines that decide it and explain in at most five sentences. Plain ASCII.",
+  "repo": "fixtures",
+  "attach": [
+    "snapshot/gateway.py",
+    "snapshot/route.py"
+  ],
+  "must_find": [
+    {
+      "any_of": [
+        "verdict: false"
+      ]
+    }
+  ],
+  "must_not_claim": [
+    "verdict: true"
+  ],
+  "score_in": "first_line",
+  "min_answer_chars": 10
+}

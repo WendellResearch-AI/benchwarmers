@@ -1,0 +1,23 @@
+Benchwarmers, by Wendell Research
+Copyright (c) 2026 Wendell Research. Licensed under the MIT License (LICENSE).
+
+This repository also contains material from others, under their own licences:
+
+Real-bug tasks (suite/tasks/rebench-*) are drawn from the nebius/SWE-rebench-V2 dataset
+on Hugging Face (CC-BY-4.0). Each task holds code from the project it names,
+under that project's licence:
+
+  matchms/matchms (Apache-2.0)
+    https://github.com/matchms/matchms/pull/809
+  more-itertools/more-itertools (MIT)
+    https://github.com/more-itertools/more-itertools/pull/1028
+  narwhals-dev/narwhals (MIT)
+    https://github.com/narwhals-dev/narwhals/pull/2864
+  QuantEcon/QuantEcon.py (MIT)
+    https://github.com/QuantEcon/QuantEcon.py/pull/769
+  scrapy/scrapy (BSD-3-Clause)
+    https://github.com/scrapy/scrapy/pull/6867
+
+Fonts (ui/fonts): Chivo and Chivo Mono, Copyright The Chivo Project Authors
+(https://github.com/Omnibus-Type/Chivo), under the SIL Open Font License 1.1
+(ui/fonts/OFL-*.txt).

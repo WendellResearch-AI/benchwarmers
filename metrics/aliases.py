@@ -1,0 +1,41 @@
+"""One place that knows an alias's current name.
+
+`config/alias-history.json` maps an old alias to the name it became, because
+aliases get renamed (`laguna-xs` became `laguna-xs-2.1` when a 2.2 was
+coming) and every record here is keyed by alias: suite outputs are named
+`<alias>.md`, offloads log `"model": "<alias>"`, the perf history has a
+`model` column, the run notes quote the alias in a table. The notes are
+narrative and are never retro-edited; the rest is data and is never rewritten
+either — instead every reader maps through this, so a renamed model keeps
+its whole record under its new name.
+
+Chains are followed (a -> b -> c resolves a to c) and cycles are refused.
+"""
+
+from __future__ import annotations
+
+import json
+import pathlib
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+from paths import DATA  # noqa: E402  -- the install's data folder (metrics/paths.py)
+HISTORY = DATA / "config" / "alias-history.json"
+
+
+def history() -> dict[str, str]:
+    try:
+        return json.loads(HISTORY.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def current(alias: str, table: dict[str, str] | None = None) -> str:
+    """The name this alias goes by today."""
+    table = history() if table is None else table
+    seen = {alias}
+    while alias in table:
+        alias = table[alias]
+        if alias in seen:
+            raise ValueError(f"alias history loops at {alias!r}")
+        seen.add(alias)
+    return alias

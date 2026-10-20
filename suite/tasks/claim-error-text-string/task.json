@@ -1,0 +1,23 @@
+{
+  "id": "claim-error-text-string",
+  "title": "Claim verification (true claim)",
+  "why": "TRUE. It calls detail.get(\"error\", detail).get(\"message\", detail); with a string under \"error\" the second .get is called on a str. Found by gemini-3.8-flash, inkling-free and gemini-4-argon-high in the decision-model review; fixed before commit a25dd86.",
+  "shape": "claim",
+  "prompt": "Hypothesis about the attached code:\n\nerror_text raises an exception, instead of returning text, when a provider's JSON error body has \"error\" set to a plain string, for example {\"error\": \"is a decisions model\"}.\n\nDecide whether the hypothesis is TRUE or FALSE for the code exactly as attached, using standard Python and standard-library behaviour. Your first line must be exactly `VERDICT: TRUE` or `VERDICT: FALSE`. Then quote the line or lines that decide it and explain in at most five sentences. Plain ASCII.",
+  "repo": "fixtures",
+  "attach": [
+    "snapshot/decide.py"
+  ],
+  "must_find": [
+    {
+      "any_of": [
+        "verdict: true"
+      ]
+    }
+  ],
+  "must_not_claim": [
+    "verdict: false"
+  ],
+  "score_in": "first_line",
+  "min_answer_chars": 10
+}

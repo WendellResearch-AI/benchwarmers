@@ -1,0 +1,31 @@
+/* Rainforest: the Wendell Research palette, the default theme.
+   Copied 2026-10-19 from the AI site's src/styles/global.css (:root, less the
+   grid tokens), which the dashboard used to read live from the sibling repo.
+   Colours only: layout, fonts and components are the same in every theme. */
+:root {
+  --ink: #24331f;
+  --ink-2: #2d3d28;
+  --ink-deep: #121a10;
+  --paper: #faf8f2;
+  --paper-2: #ffffff;
+  --band: #f3ecdc;
+  --signal: #fae66c;
+  --link: #01709c;
+  --muted: #6b685a;
+  --muted-dark: #b5b19f;
+  --line: #e4dfd2;
+  --line-dark: #42523d;
+  --brand: #3e8625;
+  --primary: #327a16;
+  --primary-bright: #63ac4d;
+  --primary-deep: #1b5501;
+  --sky: #69bdeb;
+  /* States the brand has no word for (were in ui/bench.css). */
+  --warn: #7a4d00;
+  --err: #a12b2b;
+  --font-display: 'Chivo', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'Chivo Mono', ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  --measure: 76rem;
+  --gutter: clamp(1rem, 4vw, 2.5rem);
+  --radius: 4px;
+}

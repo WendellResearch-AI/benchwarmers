@@ -1,0 +1,27 @@
+/* Dark: the same rainforest greens on a near-black ground. */
+:root {
+  --scheme: dark;
+  --ink: #e4e7e1;
+  --ink-2: #cdd2ca;
+  --ink-deep: #0a0d0b;
+  --paper: #121614;
+  --paper-2: #1a1f1c;
+  --band: #232a26;
+  --signal: #d9b740;
+  --link: #6db8f2;
+  --muted: #a1aa9f;
+  --muted-dark: #6d756b;
+  --line: #313935;
+  --line-dark: #2a312d;
+  --brand: #5fae49;
+  --primary: #6cbf57;
+  --primary-bright: #8fd67d;
+  --primary-deep: #a8e29b;
+  --sky: #69bdeb;
+  --warn: #e0a84b;
+  --err: #ff8a80;
+  /* Light text on these, unlike on paper. */
+  --on-err: #1a1f1c;
+  --log-ground: #0a0d0b;
+  --log-ink: #e4e7e1;
+}

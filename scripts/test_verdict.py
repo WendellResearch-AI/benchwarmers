@@ -1,0 +1,93 @@
+"""Verdicts and the gateway's `bench` field, against a throwaway log. No model is
+called and the real offloads.jsonl and runs/gateway/ are never written.
+
+    python scripts/test_verdict.py
+"""
+
+from __future__ import annotations
+
+import json
+import pathlib
+import sys
+import tempfile
+import threading
+import urllib.request
+from http.server import ThreadingHTTPServer
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+sys.path[:0] = [str(ROOT), str(ROOT / "metrics"), str(ROOT / "suite")]
+import gateway  # noqa: E402
+import offload  # noqa: E402
+import serve  # noqa: E402
+
+tmp = pathlib.Path(tempfile.mkdtemp(prefix="bench-verdict-"))
+offload.LOG = tmp / "offloads.jsonl"
+gateway.LOG_DIR = tmp
+
+
+def verdicts() -> None:
+    offload.add("m1", "task", None, "member; ok in 3s", "pX.member1")
+    assert not serve.record_verdict("pX.member1", None, "", [], [])["ok"]        # no pick
+    assert not serve.record_verdict("pX.member1", True, "", "x", [])["ok"]       # claims not a list
+    assert not serve.record_verdict("nope.member1", True, "", [], [])["ok"]      # unknown call
+    assert serve.record_verdict("pX.member1", True, "  found   it ", ["real one", " "], ["wrong one"])["ok"]
+    e = offload.entries()[-1]
+    assert (e["useful"], e["note"], e["real"], e["false"]) == (True, "found it", ["real one"], ["wrong one"]), e
+    n = len(offload.LOG.read_text().splitlines())
+    assert serve.record_verdict("pX.member1", True, "found it", ["real one"], ["wrong one"])["ok"]
+    assert len(offload.LOG.read_text().splitlines()) == n, "the same verdict again wrote a line"
+    # The dashboard form shows note and claims for editing: blank means cleared.
+    assert serve.record_verdict("pX.member1", False, "", [], [])["ok"]
+    e = offload.entries()[-1]
+    assert e["useful"] is False and e["note"] == "" and "real" not in e and "false" not in e, e
+    # The CLI: a blank note or claim list keeps the earlier one.
+    offload.verdict("pX.member1", False, "", ["cli claim"])
+    offload.verdict("pX.member1", True, "")
+    assert offload.entries()[-1]["real"] == ["cli claim"], offload.entries()[-1]
+    assert len(offload.entries()) == 1                                           # superseded by call id
+
+
+def bench_field() -> None:
+    gateway.pick_shape = lambda text: ("general", "test")
+    gateway.ask_seat = lambda alias, system, prompt: {"status": "ok", "answer": f"answer from {alias}",
+                                                      "error": "", "seconds": 0.1}
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), gateway.Handler)
+    gateway.PORT = srv.server_address[1]          # the Host check expects the port it runs on
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    url = f"http://127.0.0.1:{srv.server_address[1]}/v1/chat/completions"
+
+    def post(body, **headers):
+        req = urllib.request.Request(url, json.dumps(body).encode(),
+                                     {"Content-Type": "application/json", **headers})
+        with urllib.request.urlopen(req) as r:
+            return r.read().decode()
+
+    # metrics/guard.py, end to end: a rebinding Host, a page's text/plain
+    # form and a foreign Origin are refused before any seat is called.
+    for headers, code in (({"Host": "evil.example"}, 403), ({"Content-Type": "text/plain"}, 415),
+                          ({"Origin": "http://evil.example"}, 403)):
+        try:
+            post({}, **headers)
+            raise AssertionError(f"{headers} was served")
+        except urllib.error.HTTPError as exc:
+            assert exc.code == code, (headers, exc.code)
+
+    name = next(iter(gateway.bench_collections.load()))
+    msg = {"model": f"bench/{name}", "messages": [{"role": "user", "content": "say hi"}]}
+    r = json.loads(post(msg))
+    b = r["bench"]
+    assert b["collection"] == f"bench/{name}" and b["seats"], b
+    assert all(s["answer"] == f"answer from {s['alias']}" and s["call"].startswith(b["panel"] + ".")
+               for s in b["seats"])
+    assert all(s["call"] in r["choices"][0]["message"]["content"] for s in b["seats"])
+    assert "prompt" not in b and "system" not in b
+    chunks = [json.loads(line[6:]) for line in post({**msg, "stream": True}).splitlines()
+              if line.startswith("data: {")]
+    assert "bench" in chunks[0] and "bench" not in chunks[1], chunks
+    srv.shutdown()
+
+
+if __name__ == "__main__":
+    verdicts()
+    bench_field()
+    print("verdict and bench-field checks pass")
