@@ -947,8 +947,17 @@ def collections_view() -> dict:
     rows = [{"name": n, **bench_collections.described(n, c, s)}
             for n, c in sorted(bench_collections.load().items())]
     shapes = [k for k in roles_config().get("shapes", {}) if k != "image"]
+    # Tags are read only by callers (GET /v1/models, and the refusal when a
+    # request names no collection), to choose a collection for a task. The
+    # suggestions: the bench's task shapes, a few purposes, and every tag a
+    # collection already uses, so the same idea is spelled the same way.
+    used = [t for r in rows for t in r.get("tags") or []]
+    suggestions = list(dict.fromkeys(shapes + list(TAG_PURPOSES) + used))
     return {"ok": True, "errors": [], "collections": rows, "settings": s,
-            "shapes": shapes, "models": _chat_aliases()}
+            "shapes": shapes, "models": _chat_aliases(), "tag_suggestions": suggestions}
+
+
+TAG_PURPOSES = ("second-opinion", "security", "long-context", "fast", "free")
 
 
 def save_collection(name: str, members, shape: str, description: str, tags=None,
@@ -957,7 +966,8 @@ def save_collection(name: str, members, shape: str, description: str, tags=None,
     bench (a decision model cannot answer a prompt), no more than max_calls.
     The description and tags are what an orchestrator reads on /v1/models to
     choose a collection, so they say what it is for."""
-    name, shape = (name or "").strip(), (shape or "").strip()
+    # The name is what follows "bench/"; one typed with the prefix is taken as meant.
+    name, shape = (name or "").strip().removeprefix(bench_collections.PREFIX), (shape or "").strip()
     description = " ".join((description or "").split())
     if isinstance(tags, str):
         tags = tags.split(",")
@@ -1785,10 +1795,11 @@ def render(theme: str | None = None) -> str:
     return (
         "<!doctype html><html lang='en'><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width, initial-scale=1'>"
-        "<title>Model bench</title>"
+        "<title>Benchwarmers</title>"
         f"<style>{brand_css(theme)}{read(UI / 'bench.css')}</style>"
-        "<header><div><h1><span>Model bench</span></h1>"
-        "<p class='sub'>Wendell Research · a view of this repository's files</p>"
+        "<header><div><h1><span>Benchwarmers</span></h1>"
+        # The credit is fixed, not a setting (RELEASE-PLAN decision 7).
+        "<p class='sub'>by Wendell Research · ask the whole bench, keep every answer, learn who to trust</p>"
         f"<div class='runs' aria-label='Next scheduled runs'>{runs}</div></div>"
         "<div class='head-actions'>"
         "<button class='btn fresh' id='fresh' hidden>New results · Reload</button>"
@@ -2026,20 +2037,28 @@ def discover_card() -> str:
 
 
 def collections_tab() -> str:
-    """The second tab: every collection, and the form to create or edit one.
-    It was a dialog behind a header button until 2026-10-18."""
+    """Every collection; clicking one, or New collection, opens its popup."""
     return (
         "<div class='panel form-panel'><h2 id='c-title'>Collections</h2>"
         "<p class='served'>Named groups of models the bench gateway runs together. A caller"
         " asks for <code>bench/&lt;name&gt;</code> at <code>http://127.0.0.1:8123/v1</code>;"
         " every member answers, plus explorer seats the bench fills by staleness. Two to four"
-        " members is the sweet spot.</p>"
+        " members is the sweet spot. Open one to edit or delete it.</p>"
+        "<div class='list-actions'><button class='btn primary' id='c-new'>New collection</button>"
+        "<span class='done' id='c-status' role='status'></span></div>"
         "<div id='c-list'></div>"
-        "<h3 class='form-head' id='c-form-head'>New collection</h3>"
+        # The details in a popup, like every other edit on the dashboard: for
+        # the collection clicked, or a new one.
+        "<dialog id='c-form' aria-labelledby='c-form-head'>"
+        "<h2 id='c-form-head'>New collection</h2>"
         "<label class='field' for='c-name'>Name</label>"
-        "<input id='c-name' spellcheck='false' autocomplete='off' placeholder='e.g. reviewers'>"
-        "<p class='rules'>Say what it is for, not who is in it: members change. Lower-case"
-        " letters, digits and '-'.</p>"
+        # The prefix is fixed text beside the field, so it cannot be deleted
+        # or typed twice; save_collection also drops one typed by habit.
+        "<div class='prefixed'><span class='prefix' aria-hidden='true'>bench/</span>"
+        "<input id='c-name' spellcheck='false' autocomplete='off' placeholder='reviewers'"
+        " aria-describedby='c-name-rules'></div>"
+        "<p class='rules' id='c-name-rules'>Callers ask for <code>bench/&lt;name&gt;</code>. Say what"
+        " it is for, not who is in it: members change. Lower-case letters, digits and '-'.</p>"
         "<label class='field'>Members</label><div id='c-members' class='members'></div>"
         "<p class='rules' id='c-count'></p>"
         "<label class='field' for='c-shape'>Explorer shape</label><select id='c-shape'></select>"
@@ -2050,13 +2069,16 @@ def collections_tab() -> str:
         " placeholder='e.g. Adversarial code review: finding bugs and broken guarantees in a diff'></textarea>"
         "<label class='field' for='c-tags'>Tags</label>"
         "<input id='c-tags' spellcheck='false' autocomplete='off' placeholder='e.g. review, code, security'>"
-        "<p class='rules'>An orchestrator reads these on <code>GET /v1/models</code> to choose a"
-        " collection for a task, so say what it is for. Tags: comma-separated lower-case"
-        " words, up to 8.</p>"
+        "<div class='tag-picks' id='c-tag-picks' aria-label='Suggested tags'></div>"
+        "<p class='rules'>Only callers read these: an agent asking <code>GET /v1/models</code> sees"
+        " each collection's description and tags and picks one for its task. Click a suggestion"
+        " or type your own: comma-separated lower-case words, up to 8.</p>"
         "<div class='errors' id='c-errors' role='alert'></div><div class='done' id='c-done'></div>"
-        "<div class='actions'><button class='btn' id='c-new'>New</button>"
+        "<div class='actions'><button class='btn danger' id='c-delete' hidden>Delete collection</button>"
+        "<span class='spacer'></span><button class='btn' id='c-close'>Close</button>"
         "<button class='btn primary' id='c-save'>Save collection</button></div>"
-        "<h3 class='form-head'>Settings</h3>"
+        "</dialog>"
+        "<details class='c-settings'><summary class='form-head'>Gateway settings</summary>"
         "<div class='settings'>"
         "<div><label class='field' for='g-max-calls'>Max calls per request</label>"
         "<input id='g-max-calls' type='number' min='1' max='10'></div>"
@@ -2070,7 +2092,7 @@ def collections_tab() -> str:
         "<div class='errors' id='g-errors' role='alert'></div><div class='done' id='g-done'></div>"
         "<div class='actions'>"
         "<button class='btn primary' id='g-save'>Save settings</button></div>"
-        "</div>")
+        "</details></div>")
 
 
 # A grouped sidebar since 2026-10-19 (RELEASE-PLAN "The dashboard"): eight
@@ -2080,7 +2102,8 @@ SECTIONS = (("Observe", (("glance", "At a glance", "roster"),
                          ("suite", "Benchmarks", "benchmarks_tab"),
                          ("logs", "Logs", "logs_page"))),
             ("Gateway", (("collections", "Collections", "collections_and_gateway"),
-                         ("connections", "Connections", "connections_page"),
+                         ("endpoints", "Endpoints", "endpoints_page"),
+                         ("quotas", "Quota management", "quotas_page"),
                          ("discover", "Discover", "discover_card"))),
             ("Control", (("settings", "Settings", "settings_page"),
                          ("info", "Info", "info_page"))))
@@ -2159,7 +2182,7 @@ def settings_page() -> str:
         " ending 2026-10-26 (RELEASE-PLAN Phase 2a).</p></div>")
 
 
-def connections_page() -> str:
+def endpoints_page() -> str:
     """Each connection, what it serves and what is known of each model's
     limits. Quotas arrive with the built-in client's quota records (Phase 2b)."""
     eps = endpoint_list()["endpoints"]
@@ -2210,20 +2233,33 @@ def connections_page() -> str:
             "<table><thead><tr>" + th("Served as") + th("On the bench as") + th("Connection") + th("Status")
             + f"</tr></thead><tbody>{''.join(rows)}</tbody></table></details></div>")
     cards = []
+    # Which of this install's endpoints each model is reached THROUGH, beside
+    # the connection (provider) it comes FROM: an OpenRouter model may be on
+    # OpenRouter's own endpoint or arrive through Open WebUI's.
+    through = {r["alias"]: r["endpoint"] for r in endpoints.registry()}
+    through.update({a: d["endpoint"] for a, d in decide.load().items()})
     for c in connections_view()["connections"]:
         rows = []
         for a in c["models"]:
             f = catalog.info(a)
             lim = f.get("limits") or {}
             num = lambda v: f"{v:,}" if isinstance(v, int) else "—"          # noqa: E731
-            rows.append(f"<tr><td class='alias'>{esc(a)}</td>"
-                        f"<td data-sort='{f.get('context_window') or 0}'>{num(f.get('context_window'))}</td>"
-                        f"<td data-sort='{f.get('max_output') or 0}'>{num(f.get('max_output'))}</td>"
+            ep = through.get(a, "?")
+            rows.append(f"<tr><td><a href='#' class='model' data-alias='{esc(a)}'>"
+                        f"<span class='alias'>{esc(a)}</span></a></td>"
+                        f"<td data-sort='{esc(ep)}'>{chip(ep, 'via', f'reached through the {ep} endpoint')}</td>"
+                        f"<td class='num' data-sort='{f.get('context_window') or 0}'>{num(f.get('context_window'))}</td>"
+                        f"<td class='num' data-sort='{f.get('max_output') or 0}'>{num(f.get('max_output'))}</td>"
                         f"<td>{esc(', '.join(f.get('input_modalities') or []) or '—')}</td>"
-                        + "".join(f"<td>{num(lim.get(k))}</td>" for k in catalog.LIMIT_KEYS) + "</tr>")
+                        + "".join(f"<td class='num'>{num(lim.get(k))}</td>" for k in catalog.LIMIT_KEYS) + "</tr>")
+        # One column plan for every card, so the cards line up under each other
+        # (each table sized its own columns, so they drifted from card to card).
+        cols = "<colgroup><col class='c-model'><col class='c-via'><col class='c-n'><col class='c-n'>" \
+               "<col class='c-input'>" + "<col class='c-lim'>" * len(catalog.LIMIT_KEYS) + "</colgroup>"
         cards.append(f"<div class='panel'><h3 class='chart-head'>{esc(c['name'])} · {len(c['models'])} models</h3>"
-                     "<table><thead><tr>" + th("Model") + th("Context", True) + th("Max output", True)
-                     + th("Input") + "".join(th(k) for k in catalog.LIMIT_KEYS)
+                     f"<table class='model-cards'>{cols}<thead><tr>" + th("Model") + th("Through")
+                     + th("Context", True) + th("Max output", True)
+                     + th("Input") + "".join(th(k, True) for k in catalog.LIMIT_KEYS)
                      + f"</tr></thead><tbody>{''.join(rows)}</tbody></table></div>")
     return (
         "<div class='panel'><h2>Endpoints</h2><p class='sub'>Where calls go, whether each key is set"
@@ -2234,11 +2270,59 @@ def connections_page() -> str:
         " aria-label='Filter models'></div>"
         f"{''.join(blocks)}"
         "<div class='actions'><button class='btn' id='endpoints-open'>Manage endpoints and limits</button></div></div>"
-        "<div class='panel note-panel'><h2>Quotas</h2><p class='muted'>What is left on each connection, from"
-        " provider endpoints, rate-limit headers and the bench's own call ledger, arrives with the built-in"
-        " client's quota records (RELEASE-PLAN Phase 2b). Quotas of OAuth credentials stay in CLI Proxy"
-        " API's own console.</p></div>"
+        "<div class='panel'><h2>Models</h2><p class='sub'>Every model on the bench by the connection it"
+        " comes from, with the endpoint it is reached through and what is known of its limits. A name"
+        " opens the model.</p></div>"
         + "".join(cards))
+
+
+def quotas_page() -> str:
+    """What limits each connection, and who is resting after one. The live
+    numbers (what is left, when it resets) come with the built-in client's
+    quota records, RELEASE-PLAN Phase 2b."""
+    import learn
+    now = datetime.datetime.now().astimezone()
+    cool_rows = []
+    for alias, c in sorted(learn.cooldowns().items(), key=lambda kv: kv[1].get("until", "")):
+        try:
+            left = max(0, int((datetime.datetime.fromisoformat(c["until"]) - now).total_seconds() // 60))
+        except (KeyError, ValueError, TypeError):
+            left = 0
+        cool_rows.append(f"<tr><td>{named(alias)}</td><td>{esc(catalog.connection_of(alias))}</td>"
+                         f"<td class='num' data-sort='{left}'>{left} min</td>"
+                         f"<td>{'stated by the provider' if c.get('stated') else 'default wait'}</td></tr>")
+    entered = catalog.connection_limits()
+    keys = catalog.LIMIT_KEYS
+    lim_rows = [f"<tr><td>{esc(conn)}</td>" + "".join(
+                    f"<td class='num'>{lim[k]:,}</td>" if lim.get(k) else "<td class='num muted'>—</td>" for k in keys)
+                + "<td>you</td></tr>" for conn, lim in sorted(entered.items()) if any(lim.get(k) for k in keys)]
+    # Learned from providers' own error messages (metrics/learn.py), per model.
+    # Shown without the raw message: it can carry an account id.
+    for alias, rec in sorted(learn.learned().items()):
+        for k, ev in (rec.get("limits") or {}).items():
+            if k in keys:
+                lim_rows.append(f"<tr><td>{named(alias)}</td>"
+                                + "".join(f"<td class='num'>{ev['value']:,}</td>" if kk == k
+                                          else "<td class='num muted'>—</td>" for kk in keys)
+                                + f"<td>learned {esc(ev.get('at', '')[:10])} ({esc(ev.get('where', ''))})</td></tr>")
+    return (
+        "<div class='panel'><h2>Quota management</h2><p class='sub'>What is left on each connection and"
+        " when it resets, read from provider endpoints, rate-limit headers and the bench's own call"
+        " ledger, arrives with the built-in client's quota records (RELEASE-PLAN Phase 2b). Until then:"
+        " who is resting after a rate limit, and every limit known. Quotas of OAuth credentials stay"
+        " in CLI Proxy API's own console.</p></div>"
+        "<div class='panel'><h3 class='chart-head'>Resting after a rate limit · " + str(len(cool_rows)) + "</h3>"
+        + ("<table><thead><tr>" + th("Model") + th("Connection") + th("Back in", True) + th("Wait")
+           + f"</tr></thead><tbody>{''.join(cool_rows)}</tbody></table>" if cool_rows
+           else "<p class='muted'>None: every model is free to call.</p>")
+        + "</div>"
+        "<div class='panel'><h3 class='chart-head'>Known limits</h3><p class='sub'>Entered per connection"
+        " (Endpoints, Manage) or learned from a provider's error; a model's own limits in its popup win,"
+        " and learned ones only ever lower a limit.</p>"
+        + ("<table><thead><tr>" + th("Connection or model") + "".join(th(k, True) for k in keys) + th("From")
+           + f"</tr></thead><tbody>{''.join(lim_rows)}</tbody></table>" if lim_rows
+           else "<p class='muted'>None known yet.</p>")
+        + "</div>")
 
 
 def _log_rows(path: pathlib.Path, limit: int = 200) -> list[str]:
@@ -2308,7 +2392,7 @@ def info_page() -> str:
             ("Theme", saved_theme())]
     body = "".join(f"<tr><th scope='row'>{esc(k)}</th><td class='mono'>{esc(v)}</td></tr>" for k, v in rows)
     return (f"<div class='panel'><h2>Info</h2><table class='facts'><tbody>{body}</tbody></table>"
-            "<p class='muted'>Model bench, soon Benchwarmers · by Wendell Research · MIT licence"
+            "<p class='muted'>Benchwarmers · by Wendell Research · MIT licence"
             " (<code>LICENSE</code>, credits in <code>NOTICE</code>). Every response carries"
             " <code>X-Benchwarmers-Version</code>.</p></div>")
 
@@ -2414,7 +2498,10 @@ def editor() -> str:
         " to a model go straight to its endpoint, so add only providers you are content"
         " to send private source to.</p>"
         "<div id='e-list'></div>"
-        "<h3 class='form-head'>Add an endpoint, or change one's key</h3>"
+        "<div class='list-actions'><button class='btn' id='e-add'>Add an endpoint</button></div>"
+        # The form only when asked for: Add, or a row's Change key.
+        "<div id='e-form' hidden>"
+        "<h3 class='form-head' id='e-form-head'>Add an endpoint</h3>"
         "<label class='field' for='e-name'>Name</label>"
         "<input id='e-name' spellcheck='false' autocomplete='off' placeholder='e.g. openrouter'>"
         "<label class='field' for='e-base'>Base URL</label>"
@@ -2424,15 +2511,17 @@ def editor() -> str:
         "<p class='rules'>Stored where <code>llm keys set</code> stores it, never in the"
         " repository and never shown again. Saved only once <code>/models</code> answers;"
         " where that list is public, the key is proven by the first real call.</p>"
-        "<div class='errors' id='e-errors' role='alert'></div><div class='done' id='e-done'></div>"
-        "<div class='actions'><button class='btn' id='e-close'>Close</button>"
+        "<div class='actions'><button class='btn' id='e-cancel'>Cancel</button>"
         "<button class='btn primary' id='e-save'>Test and save</button></div>"
-        "<h3 class='form-head'>Rate limits per connection</h3>"
+        "</div>"
+        "<div class='errors' id='e-errors' role='alert'></div><div class='done' id='e-done'></div>"
+        "<details class='limits-block'><summary class='form-head'>Rate limits per connection</summary>"
         "<p class='rules'>What a key behind each connection allows, from the provider's docs or"
         " freellmapi.co/models. Models on that connection share it; a model's own limits (its"
         " popup) win, and limits the bench learns from errors only ever lower these.</p>"
         "<div id='l-list'></div><div class='errors' id='l-errors' role='alert'></div>"
-        "<div class='done' id='l-done'></div>"
+        "<div class='done' id='l-done'></div></details>"
+        "<div class='actions'><button class='btn' id='e-close'>Close</button></div>"
         "</dialog>"
         # one Discover model: what is known, and the routes to add it by (bench.js fills it)
         "<dialog id='discover-dialog' aria-labelledby='d-title'>"
@@ -2614,7 +2703,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    print(f"model bench on http://localhost:{PORT}  (ctrl-c to stop)")
+    print(f"Benchwarmers on http://localhost:{PORT}  (ctrl-c to stop)")
     import scheduler
     scheduler.start()                                  # off unless config/scheduler.json says otherwise
     ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()

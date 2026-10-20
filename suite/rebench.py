@@ -69,7 +69,7 @@ def api(path: str, **query) -> dict:
 
 
 def _get(url: str) -> str:
-    req = urllib.request.Request(url, headers={"User-Agent": "wendell-model-bench"})
+    req = urllib.request.Request(url, headers={"User-Agent": "benchwarmers"})
     with urllib.request.urlopen(req, timeout=90) as r:
         return r.read().decode("utf-8", errors="replace")
 

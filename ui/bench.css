@@ -1,4 +1,4 @@
-/* Model bench. The theme's colour tokens arrive first (ui/themes/*.css, the
+/* Benchwarmers. The theme's colour tokens arrive first (ui/themes/*.css, the
    Wendell Research palette by default, emitted by serve.py); the values below
    are derived from them: grounds mixed from a theme colour, and the bench's
    own spacing. A theme sets colours only. */
@@ -35,8 +35,11 @@ code { font-size: .875em; background: var(--step-1); padding: .05rem .3rem; bord
 h1, h2, h3 { line-height: 1.1; letter-spacing: -.02em; text-wrap: balance; }
 
 /* ---- header --------------------------------------------------------- */
+/* The page is wider than the theme's reading measure: with a sidebar, a
+   76rem page left a narrow column and wide empty margins on a large screen.
+   Prose inside panels keeps its own measure (.panel > .sub). */
 header {
-  max-width: var(--measure); margin: 0 auto;
+  max-width: var(--page, 104rem); margin: 0 auto;
   padding: 1.5rem var(--gutter) 1rem;
   display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between;
   gap: 1rem 2rem;
@@ -71,7 +74,7 @@ button { font: inherit; cursor: pointer; }
            text-underline-offset: .18em; font-size: inherit; }
 
 /* ---- layout --------------------------------------------------------- */
-main { max-width: var(--measure); margin: 0 auto; padding: 0 var(--gutter) 4rem; }
+main { max-width: var(--page, 104rem); margin: 0 auto; padding: 0 var(--gutter) 4rem; }
 
 /* problems: what needs a person, each with the action that resolves it */
 .problems { background: var(--panel); border-radius: var(--radius); padding: 1rem 1.25rem; margin: .5rem 0 1.75rem; }
@@ -169,6 +172,16 @@ th[data-sortable]::after { content: ""; display: inline-block; width: .9em; colo
 th[aria-sort=ascending]::after { content: " \2191"; }
 th[aria-sort=descending]::after { content: " \2193"; }
 td.num, th.num { text-align: right; }
+/* the per-connection model cards on Connections: one fixed column plan */
+table.model-cards { table-layout: fixed; min-width: 52rem; }
+.panel:has(> table.model-cards) { overflow-x: auto; }        /* scrolls on a narrow window instead of wrapping numbers */
+table.model-cards td.num { white-space: nowrap; }
+table.model-cards col.c-model { width: 24%; }
+table.model-cards col.c-via { width: 13%; }
+table.model-cards col.c-n { width: 10%; }
+table.model-cards col.c-input { width: 19%; }
+table.model-cards col.c-lim { width: 6%; }
+table.model-cards td { overflow-wrap: anywhere; }
 tbody tr:hover > td { background: var(--step-1); }
 tr.retired > td { color: var(--muted); }
 tr.retired .alias { text-decoration: line-through; }
@@ -188,6 +201,8 @@ a.model:hover .alias { box-shadow: inset 0 -.3em 0 var(--signal); }
 .chip.warn { background: var(--warn-ground); color: var(--ink); }
 .chip.err { background: var(--err-ground); color: var(--err); }
 .chip.new { background: var(--sky); color: var(--ink-deep); }
+/* an endpoint a model is reached through: outlined, so it reads as a place, not a state */
+.chip.via { background: transparent; border: 1px solid var(--line); color: var(--ink); font-family: var(--font-mono); }
 button.chip { font-family: inherit; border: 0; cursor: pointer; }
 button.chip:hover { outline: 1px solid currentColor; }
 
@@ -276,6 +291,26 @@ pre.log.answer { max-height: 40vh; }
 h3.chart-head { font-size: 1rem; margin: 1rem 0 .2rem; }
 /* the Collections tab: the dialog's form, kept to a readable width */
 .panel.form-panel > :not(#c-list) { max-width: 46rem; }
+/* a list of things you open (collections), with its New button above */
+.list-actions { display: flex; align-items: center; gap: 1rem; margin: .75rem 0; flex-wrap: wrap; }
+.list-actions .done { margin: 0; color: var(--ok); font-size: .9375rem; }
+button.c-row { width: 100%; text-align: left; font: inherit; color: inherit; background: none; border: 0;
+               border-radius: var(--radius); cursor: pointer; }
+button.c-row:hover, button.c-row:focus-visible { background: var(--step-1); }
+.c-row .open-hint { color: var(--muted); font-size: .875rem; white-space: nowrap; }
+/* suggested collection tags under the field */
+.tag-picks { display: flex; flex-wrap: wrap; gap: .35rem; margin-top: .45rem; }
+.tag-picks .chip { cursor: pointer; border: 0; font-family: inherit; }
+.tag-picks .chip:hover { outline: 1px solid currentColor; }
+/* a field with fixed text in front (the collection name after "bench/") */
+.prefixed { display: flex; align-items: stretch; }
+.prefixed .prefix { display: flex; align-items: center; padding: 0 .55rem; font-family: var(--font-mono);
+                    font-size: .9375rem; color: var(--muted); background: var(--step-1);
+                    border: 1px solid var(--line); border-right: 0; border-radius: var(--radius) 0 0 var(--radius); }
+.prefixed input { flex: 1; min-width: 0; border-top-left-radius: 0; border-bottom-left-radius: 0; }
+.c-settings, .limits-block { margin-top: 1.25rem; }
+.c-settings > summary, .limits-block > summary { cursor: pointer; }
+.actions .spacer { flex: 1; }
 .chart figure { margin: 0; }
 .chart [aria-label="color-legend"], .chart div[class$="-swatches"] { font-size: .8125rem; margin-bottom: .4rem; }
 

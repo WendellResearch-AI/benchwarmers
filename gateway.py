@@ -327,7 +327,7 @@ class Handler(BaseHTTPRequestHandler):
             # orchestrator can choose one by task. Clients ignore extra keys.
             s, data = bench_collections.settings(), bench_collections.load()
             self._json(200, {"object": "list", "data": [
-                {"id": bench_collections.PREFIX + n, "object": "model", "owned_by": "model-bench",
+                {"id": bench_collections.PREFIX + n, "object": "model", "owned_by": "benchwarmers",
                  **bench_collections.described(n, c, s)} for n, c in data.items()]})
         else:
             self._error(404, "GET /v1/models is the only GET here")

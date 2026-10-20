@@ -167,7 +167,7 @@ def chat(alias: str, prompt: str, system: str = "", timeout: float = 420) -> dic
         + [{"role": "user", "content": prompt}]
     body = json.dumps({"model": reg.get("model_name") or alias, "messages": messages,
                        **_options(alias)}).encode()
-    headers = {"Content-Type": "application/json", "User-Agent": "model-bench",
+    headers = {"Content-Type": "application/json", "User-Agent": "benchwarmers",
                **reg.get("headers", {})}
     if name := reg.get("api_key_name", ""):
         # As llm does: a named key that is not set stops here, rather than

@@ -68,7 +68,7 @@ def fetch(name: str, force: bool = False) -> dict:
     path = CACHE / f"{name}.json"
     if not force and path.exists() and time.time() - path.stat().st_mtime < MAX_AGE_S:
         return json.loads(path.read_text(encoding="utf-8"))
-    req = urllib.request.Request(FEEDS[name], headers={"User-Agent": "wendell-model-bench"})
+    req = urllib.request.Request(FEEDS[name], headers={"User-Agent": "benchwarmers"})
     with urllib.request.urlopen(req, timeout=90) as r:
         data = json.load(r)
     CACHE.mkdir(parents=True, exist_ok=True)

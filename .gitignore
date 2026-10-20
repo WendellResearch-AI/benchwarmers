@@ -2,6 +2,8 @@
 *.*.bak
 # metrics/paths.py: this checkout's pointer to its data folder (one per machine)
 .benchwarmers-home
+# Personal notes for Claude Code in a checkout; never part of the project
+CLAUDE.local.md
 # An install's own data, when its data folder is the checkout itself (the
 # default until `init` exists): never committed by accident. Files already
 # tracked here (this private repo's history) are unaffected.

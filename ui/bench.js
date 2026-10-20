@@ -1,4 +1,4 @@
-// Model bench. Plain DOM, no framework: serve.py renders the page, this only
+// Benchwarmers. Plain DOM, no framework: serve.py renders the page, this only
 // wires the controls. Every write goes through a POST that re-checks its own
 // rules server-side, so nothing here is trusted to enforce anything.
 (function () {
@@ -19,7 +19,7 @@
   function listErrors(node, errors) { node.textContent = errors.map(function (x) { return '• ' + x; }).join('\n'); node.style.whiteSpace = 'pre-line'; }
 
   // ---- tabs, remembered per browser ----------------------------------
-  var tabs = document.querySelectorAll('.tabs button');
+  var tabs = document.querySelectorAll('.tabs button[data-tab]');      // not the sidebar's own toggle
   function show(id) {
     tabs.forEach(function (b) { b.setAttribute('aria-selected', String(b.dataset.tab === id)); });
     document.querySelectorAll('.tab').forEach(function (s) { s.classList.toggle('active', s.id === 'tab-' + id); });
@@ -574,7 +574,10 @@
         row.appendChild(left);
         var acts = el('div', {class: 'acts'});
         var edit = el('button', {class: 'btn small', type: 'button'}, 'Change key');
-        edit.addEventListener('click', function () { e.name.value = x.name; e.base.value = x.base; e.key.value = ''; e.key.focus(); });
+        edit.addEventListener('click', function () {
+          showEndpointForm('Change the key for ' + x.name);
+          e.name.value = x.name; e.base.value = x.base; e.key.value = ''; e.key.focus();
+        });
         acts.appendChild(edit);
         if (!x.default && !x.models) {
           var rm = el('button', {class: 'btn small danger', type: 'button'}, 'Remove');
@@ -625,17 +628,30 @@
       });
     });
   }
+  // The add / change-key form shows only when asked for, so the dialog opens
+  // as a short list.
+  function showEndpointForm(title) {
+    $('e-form').hidden = false; $('e-add').hidden = true; $('e-form-head').textContent = title;
+    e.errors.textContent = ''; e.done.textContent = '';
+  }
+  function hideEndpointForm() {
+    $('e-form').hidden = true; $('e-add').hidden = false;
+    e.name.value = ''; e.base.value = ''; e.key.value = '';
+  }
   $('endpoints-open').addEventListener('click', function () {
-    e.errors.textContent = ''; e.done.textContent = ''; e.name.value = ''; e.base.value = ''; e.key.value = '';
+    e.errors.textContent = ''; e.done.textContent = ''; hideEndpointForm();
     ed.showModal(); loadEndpoints(); loadLimits();
   });
+  $('e-add').addEventListener('click', function () { showEndpointForm('Add an endpoint'); e.name.focus(); });
+  $('e-cancel').addEventListener('click', hideEndpointForm);
   $('e-close').addEventListener('click', function () { ed.close(); });
   e.save.addEventListener('click', function () {
     e.errors.textContent = ''; e.done.textContent = ''; e.save.disabled = true; e.save.textContent = 'Testing…';
     post('/api/endpoint', {name: e.name.value, base: e.base.value, key: e.key.value}).then(function (r) {
       e.save.disabled = false; e.save.textContent = 'Test and save'; e.key.value = '';
       if (!r.ok) { listErrors(e.errors, r.errors); return; }
-      e.done.textContent = 'Saved. ' + e.name.value.trim() + ' lists ' + r.served + ' models; they appear in the onboarding picker. ' + (r.note || '');
+      var saved = 'Saved. ' + e.name.value.trim() + ' lists ' + r.served + ' models; they appear in the onboarding picker. ' + (r.note || '');
+      hideEndpointForm(); e.done.textContent = saved;       // the form folds; the message stays
       loadEndpoints();
     }).catch(function (err) { e.errors.textContent = String(err); e.save.disabled = false; e.save.textContent = 'Test and save'; });
   });
@@ -644,8 +660,9 @@
   var c = {list: $('c-list'), name: $('c-name'), members: $('c-members'), count: $('c-count'),
            shape: $('c-shape'), desc: $('c-desc'), tags: $('c-tags'), errors: $('c-errors'), done: $('c-done'),
            head: $('c-form-head'), maxCalls: $('g-max-calls'), maxExp: $('g-max-explorers'),
-           gErrors: $('g-errors'), gDone: $('g-done')};
-  var C = null;
+           gErrors: $('g-errors'), gDone: $('g-done'), form: $('c-form'), status: $('c-status'),
+           del: $('c-delete')};
+  var C = null, open = null;         // the collection whose details are showing
   function explorersFor(n) {
     return Math.max(0, Math.min(C.settings.max_explorers, C.settings.max_calls - n));
   }
@@ -659,11 +676,41 @@
       ' = ' + (n + ex) + ' calls per request' + (n && (n < 2 || n > 4) ? ' · two to four members is recommended' : '');
     c.members.querySelectorAll('input').forEach(function (x) { x.disabled = !x.checked && n >= C.settings.max_calls; });
   }
+  // Suggested tags under the field: a click adds or removes one, and the
+  // field stays free for any other.
+  function tagList() {
+    return c.tags.value.split(',').map(function (t) { return t.trim().toLowerCase(); }).filter(Boolean);
+  }
+  function drawTagPicks() {
+    var box = $('c-tag-picks'), have = tagList();
+    box.textContent = '';
+    (C.tag_suggestions || []).forEach(function (t) {
+      var on = have.indexOf(t) !== -1;
+      var b = el('button', {type: 'button', class: 'chip' + (on ? ' ok' : ''), 'aria-pressed': String(on)}, (on ? '✓ ' : '+ ') + t);
+      b.addEventListener('click', function () {
+        var now = tagList(), i = now.indexOf(t);
+        if (i === -1) now.push(t); else now.splice(i, 1);
+        c.tags.value = now.join(', '); drawTagPicks();
+      });
+      box.appendChild(b);
+    });
+  }
+  c.tags.addEventListener('input', drawTagPicks);
+  // A collection opens in a popup, as every other edit on the dashboard does:
+  // the one clicked, or a new one from New collection.
+  function closeForm() {
+    if (c.form.open) c.form.close();
+    open = null;
+  }
+  c.form.addEventListener('close', function () { open = null; });
   function fillForm(row) {
-    c.errors.textContent = ''; c.done.textContent = '';
-    c.head.textContent = row ? 'Edit ' + row.name : 'New collection';
+    c.errors.textContent = ''; c.done.textContent = ''; c.status.textContent = '';
+    open = row ? row.name : null; c.del.hidden = !row;
+    c.head.textContent = row ? 'bench/' + row.name : 'New collection';
+    if (!c.form.open) c.form.showModal();
     c.name.value = row ? row.name : ''; c.name.readOnly = !!row;
     c.desc.value = row ? row.description : ''; c.tags.value = row ? row.tags.join(', ') : '';
+    drawTagPicks();
     c.members.textContent = '';
     C.models.forEach(function (alias) {
       var box = el('input', {type: 'checkbox', value: alias});
@@ -683,7 +730,9 @@
     fetch('/api/collections').then(function (r) { return r.json(); }).then(function (res) {
       C = res; c.list.textContent = '';
       res.collections.forEach(function (row) {
-        var box = el('div', {class: 'endpoint'});
+        // The whole row opens the collection: no tight button pair on it.
+        var box = el('button', {class: 'endpoint c-row', type: 'button', 'data-name': row.name,
+                                'aria-label': 'Open bench/' + row.name});
         var left = el('div');
         var title = el('div', {class: 'what'});
         title.appendChild(el('span', {class: 'alias'}, 'bench/' + row.name + ' '));
@@ -704,36 +753,39 @@
             (lim.length ? ' · tightest ' + lim.join(', ') : '')));
         }
         box.appendChild(left);
-        var acts = el('div', {class: 'acts'});
-        var edit = el('button', {class: 'btn small', type: 'button'}, 'Edit');
-        edit.addEventListener('click', function () { fillForm(row); c.name.scrollIntoView({block: 'center'}); });
-        acts.appendChild(edit);
-        var rm = el('button', {class: 'btn small danger', type: 'button'}, 'Delete');
-        rm.addEventListener('click', function () {
-          if (!confirm('Delete bench/' + row.name + '? Callers asking for it will get an error.')) return;
-          post('/api/collection/remove', {name: row.name}).then(function (r) {
-            if (!r.ok) { listErrors(c.errors, r.errors); return; }
-            c.done.textContent = 'Deleted bench/' + row.name + '.'; loadCollections();
-          });
-        });
-        acts.appendChild(rm);
-        box.appendChild(acts);
+        box.appendChild(el('span', {class: 'open-hint', 'aria-hidden': 'true'}, 'Open ›'));
+        box.addEventListener('click', function () { fillForm(row); });
         c.list.appendChild(box);
       });
       if (!res.collections.length) c.list.appendChild(el('p', {class: 'empty'}, 'No collections yet.'));
       c.maxCalls.value = res.settings.max_calls; c.maxExp.value = res.settings.max_explorers;
-      if (!keep) fillForm(null);
+      if (!keep) closeForm();
     });
   }
   loadCollections();
   $('c-new').addEventListener('click', function () { fillForm(null); c.name.focus(); });
+  $('c-close').addEventListener('click', closeForm);
+  // Done: say so in the popup, close it a moment later, and keep the message
+  // above the list, as onboarding and retiring do.
+  function finished(message) {
+    c.done.textContent = message; c.status.textContent = message; loadCollections(true);
+    setTimeout(closeForm, 1200);
+  }
+  c.del.addEventListener('click', function () {
+    var name = open;
+    if (!name || !confirm('Delete bench/' + name + '? Callers asking for it will get an error.')) return;
+    post('/api/collection/remove', {name: name}).then(function (r) {
+      if (!r.ok) { listErrors(c.errors, r.errors); return; }
+      finished('Deleted bench/' + name + '.');
+    });
+  });
   $('c-save').addEventListener('click', function () {
     c.errors.textContent = ''; c.done.textContent = '';
-    var name = c.name.value.trim();
+    var name = c.name.value.trim().replace(/^bench\//, '');
     post('/api/collection', {name: name, members: picked(), shape: c.shape.value, description: c.desc.value,
                              tags: c.tags.value.split(',')}).then(function (r) {
       if (!r.ok) { listErrors(c.errors, r.errors); return; }
-      c.done.textContent = 'Saved bench/' + name + '.'; loadCollections(true);
+      finished('Saved bench/' + name + '.');
     }).catch(function (err) { c.errors.textContent = String(err); });
   });
   $('g-save').addEventListener('click', function () {
@@ -804,9 +856,14 @@
         warn = tok('--warn', '#7a4d00'),
         signal = tok('--signal', '#fae66c'), sky = tok('--sky', '#69bdeb'), muted = tok('--muted', '#6b685a'),
         line = tok('--line', '#e4dfd2');
-    var style = {background: 'transparent', color: ink, fontSize: '12px', overflow: 'visible'};
-    // Tabs other than the open one have no width yet, so size from the page.
-    function width() { return Math.max(520, (document.querySelector('main').clientWidth || 900) - 70); }
+    var style = {background: 'transparent', color: ink, fontSize: '13px', overflow: 'visible'};
+    // Tabs other than the open one have no width yet, so size from the column
+    // the pages share. It was the whole page, which made every chart wider than
+    // its column beside the sidebar, scaled down, with smaller text.
+    function width() {
+      var col = document.querySelector('.panes') || document.querySelector('main');
+      return Math.max(520, (col.clientWidth || 900) - 50);
+    }
     function put(id, make) {
       var box = $(id);
       if (!box) return;
@@ -851,7 +908,7 @@
         marks: [
           Plot.rect([{x1: x0 + (1 - x0) / 2, x2: 1, y1: 0, y2: worst / 4}], {x1: 'x1', x2: 'x2', y1: 'y1', y2: 'y2', fill: good, fillOpacity: 0.08}),
           Plot.dot(C.overview, {x: 'recall', y: 'wrong', r: 6, fill: good, stroke: ink, strokeWidth: 0.5}),
-          Plot.text(labels, {x: 'recall', y: 'ty', text: 'model', fontSize: 10, fill: ink}),
+          Plot.text(labels, {x: 'recall', y: 'ty', text: 'model', fontSize: 11, fill: ink}),
           Plot.tip(C.overview, Plot.pointer({x: 'recall', y: 'wrong',
             title: function (d) { return d.model + '\nfinds ' + d.found + ' real findings\nconfidently wrong in ' + d.wrongN + ' answers'; }}))
         ]
@@ -949,7 +1006,7 @@
         y: {domain: [y0, 1], label: '↑ Findings located', tickFormat: '.0%'},
         marks: [
           Plot.dot(C.speed, {x: 'seconds', y: 'recall', r: 6, fill: sky, stroke: ink, strokeWidth: 0.5}),
-          Plot.text(labels, {x: 'seconds', y: 'ty', text: 'model', fontSize: 10, fill: ink}),
+          Plot.text(labels, {x: 'seconds', y: 'ty', text: 'model', fontSize: 11, fill: ink}),
           Plot.tip(C.speed, Plot.pointer({x: 'seconds', y: 'recall',
             title: function (d) { return d.model + '\nmedian ' + d.seconds.toFixed(0) + 's over ' + d.tasks + ' tasks\nfinds ' + Math.round(d.recall * 100) + '%'; }}))
         ]
