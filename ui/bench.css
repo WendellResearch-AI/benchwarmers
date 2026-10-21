@@ -41,33 +41,37 @@ h1, h2, h3 { line-height: 1.1; letter-spacing: -.02em; text-wrap: balance; }
 /* The page is wider than the theme's reading measure: with a sidebar, a
    76rem page left a narrow column and wide empty margins on a large screen.
    Prose inside panels keeps its own measure (.panel > .sub). */
+/* One line: the name on its bench, the credit beside it, the actions pushed
+   to the far end; the schedule wraps under them all. */
 header {
   max-width: var(--page, 104rem); margin: 0 auto;
   padding: 1.5rem var(--gutter) 1rem;
-  display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between;
-  gap: 1rem 2rem;
+  display: flex; flex-wrap: wrap; align-items: center; column-gap: 1.25rem;
 }
-header h1 { margin: 0; font-size: 2.25rem; font-weight: 800; letter-spacing: -.04em; }
+header h1 { margin: 0; font-size: 2.25rem; font-weight: 800; letter-spacing: -.04em; line-height: 1; }
 /* The name sits on a team bench: a seat in the team's colour (the theme's
    brand, or --bench-seat) on two legs joined by a rail. Drawn in CSS from the
-   font size, so it scales with the heading. */
-header h1 span { position: relative; display: inline-block; padding: 0 .14em .72em; }
+   font size, so it scales with the heading. With line-height 1 the letters
+   end about .14em above the box, so the seat's top is put there: the name
+   rests on it. */
+header h1 span { position: relative; display: inline-block; padding: 0 .14em .6em; }
 header h1 span::after {                                   /* the seat */
-  content: ""; position: absolute; left: -.06em; right: -.06em; bottom: .5em; height: .19em;
-  background: var(--bench-seat, var(--brand)); border-radius: .05em;
-  box-shadow: inset 0 .045em 0 rgb(255 255 255 / .28), 0 .035em 0 rgb(0 0 0 / .3);
+  content: ""; position: absolute; left: -.08em; right: -.08em; bottom: .46em; height: .28em;
+  background: var(--bench-seat, var(--brand)); border-radius: .06em;
+  box-shadow: inset 0 .055em 0 rgb(255 255 255 / .28), 0 .05em 0 rgb(0 0 0 / .3);
 }
 header h1 span::before {                                  /* legs and the rail between them */
   --leg: var(--bench-leg, var(--ink-2));
-  content: ""; position: absolute; left: .2em; right: .2em; bottom: 0; height: .52em;
+  content: ""; position: absolute; left: .18em; right: .18em; bottom: 0; height: .5em;
   background:
-    linear-gradient(var(--leg), var(--leg)) left top / .09em 100% no-repeat,
-    linear-gradient(var(--leg), var(--leg)) right top / .09em 100% no-repeat,
-    linear-gradient(var(--leg), var(--leg)) center 70% / 100% .055em no-repeat;
+    linear-gradient(var(--leg), var(--leg)) left top / .11em 100% no-repeat,
+    linear-gradient(var(--leg), var(--leg)) right top / .11em 100% no-repeat,
+    linear-gradient(var(--leg), var(--leg)) center 66% / 100% .07em no-repeat;
 }
-header .sub { margin: .35rem 0 0; color: var(--muted); font-size: .9375rem; }
+header .sub { margin: 0 auto 0 0; color: var(--muted); font-size: .9375rem; }
+header .sub a { color: var(--ink); font-weight: 500; text-decoration-color: var(--brand); }
 .head-actions { display: flex; flex-wrap: wrap; gap: .75rem; align-items: center; }
-.runs { margin: .6rem 0 0; display: flex; flex-wrap: wrap; gap: .25rem 1.1rem;
+.runs { flex-basis: 100%; margin: .5rem 0 0; display: flex; flex-wrap: wrap; gap: .25rem 1.1rem;
         font-size: .875rem; color: var(--muted); }
 .runs b { color: var(--ink); font-weight: 500; }
 
@@ -96,7 +100,9 @@ button { font: inherit; cursor: pointer; }
 main { max-width: var(--page, 104rem); margin: 0 auto; padding: 0 var(--gutter) 4rem; }
 
 /* problems: what needs a person, each with the action that resolves it */
-.problems { background: var(--panel); border-radius: var(--radius); padding: 1rem 1.25rem; margin: .5rem 0 1.75rem; }
+.problems { background: var(--sheet, var(--panel)); border-radius: 14px; padding: 1rem 1.4rem; margin: .5rem 0 1.5rem;
+            box-shadow: 0 1px 2px rgb(0 0 0 / .04), 0 12px 32px -14px rgb(0 0 0 / .14);
+            -webkit-backdrop-filter: var(--glass, none); backdrop-filter: var(--glass, none); }
 .problems h2 { margin: 0 0 .25rem; font-size: 1.25rem; font-weight: 700; }
 .problems > p { margin: 0 0 .5rem; color: var(--muted); font-size: .9375rem; }
 .problem { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .25rem 1rem;
@@ -121,21 +127,33 @@ main { max-width: var(--page, 104rem); margin: 0 auto; padding: 0 var(--gutter) 
 .problems.collapsed .head h2 { margin: 0; font-size: 1rem; }
 .problems.collapsed .sep { display: inline; }
 
-/* pages: a grouped sidebar (Observe, Gateway, Control); the active page
-   carries the brand's marker stroke. On a narrow screen the groups sit in a
-   row above the page. */
-.layout { display: grid; grid-template-columns: 10.5rem minmax(0, 1fr); gap: 1.75rem; align-items: start; }
-.tabs { position: sticky; top: 1rem; display: flex; flex-direction: column; gap: 1.1rem; }
-.tabs .group { display: flex; flex-direction: column; align-items: flex-start; gap: .1rem; }
+/* pages: a grouped sidebar (Observe, Gateway, Control); the group names and
+   the active page carry the theme's brand colour. A theme with a floor backs
+   the sidebar with frosted cream (--rail) so it reads over the court. On a
+   narrow screen the groups sit in a row above the page. */
+.layout { display: grid; grid-template-columns: 12rem minmax(0, 1fr); gap: 1.5rem; align-items: start; }
+.tabs { position: sticky; top: 1rem; display: flex; flex-direction: column; gap: 1.1rem;
+        background: var(--rail, transparent); padding: var(--rail-pad, 0); border-radius: 14px;
+        -webkit-backdrop-filter: var(--glass, none); backdrop-filter: var(--glass, none); }
+.tabs .group { display: flex; flex-direction: column; align-items: stretch; gap: .1rem; }
 .tabs h2 { margin: 0 0 .2rem; font-size: .75rem; font-weight: 700; letter-spacing: .08em;
-           text-transform: uppercase; color: var(--muted); }
-.tabs button { background: none; border: 0; padding: .3rem 0; color: var(--muted); text-align: left;
-               font-size: 1rem; font-weight: 500; }
-.tabs button:hover { color: var(--ink); }
+           text-transform: uppercase; color: color-mix(in oklab, var(--brand) 72%, var(--ink)); }
+           /* the brand, pulled toward the ink so small text stays legible in any theme */
+.tabs button { background: none; border: 0; padding: .3rem .6rem; margin-left: -.6rem; border-radius: 8px;
+               color: var(--muted); text-align: left; font-size: 1rem; font-weight: 500; }
+.tabs button:hover { color: var(--ink); background: var(--step-1); }
 .tabs button[aria-selected="true"] { color: var(--ink); font-weight: 700;
-                                     box-shadow: inset 0 -.3em 0 var(--signal); }
+                                     background: color-mix(in oklab, var(--brand) 14%, transparent);
+                                     box-shadow: inset 3px 0 0 var(--brand); }
 .tab { display: none; } .tab.active { display: block; }
-.panes .tab > * + * { margin-top: 1.25rem; }
+/* One surface for the page's content: its panels are sections of it,
+   divided by a hairline, rather than separate boxes with gaps between. A
+   theme with a floor makes it frosted (--sheet, --glass). */
+.panes { background: var(--sheet, var(--panel)); border-radius: 14px;
+         box-shadow: 0 1px 2px rgb(0 0 0 / .04), 0 12px 32px -14px rgb(0 0 0 / .14);
+         -webkit-backdrop-filter: var(--glass, none); backdrop-filter: var(--glass, none); }
+.panes .panel { background: transparent; border-radius: 0; padding: 1.4rem 1.6rem 1.5rem; }
+.panes .tab > .panel + .panel { border-top: 1px solid var(--line); }
 @media (max-width: 52rem) {
   .layout { grid-template-columns: minmax(0, 1fr); gap: 1rem; }
   .tabs { position: static; flex-direction: row; flex-wrap: wrap; gap: .5rem 1.5rem; }
@@ -159,6 +177,10 @@ details.panel[open] > summary { margin-bottom: .75rem; }
 
 .panel { background: var(--panel); border-radius: var(--radius); padding: 1.1rem 1.25rem 1.25rem; }
 .panel > h2 { margin: 0; font-size: 1.375rem; font-weight: 700; }
+/* A section's heading carries a short bar of the brand colour: the accent a
+   mostly-white theme needs, and a marker where sections meet on one surface. */
+.panes .panel > h2::before { content: ""; display: inline-block; width: .22em; height: .8em; margin-right: .45em;
+                             vertical-align: -.05em; border-radius: 2px; background: var(--brand); }
 .panel > .sub { margin: .3rem 0 1rem; color: var(--muted); font-size: .9375rem; max-width: 70ch; }
 .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem 1.25rem; margin: 0 0 .75rem; }
 .toolbar input[type=search] { font: inherit; font-size: .9375rem; padding: .4rem .6rem; min-width: 14rem;
@@ -266,6 +288,7 @@ dialog h2 { margin: 0 0 .2rem; font-size: 1.375rem; font-weight: 700; }
 :is(dialog, .form-panel) .errors { color: var(--err); font-size: .9375rem; margin: .8rem 0 0; }
 :is(dialog, .form-panel) .done { color: var(--ok); font-size: .9375rem; margin: .8rem 0 0; }
 :is(dialog, .form-panel) .actions { display: flex; gap: .6rem; justify-content: flex-end; margin-top: 1.25rem; flex-wrap: wrap; }
+.form-panel .actions { justify-content: flex-start; }    /* on a page, a form's button sits under its fields */
 :is(dialog, .form-panel) .note { background: var(--step-1); border-radius: var(--radius); padding: .6rem .75rem; font-size: .9375rem; margin-top: .75rem; }
 :is(dialog, .form-panel) details.remove { margin-top: 1.25rem; padding-top: .75rem; border-top: 1px solid var(--line); }
 :is(dialog, .form-panel) details.remove > summary { cursor: pointer; color: var(--err); }

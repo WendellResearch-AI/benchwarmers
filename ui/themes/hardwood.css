@@ -1,7 +1,11 @@
-/* Hardwood: a basketball gym. The page is a maple court, boards with
-   staggered joints and grain; Hoosier crimson and cream; scoreboard amber;
-   a crimson court line across the top, and the name sits on a crimson team
-   bench. Named for the gym, not a film.
+/* Hardwood: a basketball gym. The page is a maple court seen from above:
+   boards with staggered joints and grain, and the court painted on them
+   (boundary, half-court line, centre circle, crimson lanes, free-throw
+   circles, three-point arcs, backboards), held still behind the page as it
+   scrolls. Hoosier crimson and cream; scoreboard amber; a crimson court line
+   across the top; the name sits on a crimson team bench. The sidebar and the
+   page's content sit on frosted cream so the court shows without fighting
+   the text. Named for the gym, not a film.
    Crimson marks the team (button shadows, the bench, the court line, links);
    OK stays green and errors a burnt orange, so no state reads as the brand.
    --floor is the page's ground; --floor-ground its darkest board, which the
@@ -30,7 +34,12 @@
   --bench-leg: #2b211a;
   --court-line: #990000;
   --floor-ground: #e1ba80;
+  --rail: rgb(255 250 243 / .9);
+  --rail-pad: .9rem 1rem;
+  --sheet: rgb(255 250 243 / .9);
+  --glass: blur(5px);
   --floor:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 940 500'%3E%3Cg fill='%23990000' fill-opacity='.4'%3E%3Crect x='10' y='170' width='190' height='160'/%3E%3Crect x='740' y='170' width='190' height='160'/%3E%3C/g%3E%3Ccircle cx='470' cy='250' r='60' fill='%23990000' fill-opacity='.16'/%3E%3Cg fill='none' stroke='%231a1410' stroke-opacity='.55' stroke-width='4'%3E%3Crect x='10' y='10' width='920' height='480'/%3E%3Cpath d='M470 10V490M10 30H142A237.5 237.5 0 0 1 142 470H10M930 30H798A237.5 237.5 0 0 0 798 470H930M50 220V280M890 220V280'/%3E%3Crect x='10' y='170' width='190' height='160'/%3E%3Crect x='740' y='170' width='190' height='160'/%3E%3Ccircle cx='470' cy='250' r='60'/%3E%3Ccircle cx='470' cy='250' r='20'/%3E%3Ccircle cx='200' cy='250' r='60'/%3E%3Ccircle cx='740' cy='250' r='60'/%3E%3Ccircle cx='62' cy='250' r='9'/%3E%3Ccircle cx='878' cy='250' r='9'/%3E%3C/g%3E%3C/svg%3E") center / cover no-repeat fixed,
     url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='340' height='88'%3E%3Cpath d='M0 0v22M200 22v22M90 44v22M280 66v22' stroke='%23704214' stroke-opacity='.32'/%3E%3C/svg%3E"),
     repeating-linear-gradient(0deg, rgba(112, 66, 20, .26) 0 1px, transparent 1px 22px),
     repeating-linear-gradient(.5deg, transparent 0 5px, rgba(140, 86, 30, .07) 5px 6px, transparent 6px 13px),

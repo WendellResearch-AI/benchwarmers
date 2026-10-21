@@ -2068,13 +2068,15 @@ def render(theme: str | None = None) -> str:
         "<meta name='viewport' content='width=device-width, initial-scale=1'>"
         "<title>Benchwarmers</title>"
         f"<style>{brand_css(theme)}{read(UI / 'bench.css')}</style>"
-        "<header><div><h1><span>Benchwarmers</span></h1>"
+        # One line: the name on its bench, the credit beside it, the actions at
+        # the far end; the schedule underneath.
+        "<header><h1><span>Benchwarmers</span></h1>"
         # The credit is fixed, not a setting (RELEASE-PLAN decision 7).
-        "<p class='sub'>by Wendell Research</p>"
-        f"<div class='runs' aria-label='Next scheduled runs'>{runs}</div></div>"
+        "<p class='sub'>by <a href='https://wendellresearch.ai' target='_blank' rel='noopener'>Wendell Research</a></p>"
         "<div class='head-actions'>"
         "<button class='btn fresh' id='fresh' hidden>New results · Reload</button>"
-        "<button class='btn primary' id='onboard-open'>Onboard a model</button></div></header>"
+        "<button class='btn primary' id='onboard-open'>Onboard a model</button></div>"
+        f"<div class='runs' aria-label='Next scheduled runs'>{runs}</div></header>"
         # What needs a person first, then the pages; endpoints are managed from
         # Connections now (the header button moved there).
         f"<main>{first_run()}{problems()}<div class='layout'>{tabs()}</div></main>{editor()}"
