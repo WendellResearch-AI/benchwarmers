@@ -442,12 +442,14 @@
     var direct = x.via === 'direct';
     if (!confirm('Add ' + x.model + ' via ' + x.label + (x.free ? '' : ' (PAID)') + '?\n\n'
       + (direct ? 'The bench only: register it on the ' + x.endpoint + ' endpoint, a 4-call probe, then the suite.'
+        // A LiteLLM or CLI Proxy API route says its own steps: only what that hub takes.
+        : x.steps ? x.steps.map(function (s, i) { return (i + 1) + '. ' + s; }).join('\n')
         : '1. Open WebUI: add it to the ' + x.connection + ' connection\'s Model IDs (if that connection lists them)\n'
         + '2. Open WebUI: a public model record, tagged and with the logo of the connection\'s other models\n'
         + '3. The bench: register, a 4-call probe, then the suite'))) return;
     b.disabled = true; b.textContent = 'Adding…'; $('d-errors').textContent = '';
     var call = direct ? post('/api/onboard', {served: x.model, endpoint: x.endpoint})
-      : post('/api/discover/add', {connection: x.connection, model: x.model});
+      : post('/api/discover/add', {connection: x.connection, model: x.model, endpoint: x.endpoint});
     call.then(function (res) {
       if (!res.ok && !res.log) {
         listErrors($('d-errors'), (res.steps || []).concat(res.errors));
@@ -463,6 +465,7 @@
     fetch('/api/discover-model?provider=' + encodeURIComponent(provider) + '&model=' + encodeURIComponent(model))
       .then(function (r) { return r.json(); }).then(function (res) {
         if (!res.ok) { listErrors($('d-errors'), res.errors); dd.showModal(); return; }
+        if (res.errors.length) listErrors($('d-errors'), res.errors);   // a hub that could not be asked
         var r = res.model, p = $('d-profile'), list = $('d-routes');
         $('d-title').textContent = r.name;
         $('d-served').textContent = r.provider_name + ' · ' + r.model + ' · listed by ' + r.sources.join(' and ')
@@ -506,7 +509,7 @@
           list.appendChild(row);
         });
         if (!res.routes.length) list.appendChild(el('p', {class: 'rules'}, 'None: ' + r.provider_name
-          + ' needs a connection in Open WebUI or an endpoint of its own first'
+          + ' needs a connection in a hub or an endpoint of its own first'
           + (r.api ? ' (its OpenAI-compatible base URL is ' + r.api + ')' : '') + '.'));
         dd.showModal();
       }).catch(function (err) { $('d-errors').textContent = String(err); dd.showModal(); });
@@ -581,9 +584,11 @@
   // ---- endpoints: keys go in, never come back out -------------------------
   var ed = $('endpoints-dialog');
   var e = {list: $('e-list'), name: $('e-name'), base: $('e-base'), key: $('e-key'),
-           kind: $('e-kind'), hub: $('e-hub'),
+           kind: $('e-kind'), hub: $('e-hub'), admin: $('e-admin'),
            errors: $('e-errors'), done: $('e-done'), save: $('e-save')};
-  e.kind.addEventListener('change', function () { $('e-hub-row').hidden = e.kind.value !== 'hub'; });
+  e.kind.addEventListener('change', function () {
+    $('e-hub-row').hidden = $('e-admin-row').hidden = e.kind.value !== 'hub';
+  });
   function loadEndpoints() {
     fetch('/api/endpoints').then(function (r) { return r.json(); }).then(function (res) {
       e.list.textContent = '';
@@ -607,7 +612,8 @@
         var edit = el('button', {class: 'btn small', type: 'button'}, 'Change key');
         edit.addEventListener('click', function () {
           showEndpointForm('Change the key for ' + x.name);
-          e.name.value = x.name; e.base.value = x.base; e.key.value = ''; e.key.focus();
+          e.name.value = x.name; e.base.value = x.base; e.key.value = ''; e.admin.value = ''; e.key.focus();
+          $('e-admin-row').hidden = !x.hub;                 // a hub's admin key changes here too
         });
         acts.appendChild(edit);
         if (x.connect && x.connect.flow && x.connect.flow !== 'local') {     // this endpoint, not a new one
@@ -693,8 +699,8 @@
   }
   function hideEndpointForm() {
     $('e-new').hidden = true; $('e-add').hidden = false; $('cn-form').hidden = true;
-    e.name.value = ''; e.base.value = ''; e.key.value = '';
-    e.kind.value = 'provider'; $('e-hub-row').hidden = true;
+    e.name.value = ''; e.base.value = ''; e.key.value = ''; e.admin.value = '';
+    e.kind.value = 'provider'; $('e-hub-row').hidden = $('e-admin-row').hidden = true;
   }
   $('endpoints-open').addEventListener('click', function () {
     e.errors.textContent = ''; e.done.textContent = ''; hideEndpointForm();
@@ -706,10 +712,11 @@
   $('e-close').addEventListener('click', function () { ed.close(); });
   e.save.addEventListener('click', function () {
     e.errors.textContent = ''; e.done.textContent = ''; e.save.disabled = true; e.save.textContent = 'Testing…';
-    var body = {name: e.name.value, base: e.base.value, key: e.key.value, new: e.adding};
+    var body = {name: e.name.value, base: e.base.value, key: e.key.value, new: e.adding,
+                admin: $('e-admin-row').hidden ? '' : e.admin.value};
     if (e.adding) { body.kind = e.kind.value; body.hub = e.kind.value === 'hub' ? e.hub.value : ''; }   // Change key keeps its kind
     post('/api/endpoint', body).then(function (r) {
-      e.save.disabled = false; e.save.textContent = 'Test and save'; e.key.value = '';
+      e.save.disabled = false; e.save.textContent = 'Test and save'; e.key.value = ''; e.admin.value = '';
       if (!r.ok) { listErrors(e.errors, r.errors); return; }
       var name = e.name.value.trim().toLowerCase();
       var saved = 'Saved. ' + name + ' lists ' + r.served + ' models; they appear in the onboarding picker. ' + (r.note || '');

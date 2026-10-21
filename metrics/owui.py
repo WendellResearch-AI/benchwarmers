@@ -1,6 +1,10 @@
-"""Add a model to Open WebUI as it is otherwise done by hand, then hand it to onboarding.
+"""The Open WebUI hub adapter: add a model as it is otherwise done by hand, then hand it to onboarding.
 
     python metrics/owui.py <connection> <model id>     # what would change, changes nothing
+
+One of three hub adapters (litellm_hub.py, cliproxy.py), each exposing
+SUPPORTS, CHECKED, endpoint(), plan() and add(); serve.discover_add picks one
+by the endpoint's hub (endpoints.adapter).
 
 THE HAND STEPS (2026-10-18)
 ---------------------------
@@ -16,10 +20,11 @@ carries the same ones. A connection is found by its tag: the Open WebUI
 connection (`urlIdx`) its tagged models are served from. Then
 `scripts/onboard.py` registers, probes and runs the suite as for any model.
 
-Admin calls with the Open WebUI key in config/endpoints.json; keys are never
-printed, and the config is written back exactly as read, plus one id. The
-endpoint is whichever is a hub of type openwebui (`endpoints.find_hub`); an
-install without one has no Open WebUI to add to, and `endpoint()` says so.
+Admin calls with the endpoint's admin key (endpoints.admin_key: an admin's
+API key, which is the endpoint's own key unless one is stored apart); keys
+are never printed, and the config is written back exactly as read, plus one
+id. The endpoint is whichever is a hub of type openwebui (`endpoints.find_hub`);
+an install without one has no Open WebUI to add to, and `endpoint()` says so.
 """
 
 from __future__ import annotations
@@ -38,6 +43,13 @@ import endpoints  # noqa: E402
 
 PUBLIC = [{"principal_type": "user", "principal_id": "*", "permission": "read"}]
 COPIED = ("profile_image_url", "capabilities", "defaultFeatureIds")
+# What this hub takes (RELEASE-PLAN section 2, "Adding a model to a hub"); the
+# dashboard says only what is here. "" where the hub has no such thing.
+SUPPORTS = {"allow_list": "Model IDs list", "tags": "the connection's tag",
+            "logo": "copied from the connection's other models (PNG, JPEG, GIF or WebP)",
+            "access": "public: every signed-in user",
+            "link": "/?settings=admin:models (v0.11+, the Models tab; up to v0.10 /admin/settings/models?id=<id>)"}
+CHECKED = ("0.12",)                              # 0.12.3, 2026-10-21: the routes below and /api/version
 
 
 def endpoint() -> str:
@@ -54,10 +66,20 @@ def _call(path: str, body: dict | None = None):
     root = endpoints.base(name).removesuffix("/api")
     req = urllib.request.Request(root + path, data=None if body is None else json.dumps(body).encode(),
                                  method="GET" if body is None else "POST",
-                                 headers={"Authorization": f"Bearer {endpoints.key(name)}",
+                                 headers={"Authorization": f"Bearer {endpoints.admin_key(name)}",
                                           "Content-Type": "application/json", "Accept": "application/json"})
     with urllib.request.urlopen(req, timeout=60) as r:
         return json.loads(r.read() or b"null")
+
+
+def version() -> tuple[str, str]:
+    """(release, endpoints.version_note's sentence). Advice only: a hub that
+    will not say is still added to."""
+    try:
+        v = str((_call("/api/version") or {}).get("version") or "")
+    except Exception:                                  # noqa: BLE001
+        v = ""
+    return v, endpoints.version_note("openwebui", v, CHECKED)
 
 
 def connections() -> dict[str, tuple[int, str]]:
@@ -94,6 +116,7 @@ def connections() -> dict[str, tuple[int, str]]:
 
 def plan(connection: str, model_id: str) -> dict:
     """What adding would change. Raises ValueError when it cannot be done here."""
+    release, note = version()
     found = connections().get(connection)
     if found is None:
         raise ValueError(f"no Open WebUI connection is known as {connection!r}: none of the bench's"
@@ -122,13 +145,13 @@ def plan(connection: str, model_id: str) -> dict:
             "model_id": model_id, "served": served,
             "add_to_list": bool(listed) and model_id not in listed,
             "record": "update" if served in records else "create",
-            "copy_from": sibling["id"] if sibling else None}
+            "copy_from": sibling["id"] if sibling else None, "version": release, "version_note": note}
 
 
 def add(connection: str, model_id: str) -> tuple[str, list[str]]:
     """Do it. (served id, what was done)."""
     p = plan(connection, model_id)
-    done = []
+    done = [p["version_note"]] if p["version_note"] else []
     if p["add_to_list"]:
         cfg = _call("/openai/config")
         # The write sends every key back as read. 0.12.3 returns them whole; a

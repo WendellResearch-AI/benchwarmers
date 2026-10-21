@@ -32,6 +32,13 @@ The ways this install can reach a provider, each a row's `routes`:
   direct       an endpoint of its own in config/endpoints.json whose name or
                base URL is the provider's (models.dev gives the base). Adding
                is plain onboarding on that endpoint: bench only.
+  hub          a connection in a LiteLLM or CLI Proxy API hub (hub_routes),
+               whose name is the provider's or whose base URL is its API.
+               Only the hub knows its connections, so it is asked when a
+               model's popup opens, not here: build() never waits on the
+               network. Adding goes through that hub's adapter.
+               ponytail: so these routes do not count toward reach, and a
+               paid model reachable only through such a hub stays hidden.
 The same model offered by two providers (OpenRouter and NVIDIA) has a route
 on each; the dashboard's Discover popup lists them together by `norm`.
 
@@ -108,6 +115,42 @@ def _routes(r: dict, bench: list, owui_conns: set[str], direct: dict, owui: str 
         for x in out:
             x["note"] += f" Shares one {name} quota with the other {name} route when both use the same account."
     return out
+
+
+def hub_routes(rows: list[dict]) -> tuple[list[list[dict]], list[str]]:
+    """The hub routes (see ROUTES) for each of `rows`, and the hubs that could
+    not be asked. Each LiteLLM or CLI Proxy API hub is asked once, by its
+    adapter's upstreams(); an install with neither asks nothing."""
+    import endpoints
+    hubs, errors = [], []
+    for which, label in endpoints.HUBS.items():
+        ep = endpoints.find_hub(which) if which != "openwebui" else None      # Open WebUI's are in build()
+        if not ep:
+            continue
+        mod = endpoints.adapter(which)
+        try:
+            hubs.append((which, label, ep, mod.SUPPORTS, mod.upstreams()))
+        except Exception as exc:                        # noqa: BLE001
+            errors.append(f"could not ask {label} ({ep}) which connections it has: {exc}")
+    bench = _on_bench() if hubs else []
+    out = []
+    for r in rows:
+        api, mine = (r.get("api") or "").rstrip("/"), []
+        for which, label, ep, can, ups in hubs:
+            for conn, (base, prefix) in ups.items():
+                if conn not in (r["provider"], r.get("connection")) and not (base and base == api):
+                    continue
+                served = f"{prefix}/{r['model']}" if prefix else r["model"]
+                # Only what the hub takes (its adapter's SUPPORTS): no logo or tags where it has none.
+                said = [f"{label}: into the {conn} connection's {can['allow_list']}"]
+                said += [f"{k}: {can[k]}" for k in ("tags", "logo", "access") if can[k]]
+                mine.append({"via": "hub", "hub": which, "connection": conn, "endpoint": ep,
+                             "label": f"{r['provider_name']} via {label} ({conn} connection)",
+                             "note": f"Also serves it to everything else that uses {label}.",
+                             "steps": ["; ".join(said), "The bench: register, a 4-call probe, then the suite"],
+                             "on_bench_as": next((a for e, _c, _n, a, s in bench if e == ep and s == served), None)})
+        out.append(mine)
+    return out, errors
 
 
 def build() -> list[dict]:
