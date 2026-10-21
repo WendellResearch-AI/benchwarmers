@@ -68,13 +68,10 @@ def registered_models() -> list[str]:
     models were added: it named five while twenty-two were registered, so a
     scheduled run would have quietly covered a quarter of them and reported
     nothing missing. A list that has to be edited alongside another list is a
-    list that will disagree with it.
+    list that will disagree with it. Empty on a fresh install (no yaml yet).
     """
-    import re
-    text = (DATA / "config" / "extra-openai-models.yaml").read_text(
-        encoding="utf-8")
-    return [m.group(1).strip().strip("\"'")
-            for m in re.finditer(r"model_id:\s*(.+)", text)]
+    import endpoints
+    return list(endpoints.registrations())
 
 
 def ad_hoc_models() -> set[str]:
@@ -150,17 +147,9 @@ def available_models(cache: dict | None = None,
 
 
 def _registered_names() -> dict[str, str]:
-    """alias -> the model name the endpoint knows it by."""
-    import re
-    text = (DATA / "config" / "extra-openai-models.yaml").read_text(
-        encoding="utf-8")
-    out, current = {}, None
-    for line in text.splitlines():
-        if (m := re.match(r"\s*-?\s*model_id:\s*(.+)", line)):
-            current = m.group(1).strip().strip("\"'")
-        elif (m := re.match(r"\s*model_name:\s*(.+)", line)):
-            out[current] = m.group(1).strip().strip("\"'")
-    return out
+    """alias -> the model name the endpoint knows it by; {} with no yaml yet."""
+    import endpoints
+    return {alias: r.get("model_name", "") for alias, r in endpoints.registrations().items()}
 
 
 def _served_model_names(cache: dict | None = None) -> set[str] | None:

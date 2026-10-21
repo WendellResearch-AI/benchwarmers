@@ -120,9 +120,9 @@ def load_json(path: pathlib.Path) -> dict:
 def data_stamp() -> float:
     """Newest change to anything the page renders from. The page polls this
     and offers a reload when it moves, rather than reloading under you."""
-    paths = [*ROOT.glob("config/*.json*"), *ROOT.glob("config/*.yaml"),
-             *ROOT.glob("metrics/*.json*"), DATA / "perf" / "history.csv",
-             *ROOT.glob("runs/*.md")]
+    paths = [*DATA.glob("config/*.json*"), *DATA.glob("config/*.yaml"),
+             *DATA.glob("metrics/*.json*"), DATA / "perf" / "history.csv",
+             *DATA.glob("runs/*.md")]
     return max((p.stat().st_mtime for p in paths if p.exists()), default=0.0)
 
 
@@ -148,7 +148,7 @@ def suite_scores() -> dict:
     row = re.compile(r"^\|\s*([\w-]+)\s*\|\s*`([^`]+)`\s*\|\s*([^|]+?)\s*\|"
                      r"\s*([^|]*?)\s*\|\s*([\d.]+)\s*\|")
     scores: dict[tuple[str, str], dict] = {}
-    for path in sorted(ROOT.glob("runs/suite-*.md")):
+    for path in sorted(DATA.glob("runs/suite-*.md")):
         for line in read(path).splitlines():
             if (m := row.match(line.strip())):
                 task, model, found, invented, seconds = m.groups()
@@ -273,6 +273,7 @@ OPTIONS_PATH = DATA / "config" / "model-options.json"   # keyed by alias, follow
 import endpoints  # noqa: E402
 import decide  # noqa: E402
 import bench_collections  # noqa: E402
+import model_roles  # noqa: E402
 import catalog  # noqa: E402
 CHANGES_PATH = DATA / "config" / "changes.jsonl"
 
@@ -309,9 +310,7 @@ def model_directory() -> dict[str, dict]:
 
 
 def _write_atomic(path: pathlib.Path, text: str) -> None:
-    tmp = path.with_suffix(path.suffix + ".part")
-    tmp.write_text(text, encoding="utf-8")
-    tmp.replace(path)
+    locked.write_atomic(path, text)                # makes config/ on a fresh install's first save
 
 
 def _dump(data: dict) -> str:
@@ -333,7 +332,7 @@ def change_model(alias: str, new_alias: str | None, new_role: str | None,
     """
     directory = model_directory()
     roles = roles_config()
-    known_roles = set(roles.get("roles", {}).keys()) or {"general", "code", "image"}
+    known_roles = set(model_roles.load()["roles"])
     errors: list[str] = []
 
     if alias not in directory:
@@ -720,6 +719,10 @@ def onboard_candidates() -> dict:
     makes happen only when the picker opens: a dashboard that needs the
     network to render would be down exactly when you want to look at it.
     """
+    names = list(endpoints.load())
+    if not names:
+        return {"ok": False, "errors": ["no endpoint yet: add one first (Endpoints, then Manage, then"
+                                        " Add an endpoint), and what it serves is listed here"]}
     taken = ({endpoints.snapshot_key(r["served"], r["endpoint"]) for r in endpoints.registry()}
              | {endpoints.snapshot_key(r.get("served", ""), r.get("endpoint") or endpoints.default())
                 for r in retired().values()}
@@ -735,7 +738,6 @@ def onboard_candidates() -> dict:
             return endpoints.models(name)
         except Exception as exc:                       # noqa: BLE001
             return exc
-    names = list(endpoints.load())
     with ThreadPoolExecutor(max_workers=len(names)) as pool:   # all at once, not in turn
         answers = dict(zip(names, pool.map(ask, names)))
     for name, live in answers.items():
@@ -1154,7 +1156,7 @@ def collections_view() -> dict:
     s = bench_collections.settings()
     rows = [{"name": n, **bench_collections.described(n, c, s)}
             for n, c in sorted(bench_collections.load().items())]
-    shapes = [k for k in roles_config().get("shapes", {}) if k != "image"]
+    shapes = [k for k in model_roles.load()["shapes"] if k != "image"]
     # Tags are read only by callers (GET /v1/models, and the refusal when a
     # request names no collection), to choose a collection for a task. The
     # suggestions: the bench's task shapes, a few purposes, and every tag a
@@ -1196,7 +1198,7 @@ def save_collection(name: str, members, shape: str, description: str, tags=None,
     unknown = [m for m in members if m not in known]
     if unknown:
         errors.append(f"not chat models on the bench: {', '.join(unknown)}")
-    shapes = [k for k in roles_config().get("shapes", {}) if k != "image"]
+    shapes = [k for k in model_roles.load()["shapes"] if k != "image"]
     if shape and shape not in shapes:
         errors.append(f"shape must be one of {', '.join(shapes)}, or empty for automatic")
     if len(description) > 300:
@@ -1435,6 +1437,32 @@ def recently_onboarded(days: int = 7) -> set[str]:
 def chip(label: str, css: str, why: str = "") -> str:
     return (f"<span class='chip {css}'" + (f" title='{esc(why)}'" if why else "")
             + f">{esc(label)}</span>")
+
+
+def first_run() -> str:
+    """A fresh install's next step, until it has an endpoint, a model on the
+    bench and a collection: add an endpoint (sign in with a provider, or paste
+    a key), onboard a model from it, make a collection of them (RELEASE-PLAN
+    Phase 4: init's steps, in the dashboard). Each opens what every install
+    uses; bench.js opens the first on load, since an empty bench offers nothing else."""
+    if not endpoints.load():
+        step, head, label = "endpoint", "Add your first endpoint", "Add an endpoint"
+        text = ("Where models are served from: sign in with a provider, or paste an API key for any"
+                " OpenAI-compatible API. Then onboard a model from it.")
+    elif not registered() and not decide.load():
+        step, head, label = "onboard", "Onboard your first model", "Onboard a model"
+        text = ("Pick a model your endpoints serve. Onboarding registers it, probes it (4 calls) and runs"
+                " the internal suite, so it takes minutes and spends calls.")
+    elif not bench_collections.load():
+        step, head, label = "collection", "Make your first collection", "New collection"
+        text = ("The models a panel always asks, and what it is for. Callers then ask for"
+                " bench/&lt;name&gt; through the gateway (python gateway.py).")
+    else:
+        return ""
+    return (f"<section class='problems' id='first-run' data-step='{step}' aria-labelledby='first-head'>"
+            f"<div class='head'><h2 id='first-head'>{head}</h2></div>"
+            f"<div class='problem'><div class='why'>{text}</div><div class='acts'>"
+            f"<button class='btn primary' id='first-go'>{label}</button></div></div></section>")
 
 
 def problems() -> str:
@@ -2015,7 +2043,7 @@ def render(theme: str | None = None) -> str:
         "<button class='btn primary' id='onboard-open'>Onboard a model</button></div></header>"
         # What needs a person first, then the pages; endpoints are managed from
         # Connections now (the header button moved there).
-        f"<main>{problems()}<div class='layout'>{tabs()}</div></main>{editor()}"
+        f"<main>{first_run()}{problems()}<div class='layout'>{tabs()}</div></main>{editor()}"
         f"<script>window.BENCH={directory_json()};</script>"
         # Observable Plot (on d3) draws the Benchmarks charts. Pinned versions from
         # jsDelivr; without a network the tables under each chart still work.
@@ -2465,7 +2493,7 @@ def endpoints_page() -> str:
     # elsewhere. A page that needs the network would be down when you need it.
     snap = load_json(DATA / "config" / "served-snapshot.json")
     checked = snap.get("updated", "")
-    names, default = {e["name"] for e in eps}, endpoints.default()
+    names, default = {e["name"] for e in eps}, next((e["name"] for e in eps if e["default"]), "")
     serves: dict[str, dict[str, str]] = {n: {} for n in names}     # endpoint -> served -> last seen
     for key, day in (snap.get("last_seen") or {}).items():
         served, _, ep = key.rpartition("@")
@@ -2639,7 +2667,7 @@ def logs_page() -> str:
         + section("Changes", "<table><thead><tr>" + th("When") + th("By") + th("Model") + th("What")
                   + th("New") + f"</tr></thead><tbody>{''.join(changes)}</tbody></table>", len(changes))
         + section("Scheduler", sched or "<p class='muted'>Nothing yet.</p>",
-                  len(_log_rows(ROOT / 'runs' / 'scheduler.log')))
+                  len(_log_rows(DATA / 'runs' / 'scheduler.log')))
         + section("Onboarding runs", f"<ul>{onboard}</ul>", onboard.count("<li")))
 
 
@@ -2659,7 +2687,7 @@ VERSION = version()
 def info_page() -> str:
     import scheduler
     rows = [("Version", VERSION), ("Python", f"{sys.version.split()[0]} · {sys.executable}"),
-            ("Folder", str(ROOT)), ("Endpoints", str(len(endpoints.load()))),
+            ("Folder", str(ROOT)), ("Data folder", str(DATA)), ("Endpoints", str(len(endpoints.load()))),
             ("Models on the bench", str(len(_chat_aliases()))),
             ("Scheduler", scheduler.settings()["mode"]), ("Model client", os.environ.get("BENCH_CLIENT") or "llm"),
             ("Theme", saved_theme())]
@@ -2673,7 +2701,7 @@ def info_page() -> str:
 def directory_json() -> str:
     directory = model_directory()
     facts = {a: catalog.info(a) for a, d in directory.items() if d.get("kind") != "decision"}
-    return json.dumps({"models": directory, "facts": facts, "roles": roles_config().get("roles", {}),
+    return json.dumps({"models": directory, "facts": facts, "roles": model_roles.load()["roles"],
                        "retired": retired(), "stamp": data_stamp()},
                       ensure_ascii=False).replace("</", "<\\/")
 
@@ -2961,7 +2989,10 @@ class Handler(gateway.Handler):
             return
         from urllib.parse import parse_qs, urlparse
         theme = parse_qs(urlparse(self.path).query).get("theme", [None])[0]   # a preview; else the saved one
-        body = render(theme).encode("utf-8")
+        try:
+            body = render(theme).encode("utf-8")
+        except RuntimeError as exc:                    # endpoints.json unreadable: say which and why
+            body = f"<!doctype html><meta charset='utf-8'><title>Benchwarmers</title><p>{esc(exc)}</p>".encode()
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
@@ -3044,6 +3075,8 @@ class Handler(gateway.Handler):
         except (ValueError, TypeError) as exc:
             result = {"ok": False, "errors": [f"bad request: {exc}"],
                       "changed": [], "sync": ""}
+        except RuntimeError as exc:                    # endpoints: none yet, or a file it cannot read
+            result = {"ok": False, "errors": [str(exc)], "changed": [], "sync": ""}
         self._json(200 if result["ok"] else 400, result)
 
     def _admitted(self, path: str) -> bool:
@@ -3119,6 +3152,8 @@ if __name__ == "__main__":
     guard.startup(address)                             # beyond this machine, only with an admin token
     shown = "localhost" if address == "127.0.0.1" else address
     print(f"Benchwarmers on http://{shown}:{PORT}{'  (login on)' if guard.auth_on() else ''}  (ctrl-c to stop)")
+    import paths
+    paths.make()                                       # a fresh data folder's layout, before any writer
     import scheduler
     scheduler.start()                                  # off unless config/scheduler.json says otherwise
     ThreadingHTTPServer((address, PORT), Handler).serve_forever()

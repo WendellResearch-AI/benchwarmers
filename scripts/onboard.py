@@ -51,6 +51,7 @@ sys.path.insert(0, str(ROOT / "metrics"))
 sys.path.insert(0, str(ROOT / "suite"))
 import endpoints  # noqa: E402
 import decide  # noqa: E402
+import locked  # noqa: E402
 from run import bench_python  # noqa: E402
 
 PY = bench_python()
@@ -80,8 +81,7 @@ def alias_for(served_name: str, taken: dict[str, str] | None = None,
     base = served_name_stripped.split("/")[-1].replace(":", "-")
     if not taken or taken.get(base) in (None, served_name):
         return base
-    tags = json.loads((DATA / "config" / "provider-tags.json")
-                      .read_text(encoding="utf-8"))
+    tags = locked.read_json(DATA / "config" / "provider-tags.json")    # none without Open WebUI
     tag = (tags.get(served_name) or "alt").split("/")[0]
     return f"{base}-{tag}"
 
@@ -92,16 +92,11 @@ def existing_aliases(include_retired: bool = True) -> dict[str, str]:
     Retired aliases count as taken: a retired name is never reused, because
     the run notes and perf history still say it and would merge two models.
     """
-    import re
     retired = json.loads((DATA / "config" / "retired.json").read_text(encoding="utf-8")
                          or "{}") if include_retired and (DATA / "config" / "retired.json").exists() else {}
-    out, current = {a: r.get("served", "") for a, r in retired.items()}, None
+    out = {a: r.get("served", "") for a, r in retired.items()}
     out.update({a: d["served"] for a, d in decide.load().items()})
-    for line in YAML.read_text(encoding="utf-8").splitlines():
-        if (m := re.match(r"\s*-?\s*model_id:\s*(.+)", line)):
-            current = m.group(1).strip().strip("\"'")
-        elif (m := re.match(r"\s*model_name:\s*(.+)", line)):
-            out[current] = m.group(1).strip().strip("\"'")
+    out.update({a: r.get("model_name", "") for a, r in endpoints.registrations().items()})
     return out
 
 
@@ -171,10 +166,8 @@ def onboard_decision(name: str, endpoint: str, via: str, alias: str, path: str =
                    "question_types": types,
                    "onboarded": dt.date.today().isoformat()}
     decide.FILE.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    roles_path = DATA / "config" / "model-roles.json"
-    roles = json.loads(roles_path.read_text(encoding="utf-8"))
-    roles.setdefault("models", {})[alias] = "decision"
-    roles_path.write_text(json.dumps(roles, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    locked.update(DATA / "config" / "model-roles.json",
+                  lambda roles: roles.setdefault("models", {}).__setitem__(alias, "decision"), ensure_ascii=False)
     print(f"  [4/5] recorded as {alias} in config/decision-models.json, role decision")
     print("  [5/5] no chat probe or suite: they cannot test a decision model."
           f" Ask it with: python metrics/decide.py {alias} \"<text>\" --noul \"<question>\"")
@@ -255,8 +248,7 @@ def main() -> None:
         print(f"  [2/5] registered as {alias}")
     run("scripts/sync_config.py", timeout=300)
     run("scripts/provider_tags.py", timeout=300)
-    tags = json.loads((DATA / "config" / "provider-tags.json")
-                      .read_text(encoding="utf-8"))
+    tags = locked.read_json(DATA / "config" / "provider-tags.json")
     print(f"  [3/5] synced; connection is {tags.get(name, '?')}")
 
     # 4. availability
