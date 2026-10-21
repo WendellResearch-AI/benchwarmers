@@ -56,6 +56,23 @@ JOBS = {
     "capabilities": (["metrics/probe_caps.py", "--gap", "30"], [(6, "07:00")]),
     "suite": (["suite/run.py", "--next"], [(None, t) for t in ("03:00", "09:00", "15:00", "21:00")]),
 }
+# What each job is for, in a sentence, for the Settings page.
+ABOUT = {
+    "availability": "Is each model still answering? One one-word prompt per model every morning;"
+                    " feeds the status on At a glance and auto-retire.",
+    "catalog": "Refreshes what is known about models (context, output limit, price, free tier) and the"
+               " Discover list from public feeds. No model calls.",
+    "suite-free": "Scores one free model on the review suite: up to six tasks it has not answered yet,"
+                  " within the free tier's shared daily budget.",
+    "deprecations": "Checks which models each endpoint still serves, and retires models that are gone or"
+                    " have failed for days (auto-retire), after one confirming call.",
+    "perf": "Weekly speed test: a short and a long prompt, three samples per model, for typical and"
+            " slow response times and output speed. The trend is on Benchmarks.",
+    "capabilities": "Weekly check of what each model can do: tool calling and reasoning, two short calls"
+                    " per model, spaced out.",
+    "suite": "Scores one paid model on the review suite every six hours: up to six tasks it has not"
+             " answered yet. These scores are what the router ranks by.",
+}
 
 
 def settings() -> dict:

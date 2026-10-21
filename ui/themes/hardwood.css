@@ -1,25 +1,38 @@
-/* Hardwood: the benchwarmer's gym. Maple floor and cream, varsity crimson,
-   scoreboard amber, court-line navy. Named for the gym, not a film.
-   Crimson is decoration only (button shadows, meters, step marks): OK stays
-   green and errors a burnt orange, so neither is mistaken for the brand. */
+/* Hardwood: a basketball gym. The page is a maple court, boards with
+   staggered joints and grain; Hoosier crimson and cream; scoreboard amber;
+   a crimson court line across the top, and the name sits on a crimson team
+   bench. Named for the gym, not a film.
+   Crimson marks the team (button shadows, the bench, the court line, links);
+   OK stays green and errors a burnt orange, so no state reads as the brand.
+   --floor is the page's ground; --floor-ground its darkest board, which the
+   theme check holds the page's text to. */
 :root {
-  --ink: #1f1a16;
-  --ink-2: #2e2620;
-  --ink-deep: #14100c;
-  --paper: #f7efe1;
-  --paper-2: #fffaf2;
-  --band: #ecd8b4;
+  --ink: #1a1410;
+  --ink-2: #2b211a;
+  --ink-deep: #120d09;
+  --paper: #f6efe3;
+  --paper-2: #fffaf3;
+  --band: #efe0c4;
   --signal: #ffb000;
-  --link: #1d3f6e;
-  --muted: #5f5346;
+  --link: #8f0a1a;
+  --muted: #4c4136;
   --muted-dark: #c4b59c;
-  --line: #e0caa3;
+  --line: #e2cba3;
   --line-dark: #4a3e31;
-  --brand: #9e1b32;
+  --brand: #990000;
   --primary: #2f6b34;
   --primary-bright: #4f9a55;
   --primary-deep: #1d4a22;
   --sky: #7fb2de;
   --warn: #7a4d00;
   --err: #b0400c;
+  --bench-seat: #990000;
+  --bench-leg: #2b211a;
+  --court-line: #990000;
+  --floor-ground: #e1ba80;
+  --floor:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='340' height='88'%3E%3Cpath d='M0 0v22M200 22v22M90 44v22M280 66v22' stroke='%23704214' stroke-opacity='.32'/%3E%3C/svg%3E"),
+    repeating-linear-gradient(0deg, rgba(112, 66, 20, .26) 0 1px, transparent 1px 22px),
+    repeating-linear-gradient(.5deg, transparent 0 5px, rgba(140, 86, 30, .07) 5px 6px, transparent 6px 13px),
+    repeating-linear-gradient(0deg, #ecce9b 0 22px, #e6c48c 22px 44px, #efd4a5 44px 66px, #e1ba80 66px 88px);
 }

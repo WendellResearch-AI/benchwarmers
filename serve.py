@@ -2070,7 +2070,7 @@ def render(theme: str | None = None) -> str:
         f"<style>{brand_css(theme)}{read(UI / 'bench.css')}</style>"
         "<header><div><h1><span>Benchwarmers</span></h1>"
         # The credit is fixed, not a setting (RELEASE-PLAN decision 7).
-        "<p class='sub'>by Wendell Research · ask the whole bench, keep every answer, learn who to trust</p>"
+        "<p class='sub'>by Wendell Research</p>"
         f"<div class='runs' aria-label='Next scheduled runs'>{runs}</div></div>"
         "<div class='head-actions'>"
         "<button class='btn fresh' id='fresh' hidden>New results · Reload</button>"
@@ -2504,7 +2504,8 @@ def settings_page() -> str:
     rows = "".join(
         f"<tr><td>{esc(job)}</td><td>{'on' if job in scheduler.enabled(conf) else 'off'}</td>"
         f"<td>{esc(state.get(job, '—')[:16].replace('T', ' '))}</td>"
-        f"<td>{scheduler.next_due(slots, now):%a %d %b %H:%M}</td><td class='mono'>{esc(' '.join(args))}</td></tr>"
+        f"<td>{scheduler.next_due(slots, now):%a %d %b %H:%M}</td><td class='mono'>{esc(' '.join(args))}</td>"
+        f"<td>{esc(scheduler.ABOUT.get(job, ''))}</td></tr>"
         for job, (args, slots) in scheduler.JOBS.items())
     mode_note = {"off": "Nothing runs. Set <code>\"mode\"</code> in <code>config/scheduler.json</code> to"
                         " <code>log-only</code> to watch it, then <code>run</code>.",
@@ -2522,7 +2523,7 @@ def settings_page() -> str:
         + gateway_keys_card() +
         f"<div class='panel'><h2>Scheduler ·{esc(conf['mode'])}</h2><p class='muted'>{mode_note.get(conf['mode'], '')}</p>"
         "<table><thead><tr>" + th("Job") + th("On") + th("Counted up to") + th("Next") + th("Runs")
-        + f"</tr></thead><tbody>{rows}</tbody></table></div>"
+        + th("What it does") + f"</tr></thead><tbody>{rows}</tbody></table></div>"
         f"<div class='panel'><h2>Model client · {esc(client)}</h2><p class='muted'>"
         "The default for calls the dashboard and gateway make (<code>BENCH_CLIENT</code>, <code>llm</code>"
         " unless set). The perf and availability tasks pass <code>--client builtin</code> for the trial week"
@@ -2663,9 +2664,12 @@ def quotas_page() -> str:
            + f"</tr></thead><tbody>{''.join(cool_rows)}</tbody></table>" if cool_rows
            else "<p class='muted'>None: every model is free to call.</p>")
         + "</div>"
-        "<div class='panel'><h3 class='chart-head'>Known limits</h3><p class='sub'>Entered per connection"
-        " (Endpoints, Manage) or learned from a provider's error; a model's own limits in its popup win,"
-        " and learned ones only ever lower a limit.</p>"
+        "<div class='panel'><h3 class='chart-head'>Known limits</h3><p class='sub'>How much each connection"
+        " or model allows (tokens or requests per minute or day), so the bench can space its calls."
+        " Two sources: what you enter per connection (Endpoints, Manage, Rate limits), and what a"
+        " provider states in a rate-limit error, which the bench writes down by itself. The list grows on"
+        " its own as models meet their limits. A model's own limits (its popup) win, and learned ones"
+        " only ever lower a limit.</p>"
         + ("<table><thead><tr>" + th("Connection or model") + "".join(th(k, True) for k in keys) + th("From")
            + f"</tr></thead><tbody>{''.join(lim_rows)}</tbody></table>" if lim_rows
            else "<p class='muted'>None known yet.</p>")
@@ -2717,22 +2721,34 @@ def logs_page() -> str:
         + section("Onboarding runs", f"<ul>{onboard}</ul>", onboard.count("<li")))
 
 
-def version() -> str:
-    """The commit this is running, from git when there is one."""
+def _git(*args: str) -> str:
     try:
-        out = subprocess.run(["git", "log", "-1", "--format=%h %cs"], cwd=ROOT, capture_output=True,
-                             text=True, timeout=5)
-        return out.stdout.strip() or "unknown"
+        return subprocess.run(["git", *args], cwd=ROOT, capture_output=True, text=True, timeout=5).stdout.strip()
     except (OSError, subprocess.SubprocessError):
-        return "unknown"
+        return ""
 
 
-VERSION = version()
+def version() -> tuple[str, str, str]:
+    """(release, date, commit). The release is the VERSION file, with the
+    branch appended off `main` (0.1.0-dev), so a dev checkout and the one in
+    daily use are told apart at a glance; date and commit come from git when
+    there is one (a Docker image has none)."""
+    release = read(ROOT / "VERSION").strip() or "0.0.0"
+    branch = _git("rev-parse", "--abbrev-ref", "HEAD")
+    if branch and branch not in ("main", "HEAD"):
+        release += "-" + re.sub(r"[^A-Za-z0-9.]+", "-", branch)
+    commit, _, date = _git("log", "-1", "--format=%h %cs").partition(" ")
+    return release, date, commit
+
+
+RELEASE, RELEASE_DATE, COMMIT = version()
+VERSION = f"{RELEASE} {RELEASE_DATE}".strip()           # the X-Benchwarmers-Version header
 
 
 def info_page() -> str:
     import scheduler
-    rows = [("Version", VERSION), ("Python", f"{sys.version.split()[0]} · {sys.executable}"),
+    rows = [("Version", RELEASE), ("Date", RELEASE_DATE or "unknown"), ("Commit", COMMIT or "unknown"),
+            ("Python", f"{sys.version.split()[0]} · {sys.executable}"),
             ("Folder", str(ROOT)), ("Data folder", str(DATA)), ("Endpoints", str(len(endpoints.load()))),
             ("Models on the bench", str(len(_chat_aliases()))),
             ("Scheduler", scheduler.settings()["mode"]), ("Model client", os.environ.get("BENCH_CLIENT") or "llm"),

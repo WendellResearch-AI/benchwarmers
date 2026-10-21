@@ -39,7 +39,13 @@ PAIRS = [
     ("log-ink", "log-ground", 4.5, "onboarding log"),
     ("ink-deep", "sky", 4.5, "'new' chip"),
     ("brand", "paper", 3.0, "meters, step marks, button shadow"),
+    # Only for a theme with a floor (--floor, a page ground drawn as a
+    # pattern): the header and sidebar text sit on it, held to its darkest board.
+    ("ink", "floor-ground", 4.5, "header text on the floor"),
+    ("muted", "floor-ground", 4.5, "secondary text on the floor"),
+    ("link", "floor-ground", 4.5, "links on the floor"),
 ]
+OPTIONAL = {"floor-ground"}
 # What bench.css falls back to when a theme leaves these out.
 FALLBACK = {"on-err": "#ffffff", "log-ink": "paper", "log-ground": "ink-deep"}
 
@@ -71,6 +77,8 @@ def ratio(a: str, b: str) -> float:
 def check(name: str, theme: dict[str, str]) -> list[str]:
     problems = [f"{name}: --{t} is not set" for t in REQUIRED if t not in theme]
     for text, ground, need, where in PAIRS:
+        if ground in OPTIONAL and ground not in theme:
+            continue
         a, b = colour(theme, text), colour(theme, ground)
         if not (re.fullmatch(r"#[0-9a-fA-F]{3}([0-9a-fA-F]{3})?", a or "")
                 and re.fullmatch(r"#[0-9a-fA-F]{3}([0-9a-fA-F]{3})?", b or "")):
