@@ -113,9 +113,9 @@ def load_json(path: pathlib.Path) -> dict:
 def data_stamp() -> float:
     """Newest change to anything the page renders from. The page polls this
     and offers a reload when it moves, rather than reloading under you."""
-    paths = [*ROOT.glob("config/*.json*"), *ROOT.glob("config/*.yaml"),
-             *ROOT.glob("metrics/*.json*"), DATA / "perf" / "history.csv",
-             *ROOT.glob("runs/*.md")]
+    paths = [*DATA.glob("config/*.json*"), *DATA.glob("config/*.yaml"),
+             *DATA.glob("metrics/*.json*"), DATA / "perf" / "history.csv",
+             *DATA.glob("runs/*.md")]
     return max((p.stat().st_mtime for p in paths if p.exists()), default=0.0)
 
 
@@ -141,7 +141,7 @@ def suite_scores() -> dict:
     row = re.compile(r"^\|\s*([\w-]+)\s*\|\s*`([^`]+)`\s*\|\s*([^|]+?)\s*\|"
                      r"\s*([^|]*?)\s*\|\s*([\d.]+)\s*\|")
     scores: dict[tuple[str, str], dict] = {}
-    for path in sorted(ROOT.glob("runs/suite-*.md")):
+    for path in sorted(DATA.glob("runs/suite-*.md")):
         for line in read(path).splitlines():
             if (m := row.match(line.strip())):
                 task, model, found, invented, seconds = m.groups()
@@ -2366,7 +2366,7 @@ def logs_page() -> str:
         + section("Changes", "<table><thead><tr>" + th("When") + th("By") + th("Model") + th("What")
                   + th("New") + f"</tr></thead><tbody>{''.join(changes)}</tbody></table>", len(changes))
         + section("Scheduler", sched or "<p class='muted'>Nothing yet.</p>",
-                  len(_log_rows(ROOT / 'runs' / 'scheduler.log')))
+                  len(_log_rows(DATA / 'runs' / 'scheduler.log')))
         + section("Onboarding runs", f"<ul>{onboard}</ul>", onboard.count("<li")))
 
 

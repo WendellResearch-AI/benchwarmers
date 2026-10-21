@@ -200,7 +200,7 @@ def evidence() -> tuple[list[dict], dict[str, dt.date], dict[str, dt.date]]:
             saw(o["model"], dt.date.fromisoformat(o["date"]))
 
     from run import outcome
-    for out in ROOT.glob("suite/tasks/*/output/*.md"):
+    for out in DATA.glob("suite/tasks/*/output/*.md"):    # the saved answers are the install's data
         if outcome(out.read_text(encoding="utf-8", errors="replace")) is None:
             saw(out.stem, dt.date.fromtimestamp(out.stat().st_mtime))
 
