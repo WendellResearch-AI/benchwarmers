@@ -127,7 +127,11 @@ With no explorer seats to fill, nothing is asked.
 - **Free models only**, so rate limits are the constraint; a failed seat is
   reported and logged, not retried into the limit.
 - **Privacy:** prompts go only to providers the bench already uses.
-- **Bind to 127.0.0.1**, as the dashboard does.
+- **Bind to 127.0.0.1**, as the dashboard does. Elsewhere only with an admin
+  token set, and then every call carries a gateway key made on the
+  dashboard's Settings page (`Authorization: Bearer <key>`). The dashboard
+  answers the same routes on its own port, so one port can serve both
+  (README, "Security").
 
 ## What is and isn't new
 

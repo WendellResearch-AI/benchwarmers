@@ -24,7 +24,10 @@ mean something narrower than their name suggests — an efficiency below 1.0 in
 particular means the model arrived while wandering, which a success rate hides.
 
 It binds to 127.0.0.1 on purpose. Nothing here is secret, but a benchmark
-dashboard is not a thing to put on a network by accident.
+dashboard is not a thing to put on a network by accident. BENCH_BIND puts it
+on one deliberately, and then it refuses to start without
+BENCHWARMERS_ADMIN_TOKEN, which turns on the login (metrics/guard.py). It also
+answers the gateway's routes, so one port serves both.
 """
 
 from __future__ import annotations
@@ -52,6 +55,7 @@ for _d in ("metrics", "suite", "scripts"):
     sys.path.insert(0, str(ROOT / _d))
 from aliases import current as current_alias  # noqa: E402
 import connect  # noqa: E402
+import gateway  # noqa: E402  -- its routes are answered on this port too (one port)
 import guard  # noqa: E402
 import locked  # noqa: E402
 
@@ -1041,7 +1045,7 @@ def connect_save(tokens: dict) -> dict:
 
 def connect_page(out: dict) -> str:
     """What the sign-in tab shows when the provider sends it back here."""
-    home = f"http://localhost:{PORT}/"
+    home = (guard.public_url() or f"http://localhost:{PORT}") + "/"
     if out.get("ok"):
         head, text = (f"{out['label']} is connected as {out['endpoint']}",
                       f"It lists {out.get('served', 0):,} models. Back in Benchwarmers, onboard the ones you want.")
@@ -1050,7 +1054,7 @@ def connect_page(out: dict) -> str:
     return (f"<!doctype html><meta charset='utf-8'><title>Benchwarmers</title>"
             f"<body style='font:16px system-ui;max-width:36rem;margin:4rem auto;padding:0 1rem'>"
             f"<h1>{html.escape(head)}</h1><p>{html.escape(text)}</p>"
-            f"<p><a href='{home}'>Back to Benchwarmers</a>. You can close this tab.</p>")
+            f"<p><a href='{html.escape(home)}'>Back to Benchwarmers</a>. You can close this tab.</p>")
 
 
 def _clean_limits(raw) -> tuple[dict, list[str]]:
@@ -2343,6 +2347,69 @@ def save_theme(theme: str) -> dict:
     return {"ok": True, "errors": [], "theme": theme}
 
 
+def make_gateway_key(name: str, who: str = "ui") -> dict:
+    """A named gateway key, in this response only: the data folder keeps its
+    hash (metrics/guard.py), the change log its name."""
+    name = name.strip().lower()
+    try:
+        value = guard.make_key(name)
+    except ValueError as exc:
+        return {"ok": False, "errors": [str(exc)]}
+    _log_change(datetime.datetime.now().astimezone().isoformat(timespec="seconds"), who, "",
+                "gateway key", None, name)
+    return {"ok": True, "errors": [], "name": name, "key": value}
+
+
+def revoke_gateway_key(name: str, who: str = "ui") -> dict:
+    if not guard.revoke_key(name):
+        return {"ok": False, "errors": [f"no gateway key named {name!r}"]}
+    _log_change(datetime.datetime.now().astimezone().isoformat(timespec="seconds"), who, "",
+                "gateway key", name, None)
+    return {"ok": True, "errors": []}
+
+
+def gateway_keys_card() -> str:
+    rows = "".join(f"<tr><td class='mono'>{esc(n)}</td><td>{esc(str(e.get('created', ''))[:16].replace('T', ' '))}</td>"
+                   f"<td><button class='btn' data-revoke-key='{esc(n)}'>Revoke</button></td></tr>"
+                   for n, e in sorted(guard.gateway_keys().items()) if isinstance(e, dict))
+    asked = ("An admin token is set, so every call to <code>/v1/…</code> and <code>/bench/verdict</code> needs one."
+             if guard.auth_on() else
+             "None is asked for yet: without an admin token (<code>BENCHWARMERS_ADMIN_TOKEN</code>) the gateway"
+             " serves this machine with no key, as before. Set one and every call needs a key.")
+    return ("<div class='panel form-panel'><h2>Gateway keys</h2><p class='muted'>For a chat UI, an agent or another"
+            " machine, sent as <code>Authorization: Bearer &lt;key&gt;</code>. A key reaches the gateway only, never"
+            f" this dashboard; revoke it and it stops at once. {asked}</p>"
+            f"<table><thead><tr>{th('Name')}{th('Made')}<th></th></tr></thead>"
+            f"<tbody>{rows or '<tr><td colspan=3 class=muted>No keys yet.</td></tr>'}</tbody></table>"
+            "<label class='field' for='k-name'>Name for a new key</label>"
+            "<input id='k-name' placeholder='e.g. open-webui' autocomplete='off'>"
+            "<div class='errors' id='k-errors' role='alert'></div>"
+            "<div class='done' id='k-done' hidden><p>Copy it now: it is shown this once and kept only as a hash.</p>"
+            "<input id='k-value' class='mono' readonly></div>"
+            "<div class='actions'><button class='btn primary' id='k-make'>Make a key</button></div></div>")
+
+
+def login_page() -> str:
+    """The admin token goes in a JSON POST, through the same guard as every
+    write. Opened from a link on another site, SameSite=Strict holds the
+    cookie back, so a browser already signed in is sent on to the dashboard."""
+    return ("<!doctype html><html lang='en'><meta charset='utf-8'>"
+            "<meta name='viewport' content='width=device-width, initial-scale=1'><title>Benchwarmers</title>"
+            "<body style='font:16px system-ui;max-width:24rem;margin:4rem auto;padding:0 1rem'>"
+            "<h1>Benchwarmers</h1><form id='f'><label for='t'>Admin token</label>"
+            "<input id='t' type='password' autocomplete='current-password' required"
+            " style='display:block;width:100%;box-sizing:border-box;font:inherit;margin:.5rem 0 1rem'>"
+            "<button>Sign in</button><p id='e' role='alert'></p></form><script>"
+            "fetch('/api/stamp').then(function (r) { if (r.ok) location.replace('/'); });"
+            "document.getElementById('f').addEventListener('submit', function (ev) {"
+            " ev.preventDefault();"
+            " fetch('/login', {method: 'POST', headers: {'Content-Type': 'application/json'},"
+            "  body: JSON.stringify({token: document.getElementById('t').value})}).then(function (r) {"
+            "  if (r.ok) location.replace('/');"
+            "  else document.getElementById('e').textContent = 'That is not the admin token.'; });"
+            "});</script>")
+
+
 def settings_page() -> str:
     """Theme (saved), the scheduler and the model client (shown, changed in
     their config files for now: switching either for real is a deliberate
@@ -2378,7 +2445,8 @@ def settings_page() -> str:
         f"<div class='themes' id='themes'>{''.join(cards)}</div>"
         "<div class='errors' id='t-errors' role='alert'></div>"
         "<div class='actions'><button class='btn primary' id='t-save'>Save theme</button></div></div>"
-        f"<div class='panel'><h2>Scheduler · {esc(conf['mode'])}</h2><p class='muted'>{mode_note.get(conf['mode'], '')}</p>"
+        + gateway_keys_card() +
+        f"<div class='panel'><h2>Scheduler ·{esc(conf['mode'])}</h2><p class='muted'>{mode_note.get(conf['mode'], '')}</p>"
         "<table><thead><tr>" + th("Job") + th("On") + th("Counted up to") + th("Next") + th("Runs")
         + f"</tr></thead><tbody>{rows}</tbody></table></div>"
         f"<div class='panel'><h2>Model client · {esc(client)}</h2><p class='muted'>"
@@ -2790,14 +2858,32 @@ def editor() -> str:
 MAX_BODY = 1_000_000   # bytes; the largest form is a collection or an endpoint
 
 
-class Handler(BaseHTTPRequestHandler):
+class Handler(gateway.Handler):
+    """The dashboard, and on the same port the gateway's routes, `/v1/...` and
+    `/bench/...` (one port, for container hosts that expose one): those go to
+    gateway.Handler, which takes a gateway key. Every other route is the
+    dashboard's and takes the login cookie when an admin token is set;
+    /health, /login and Connect's callback take neither (metrics/guard.py)."""
+
     def do_GET(self):                                    # noqa: N802
+        path = self.path.split("?", 1)[0]
+        if guard.gateway_route(path):
+            return super().do_GET()
+        if path == "/health":
+            # For a container's health check, which may send any Host: answered
+            # before the Host check, so it says nothing but that it is up.
+            return self._json(200, {"ok": True})
         # Host checked on every GET: a DNS-rebinding page could otherwise read
         # any of these replies (metrics/guard.py).
         try:
             guard.check(self.headers, PORT, post=False, max_body=0)
         except guard.Refused as r:
             self._json(r.status, {"ok": False, "errors": [str(r)]})
+            return
+        if path == "/login":
+            return self._page(login_page()) if guard.auth_on() else self._redirect("/")
+        callback = self.path.startswith((connect.CALLBACK + "?", connect.CALLBACK + "/"))
+        if not callback and not self._admitted(path):
             return
         if self.path.startswith("/api/onboard?"):
             from urllib.parse import parse_qs, urlparse
@@ -2813,10 +2899,11 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/api/connect":
             self._json(200, connect_list())
             return
-        if self.path.startswith((connect.CALLBACK + "?", connect.CALLBACK + "/")):
+        if callback:
             # The provider sends the browser back here. A GET that saves, as
             # OAuth callbacks are: the state is single-use and unguessable, and
-            # only a sign-in this dashboard started has one.
+            # only a sign-in this dashboard started has one. No login cookie:
+            # SameSite=Strict keeps it off the provider's cross-site redirect.
             from urllib.parse import parse_qsl, urlparse
             query = dict(parse_qsl(urlparse(self.path).query))
             query["state"] = connect.callback_id(self.path, query)
@@ -2889,6 +2976,11 @@ class Handler(BaseHTTPRequestHandler):
         JSON out, and every rule lives in `change_model` — this method only
         parses and reports.
         """
+        path = self.path.split("?", 1)[0]
+        if guard.gateway_route(path):
+            return super().do_POST()
+        if path == "/login":
+            return self._login()
         ops = {"/api/model": lambda p: change_model(str(p.get("alias", "")),
                                                     p.get("new_alias"), p.get("new_role"),
                                                     new_ad_hoc=p.get("new_ad_hoc"),
@@ -2928,18 +3020,23 @@ class Handler(BaseHTTPRequestHandler):
                                                         p.get("false")),
                "/api/gateway-settings": lambda p: save_gateway_settings(
                    p.get("max_calls"), p.get("max_explorers")),
+               "/api/gateway-key": lambda p: make_gateway_key(str(p.get("name") or "")),
+               "/api/gateway-key/remove": lambda p: revoke_gateway_key(str(p.get("name") or "")),
                "/api/theme": lambda p: save_theme(str(p.get("theme") or ""))}
-        if self.path not in ops:
-            self._json(404, {"ok": False, "errors": ["unknown endpoint"]})
-            return
         # SAME ORIGIN ONLY. Any page open in the browser can POST a plain form
         # to 127.0.0.1, and this used to parse whatever arrived as JSON -- so a
         # website could retire models, and now could set a key. The checks are
-        # shared with the gateway (metrics/guard.py).
+        # shared with the gateway (metrics/guard.py). Then the login, then the
+        # route: a stranger learns nothing, not even which routes exist.
         try:
             length = guard.check(self.headers, PORT, post=True, max_body=MAX_BODY)
         except guard.Refused as r:
             self._json(r.status, {"ok": False, "errors": [str(r)]})
+            return
+        if not self._admitted(path):
+            return
+        if self.path not in ops:
+            self._json(404, {"ok": False, "errors": ["unknown endpoint"]})
             return
         try:
             payload = json.loads(self.rfile.read(length) or b"{}")
@@ -2949,12 +3046,56 @@ class Handler(BaseHTTPRequestHandler):
                       "changed": [], "sync": ""}
         self._json(200 if result["ok"] else 400, result)
 
-    def _json(self, status: int, data: dict) -> None:
+    def _admitted(self, path: str) -> bool:
+        """The login cookie, when an admin token is set: a page asked for
+        without it goes to the login page, anything else gets a 401."""
+        try:
+            self.who = guard.admin_caller(self.headers)
+            return True
+        except guard.Refused as r:
+            if self.command == "GET" and not path.startswith("/api/"):
+                self._redirect("/login")
+            else:
+                self._json(r.status, {"ok": False, "errors": [str(r)]})
+            return False
+
+    def _login(self) -> None:
+        """POST /login {"token"}: the login cookie, for the admin token only."""
+        try:
+            length = guard.check(self.headers, PORT, post=True, max_body=MAX_BODY)
+            given = json.loads(self.rfile.read(length) or b"{}").get("token")
+        except guard.Refused as r:
+            return self._json(r.status, {"ok": False, "errors": [str(r)]})
+        except (ValueError, AttributeError):
+            return self._json(400, {"ok": False, "errors": ['send {"token": "..."}']})
+        if not (isinstance(given, str) and guard.login(given)):
+            return self._json(401, {"ok": False, "errors": ["that is not the admin token"]})
+        self.who = "admin"
+        self._json(200, {"ok": True, "errors": []}, cookie=guard.session_cookie())
+
+    def _redirect(self, where: str) -> None:
+        self.send_response(303)
+        self.send_header("Location", where)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def _page(self, html_text: str) -> None:
+        body = html_text.encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _json(self, status: int, data: dict, cookie: str = "") -> None:
         body = json.dumps(data).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        if cookie:
+            self.send_header("Set-Cookie", cookie)
         self.end_headers()
         self.wfile.write(body)
 
@@ -2963,12 +3104,21 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("X-Benchwarmers-Version", VERSION)
         super().end_headers()
 
+    def log_request(self, code="-", size="-"):
+        """The access log (route, status, who) once logins are on; without
+        them the dashboard stays as quiet as it always was."""
+        if guard.auth_on():
+            guard.access(self, code)
+
     def log_message(self, *_args):
         """Quiet. A dashboard does not need to narrate every refresh."""
 
 
 if __name__ == "__main__":
-    print(f"Benchwarmers on http://localhost:{PORT}  (ctrl-c to stop)")
+    address = guard.bind()
+    guard.startup(address)                             # beyond this machine, only with an admin token
+    shown = "localhost" if address == "127.0.0.1" else address
+    print(f"Benchwarmers on http://{shown}:{PORT}{'  (login on)' if guard.auth_on() else ''}  (ctrl-c to stop)")
     import scheduler
     scheduler.start()                                  # off unless config/scheduler.json says otherwise
-    ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
+    ThreadingHTTPServer((address, PORT), Handler).serve_forever()

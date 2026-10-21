@@ -21,9 +21,9 @@ error messages, and a review suite built from real bugs.
 ## Status
 
 **Early.** It runs from a checkout with Python 3.11 or later on Windows, macOS
-and Linux. An installer (`pipx install benchwarmers`), dashboard login and a
-Docker image are on the way to v0.1. Until then, expect rough edges and read
-the code where this page is thin.
+and Linux, or in Docker. An installer (`pipx install benchwarmers`) is on the
+way to v0.1. Until then, expect rough edges and read the code where this page
+is thin.
 
 ## Quick start (from source)
 
@@ -114,13 +114,45 @@ code makes the best tasks, because no model has trained on it. See
 
     python scripts/check.py             # every self-check and test (--quick skips the slow one)
 
+## Docker
+
+One container runs the dashboard, the gateway (on the same port, at `/v1`)
+and the scheduler, with the data folder as a volume and no `llm` CLI (the
+built-in client makes every call). Put the secrets in a `.env` file beside
+`compose.yaml`:
+
+    BENCHWARMERS_ADMIN_TOKEN=<16 or more characters>
+    BENCHWARMERS_KEY_OPENROUTER=sk-or-...
+
+then `docker compose up -d` and open http://127.0.0.1:8122. The compose file
+publishes on this machine only; see its comments for a proxy.
+
 ## Security
 
-Both servers listen on 127.0.0.1 only. Every request is checked for the
+Both servers listen on 127.0.0.1 by default. Every request is checked for the
 server's own host name (against DNS rebinding), and every write must be a
 same-origin JSON request, so a web page in your browser cannot drive either
-server. Keys are read from the `llm` CLI's key store and never written to the
-data folder's JSON or shown back.
+server. On this machine with no admin token there is no login and the gateway
+asks for no key, as before.
+
+To listen anywhere else (`BENCH_BIND`, and `BENCH_PORT` / `BENCH_GATEWAY_PORT`
+for the ports), set `BENCHWARMERS_ADMIN_TOKEN` first; without it both servers
+refuse to start. With a token:
+
+- the dashboard asks for it once, then keeps an `HttpOnly; SameSite=Strict`
+  session cookie for a week (changing the token signs everyone out);
+- the gateway's routes (`/v1/...`, `/bench/verdict`) take a **gateway key** as
+  `Authorization: Bearer <key>`. Make named keys on Settings: each is shown
+  once, kept only as a hash, revocable, and never opens the dashboard;
+- `BENCHWARMERS_PUBLIC_URL` (e.g. `https://bench.example.com`) is the address
+  browsers use behind a proxy or on a LAN address; its host and origin are
+  accepted, and the cookie is `Secure` when it is https;
+- every request is logged to stderr: route, status, and who (a key's name or
+  admin), never a secret.
+
+Endpoint keys come from `BENCHWARMERS_KEY_<NAME>` (the key name upper-cased,
+`-` as `_`) first, then from the `llm` CLI's key store; they are never written
+to the data folder's JSON or shown back.
 
 ## Licence
 

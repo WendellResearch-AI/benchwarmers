@@ -554,6 +554,28 @@
     });
   });
 
+  // ---- gateway keys: shown once, then only their names ---------------------
+  if ($('k-make')) $('k-make').addEventListener('click', function () {
+    $('k-errors').textContent = '';
+    post('/api/gateway-key', {name: $('k-name').value}).then(function (r) {
+      if (!r.ok) { listErrors($('k-errors'), r.errors); return; }
+      $('k-value').value = r.key;
+      $('k-done').hidden = false;
+      $('k-value').select();
+      $('k-make').disabled = true;               // reload to see it listed; the value is gone then
+    });
+  });
+  document.querySelectorAll('[data-revoke-key]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var name = b.dataset.revokeKey;
+      if (!confirm('Revoke the gateway key ' + name + '? Anything using it is refused from now on.')) return;
+      post('/api/gateway-key/remove', {name: name}).then(function (r) {
+        if (!r.ok) { listErrors($('k-errors'), r.errors); return; }
+        location.reload();
+      });
+    });
+  });
+
   // ---- endpoints: keys go in, never come back out -------------------------
   var ed = $('endpoints-dialog');
   var e = {list: $('e-list'), name: $('e-name'), base: $('e-base'), key: $('e-key'),

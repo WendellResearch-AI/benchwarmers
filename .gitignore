@@ -16,6 +16,8 @@ CLAUDE.local.md
 *.json.lock
 .*.part
 keys.json
+# compose.yaml's secrets (the admin token, BENCHWARMERS_KEY_*)
+.env
 __pycache__/
 suite/tasks/*/output/
 .venv/

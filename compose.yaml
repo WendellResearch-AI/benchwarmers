@@ -1,0 +1,30 @@
+# Benchwarmers: dashboard and gateway on one port, data in a named volume.
+#
+#   1. Put the secrets in a .env file beside this one (gitignored, never in
+#      the image):
+#        BENCHWARMERS_ADMIN_TOKEN=<16+ characters; python -c "import secrets; print(secrets.token_urlsafe(24))">
+#        BENCHWARMERS_KEY_OPENROUTER=sk-or-...      # one per endpoint key name, upper-cased, '-' as '_'
+#   2. docker compose up -d
+#   3. Open http://127.0.0.1:8122 and sign in with the token. Gateway keys for
+#      clients are made on Settings; clients use http://127.0.0.1:8122/v1.
+#
+# Published on this machine only. To reach it from elsewhere, put a proxy
+# with TLS in front and set BENCHWARMERS_PUBLIC_URL (e.g.
+# https://bench.example.com) so its Host and Origin are accepted. Keep the
+# host port equal to BENCH_PORT, or sign-ins that return to this machine
+# (OpenRouter, ChatGPT) land on the wrong port.
+services:
+  benchwarmers:
+    build: .
+    image: benchwarmers
+    ports:
+      - "127.0.0.1:8122:8122"
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - benchwarmers-data:/data
+    restart: unless-stopped
+
+volumes:
+  benchwarmers-data:

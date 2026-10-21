@@ -100,11 +100,25 @@ def base(name: str | None = None) -> str:
     return load()[name or default()]["base"].rstrip("/")
 
 
-def keys() -> dict:
+ENV_KEY = "BENCHWARMERS_KEY_"
+
+
+def _stored() -> dict:
     try:
         return json.loads((LLM_DIR / "keys.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
+
+
+def keys() -> dict:
+    """Every key by name: BENCHWARMERS_KEY_<NAME> from the environment first, so
+    a container needs no key store, then the llm CLI's keys.json. <NAME> is the
+    key name upper-cased with '-' as '_' (BENCHWARMERS_KEY_OPENROUTER_2 for
+    openrouter-2). ponytail: a hand-written key name holding '_' or '.' cannot
+    come from the environment; every name the dashboard makes can."""
+    env = {var[len(ENV_KEY):].lower().replace("_", "-"): value
+           for var, value in os.environ.items() if var.upper().startswith(ENV_KEY) and var[len(ENV_KEY):] and value}
+    return {**_stored(), **env}
 
 
 def key(name: str | None = None) -> str:
@@ -112,10 +126,12 @@ def key(name: str | None = None) -> str:
 
 
 def set_key(key_name: str, value: str) -> None:
-    """Store a key where `llm keys set` would. Atomic; other keys untouched."""
-    data = keys()
+    """Store a key where `llm keys set` would. Atomic; other keys untouched,
+    and never one from the environment."""
+    data = _stored()
     data[key_name] = value
     path = LLM_DIR / "keys.json"
+    path.parent.mkdir(parents=True, exist_ok=True)     # a container's store starts empty
     tmp = path.with_suffix(".json.part")
     tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     tmp.replace(path)
@@ -226,10 +242,19 @@ def main() -> None:
 def _selftest() -> None:
     """No endpoint means a refusal, not someone's LAN; the yaml parser keeps headers."""
     import tempfile
-    global FILE, YAML
-    real = FILE, YAML
+    global FILE, YAML, LLM_DIR
+    real = FILE, YAML, LLM_DIR
     with tempfile.TemporaryDirectory() as tmp:
         FILE, YAML = pathlib.Path(tmp) / "endpoints.json", pathlib.Path(tmp) / "models.yaml"
+        LLM_DIR = pathlib.Path(tmp) / "llm"                # absent: set_key makes it
+        try:
+            set_key("or-2", "stored")
+            os.environ[ENV_KEY + "OR_2"], os.environ[ENV_KEY + "NEW"] = "from-env", "env-only"
+            assert keys()["or-2"] == "from-env" and keys()["new"] == "env-only"
+            set_key("other", "x")                          # the environment's never reach the file
+            assert _stored() == {"or-2": "stored", "other": "x"}, _stored()
+        finally:
+            os.environ.pop(ENV_KEY + "OR_2", None), os.environ.pop(ENV_KEY + "NEW", None)
         try:
             for content in (None, "{}", "not json"):
                 if content is not None:
@@ -258,7 +283,7 @@ def _selftest() -> None:
                 listing.write_text(body, encoding="utf-8")
                 assert list(list_models({"base": "x", "models_url": listing.as_uri()})) == ["a"], body
         finally:
-            FILE, YAML = real
+            FILE, YAML, LLM_DIR = real
     print("ok")
 
 

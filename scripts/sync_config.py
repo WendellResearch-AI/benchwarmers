@@ -87,7 +87,9 @@ def apply_options() -> None:
     import json
     import subprocess
     path = REPO.parent / "model-options.json"
-    if not path.exists():
+    # No llm CLI (the Docker image): no store to set them in, and the
+    # built-in client reads this file itself.
+    if not path.exists() or not shutil.which("llm"):
         return
     for alias, options in json.loads(path.read_text(encoding="utf-8")).items():
         if alias.startswith("_"):

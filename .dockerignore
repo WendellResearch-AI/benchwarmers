@@ -1,0 +1,16 @@
+# Code only: never an install's data, keys or local settings.
+.git
+.env
+.benchwarmers-home
+CLAUDE.local.md
+.venv
+**/keys.json
+**/__pycache__
+**/*.bak
+**/*.lock
+config/
+runs/
+perf/history.csv
+metrics/*.json
+metrics/*.jsonl
+suite/tasks/*/output/

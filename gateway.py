@@ -48,7 +48,9 @@ A single-model proxy. Tools such as Roo Code call Open WebUI directly; this
 exists only for the multi-model work. Seats are called with `llm -m`, exactly
 as offloads always were, so endpoints, headers and per-model options all come
 from the same registry. Full prompts and answers go to `runs/gateway/`,
-gitignored. Bound to 127.0.0.1, like the dashboard.
+gitignored. Bound to 127.0.0.1, like the dashboard (BENCH_BIND and
+BENCH_GATEWAY_PORT change that; beyond this machine it asks for a gateway key,
+metrics/guard.py). The dashboard answers these same routes on its own port.
 """
 
 from __future__ import annotations
@@ -67,7 +69,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 ROOT = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "metrics"))
 from paths import DATA  # noqa: E402  -- the install's data folder (metrics/paths.py)
-PORT = 8123
+PORT = int(os.environ.get("BENCH_GATEWAY_PORT") or 8123)
 LOG_DIR = DATA / "runs" / "gateway"
 # The suite's own timeout. Above the slowest real answer seen (383 s); at 900
 # one stuck explorer held a whole request for fifteen minutes.
@@ -306,6 +308,10 @@ def models() -> list[str]:
 
 
 class Handler(BaseHTTPRequestHandler):
+    """The gateway's routes. serve.py's Handler subclasses this to answer them
+    on the dashboard's port too, so the checks use the port actually served."""
+    who = "-"
+
     def _json(self, code: int, data: dict) -> None:
         body = json.dumps(data).encode()
         self.send_response(code)
@@ -319,7 +325,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):                                  # noqa: N802
         try:
-            guard.check(self.headers, PORT, post=False, max_body=0)
+            guard.check(self.headers, self.server.server_port, post=False, max_body=0)
+            self.who = guard.gateway_caller(self.headers)
         except guard.Refused as r:
             return self._error(r.status, str(r))
         if self.path.split("?", 1)[0].rstrip("/") in ("/v1/models", "/models"):
@@ -336,7 +343,8 @@ class Handler(BaseHTTPRequestHandler):
         # Without this any web page could spend model calls, seat ad hoc
         # models through `with`, or write verdicts (metrics/guard.py).
         try:
-            length = guard.check(self.headers, PORT, post=True, max_body=MAX_BODY)
+            length = guard.check(self.headers, self.server.server_port, post=True, max_body=MAX_BODY)
+            self.who = guard.gateway_caller(self.headers)
         except guard.Refused as r:
             return self._error(r.status, str(r))
         try:
@@ -397,14 +405,19 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(f"data: {json.dumps(chunk)}\n\n".encode())
         self.wfile.write(b"data: [DONE]\n\n")
 
+    def log_request(self, code="-", size="-"):         # route, status, who; never a query or a key
+        guard.access(self, code)
+
     def log_message(self, fmt, *args):                 # quieter than the default
         sys.stderr.write(f"{self.log_date_time_string()} {fmt % args}\n")
 
 
 def main() -> None:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    print(f"bench gateway on http://127.0.0.1:{PORT}/v1 — models: {', '.join(models())}")
-    ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
+    address = guard.bind()
+    guard.startup(address)
+    print(f"bench gateway on http://{address}:{PORT}/v1 — models: {', '.join(models())}")
+    ThreadingHTTPServer((address, PORT), Handler).serve_forever()
 
 
 if __name__ == "__main__":
