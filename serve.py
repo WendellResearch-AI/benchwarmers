@@ -84,26 +84,31 @@ def _tokens(name: str) -> dict[str, str]:
     return dict(re.findall(r"(--[\w-]+)\s*:\s*([^;]+);", block.group(1))) if block else {}
 
 
-def brand_css(theme: str = DEFAULT_THEME) -> str:
-    """`:root` tokens and @font-face rules. The default theme supplies every
-    token (faces, measure, radius); another theme lays its colours over it.
-    Colours only (RELEASE-PLAN decision 7); scripts/check_themes.py checks
-    each one's contrast. Until the Settings page, `?theme=<name>` previews one."""
-    merged = _tokens(DEFAULT_THEME)
-    if theme != DEFAULT_THEME and theme in themes():
-        merged.update(_tokens(theme))
-    tokens = "".join(f"{name}:{value.strip()};" for name, value in merged.items())
+def brand_css() -> str:
+    """Every theme's tokens, and the @font-face rules. The default theme
+    supplies every token on `:root` (faces, measure, radius); each other theme
+    lays its own over them under `html[data-theme=<name>]`, so the page holds
+    them all and switching is one attribute (bench.js), with no reload.
+    scripts/check_themes.py checks each one's contrast."""
+    def block(name: str) -> str:
+        return "".join(f"{k}:{v.strip()};" for k, v in _tokens(name).items())
+    scoped = "".join(f"html[data-theme='{name}']{{{block(name)}}}" for name in themes() if name != DEFAULT_THEME)
     faces = "".join(
         f"@font-face{{font-family:'{'Chivo Mono' if fam == 'chivo-mono' else 'Chivo'}';"
         f"font-weight:{name.split('-')[-2]};font-style:normal;font-display:swap;"
         f"src:url('/fonts/{name}') format('woff2');}}"
         for name, fam in FONTS.items())
-    return f":root{{{tokens}}}{faces}"
+    return f":root{{{block(DEFAULT_THEME)}}}{scoped}{faces}"
 
 
 def font_file(name: str) -> pathlib.Path | None:
     path = (UI / "fonts" / name) if name in FONTS else None
     return path if path and path.exists() else None
+
+
+# Images a theme may draw (Hardwood's centre court): named here, served from
+# ui/ with a fixed type, so the route cannot be walked to other files.
+ASSETS = {"mascot.png": "image/png"}
 
 
 def read(path: pathlib.Path) -> str:
@@ -123,6 +128,7 @@ def data_stamp() -> float:
     paths = [*DATA.glob("config/*.json*"), *DATA.glob("config/*.yaml"),
              *DATA.glob("metrics/*.json*"), DATA / "perf" / "history.csv",
              *DATA.glob("runs/*.md")]
+    paths = [p for p in paths if p.name != UI_CONFIG.name]     # a theme switch is already on the page
     return max((p.stat().st_mtime for p in paths if p.exists()), default=0.0)
 
 
@@ -2060,14 +2066,14 @@ def perf_card() -> str:
 
 
 def render(theme: str | None = None) -> str:
-    theme = theme or saved_theme()
+    theme = theme if theme in themes() else saved_theme()      # a ?theme preview, else the saved one
     runs = "".join(f"<span>{esc(label)} <b>{esc(when)}</b></span>"
                    for label, when in next_runs()) or "<span>schedule unavailable</span>"
     return (
-        "<!doctype html><html lang='en'><meta charset='utf-8'>"
+        f"<!doctype html><html lang='en' data-theme='{esc(theme)}'><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width, initial-scale=1'>"
         "<title>Benchwarmers</title>"
-        f"<style>{brand_css(theme)}{read(UI / 'bench.css')}</style>"
+        f"<style>{brand_css()}{read(UI / 'bench.css')}</style>"
         # One line: the name on its bench, the credit beside it, the actions at
         # the far end; the schedule underneath.
         "<header><h1><span>Benchwarmers</span></h1>"
@@ -2499,8 +2505,7 @@ def settings_page() -> str:
         dots = "".join(f"<span style='background:{esc(merged.get(t, '').strip())}'></span>" for t in swatch)
         cards.append(f"<label class='theme-card'><input type='radio' name='theme' value='{esc(name)}'"
                      f"{' checked' if name == current else ''}><b>{esc(name.title())}</b>"
-                     f"<span class='swatch'>{dots}</span>"
-                     f"<a href='/?theme={esc(name)}' class='muted'>preview</a></label>")
+                     f"<span class='swatch'>{dots}</span></label>")
     conf, now = scheduler.settings(), datetime.datetime.now()
     state = load_json(scheduler.STATE)
     rows = "".join(
@@ -2517,11 +2522,11 @@ def settings_page() -> str:
                  "run": "It runs the jobs. The Windows tasks should be removed, or every call is made twice."}
     client = os.environ.get("BENCH_CLIENT") or "llm"
     return (
-        "<div class='panel form-panel'><h2>Theme</h2><p class='muted'>Colours only; every theme passes the contrast"
-        " check (<code>scripts/check_themes.py</code>). The \"by Wendell Research\" credit is not a setting.</p>"
+        "<div class='panel form-panel'><h2>Theme</h2><p class='muted'>Applied and saved the moment you pick one."
+        " Every theme passes the contrast check (<code>scripts/check_themes.py</code>). The \"by Wendell"
+        " Research\" credit is not a setting.</p>"
         f"<div class='themes' id='themes'>{''.join(cards)}</div>"
-        "<div class='errors' id='t-errors' role='alert'></div>"
-        "<div class='actions'><button class='btn primary' id='t-save'>Save theme</button></div></div>"
+        "<div class='errors' id='t-errors' role='alert'></div><div class='done' id='t-done'></div></div>"
         + gateway_keys_card() +
         f"<div class='panel'><h2>Scheduler ·{esc(conf['mode'])}</h2><p class='muted'>{mode_note.get(conf['mode'], '')}</p>"
         "<table><thead><tr>" + th("Job") + th("On") + th("Counted up to") + th("Next") + th("Runs")
@@ -3053,16 +3058,19 @@ class Handler(gateway.Handler):
         if self.path == "/api/stamp":
             self._json(200, {"stamp": data_stamp()})
             return
-        if self.path.startswith("/fonts/"):
-            # Only the named brand font files, from the brand repo; anything
-            # else is a 404, so this cannot be walked to other paths.
-            path = font_file(self.path[len("/fonts/"):])
+        if self.path.startswith(("/fonts/", "/ui/")):
+            # Only the named font files and ASSETS; anything else is a 404, so
+            # this cannot be walked to other paths.
+            name = self.path.split("/", 2)[2]
+            path = font_file(name) if self.path.startswith("/fonts/") else \
+                (UI / name if name in ASSETS and (UI / name).exists() else None)
             if not path:
                 self.send_error(404)
                 return
             data = path.read_bytes()
             self.send_response(200)
-            self.send_header("Content-Type", "font/woff2")
+            self.send_header("Content-Type", ASSETS.get(name, "font/woff2"))
+            self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Content-Length", str(len(data)))
             self.send_header("Cache-Control", "max-age=86400")
             self.end_headers()

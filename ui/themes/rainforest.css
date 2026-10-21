@@ -20,8 +20,6 @@
   --primary-bright: #63ac4d;
   --primary-deep: #1b5501;
   --sky: #69bdeb;
-  /* A green line across the top: the accent a mostly-white page needs. */
-  --court-line: #3e8625;
   /* States the brand has no word for (were in ui/bench.css). */
   --warn: #7a4d00;
   --err: #a12b2b;

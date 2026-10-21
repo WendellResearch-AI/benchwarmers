@@ -52,6 +52,11 @@ def render() -> str:
         lines += ["Fonts (ui/fonts): Chivo and Chivo Mono, Copyright The Chivo Project Authors",
                   "(https://github.com/Omnibus-Type/Chivo), under the SIL Open Font License 1.1",
                   "(ui/fonts/OFL-*.txt).", ""]
+    if (ROOT / "ui" / "mascot.png").exists():
+        lines += ["The Wendell Research mascot (ui/mascot.png, drawn at centre court in the",
+                  "Hardwood theme) is a registered trademark of Wendell Research. It is not",
+                  "covered by the MIT License: a fork may keep it in place unchanged, but should",
+                  "not use it to name or brand another product.", ""]
     return "\n".join(lines)
 
 

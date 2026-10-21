@@ -68,7 +68,8 @@ header h1 span::before {                                  /* legs and the rail b
     linear-gradient(var(--leg), var(--leg)) right top / .11em 100% no-repeat,
     linear-gradient(var(--leg), var(--leg)) center 66% / 100% .07em no-repeat;
 }
-header .sub { margin: 0 auto 0 0; color: var(--muted); font-size: .9375rem; }
+/* The credit at the bench's feet: level with the bottom of the name's group. */
+header .sub { align-self: flex-end; margin: 0 auto 0 -.6rem; line-height: 1; color: var(--muted); font-size: .9375rem; }
 header .sub a { color: var(--ink); font-weight: 500; text-decoration-color: var(--brand); }
 .head-actions { display: flex; flex-wrap: wrap; gap: .75rem; align-items: center; }
 .runs { flex-basis: 100%; margin: .5rem 0 0; display: flex; flex-wrap: wrap; gap: .25rem 1.1rem;
@@ -135,16 +136,16 @@ main { max-width: var(--page, 104rem); margin: 0 auto; padding: 0 var(--gutter) 
 .tabs { position: sticky; top: 1rem; display: flex; flex-direction: column; gap: 1.1rem;
         background: var(--rail, transparent); padding: var(--rail-pad, 0); border-radius: 14px;
         -webkit-backdrop-filter: var(--glass, none); backdrop-filter: var(--glass, none); }
-.tabs .group { display: flex; flex-direction: column; align-items: stretch; gap: .1rem; }
+.tabs .group { display: flex; flex-direction: column; align-items: flex-start; gap: .1rem; }
 .tabs h2 { margin: 0 0 .2rem; font-size: .75rem; font-weight: 700; letter-spacing: .08em;
            text-transform: uppercase; color: color-mix(in oklab, var(--brand) 72%, var(--ink)); }
            /* the brand, pulled toward the ink so small text stays legible in any theme */
-.tabs button { background: none; border: 0; padding: .3rem .6rem; margin-left: -.6rem; border-radius: 8px;
-               color: var(--muted); text-align: left; font-size: 1rem; font-weight: 500; }
-.tabs button:hover { color: var(--ink); background: var(--step-1); }
+.tabs button { background: none; border: 0; padding: .3rem 0; color: var(--muted); text-align: left;
+               font-size: 1rem; font-weight: 500; }
+.tabs button:hover { color: var(--ink); }
+/* The active page: a highlighter stroke under it, the header's old mark. */
 .tabs button[aria-selected="true"] { color: var(--ink); font-weight: 700;
-                                     background: color-mix(in oklab, var(--brand) 14%, transparent);
-                                     box-shadow: inset 3px 0 0 var(--brand); }
+                                     box-shadow: inset 0 -.32em 0 var(--signal); }
 .tab { display: none; } .tab.active { display: block; }
 /* One surface for the page's content: its panels are sections of it,
    divided by a hairline, rather than separate boxes with gaps between. A

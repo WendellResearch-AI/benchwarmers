@@ -549,13 +549,20 @@
     }, 3000);
   }
 
-  // ---- theme: saved on the server, applied on the next load ---------------
-  if ($('t-save')) $('t-save').addEventListener('click', function () {
-    var picked = document.querySelector('#themes input[name=theme]:checked');
-    $('t-errors').textContent = '';
-    post('/api/theme', {theme: picked ? picked.value : ''}).then(function (r) {
-      if (!r.ok) { listErrors($('t-errors'), r.errors); return; }
-      location.href = '/';                       // the saved theme, without any ?theme preview
+  // ---- theme: applied the moment it is picked, and saved ------------------
+  // Every theme's colours are on the page (serve.brand_css), keyed by the
+  // data-theme on <html>, so switching is one attribute: no reload. The
+  // charts read their colours when drawn, so they are drawn again.
+  document.querySelectorAll('#themes input[name=theme]').forEach(function (input) {
+    input.addEventListener('change', function () {
+      document.documentElement.setAttribute('data-theme', input.value);
+      $('t-errors').textContent = ''; $('t-done').textContent = '';
+      if (typeof drawCharts === 'function') drawCharts();
+      post('/api/theme', {theme: input.value}).then(function (r) {
+        if (!r.ok) { listErrors($('t-errors'), r.errors); return; }
+        $('t-done').textContent = 'Saved: ' + input.value + ' is the theme from now on.';
+        if (location.search.indexOf('theme=') !== -1) history.replaceState(null, '', '/');   // drop a ?theme preview
+      });
     });
   });
 
@@ -1034,7 +1041,8 @@
   });
 
   // ---- Benchmarks charts: Observable Plot, data from serve.charts_data ------
-  (function () {
+  // A function, not run once: a theme switched on Settings redraws them in its colours.
+  function drawCharts() {
     var holder = $('charts-data');
     if (!holder) return;
     var C = JSON.parse(holder.textContent);
@@ -1062,6 +1070,7 @@
         box.textContent = 'Charts need Observable Plot from cdn.jsdelivr.net, which did not load; the table below has the same numbers.';
         return;
       }
+      box.textContent = '';                      // a redraw replaces the chart
       try { box.appendChild(make(width())); } catch (e) { box.textContent = 'Chart failed: ' + e; }
     }
     // Pixel offsets that keep scatter labels apart: each label, in order, moves
@@ -1249,5 +1258,6 @@
       });
     });
 
-  })();
+  }
+  drawCharts();
 })();

@@ -38,10 +38,15 @@
   --rail-pad: .9rem 1rem;
   --sheet: rgb(255 250 243 / .9);
   --glass: blur(5px);
+  /* Every layer is fixed, so the whole floor holds still as the page scrolls.
+     The court starts just under the header (its top sideline 5rem down, its
+     height the window's less 6rem), so the name's bench sits on the
+     sideline; Wendell, the Wendell Research mascot, is at centre court. */
   --floor:
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 940 500'%3E%3Cg fill='%23990000' fill-opacity='.4'%3E%3Crect x='10' y='170' width='190' height='160'/%3E%3Crect x='740' y='170' width='190' height='160'/%3E%3C/g%3E%3Ccircle cx='470' cy='250' r='60' fill='%23990000' fill-opacity='.16'/%3E%3Cg fill='none' stroke='%231a1410' stroke-opacity='.55' stroke-width='4'%3E%3Crect x='10' y='10' width='920' height='480'/%3E%3Cpath d='M470 10V490M10 30H142A237.5 237.5 0 0 1 142 470H10M930 30H798A237.5 237.5 0 0 0 798 470H930M50 220V280M890 220V280'/%3E%3Crect x='10' y='170' width='190' height='160'/%3E%3Crect x='740' y='170' width='190' height='160'/%3E%3Ccircle cx='470' cy='250' r='60'/%3E%3Ccircle cx='470' cy='250' r='20'/%3E%3Ccircle cx='200' cy='250' r='60'/%3E%3Ccircle cx='740' cy='250' r='60'/%3E%3Ccircle cx='62' cy='250' r='9'/%3E%3Ccircle cx='878' cy='250' r='9'/%3E%3C/g%3E%3C/svg%3E") center / cover no-repeat fixed,
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='340' height='88'%3E%3Cpath d='M0 0v22M200 22v22M90 44v22M280 66v22' stroke='%23704214' stroke-opacity='.32'/%3E%3C/svg%3E"),
-    repeating-linear-gradient(0deg, rgba(112, 66, 20, .26) 0 1px, transparent 1px 22px),
-    repeating-linear-gradient(.5deg, transparent 0 5px, rgba(140, 86, 30, .07) 5px 6px, transparent 6px 13px),
-    repeating-linear-gradient(0deg, #ecce9b 0 22px, #e6c48c 22px 44px, #efd4a5 44px 66px, #e1ba80 66px 88px);
+    url("/ui/mascot.png") center calc(5rem + (100vh - 6rem) * .41) / auto calc((100vh - 6rem) * .18) no-repeat fixed,
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 940 500'%3E%3Cg fill='%23990000' fill-opacity='.4'%3E%3Crect x='10' y='170' width='190' height='160'/%3E%3Crect x='740' y='170' width='190' height='160'/%3E%3C/g%3E%3Cg fill='none' stroke='%231a1410' stroke-opacity='.55' stroke-width='4'%3E%3Crect x='10' y='10' width='920' height='480'/%3E%3Cpath d='M470 10V190M470 310V490M10 30H142A237.5 237.5 0 0 1 142 470H10M930 30H798A237.5 237.5 0 0 0 798 470H930M50 220V280M890 220V280'/%3E%3Crect x='10' y='170' width='190' height='160'/%3E%3Crect x='740' y='170' width='190' height='160'/%3E%3Ccircle cx='470' cy='250' r='60'/%3E%3Ccircle cx='200' cy='250' r='60'/%3E%3Ccircle cx='740' cy='250' r='60'/%3E%3Ccircle cx='62' cy='250' r='9'/%3E%3Ccircle cx='878' cy='250' r='9'/%3E%3C/g%3E%3C/svg%3E") center top 5rem / auto calc(100vh - 6rem) no-repeat fixed,
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='340' height='88'%3E%3Cpath d='M0 0v22M200 22v22M90 44v22M280 66v22' stroke='%23704214' stroke-opacity='.32'/%3E%3C/svg%3E") fixed,
+    repeating-linear-gradient(0deg, rgba(112, 66, 20, .26) 0 1px, transparent 1px 22px) fixed,
+    repeating-linear-gradient(.5deg, transparent 0 5px, rgba(140, 86, 30, .07) 5px 6px, transparent 6px 13px) fixed,
+    repeating-linear-gradient(0deg, #ecce9b 0 22px, #e6c48c 22px 44px, #efd4a5 44px 66px, #e1ba80 66px 88px) fixed;
 }
