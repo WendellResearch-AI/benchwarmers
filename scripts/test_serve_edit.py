@@ -166,6 +166,26 @@ def main() -> int:
         ok = not r["ok"]
         print(("ok   " if ok else "FAIL ") + label); failures += 0 if ok else 1
 
+    # Removing an endpoint with a model on it: refused unless asked, then the
+    # model retires with it, and Restore will not move it to another endpoint.
+    eps = json.loads((cfg / "endpoints.json").read_text())
+    eps["edit-test-ep"] = {"base": "https://edit-test.example/v1", "key": "edit-test-ep"}
+    (cfg / "endpoints.json").write_text(json.dumps(eps), encoding="utf-8")
+    serve.YAML_PATH.write_text(serve.read(serve.YAML_PATH).rstrip("\n") + "\n"
+                               + serve.endpoints.yaml_block("edit-test-m", "vendor/edit-test", "edit-test-ep"),
+                               encoding="utf-8")
+    refused = serve.remove_endpoint("edit-test-ep")
+    r = serve.remove_endpoint("edit-test-ep", with_models=True)
+    back = serve.restore_model("edit-test-m")
+    ok = (not refused["ok"] and "1 model" in refused["errors"][0]
+          and r["ok"] and r["retired"] == ["edit-test-m"] and "edit-test-ep" not in serve.endpoints.load()
+          and "edit-test-m" in json.loads((cfg / "retired.json").read_text())
+          and "edit-test-m" not in serve.model_directory()
+          and not back["ok"] and "was removed" in back["errors"][0])
+    print(("ok   " if ok else "FAIL ") + "endpoint removed with its model; restore refused without it"
+          + ("" if ok else f" -> {refused} {r} {back}"))
+    failures += 0 if ok else 1
+
     # The owner's files are as they were. alerts.json can change under a
     # running suite, so only what this test could do counts: the victim's
     # alerts cleared from the real file.

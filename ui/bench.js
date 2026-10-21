@@ -591,13 +591,30 @@
           });
           acts.appendChild(again);
         }
-        if (!x.default && !x.models) {
+        if (!x.default) {
+          var def = el('button', {class: 'btn small', type: 'button'}, 'Make default');
+          def.addEventListener('click', function () {
+            if (!confirm('Make ' + x.name + ' the default endpoint? The default is where a model is taken'
+                         + ' to be when nothing says otherwise, and the one endpoint that cannot be removed.')) return;
+            post('/api/endpoint/default', {name: x.name}).then(function (r) {
+              if (!r.ok) { listErrors(e.errors, r.errors); return; }
+              e.done.textContent = r.note + '.'; loadEndpoints();
+            });
+          });
+          acts.appendChild(def);
+          // Its models go with it, after saying how many: each is retired as by
+          // hand (evidence kept, restorable once the endpoint is back).
           var rm = el('button', {class: 'btn small danger', type: 'button'}, 'Remove');
           rm.addEventListener('click', function () {
-            if (!confirm('Remove the ' + x.name + ' endpoint?')) return;
-            post('/api/endpoint/remove', {name: x.name}).then(function (r) {
+            var n = x.models, them = n + ' model' + (n === 1 ? '' : 's');
+            if (!confirm(n ? 'Remove the ' + x.name + ' endpoint and the ' + them + ' on the bench through it?\n\n'
+                             + 'The ' + them + ' will be retired too. Their results and history are kept, and'
+                             + ' Restore brings them back if an endpoint named ' + x.name + ' is added again.'
+                           : 'Remove the ' + x.name + ' endpoint?')) return;
+            post('/api/endpoint/remove', {name: x.name, with_models: n > 0}).then(function (r) {
               if (!r.ok) { listErrors(e.errors, r.errors); return; }
               e.done.textContent = 'Removed ' + x.name + '; ' + r.note + '.'; loadEndpoints();
+              if (r.retired && r.retired.length) setTimeout(function () { location.reload(); }, 2500);   // the model tables changed
             });
           });
           acts.appendChild(rm);
@@ -640,24 +657,24 @@
       });
     });
   }
-  // The add / change-key form shows only when asked for, so the dialog opens
-  // as a short list.
+  // The add view shows only when asked for, so the dialog opens as a short
+  // list. Add: sign in with a provider, or paste a key. Change key: the key form.
   function showEndpointForm(title, adding) {
-    $('e-form').hidden = false; $('e-add').hidden = true; $('e-form-head').textContent = title;
+    $('e-new').hidden = false; $('e-add').hidden = true; $('e-form-head').textContent = title;
+    $('e-signin').hidden = !adding; $('e-key-head').hidden = !adding;
     e.errors.textContent = ''; e.done.textContent = '';
     e.adding = !!adding;           // Add refuses a name in use; Change key edits that one
   }
   function hideEndpointForm() {
-    $('e-form').hidden = true; $('e-add').hidden = false;
+    $('e-new').hidden = true; $('e-add').hidden = false; $('cn-form').hidden = true;
     e.name.value = ''; e.base.value = ''; e.key.value = '';
   }
   $('endpoints-open').addEventListener('click', function () {
     e.errors.textContent = ''; e.done.textContent = ''; hideEndpointForm();
-    $('cn-errors').textContent = ''; $('cn-done').textContent = '';
     $('cn-app-errors').textContent = ''; $('cn-app-done').textContent = '';
     ed.showModal(); loadEndpoints(); loadProviders(); loadLimits();
   });
-  $('e-add').addEventListener('click', function () { showEndpointForm('Add an endpoint', true); e.name.focus(); });
+  $('e-add').addEventListener('click', function () { showEndpointForm('Add an endpoint', true); });
   $('e-cancel').addEventListener('click', hideEndpointForm);
   $('e-close').addEventListener('click', function () { ed.close(); });
   e.save.addEventListener('click', function () {
@@ -672,27 +689,31 @@
   });
 
   // ---- connect: sign in on the provider's page (metrics/connect.py) --------
-  var cn = {list: $('cn-list'), wait: $('cn-wait'), msg: $('cn-msg'), errors: $('cn-errors'),
-            done: $('cn-done'), timer: null};
+  var cn = {list: $('cn-list'), wait: $('cn-wait'), msg: $('cn-msg'), timer: null};
+  // Reached from another machine (a hosted install): a callback to this
+  // machine's 127.0.0.1 could not arrive, so sign-ins go by code instead.
+  var remote = !/^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
   function connectDone(r) {
     clearInterval(cn.timer); cn.timer = null; cn.wait.hidden = true;
-    if (!r.ok) { listErrors(cn.errors, r.errors); return; }
-    cn.done.textContent = r.label + ' is connected as ' + r.endpoint + ': it lists ' + r.served + ' models. ' + (r.note || '');
+    if (!r.ok) { listErrors(e.errors, r.errors); return; }
+    hideEndpointForm();
+    e.done.textContent = r.label + ' is connected as ' + r.endpoint + ': it lists ' + r.served + ' models. ' + (r.note || '');
     // The next step for a new connection: onboard what it serves.
     var go = el('button', {class: 'btn small', type: 'button', style: 'margin-left:.6rem'}, 'Onboard a model from it');
     go.addEventListener('click', function () {
       ed.close(); $('onboard-open').click(); o.find.value = r.endpoint;   // the picker filters on it once loaded
     });
-    cn.done.appendChild(go);
+    e.done.appendChild(go);
     loadEndpoints(); loadProviders();
   }
   function connectStart(p, endpoint) {
-    cn.errors.textContent = ''; cn.done.textContent = '';
+    e.errors.textContent = ''; e.done.textContent = '';
     // Opened now, while this is still the click: a window opened after the
     // request returns is a popup the browser blocks.
-    var tab = p.flow === 'key' || p.flow === 'oauth' ? window.open('', '_blank') : null;
+    var byCode = remote && p.flow !== 'local';
+    var tab = !byCode && (p.flow === 'key' || p.flow === 'oauth') ? window.open('', '_blank') : null;
     if (tab) tab.opener = null;
-    post('/api/connect/start', {provider: p.id, endpoint: endpoint}).then(function (r) {
+    post('/api/connect/start', {provider: p.id, endpoint: endpoint, code: byCode}).then(function (r) {
       if (!r.ok || r.state) { if (tab) tab.close(); connectDone(r); return; }   // refused, or local: saved at once
       cn.wait.hidden = false; cn.msg.textContent = '';
       if (r.url) {
@@ -710,7 +731,7 @@
         if (++tries > 450) { connectDone({ok: false, errors: ['No sign-in after fifteen minutes; start again.']}); return; }
         post('/api/connect/poll', {id: r.id}).then(function (s) { if (s.state !== 'pending') connectDone(s); });
       }, 2000);
-    }).catch(function (err) { if (tab) tab.close(); cn.errors.textContent = String(err); });
+    }).catch(function (err) { if (tab) tab.close(); e.errors.textContent = String(err); });
   }
   function loadProviders() {
     fetch('/api/connect').then(function (r) { return r.json(); }).then(function (res) {
@@ -720,11 +741,13 @@
         // and a sign-in, or two accounts). Signing an existing one in again is
         // its row's button.
         var b = el('button', {class: 'btn', type: 'button'}, p.label);
-        if (p.missing) { b.disabled = true; b.title = p.missing; }
+        var why = p.missing || (remote && !p.code ? p.label + ' signs in only through a page on the machine'
+                                + ' Benchwarmers runs on; from here, paste an API key below' : '');
+        if (why) { b.disabled = true; b.title = why; }
         b.addEventListener('click', function () {
           cn.pick = p; $('cn-name').value = p.suggest; $('cn-form').hidden = false;
           $('cn-go').textContent = (p.flow === 'local' ? 'Add ' : 'Sign in to ') + p.label;
-          cn.errors.textContent = ''; cn.done.textContent = ''; $('cn-name').select();
+          e.errors.textContent = ''; e.done.textContent = ''; $('cn-name').select();
         });
         cn.list.appendChild(b);
         if (p.register) $('cn-apps').appendChild(appRow(p));
@@ -744,7 +767,9 @@
     var box = el('input', {spellcheck: 'false', autocomplete: 'off', 'aria-label': p.label + ' client id',
                            placeholder: p.shipped ? "Wendell Research's app (leave blank)" : 'client id, needed to sign in'});
     box.value = p.own_id || '';
-    left.appendChild(box);
+    var line = el('div', {class: 'row-input'});            // the box and its Save on one line
+    line.appendChild(box);
+    left.appendChild(line);
     row.appendChild(left);
     var save = el('button', {class: 'btn small', type: 'button'}, 'Save');
     save.addEventListener('click', function () {
@@ -756,7 +781,7 @@
         loadProviders();
       });
     });
-    var acts = el('div', {class: 'acts'}); acts.appendChild(save); row.appendChild(acts);
+    line.appendChild(save);
     return row;
   }
 

@@ -74,7 +74,7 @@ def main() -> int:
     provider, dash = serve_on(Provider), serve_on(serve.Handler)
     fake = f"http://127.0.0.1:{provider.server_port}"
     saved = (dict(connect.PROVIDERS), connect.CONFIG, serve.PORT, serve.CHANGES_PATH,
-             serve.endpoints.FILE, serve.endpoints.YAML, serve.endpoints.LLM_DIR)
+             serve.endpoints.FILE, serve.endpoints.YAML, serve.endpoints.LLM_DIR, serve.DATA, serve.DISMISSED_PATH)
     with tempfile.TemporaryDirectory() as tmp:
         t = pathlib.Path(tmp)
         try:
@@ -94,7 +94,9 @@ def main() -> int:
                     "client_id": "cid", "entry": {"api": "responses"}},
                 fd={**base, "label": "Device", "flow": "device", "device": fake + "/device",
                     "token": fake + "/token", "client_id": "cid", "register": "an app at the fake"},
-                fl={**base, "label": "Local", "flow": "local"})
+                fl={**base, "label": "Local", "flow": "local"},
+                fc={**base, "label": "Code", "flow": "oauth", "authorize": fake + "/auth", "token": fake + "/token",
+                    "device": fake + "/device", "client_id": "cid"})
 
             def callback(pid: str, endpoint: str = "") -> str:
                 r = serve.connect_start(pid, endpoint)
@@ -181,11 +183,35 @@ def main() -> int:
             rows = {r["name"]: r for r in serve.endpoint_list()["endpoints"]}
             assert rows["fo-2"]["connect"]["label"] == "OAuth" and rows["fo-2"]["connect"]["flow"] == "oauth"
             assert not rows["fo-2"]["connect"]["expired"] and rows["hub"]["connect"] is None
+
+            # From a browser on another machine: by code where the provider has a device URL...
+            c = serve.connect_start("fc", "", True)
+            assert c["ok"] and c["code"] == "WXYZ-0000" and "url" not in c, c
+            assert serve.connect_poll(c["id"])["endpoint"] == "fc"
+            # ...and refused where it signs in only through a page on this machine.
+            assert not serve.connect_start("fk", "", True)["ok"]
+            assert {p["id"]: p for p in serve.connect_list()["providers"]}["fc"]["code"]
+
+            # Make default: moved, the default can't be removed, and records keyed by
+            # endpoint are renamed with it (bare on the default, served@endpoint elsewhere).
+            cfg = t / "config"
+            cfg.mkdir()
+            serve.DATA, serve.DISMISSED_PATH = t, cfg / "dismissed.json"
+            (cfg / "served-snapshot.json").write_text(json.dumps({"last_seen": {
+                "m1": "d", "m1@fk-2": "d", "a@b": "d"}, "first_missing": {"m9": "d"}}), encoding="utf-8")
+            serve.DISMISSED_PATH.write_text(json.dumps({"m2": {}, "m3@fk-2": {}}), encoding="utf-8")
+            assert serve.set_default("fk-2")["ok"] and serve.endpoints.default() == "fk-2"
+            snap = json.loads((cfg / "served-snapshot.json").read_text(encoding="utf-8"))
+            assert set(snap["last_seen"]) == {"m1@hub", "m1", "a@b@hub"}, snap   # "@b" is not an endpoint
+            assert set(snap["first_missing"]) == {"m9@hub"}, snap
+            assert set(json.loads(serve.DISMISSED_PATH.read_text(encoding="utf-8"))) == {"m2@hub", "m3"}
+            assert not serve.remove_endpoint("fk-2")["ok"] and not serve.set_default("nope")["ok"]
+            assert sum(1 for e in serve.endpoints.load().values() if e.get("default")) == 1
         finally:
             connect.PROVIDERS.clear()
             connect.PROVIDERS.update(saved[0])
-            (connect.CONFIG, serve.PORT, serve.CHANGES_PATH,
-             serve.endpoints.FILE, serve.endpoints.YAML, serve.endpoints.LLM_DIR) = saved[1:]
+            (connect.CONFIG, serve.PORT, serve.CHANGES_PATH, serve.endpoints.FILE, serve.endpoints.YAML,
+             serve.endpoints.LLM_DIR, serve.DATA, serve.DISMISSED_PATH) = saved[1:]
             provider.shutdown()
             dash.shutdown()
     print("ok")

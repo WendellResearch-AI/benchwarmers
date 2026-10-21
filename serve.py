@@ -53,6 +53,7 @@ for _d in ("metrics", "suite", "scripts"):
 from aliases import current as current_alias  # noqa: E402
 import connect  # noqa: E402
 import guard  # noqa: E402
+import locked  # noqa: E402
 
 
 UI = ROOT / "ui"
@@ -646,6 +647,12 @@ def restore_model(alias: str, who: str = "ui") -> dict:
     entry = retired.get(alias)
     if not entry:
         return {"ok": False, "errors": [f"{alias!r} is not a retired alias"], "changed": [], "sync": ""}
+    gone = entry.get("endpoint")
+    if gone and gone != "?" and gone not in endpoints.load():
+        # Retired with its endpoint: putting it on the default would send its
+        # prompts to another provider under its old name.
+        return {"ok": False, "changed": [], "sync": "",
+                "errors": [f"its endpoint {gone} was removed; add an endpoint named {gone} again, then restore"]}
     if entry.get("decision"):
         data = decide.load()
         if alias in data or any(d["served"] == entry["served"] and d["endpoint"] == entry["endpoint"]
@@ -768,8 +775,8 @@ def dismiss(served: str, undo: bool = False, who: str = "ui") -> dict:
 def endpoint_list() -> dict:
     """Every endpoint, and whether its key is set -- never the key itself."""
     counts: dict[str, int] = {}
-    for r in endpoints.registry():
-        counts[r["endpoint"]] = counts.get(r["endpoint"], 0) + 1
+    for d in model_directory().values():               # decision models too: removing takes them as well
+        counts[d["endpoint"]] = counts.get(d["endpoint"], 0) + 1
     rows = [{"name": n, "base": e["base"], "default": n == endpoints.default(),
              "key_set": bool(endpoints.key(n)), "models": counts.get(n, 0),
              "connect": connect.standing(e.get("connect"))}
@@ -855,20 +862,83 @@ def save_endpoint(name: str, base: str, secret: str, who: str = "ui", extra: dic
     return {"ok": True, "errors": [], "served": count, "note": note.strip()}
 
 
-def remove_endpoint(name: str, who: str = "ui") -> dict:
+def remove_endpoint(name: str, who: str = "ui", with_models: bool = False) -> dict:
+    """Remove an endpoint. Its models go with it only when asked (`with_models`,
+    once the dashboard has said how many): each is retired as by hand, so no
+    evidence is lost and Restore brings it back once an endpoint of that name
+    exists again. The default cannot be removed: make another the default first."""
     data = endpoints.load()
-    on_it = [r["alias"] for r in endpoints.registry() if r["endpoint"] == name]
+    on_it = sorted(a for a, d in model_directory().items() if d["endpoint"] == name)
     errors = ([f"no endpoint {name!r}"] if name not in data else
-              ["the default endpoint cannot be removed"] if name == endpoints.default() else
-              [f"retire its models first: {', '.join(on_it)}"] if on_it else [])
+              ["the default endpoint cannot be removed: make another one the default first"]
+              if name == endpoints.default() else
+              [f"{len(on_it)} model(s) are on it ({', '.join(on_it)}): remove it with them, or retire them first"]
+              if on_it and not with_models else [])
     if errors:
         return {"ok": False, "errors": errors}
-    data = {n: e for n, e in data.items() if n != name}
+    for i, alias in enumerate(on_it):
+        r = remove_model(alias, alias, f"its endpoint {name} was removed", who)
+        if not r["ok"]:
+            # Stop with the endpoint still there: the rest stay registered on it.
+            return {"ok": False, "errors": [f"stopped at {alias} after retiring {i} of {len(on_it)};"
+                                            f" {name} is still there"] + r["errors"]}
+    data = {n: e for n, e in endpoints.load().items() if n != name}
     _write_atomic(endpoints.FILE, _dump(data))
     _log_change(datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
-                who, "", "endpoint removed", name, None)
-    return {"ok": True, "errors": [], "note": f"its key stays in the llm key store;"
-                                              f" `llm keys` lists it"}
+                who, "", "endpoint removed", name, f"with {len(on_it)} model(s)" if on_it else None)
+    gone = f"{len(on_it)} model(s) retired with it, restorable once an endpoint named {name} exists again; " \
+        if on_it else ""
+    return {"ok": True, "errors": [], "retired": on_it,
+            "note": f"{gone}its key stays in the llm key store; `llm keys` lists it"}
+
+
+def set_default(name: str, who: str = "ui") -> dict:
+    """Make `name` the default endpoint: the one a model is taken to be on when
+    nothing says otherwise, and the only one that cannot be removed.
+
+    Models on the default are recorded by their bare served name, elsewhere as
+    served@endpoint (endpoints.snapshot_key). So the records kept that way (the
+    daily served check's snapshot, onboarding dismissals) are renamed in the
+    same step: otherwise the next check would report every model on the old
+    default as gone, and what was dismissed there would come back."""
+    data = endpoints.load()
+    old = endpoints.default()
+    if name not in data:
+        return {"ok": False, "errors": [f"no endpoint {name!r}"]}
+    if name == old:
+        return {"ok": True, "errors": [], "note": f"{name} is already the default"}
+
+    def rekey(keys: dict) -> dict:
+        out = {}
+        for k, v in keys.items():
+            served, _, ep = k.rpartition("@")
+            if not served or ep not in data:       # bare (an "@" in a model id is not an endpoint)
+                out[f"{k}@{old}"] = v
+            else:
+                out[served if ep == name else k] = v
+        return out
+
+    def snapshot(d: dict) -> None:
+        for field in ("last_seen", "first_missing"):
+            if isinstance(d.get(field), dict):
+                d[field] = rekey(d[field])
+
+    def dismissed(d: dict) -> None:
+        new = rekey(d)
+        d.clear()
+        d.update(new)
+
+    def move(d: dict) -> None:
+        for e in d.values():
+            e.pop("default", None)
+        d[name]["default"] = True
+
+    locked.update(DATA / "config" / "served-snapshot.json", snapshot)
+    locked.update(DISMISSED_PATH, dismissed)
+    locked.update(endpoints.FILE, move)                # last: the records already match it
+    _log_change(datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+                who, "", "default endpoint", old, name)
+    return {"ok": True, "errors": [], "note": f"{name} is the default endpoint now (was {old})"}
 
 
 # ---- Connect: sign in on a provider's page (metrics/connect.py) -------------
@@ -881,7 +951,9 @@ def connect_list() -> dict:
     rows = []
     for pid, p in connect.PROVIDERS.items():
         row = {"id": pid, "label": p["label"], "flow": p["flow"], "missing": connect.ready(pid),
-               "suggest": connect_list_suggest(pid)}
+               "suggest": connect_list_suggest(pid),
+               # Signs in with a code, so from a browser on another machine too.
+               "code": p["flow"] in ("device", "local") or bool(p.get("device"))}
         if p.get("register"):
             row.update(register=p["register"], own_id=own.get(pid, ""), shipped=bool(p.get("client_id")))
         rows.append(row)
@@ -911,11 +983,12 @@ def connect_app(provider: str, client_id: str) -> dict:
     return {"ok": True, "errors": []}
 
 
-def connect_start(provider: str, endpoint: str = "") -> dict:
+def connect_start(provider: str, endpoint: str = "", by_code: bool = False) -> dict:
     """A sign-in for an endpoint named `endpoint`: an existing one signed in to
     this provider is signed in again; a free name is a new endpoint (a provider
     can be several: a pasted key and a sign-in, two accounts). No name: the
-    next free one, provider, provider-2..."""
+    next free one, provider, provider-2... `by_code`: the browser is not on
+    this machine, so no callback to it can arrive (metrics/connect.py)."""
     p = connect.PROVIDERS.get(provider)
     if not p:
         return {"ok": False, "errors": [f"no provider {provider!r}"]}
@@ -934,7 +1007,7 @@ def connect_start(provider: str, endpoint: str = "") -> dict:
         # Ollama ignores the key, but llm sends one, so the endpoint gets a stand-in.
         return connect_save({"provider": provider, "endpoint": endpoint, "secret": provider})
     try:
-        return {"ok": True, "errors": [], **connect.start(provider, PORT, endpoint)}
+        return {"ok": True, "errors": [], **connect.start(provider, PORT, endpoint, by_code)}
     except connect.ConnectError as exc:
         return {"ok": False, "errors": [str(exc)]}
 
@@ -2631,9 +2704,27 @@ def editor() -> str:
         " to send private source to.</p>"
         "<div id='e-list'></div>"
         "<div class='list-actions'><button class='btn' id='e-add'>Add an endpoint</button></div>"
-        # The form only when asked for: Add, or a row's Change key.
-        "<div id='e-form' hidden>"
+        # Shown only when asked for. Add: sign in with a provider, or paste a
+        # key. A row's Change key: the key form alone.
+        "<div id='e-new' hidden>"
         "<h3 class='form-head' id='e-form-head'>Add an endpoint</h3>"
+        # Connect: sign in on the provider's page instead of pasting a key (metrics/connect.py)
+        "<div id='e-signin'>"
+        "<p class='sub-head'>Sign in with a provider</p>"
+        "<p class='rules'>On the provider's own page; the key it hands back is kept where a pasted"
+        " one is. Only providers that publish a sign-in for other apps are here.</p>"
+        "<div class='list-actions' id='cn-list'></div>"
+        # A provider's button opens this: the new endpoint's name, then the sign-in.
+        "<div id='cn-form' hidden>"
+        "<label class='field' for='cn-name'>Name for this endpoint</label>"
+        "<input id='cn-name' spellcheck='false' autocomplete='off'>"
+        "<p class='rules'>Its own name and its own key, so one provider can be several endpoints"
+        " (a pasted key and a sign-in, or two accounts).</p>"
+        "<div class='actions'><button class='btn' id='cn-cancel'>Cancel</button>"
+        "<button class='btn primary' id='cn-go'>Sign in</button></div></div>"
+        "</div>"
+        "<div id='e-form'>"
+        "<p class='sub-head' id='e-key-head'>Or paste an API key</p>"
         "<label class='field' for='e-name'>Name</label>"
         "<input id='e-name' spellcheck='false' autocomplete='off' placeholder='e.g. openrouter'>"
         "<label class='field' for='e-base'>Base URL</label>"
@@ -2645,24 +2736,10 @@ def editor() -> str:
         " where that list is public, the key is proven by the first real call.</p>"
         "<div class='actions'><button class='btn' id='e-cancel'>Cancel</button>"
         "<button class='btn primary' id='e-save'>Test and save</button></div>"
-        "</div>"
-        "<div class='errors' id='e-errors' role='alert'></div><div class='done' id='e-done'></div>"
-        # Connect: sign in on the provider's page instead of pasting a key
-        # (metrics/connect.py). Its own section, with its own messages.
-        "<h3 class='form-head'>Connect by signing in</h3>"
-        "<p class='rules'>Sign in on the provider's own page; the key it hands back is kept where a"
-        " pasted one is. Only providers that publish a sign-in for other apps are here.</p>"
-        "<div class='list-actions' id='cn-list'></div>"
-        # A provider's button opens this: the new endpoint's name, then the sign-in.
-        "<div id='cn-form' hidden>"
-        "<label class='field' for='cn-name'>Name for this endpoint</label>"
-        "<input id='cn-name' spellcheck='false' autocomplete='off'>"
-        "<p class='rules'>Its own name and its own key, so one provider can be several endpoints"
-        " (a pasted key and a sign-in, or two accounts).</p>"
-        "<div class='actions'><button class='btn' id='cn-cancel'>Cancel</button>"
-        "<button class='btn primary' id='cn-go'>Sign in</button></div></div>"
+        "</div></div>"
+        # A sign-in in progress (from Add, or a row's Sign in again): where to finish it.
         "<div id='cn-wait' hidden><p class='served' id='cn-msg'></p></div>"
-        "<div class='errors' id='cn-errors' role='alert'></div><div class='done' id='cn-done'></div>"
+        "<div class='errors' id='e-errors' role='alert'></div><div class='done' id='e-done'></div>"
         "<details class='limits-block'><summary class='form-head'>Use your own app</summary>"
         "<p class='rules'>Some providers need an app registered with them before anyone can sign in."
         " Benchwarmers ships Wendell Research's where it has one; register your own and paste its"
@@ -2829,9 +2906,11 @@ class Handler(BaseHTTPRequestHandler):
                "/api/endpoint": lambda p: save_endpoint(str(p.get("name", "")),
                                                         str(p.get("base", "")),
                                                         str(p.get("key", "")), new=bool(p.get("new"))),
-               "/api/endpoint/remove": lambda p: remove_endpoint(str(p.get("name", ""))),
+               "/api/endpoint/remove": lambda p: remove_endpoint(str(p.get("name", "")),
+                                                                 with_models=bool(p.get("with_models"))),
                "/api/connect/start": lambda p: connect_start(str(p.get("provider") or ""),
-                                                             str(p.get("endpoint") or "")),
+                                                             str(p.get("endpoint") or ""), bool(p.get("code"))),
+               "/api/endpoint/default": lambda p: set_default(str(p.get("name") or "")),
                "/api/connect/poll": lambda p: connect_poll(str(p.get("id") or "")),
                "/api/connect/app": lambda p: connect_app(str(p.get("provider") or ""),
                                                          str(p.get("client_id") or "")),

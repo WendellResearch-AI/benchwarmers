@@ -17,6 +17,9 @@ FOUR FLOWS COVER EVERY PROVIDER
             (Hugging Face, Pollinations, ChatGPT).
 - `device`  the user types a short code on the provider's page; no callback,
             so it works where the browser is on another machine (GitHub).
+            Any provider with a `device` URL also signs in this way when
+            asked (`by_code`): the dashboard asks when it is not reached on
+            this machine, where a callback to 127.0.0.1 could not arrive.
 - `local`   nothing to sign in to here (Ollama: a local Ollama that is signed
             in to ollama.com serves its cloud models too).
 
@@ -38,7 +41,9 @@ ADDING A PROVIDER
      label, flow, base     shown name; one of FLOWS; its OpenAI-compatible base
      authorize, token      the authorize page; where the code (or device code,
                            or refresh token) is exchanged
-     device                (device flow) where the device code is requested
+     device                where a device code is requested (the device
+                           flow, or signing in by code); `device_json` when
+                           that request is JSON rather than a form
      client_id             a PUBLIC client id, if the provider needs one. Never
                            a secret: this file ships. Empty means "register an
                            app first" (`register` says where), and an install
@@ -117,6 +122,7 @@ PROVIDERS: dict[str, dict] = {
         "label": "Pollinations", "flow": "oauth", "base": "https://gen.pollinations.ai/v1",
         "authorize": "https://enter.pollinations.ai/authorize",
         "token": "https://enter.pollinations.ai/api/oauth/token",
+        "device": "https://enter.pollinations.ai/api/device/code", "device_json": True,
         "client_id": "", "params": {"models": "text", "expiry": "30"}, "loopback": "localhost",
         "register": "https://enter.pollinations.ai/keys (an app key, pk_...; redirect"
                     " http://localhost/connect/callback)",
@@ -265,22 +271,25 @@ def _sweep() -> None:
         del _pending[k]
 
 
-def start(provider: str, port: int, endpoint: str = "") -> dict:
+def start(provider: str, port: int, endpoint: str = "", by_code: bool = False) -> dict:
     """Begin a sign-in for `endpoint` (default: the provider's id). {"url"} to
-    open (key, oauth), or {"code", "verify"} to show (device); either way an
-    "id" to poll."""
+    open (key, oauth), or {"code", "verify"} to show (device, or `by_code`);
+    either way an "id" to poll."""
     p = PROVIDERS.get(provider)
     if not p or p["flow"] == "local":
         raise ConnectError(f"{provider!r} has no sign-in")
     if (missing := ready(provider)):
         raise ConnectError(missing)
+    if by_code and not p.get("device"):
+        raise ConnectError(f"{p['label']} signs in only through a page on the machine Benchwarmers runs on;"
+                           " from here, add it with an API key instead")
     cid = client_id(provider)
     sid = secrets.token_urlsafe(24)
     record = {"provider": provider, "endpoint": endpoint or provider, "client_id": cid,
               "at": time.time(), "result": None}
-    if p["flow"] == "device":
+    if p["flow"] == "device" or by_code:
         fields = {"client_id": cid, **({"scope": p["scope"]} if p.get("scope") else {})}
-        reply = _post(p["device"], fields)
+        reply = _post(p["device"], fields, as_json=bool(p.get("device_json")))
         if not reply.get("device_code"):
             raise _failed(reply, "the provider would not start a sign-in")
         interval = int(reply.get("interval", 5))
@@ -613,6 +622,19 @@ def _selftest() -> None:
                 raise AssertionError("a finished sign-in was reused")
             except ConnectError:
                 pass
+
+            # Signing in by code where there is a device URL (JSON for Pollinations); refused where there is none.
+            PROVIDERS["c"] = {**PROVIDERS["pollinations"], "client_id": "pk_x", "device": fake + "/device",
+                              "token": fake + "/token"}
+            c = start("c", 8122, endpoint="c", by_code=True)
+            assert c["code"] == "ABCD-1234" and poll(c["id"]) == {"state": "pending"}, c
+            assert poll(c["id"])["state"] == "done"
+            try:
+                start("k", 8122, by_code=True)
+                raise AssertionError("a provider with no device URL started a code sign-in")
+            except ConnectError as exc:
+                assert "API key" in str(exc)
+            seen["polls"] = 0
 
             d = start("d", 8122, endpoint="d-2")
             assert d["code"] == "ABCD-1234" and poll(d["id"]) == {"state": "pending"}
