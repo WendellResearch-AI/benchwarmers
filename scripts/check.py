@@ -45,6 +45,7 @@ CHECKS = [
     ("scripts/test_verdict.py", [], False),
     ("scripts/test_serve_edit.py", [], False),
     ("scripts/test_connect.py", [], False),
+    ("scripts/test_no_owui.py", [], False),
     ("suite/test_score.py", [], False),
     ("suite/test_mine.py", [], False),
     ("suite/test_seed.py", [], False),

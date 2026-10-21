@@ -11,8 +11,10 @@ THE RULES (decided 2026-10-15)
   model), `paywalled` (free tier gone) or `entitlement` (payment required, no
   credit, not authorised). Confirmed first by ONE fresh call that must fail
   the same way, so a single blip cannot retire a working model.
-- AFTER 3 DAYS: missing from Open WebUI's /models, or failing for a reason
-  nothing recognises (`other`) on 3 separate days with no answer since.
+- AFTER 3 DAYS: missing from its endpoint's /models (the daily served
+  check's snapshot: Open WebUI's whole list, or the registered models on any
+  other endpoint), or failing for a reason nothing recognises (`other`) on 3
+  separate days with no answer since.
 - BACKSTOP, AFTER 7 DAYS: no answer of any kind for 7 days, whatever the
   reason -- a rate limit that never lifts is a quota or a dead model.
   `mistral-medium-3-5` answered 429 to 11 calls out of 11.
@@ -68,12 +70,15 @@ def account_quota(detail: str) -> bool:
 def plan(today: dt.date, models: dict[str, str], live: set[str],
          first_missing: dict[str, str], rows: list[dict],
          answers: dict[str, dt.date], restored: dict[str, dt.date],
-         tags: dict[str, str]) -> dict:
+         tags: dict[str, str], owui: set[str] = frozenset()) -> dict:
     """Decide, from evidence alone. No calls, no writes.
 
     models   alias -> served name, every registered model
     rows     perf rows: {alias, date, answered, failure, detail}
     answers  alias -> last date it answered outside the perf tier
+    tags     served name -> its connection (route.connection_of)
+    owui     aliases served through an Open WebUI hub, the only place a
+             connection prefix can rename a model
     Returns {"retire": [...], "confirm": [...], "pending": [...],
              "held": {connection: [...]}}; each item is (alias, why).
     """
@@ -109,17 +114,18 @@ def plan(today: dt.date, models: dict[str, str], live: set[str],
         # vanish. That is an address change, not a retirement, and
         # `reprefix.py` repoints the registry with all history intact.
         renamed = next((s for s in live if s.endswith("." + served)), None) \
-            if missing_since else None
+            if missing_since and alias in owui else None
         if renamed:
             out["pending"].append((alias, f"1|served as {renamed} now — run "
                                           f"scripts/reprefix.py, not a retirement"))
             continue
+        where = "Open WebUI" if alias in owui else "its endpoint"
         if missing_since and (today - missing_since).days >= MISSING_DAYS:
             # Not guarded: three days of absence already outlasts a blip, and
             # providers DO retire in batches (three gpt-* on 10-08, three
             # mistral-*-latest on 10-07), which a guard would hold for ever.
             out["retire"].append((alias,
-                                  f"not served by Open WebUI since {missing_since}"))
+                                  f"not served by {where} since {missing_since}"))
         elif latest and latest["failure"] in IMMEDIATE \
                 and (today - latest["date"]).days <= 1:
             candidates.append((alias, "confirm", why))
@@ -134,7 +140,7 @@ def plan(today: dt.date, models: dict[str, str], live: set[str],
             left = []
             if missing_since:
                 left.append((MISSING_DAYS - (today - missing_since).days,
-                             "not served by Open WebUI"))
+                             f"not served by {where}"))
             if latest and latest["failure"] == "other":
                 left.append((OTHER_DAYS - len(other_days), why))
             if fails:
@@ -219,6 +225,22 @@ def evidence() -> tuple[list[dict], dict[str, dt.date], dict[str, dt.date]]:
     return rows, answers, restored
 
 
+def connections(models: dict[str, str]) -> tuple[dict[str, str], set[str]]:
+    """(snapshot key -> connection, aliases on an Open WebUI hub), for plan.
+
+    The connection is route.connection_of's, the one answer every grouping
+    uses: the Open WebUI tag, else the endpoint the model is registered on.
+    Until 2026-10-21 this read provider-tags.json directly and named only
+    `served@endpoint` models by their endpoint, so on an install without Open
+    WebUI every model on the default was "?" and the guard never held one."""
+    import endpoints
+    import route
+    data = endpoints.load()
+    owui = {r["alias"] for r in endpoints.registry()
+            if r["endpoint"] in data and endpoints.hub(r["endpoint"], data) == "openwebui"}
+    return {key: route.connection_of(alias) for alias, key in models.items()}, owui
+
+
 def confirm(alias: str) -> tuple[bool, str]:
     """One fresh call. Retire only if it fails the same way again."""
     from run import ask_once, failure_class, llm_binary
@@ -231,13 +253,9 @@ def run(models: dict[str, str], live: set[str], first_missing: dict[str, str],
         dry_run: bool = False) -> tuple[list[str], set[str]]:
     """Apply the plan. Returns (report lines, alert keys raised)."""
     rows, answers, restored = evidence()
-    tags = json.loads((DATA / "config" / "provider-tags.json")
-                      .read_text(encoding="utf-8"))
-    # A model on a non-default endpoint is recorded as `served@endpoint`, and
-    # the endpoint IS its connection for the guard.
-    tags.update({k: k.rsplit("@", 1)[1] for k in models.values() if "@" in k})
+    tags, owui = connections(models)
     p = plan(dt.date.today(), models, live, first_missing, rows, answers,
-             restored, tags)
+             restored, tags, owui)
 
     retire = list(p["retire"])
     for alias, why in p["confirm"]:
@@ -312,8 +330,12 @@ def _selfcheck() -> None:
     assert {a for a, _ in p2["retire"]} == {"a", "b"} and not p2["held"], p2
     # a prefix added in Open WebUI is a rename, never a retirement
     p3 = plan(d, {"c": "codestral"}, {"llm7.codestral"},
-              {"codestral": str(day(9))}, [], {}, {}, {})
+              {"codestral": str(day(9))}, [], {}, {}, {}, {"c"})
     assert not p3["retire"] and "reprefix" in dict(p3["pending"])["c"], p3
+    # ...and only Open WebUI prefixes: elsewhere a model gone for 9 days is gone
+    p3 = plan(d, {"c": "codestral"}, {"llm7.codestral"},
+              {"codestral": str(day(9))}, [], {}, {}, {})
+    assert dict(p3["retire"])["c"].startswith("not served by its endpoint"), p3
     retire = {a for a, _ in p["retire"]}
     assert retire == {"dead", "quota", "gone"}, retire
     assert {a for a, _ in p["confirm"]} == {"paid"}

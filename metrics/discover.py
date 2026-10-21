@@ -2,9 +2,9 @@
 
     python metrics/discover.py           # summary: free models by reach, new this week
 
-You still add a model to Open WebUI yourself; this is the shopping list. A
-model offered by the same provider in both sources appears once, carrying
-both sources and the better-filled fields.
+The shopping list: Discover's Add (serve.py) puts a model on the bench by one
+of the routes below. A model offered by the same provider in both sources
+appears once, carrying both sources and the better-filled fields.
 
 FREE
 ----
@@ -19,15 +19,16 @@ REACH
   on bench     already registered here
   connected    this install has a ROUTE to the provider (below)
   easy to add  the provider has an OpenAI-compatible API (models.dev gives its
-               base URL), so it is one new Open WebUI connection away
+               base URL), so it is one new endpoint (or hub connection) away
   other        a native API only, or a reseller nobody has vetted
 
 ROUTES
 ------
 The ways this install can reach a provider, each a row's `routes`:
   openwebui    a connection in Open WebUI, known because a bench model on the
-               Open WebUI endpoint is served from it. Adding goes through
-               metrics/owui.py, so the model also appears in the chats.
+               Open WebUI hub (endpoints.find_hub) is served from it. Adding
+               goes through metrics/owui.py, so the model also appears in the
+               chats. None without an Open WebUI hub.
   direct       an endpoint of its own in config/endpoints.json whose name or
                base URL is the provider's (models.dev gives the base). Adding
                is plain onboarding on that endpoint: bench only.
@@ -69,32 +70,32 @@ def _on_bench() -> list[tuple[str, str, str, str, str]]:
 
 
 def _direct(md: dict) -> dict[str, list[str]]:
-    """models.dev provider -> the endpoints of its own this install has (not
-    Open WebUI): by the connection-name map, else by base URL."""
+    """models.dev provider -> the endpoints of its own this install has (not a
+    hub, which fronts many): by the connection-name map, else by base URL."""
     import endpoints
-    from owui import ENDPOINT
     names = sources.connection_to_modelsdev()
     by_base = {(p.get("api") or "").rstrip("/"): prov for prov, p in md.items() if p.get("api")}
     out: dict[str, list[str]] = {}
-    for name, e in endpoints.load().items():
-        prov = None if name == ENDPOINT else names.get(name) or by_base.get(e["base"].rstrip("/"))
+    data = endpoints.load()
+    for name, e in data.items():
+        prov = None if endpoints.hub(name, data) else names.get(name) or by_base.get(e["base"].rstrip("/"))
         if prov:
             out.setdefault(prov, []).append(name)
     return out
 
 
-def _routes(r: dict, bench: list, owui_conns: set[str], direct: dict) -> list[dict]:
+def _routes(r: dict, bench: list, owui_conns: set[str], direct: dict, owui: str | None) -> list[dict]:
     """How this install could add one row's model, and whether it already has.
     By the exact id, not `norm`: `vendor/m:free` on the bench is not `vendor/m`
-    (paid) on the bench. Open WebUI may serve it as `<prefix>.<id>`."""
-    from owui import ENDPOINT
+    (paid) on the bench. Open WebUI may serve it as `<prefix>.<id>`. `owui`:
+    the Open WebUI hub's endpoint, None without one (then `owui_conns` is empty)."""
     conn, name, mid, out = r["connection"], r["provider_name"], r["model"], []
     if conn and conn in owui_conns:
-        out.append({"via": "openwebui", "connection": conn, "endpoint": ENDPOINT,
+        out.append({"via": "openwebui", "connection": conn, "endpoint": owui,
                     "label": f"{name} via Open WebUI ({conn} connection)",
                     "note": "Also puts it in Open WebUI's chats: the connection's Model IDs,"
                             " a public record, its tag and logo.",
-                    "on_bench_as": next((a for ep, c, _n, a, s in bench if ep == ENDPOINT and c == conn
+                    "on_bench_as": next((a for ep, c, _n, a, s in bench if ep == owui and c == conn
                                          and (s == mid or s.endswith("." + mid))), None)})
     for ep in direct.get(r["provider"], []):
         out.append({"via": "direct", "connection": conn or ep, "endpoint": ep,
@@ -110,12 +111,13 @@ def _routes(r: dict, bench: list, owui_conns: set[str], direct: dict) -> list[di
 
 
 def build() -> list[dict]:
-    from owui import ENDPOINT
+    import endpoints
     md, fl = sources.cached("modelsdev"), sources.cached("freellmapi")
     md_conn = {v: k for k, v in sources.connection_to_modelsdev().items()}
     bench = _on_bench()
     # Open WebUI's connections, as far as the bench can tell without asking it.
-    owui_conns = {c for ep, c, *_ in bench if ep == ENDPOINT} - {"?"}
+    owui = endpoints.find_hub("openwebui")
+    owui_conns = {c for ep, c, *_ in bench if ep == owui} - {"?"}
     direct = _direct(md)
     rows: dict[tuple[str, str], dict] = {}
 
@@ -182,7 +184,7 @@ def build() -> list[dict]:
         r["new"] = seen[k] not in ("baseline",) and seen[k] >= (dt.date.today() - dt.timedelta(days=NEW_DAYS)).isoformat()
         conn = r["connection"]
         r["norm"] = key[1]
-        r["routes"] = _routes(r, bench, owui_conns, direct)
+        r["routes"] = _routes(r, bench, owui_conns, direct, owui)
         # Where there are routes they decide, by exact id: the bench's `v/m:free`
         # leaves the paid `v/m` addable, and shows under also_on instead.
         mine = (next((x["on_bench_as"] for x in r["routes"] if x["on_bench_as"]), None) if r["routes"]
@@ -222,20 +224,22 @@ def _selftest() -> None:
     bench = [("openwebui", "openrouter", "m", "m-owui", "or.v/m"),
              ("openrouter", "openrouter", "x", "x-direct", "v/x:free")]
     row = {"connection": "openrouter", "provider": "openrouter", "provider_name": "OpenRouter", "model": "v/m"}
-    both = _routes(row, bench, {"openrouter"}, {"openrouter": ["openrouter"]})
+    both = _routes(row, bench, {"openrouter"}, {"openrouter": ["openrouter"]}, "openwebui")
     assert [r["via"] for r in both] == ["openwebui", "direct"], both
     # On the bench through Open WebUI (under its prefix) is not on the bench through the endpoint.
     assert both[0]["on_bench_as"] == "m-owui" and both[1]["on_bench_as"] is None, both
     assert all("Shares one OpenRouter quota" in r["note"] for r in both)
-    x = _routes({**row, "model": "v/x:free"}, bench, {"openrouter"}, {"openrouter": ["openrouter"]})
+    x = _routes({**row, "model": "v/x:free"}, bench, {"openrouter"}, {"openrouter": ["openrouter"]}, "openwebui")
     assert x[0]["on_bench_as"] is None and x[1]["on_bench_as"] == "x-direct", x
-    paid = _routes({**row, "model": "v/x"}, bench, {"openrouter"}, {"openrouter": ["openrouter"]})
+    paid = _routes({**row, "model": "v/x"}, bench, {"openrouter"}, {"openrouter": ["openrouter"]}, "openwebui")
     assert paid[1]["on_bench_as"] is None, paid                     # the :free slug is not the paid one
     nv = _routes({"connection": "nvidia-api", "provider": "nvidia", "provider_name": "NVIDIA", "model": "v/m"},
-                 bench, {"nvidia-api"}, {})
+                 bench, {"nvidia-api"}, {}, "openwebui")
     assert len(nv) == 1 and nv[0]["connection"] == "nvidia-api" and "Shares" not in nv[0]["note"], nv
     assert _routes({"connection": "groq", "provider": "groq", "provider_name": "Groq", "model": "v/m"}, bench,
-                   {"openrouter"}, {}) == []                         # no connection, no endpoint: no route
+                   {"openrouter"}, {}, "openwebui") == []            # no connection, no endpoint: no route
+    # No Open WebUI hub: no connections behind one, so only the endpoint's own route.
+    assert [r["via"] for r in _routes(row, bench, set(), {"openrouter": ["openrouter"]}, None)] == ["direct"]
     print("discover selftest ok")
 
 

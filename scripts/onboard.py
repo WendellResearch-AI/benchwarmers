@@ -1,4 +1,4 @@
-"""Take a model from "added to Open WebUI" to "usable, with evidence".
+"""Take a model from "served by an endpoint" to "usable, with evidence".
 
     python scripts/onboard.py "vendor/new-model:free"
     python scripts/onboard.py "vendor/new-model:free" --skip-suite
@@ -18,8 +18,9 @@ WHAT IT DOES, AND WHY IN THIS ORDER
    connection tag already carries it), turn `:` into `-`. So
    `poolside/laguna-s-2.1:free` becomes `laguna-s-2.1-free`. Version numbers
    stay, because there will be a 2.2.
-3. **Register and sync**, then refresh the provider tags so the connection is
-   known — which is what the router uses to keep a panel independent.
+3. **Register and sync**, then, with an Open WebUI hub, refresh the provider
+   tags so the connection behind it is known — which is what the router uses
+   to keep a panel independent. Without one the endpoint is the connection.
 4. **Probe availability** before spending anything: two prompt sizes, two
    samples. A model that cannot answer "ready" will not answer a 46 KB task,
    and finding that out here costs four calls instead of six large ones.
@@ -199,7 +200,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("served_name", help="the id the endpoint serves it under")
     ap.add_argument("--endpoint", default=None,
-                    help="a name from config/endpoints.json; Open WebUI by default")
+                    help="a name from config/endpoints.json; the default endpoint if omitted")
     ap.add_argument("--skip-suite", action="store_true",
                     help="register and probe only")
     args = ap.parse_args()
@@ -235,11 +236,15 @@ def main() -> None:
         if why is None:
             onboard_decision(name, endpoint, endpoint, alias, path)
             return
+        # The passthrough hints are about Open WebUI; anywhere else a 404 is the provider's.
+        owui = endpoints.hub(endpoint) == "openwebui"
         hint = ("  Open WebUI relays decisions only with ENABLE_OPENAI_API_PASSTHROUGH=True"
-                " in its environment.\n" if "passthrough" in why.lower() else
+                " in its environment.\n" if owui and "passthrough" in why.lower() else
                 "  Its connection has no /decisions under its base. An OpenRouter-hosted decision"
                 " model cannot go through Open WebUI (its Decisions API is outside /api/v1);"
-                " pick it from openrouter (direct) instead.\n" if " 404" in why and " 402" not in why else
+                " pick it from openrouter (direct) instead.\n" if owui and " 404" in why and " 402" not in why else
+                "  This endpoint has no Decisions API at its decisions URL in config/endpoints.json.\n"
+                if " 404" in why and " 402" not in why else
                 "  The provider wants paid usage for this model; the bench uses free models only.\n"
                 if " 402" in why else
                 "  The provider refused the call; try again once its limit resets.\n")
@@ -254,10 +259,13 @@ def main() -> None:
         register(alias, name, endpoint)
         print(f"  [2/5] registered as {alias}")
     run("scripts/sync_config.py", timeout=300)
-    run("scripts/provider_tags.py", timeout=300)
-    tags = json.loads((DATA / "config" / "provider-tags.json")
-                      .read_text(encoding="utf-8"))
-    print(f"  [3/5] synced; connection is {tags.get(name, '?')}")
+    # Open WebUI's tags name the connection behind the hub; without a hub the
+    # endpoint is the connection, and route.connection_of needs no tags.
+    if endpoints.find_hub("openwebui"):
+        run("scripts/provider_tags.py", timeout=300)
+    import route
+    connection = route.full_tag_of(alias)
+    print(f"  [3/5] synced; connection is {connection}")
 
     # 4. availability
     print("  [4/5] probing availability (4 calls)...")
@@ -293,7 +301,7 @@ def main() -> None:
     note = DATA / "runs" / f"onboard-{stamp}.md"
     with note.open("a", encoding="utf-8") as fh:
         fh.write(f"\n## Onboarded `{alias}` ({name}) — {stamp}\n\n"
-                 f"Connection: {tags.get(name, '?')}. "
+                 f"Connection: {connection}. "
                  f"Availability probe: {'answered' if answered else 'NO ANSWER'}.\n\n"
                  f"Suite scores are in the dated suite note. Whether to route "
                  f"work here is a judgement, not an output of this script.\n")

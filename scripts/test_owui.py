@@ -52,6 +52,7 @@ def fake(state):
 def run(connection, model, registered):
     state = {"config": copy.deepcopy(CONFIG), "models": list(MODELS), "records": copy.deepcopy(RECORDS), "calls": []}
     owui._call = fake(state)
+    owui.endpoint = lambda: "openwebui"
     owui.endpoints.models = lambda name, timeout=30: {m["id"]: m for m in state["models"]}
     import route
     import run as suite_run

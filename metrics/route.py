@@ -106,16 +106,9 @@ def _json(path: pathlib.Path) -> dict:
 
 
 def connection_of(alias: str) -> str:
-    """The connection a model is reached through: its Open WebUI tag, else the
-    endpoint it is registered on (a model on its own endpoint, or an install
-    with no Open WebUI to tag anything), else "?"."""
-    from run import _registered_names
-    tags = _json(DATA / "config" / "provider-tags.json")
-    tag = tags.get(_registered_names().get(alias, alias))
-    if not tag:
-        import endpoints
-        tag = endpoints.endpoint_name(endpoints.registrations().get(alias) or {})
-    return (tag or "?").split("/")[0]
+    """The connection a model is reached through, trimmed to the host (what
+    shares a rate limit): see full_tag_of."""
+    return full_tag_of(alias).split("/")[0]
 
 
 # Connections already PAID for, so a spare call there costs nothing extra:
@@ -133,10 +126,21 @@ def full_tag_of(alias: str) -> str:
     `connection_of` trims to the host because that is what shares a rate
     limit; this keeps `<proxy>/<vendor>` whole, because that is what a
     subscription is bought for.
+
+    Its Open WebUI tag (scripts/provider_tags.py), else the endpoint it is
+    registered on: a model on its own endpoint, or any model on an install
+    with no Open WebUI to tag anything, needs no tags file. Never a hub's
+    name, else "?": a hub fronts many connections, and an untagged model
+    behind it (Open WebUI stopped listing it) is not on a connection called
+    `openwebui` with every other untagged one.
     """
     from run import _registered_names
-    tags = _json(DATA / "config" / "provider-tags.json")
-    return tags.get(_registered_names().get(alias, alias)) or "?"
+    import endpoints
+    tag = _json(DATA / "config" / "provider-tags.json").get(_registered_names().get(alias, alias))
+    if not tag:
+        name = endpoints.endpoint_name(endpoints.registrations().get(alias) or {})
+        tag = name if name and not endpoints.hub(name) else None
+    return tag or "?"
 
 
 def family_of(alias: str) -> str:

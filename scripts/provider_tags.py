@@ -16,6 +16,11 @@ stays a view of the repository and works with the network down.
 alongside the base URLs, in plaintext. This takes `OPENAI_API_BASE_URLS` and
 the host name off each URL, and nothing else, so no secret can reach a file
 that is committed. Worth knowing that endpoint behaves that way.
+
+A REFINEMENT, NOT A PREREQUISITE. Only an Open WebUI hub (endpoints.find_hub)
+has connections to name; without one this writes nothing and exits cleanly,
+and every model's connection is the endpoint it is registered on
+(route.connection_of), which needs no file at all.
 """
 
 from __future__ import annotations
@@ -29,10 +34,7 @@ REPO = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "metrics"))
 from paths import DATA  # noqa: E402  -- the install's data folder (metrics/paths.py)
 OUT = DATA / "config" / "provider-tags.json"
-sys.path.insert(0, str(REPO / "metrics"))
-from endpoints import base as _base, connections as _connections, key as _key  # noqa: E402
-# Open WebUI's root: `/openai/config` and `/api/models` both hang off it.
-BASE = _base().removesuffix("/api")
+import endpoints  # noqa: E402
 TIMEOUT = 30
 
 # Host -> the name a person would use for it. Anything unlisted falls back to
@@ -56,17 +58,19 @@ NAMES = {
 }
 
 
-def get(path: str) -> dict:
-    key = _key()                                       # the default endpoint's, i.e. Open WebUI's
+def get(hub: str, path: str) -> dict:
+    """GET off the Open WebUI server's root, where `/openai/config` and
+    `/api/models` both hang, with the hub's own key."""
     request = urllib.request.Request(
-        BASE + path, headers={"Authorization": f"Bearer {key}"})
+        endpoints.base(hub).removesuffix("/api") + path,
+        headers={"Authorization": f"Bearer {endpoints.key(hub)}"})
     with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
         return json.load(response)
 
 
-def connection_names() -> list[str]:
+def connection_names(hub: str) -> list[str]:
     """One short name per connection index. URLs only — never the keys."""
-    urls = get("/openai/config").get("OPENAI_API_BASE_URLS", [])
+    urls = get(hub, "/openai/config").get("OPENAI_API_BASE_URLS", [])
     names = []
     for url in urls:
         host = url.split("//", 1)[-1].split("/", 1)[0].split(":", 1)[0]
@@ -77,16 +81,20 @@ def connection_names() -> list[str]:
             # connection names over the API to find that out —
             # `OPENAI_API_CONFIGS` has a `tags` field and it is empty. So it
             # is written down in config/connections.json `hosts`.
-            names.append((_connections().get("hosts") or {}).get(host, "lan-proxy"))
+            names.append((endpoints.connections().get("hosts") or {}).get(host, "lan-proxy"))
         else:
             names.append(NAMES.get(host, host))
     return names
 
 
 def main() -> None:
-    names = connection_names()
+    hub = endpoints.find_hub("openwebui")
+    if not hub:
+        print("no Open WebUI hub: nothing to tag; each model's connection is its endpoint")
+        return
+    names = connection_names(hub)
     tags = {}
-    for entry in get("/api/models").get("data", []):
+    for entry in get(hub, "/api/models").get("data", []):
         model_id = entry.get("id")
         if not model_id:
             continue
@@ -103,10 +111,8 @@ def main() -> None:
 
     # Models registered on another endpoint arrive through THAT endpoint,
     # whatever Open WebUI would have called them.
-    sys.path.insert(0, str(REPO / "metrics"))
-    import endpoints
     for r in endpoints.registry():
-        if r["endpoint"] not in ("?", endpoints.default()):
+        if r["endpoint"] not in ("?", hub):
             tags[r["served"]] = r["endpoint"]
 
     OUT.write_text(json.dumps(tags, indent=2, sort_keys=True) + "\n",

@@ -557,7 +557,9 @@
   // ---- endpoints: keys go in, never come back out -------------------------
   var ed = $('endpoints-dialog');
   var e = {list: $('e-list'), name: $('e-name'), base: $('e-base'), key: $('e-key'),
+           kind: $('e-kind'), hub: $('e-hub'),
            errors: $('e-errors'), done: $('e-done'), save: $('e-save')};
+  e.kind.addEventListener('change', function () { $('e-hub-row').hidden = e.kind.value !== 'hub'; });
   function loadEndpoints() {
     fetch('/api/endpoints').then(function (r) { return r.json(); }).then(function (res) {
       e.list.textContent = '';
@@ -661,13 +663,14 @@
   // list. Add: sign in with a provider, or paste a key. Change key: the key form.
   function showEndpointForm(title, adding) {
     $('e-new').hidden = false; $('e-add').hidden = true; $('e-form-head').textContent = title;
-    $('e-signin').hidden = !adding; $('e-key-head').hidden = !adding;
+    $('e-signin').hidden = !adding; $('e-key-head').hidden = !adding; $('e-kinds').hidden = !adding;
     e.errors.textContent = ''; e.done.textContent = '';
     e.adding = !!adding;           // Add refuses a name in use; Change key edits that one
   }
   function hideEndpointForm() {
     $('e-new').hidden = true; $('e-add').hidden = false; $('cn-form').hidden = true;
     e.name.value = ''; e.base.value = ''; e.key.value = '';
+    e.kind.value = 'provider'; $('e-hub-row').hidden = true;
   }
   $('endpoints-open').addEventListener('click', function () {
     e.errors.textContent = ''; e.done.textContent = ''; hideEndpointForm();
@@ -679,7 +682,9 @@
   $('e-close').addEventListener('click', function () { ed.close(); });
   e.save.addEventListener('click', function () {
     e.errors.textContent = ''; e.done.textContent = ''; e.save.disabled = true; e.save.textContent = 'Testing…';
-    post('/api/endpoint', {name: e.name.value, base: e.base.value, key: e.key.value, new: e.adding}).then(function (r) {
+    var body = {name: e.name.value, base: e.base.value, key: e.key.value, new: e.adding};
+    if (e.adding) { body.kind = e.kind.value; body.hub = e.kind.value === 'hub' ? e.hub.value : ''; }   // Change key keeps its kind
+    post('/api/endpoint', body).then(function (r) {
       e.save.disabled = false; e.save.textContent = 'Test and save'; e.key.value = '';
       if (!r.ok) { listErrors(e.errors, r.errors); return; }
       var saved = 'Saved. ' + e.name.value.trim() + ' lists ' + r.served + ' models; they appear in the onboarding picker. ' + (r.note || '');
