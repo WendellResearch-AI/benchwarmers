@@ -53,7 +53,8 @@ ADDING A PROVIDER
      token_params          extra fields on every token request
      loopback              the callback host the provider accepts:
                            "127.0.0.1" (default) or "localhost"
-     entry                 fields for the endpoint when it is new: headers,
+     entry                 fields for the endpoint: its `kind` (required, one
+                           of endpoints.KINDS); and when it is new, headers,
                            `api: responses`, `models_url`
      docs, hint            its docs; one line for when /models fails
 3. Run `python metrics/connect.py --selftest`: it checks every entry's shape,
@@ -98,7 +99,7 @@ PROVIDERS: dict[str, dict] = {
         "token": "https://openrouter.ai/api/v1/auth/keys",
         "params": {"key_label": "Benchwarmers"}, "loopback": "localhost",
         # Who is calling, truthfully: some free models answer only named apps.
-        "entry": {"headers": {"HTTP-Referer": REPO, "X-Title": "Benchwarmers"}},
+        "entry": {"kind": "aggregator", "headers": {"HTTP-Referer": REPO, "X-Title": "Benchwarmers"}},
         "docs": "https://openrouter.ai/docs/use-cases/oauth-pkce",
     },
     "nanogpt": {
@@ -106,6 +107,7 @@ PROVIDERS: dict[str, dict] = {
         "authorize": "https://nano-gpt.com/auth",
         "token": "https://nano-gpt.com/api/v1/auth/keys",
         "scope": "api.use models.read", "params": {"client_name": "Benchwarmers"},
+        "entry": {"kind": "aggregator"},
         "docs": "https://docs.nano-gpt.com/api-reference/miscellaneous/oauth-pkce",
     },
     "huggingface": {
@@ -116,6 +118,7 @@ PROVIDERS: dict[str, dict] = {
         "client_id": "", "scope": "openid inference-api",
         "register": "https://huggingface.co/settings/applications/new (no secret; redirect"
                     " http://127.0.0.1/connect/callback; scopes openid, inference-api)",
+        "entry": {"kind": "aggregator"},             # its router fronts many inference providers
         "docs": "https://huggingface.co/docs/hub/oauth",
     },
     "pollinations": {
@@ -126,6 +129,7 @@ PROVIDERS: dict[str, dict] = {
         "client_id": "", "params": {"models": "text", "expiry": "30"}, "loopback": "localhost",
         "register": "https://enter.pollinations.ai/keys (an app key, pk_...; redirect"
                     " http://localhost/connect/callback)",
+        "entry": {"kind": "aggregator"},
         "docs": "https://github.com/pollinations/pollinations/blob/main/BRING_YOUR_OWN_POLLEN.md",
     },
     "chatgpt": {
@@ -139,7 +143,7 @@ PROVIDERS: dict[str, dict] = {
         "params": {"agent_name_hint": "Benchwarmers", "ext_agent_host_id": "{host_id}",
                    "nonce": "{nonce}", "resource": "https://api.openai.com/v1"},
         "token_params": {"resource": "https://api.openai.com/v1"},
-        "entry": {"api": "responses"},
+        "entry": {"kind": "provider", "api": "responses"},
         "docs": "https://developers.openai.com/siwc/token-sharing-open-source",
     },
     "github": {
@@ -149,12 +153,13 @@ PROVIDERS: dict[str, dict] = {
         "client_id": "",
         "register": "a GitHub App: Developer settings > GitHub Apps > New; Enable Device Flow;"
                     " Account permissions > Models: Read",
-        "entry": {"models_url": "https://models.github.ai/catalog/models"},
+        "entry": {"kind": "provider", "models_url": "https://models.github.ai/catalog/models"},
         "docs": "https://docs.github.com/en/github-models",
     },
     "ollama": {
         "label": "Ollama (this machine)", "flow": "local", "base": "http://localhost:11434/v1",
         "hint": "is Ollama running? For its cloud models, run `ollama signin` once",
+        "entry": {"kind": "local"},
         "docs": "https://docs.ollama.com/openai",
     },
 }
@@ -508,6 +513,8 @@ def check() -> list[str]:
         for k in ("params", "token_params", "entry"):
             if not isinstance(p.get(k, {}), dict):
                 problems.append(f"{pid}: {k} must be an object")
+        if (p.get("entry") or {}).get("kind") not in set(endpoints.KINDS) - {"hub"}:
+            problems.append(f"{pid}: entry.kind is provider, aggregator or local (a hub is added by hand)")
     return problems
 
 

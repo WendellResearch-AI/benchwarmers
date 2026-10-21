@@ -17,7 +17,9 @@ connection (`urlIdx`) its tagged models are served from. Then
 `scripts/onboard.py` registers, probes and runs the suite as for any model.
 
 Admin calls with the Open WebUI key in config/endpoints.json; keys are never
-printed, and the config is written back exactly as read, plus one id.
+printed, and the config is written back exactly as read, plus one id. The
+endpoint is whichever is a hub of type openwebui (`endpoints.find_hub`); an
+install without one has no Open WebUI to add to, and `endpoint()` says so.
 """
 
 from __future__ import annotations
@@ -34,16 +36,25 @@ sys.path.insert(0, str(ROOT / "metrics"))
 sys.path.insert(0, str(ROOT / "suite"))
 import endpoints  # noqa: E402
 
-ENDPOINT = "openwebui"
 PUBLIC = [{"principal_type": "user", "principal_id": "*", "permission": "read"}]
 COPIED = ("profile_image_url", "capabilities", "defaultFeatureIds")
 
 
+def endpoint() -> str:
+    """The Open WebUI hub's endpoint name. ValueError when there is none: the
+    dashboard shows it as the reason, and nothing has been sent anywhere."""
+    name = endpoints.find_hub("openwebui")
+    if not name:
+        raise ValueError("no endpoint is an Open WebUI hub; add it on the Endpoints page as kind hub, Open WebUI")
+    return name
+
+
 def _call(path: str, body: dict | None = None):
-    root = endpoints.base(ENDPOINT).removesuffix("/api")
+    name = endpoint()
+    root = endpoints.base(name).removesuffix("/api")
     req = urllib.request.Request(root + path, data=None if body is None else json.dumps(body).encode(),
                                  method="GET" if body is None else "POST",
-                                 headers={"Authorization": f"Bearer {endpoints.key(ENDPOINT)}",
+                                 headers={"Authorization": f"Bearer {endpoints.key(name)}",
                                           "Content-Type": "application/json", "Accept": "application/json"})
     with urllib.request.urlopen(req, timeout=60) as r:
         return json.loads(r.read() or b"null")
@@ -152,7 +163,7 @@ def add(connection: str, model_id: str) -> tuple[str, list[str]]:
                 + (f", logo and switches from {p['copy_from']}" if p["copy_from"] else ", no logo found to copy"))
     # Open WebUI rebuilds its model list on request; wait until it serves the new id.
     for _ in range(10):
-        if p["served"] in endpoints.models(ENDPOINT):
+        if p["served"] in endpoints.models(endpoint()):
             break
         time.sleep(2)
     else:

@@ -26,7 +26,10 @@ is `/api/alpha/decisions`, outside its `/api/v1` base.
 
 A model is called on the endpoint it was picked from when onboarding, recorded
 as `via`: picked from Open WebUI, it goes through Open WebUI; picked from
-`openrouter (direct)`, it goes direct. OpenRouter's /models omits its decision
+`openrouter (direct)`, it goes direct. Nothing here calls Open WebUI on its
+own: the passthrough is reached only through an endpoint's own `decisions`
+URL, which nothing writes (an Open WebUI hub is given one by hand), and the
+onboarding hints about it show only for an Open WebUI hub (endpoints.hub). OpenRouter's /models omits its decision
 models, so that endpoint names them in `unlisted_models` to make them pickable.
 
 WHAT EACH MODEL CAN ANSWER

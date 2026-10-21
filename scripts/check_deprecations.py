@@ -7,7 +7,7 @@ stays in the routing table being recommended for work it can no longer do.
 
 This compares three lists and reports the differences:
 
-    what Open WebUI SERVES   (the live /models endpoint)
+    what the endpoints SERVE   (each live /models list; see served())
     what the CLI has REGISTERED (config/extra-openai-models.yaml)
     what was served LAST TIME (config/served-snapshot.json)
 
@@ -56,28 +56,33 @@ GRACE_DAYS = 1
 def served() -> set[str]:
     """What every endpoint serves, as snapshot keys (`endpoints.snapshot_key`).
 
-    The default endpoint (Open WebUI) is recorded whole, as it always was.
-    Another endpoint is recorded only for the models REGISTERED on it --
+    The default endpoint is recorded whole when it is a hub or local (the
+    owner's Open WebUI, as it always was): a list the user chose.
+    Anything else is recorded only for the models REGISTERED on it --
     OpenRouter alone lists 465, and the snapshot is not a mirror of its
-    catalogue. An endpoint that cannot be asked contributes its registered
-    models as if present: its outage is not evidence that any of them went.
-    Only the default being unreachable raises, and the caller writes nothing.
+    catalogue (`endpoints.recorded_whole`), even as a stranger's only and
+    default endpoint. An endpoint that cannot be asked contributes its
+    registered models as if present: its outage is not evidence that any of
+    them went. Only the default being unreachable raises, and the caller
+    writes nothing.
     """
     live: set[str] = set()
     on = {}
     for r in endpoints.registry():
         on.setdefault(r["endpoint"], set()).add(r["served"])
     for name in endpoints.load():
-        if name == endpoints.default():
-            live |= set(endpoints.models(name, TIMEOUT))
-            continue
         try:
             listed = set(endpoints.models(name, TIMEOUT))
         except Exception as exc:                   # noqa: BLE001
+            if name == endpoints.default():
+                raise
             print(f"cannot reach {name} ({type(exc).__name__}); its models are "
                   f"left as they were")
             listed = on.get(name, set())
-        live |= {endpoints.snapshot_key(s, name) for s in on.get(name, set()) & listed}
+        if endpoints.recorded_whole(name):
+            live |= listed
+        else:
+            live |= {endpoints.snapshot_key(s, name) for s in on.get(name, set()) & listed}
     return live
 
 
@@ -236,12 +241,15 @@ def main() -> int:
                 f"fix or drop the entry for `{alias}` in "
                 f"config/extra-openai-models.yaml")
             raised.add(key)
+        data = endpoints.load()
         for name, alias, seen, days in gone_registered:
             key = f"model:gone:{name}"
+            served_as, _, ep = name.rpartition("@")       # bare: on the default (a model may be named like an endpoint)
+            hub = endpoints.hub(ep if served_as and ep in data else endpoints.default(), data)
             raise_alert(
                 key, "retired",
                 f"{name} is no longer served (last seen {seen}, {days}d ago)",
-                f"remove it from Open WebUI and from the yaml")
+                f"remove it from {'Open WebUI and from ' if hub == 'openwebui' else ''}the yaml")
             raised.add(key)
         for name, alias in structural:
             key = f"model:structural:{name}"

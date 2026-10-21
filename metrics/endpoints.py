@@ -4,8 +4,9 @@
 
 `config/endpoints.json` names each endpoint:
 
-    {"openwebui":  {"base": "http://localhost:3000/api", "key": "openwebui", "default": true},
-     "openrouter": {"base": "https://openrouter.ai/api/v1", "key": "openrouter",
+    {"openwebui":  {"base": "http://localhost:3000/api", "key": "openwebui", "default": true,
+                    "kind": "hub", "hub": "openwebui"},
+     "openrouter": {"base": "https://openrouter.ai/api/v1", "key": "openrouter", "kind": "aggregator",
                     "headers": {"HTTP-Referer": "https://example.com", "X-Title": "My app"}}}
 
 `key` is the NAME of a key in the llm CLI's own `keys.json` -- the same store
@@ -30,6 +31,14 @@ Ollama), because the passthrough appends it to the connection's own base.
 `headers` go into every yaml entry registered on that endpoint. They exist for
 OpenRouter's attribution gate (some free models answer only named apps), and
 must describe the client that really makes the requests.
+
+`kind` is one of KINDS (RELEASE-PLAN section 2, "Connection kinds"), and a
+hub also names which hub it is in `hub` (one of HUBS). It decides what runs
+for an endpoint: the Open WebUI code (owui.py, provider_tags.py, reprefix.py,
+the passthrough hints) only for a hub that is Open WebUI, and the daily served
+check records a whole list only where the user chose what is in it. Ask
+`kind()` and `hub()`, never the entry: an entry written before `kind` existed
+is inferred (see `kind`).
 """
 
 from __future__ import annotations
@@ -39,6 +48,7 @@ import os
 import pathlib
 import re
 import sys
+import urllib.parse
 import urllib.request
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -61,6 +71,10 @@ def llm_dir() -> pathlib.Path:
 
 LLM_DIR = llm_dir()
 NAME = re.compile(r"^[a-z0-9][a-z0-9-]{1,31}$")
+# kind -> examples, as the Add form shows them
+KINDS = {"provider": "Groq, Mistral, NVIDIA", "aggregator": "OpenRouter, LLM7, NanoGPT",
+         "hub": "Open WebUI", "local": "Ollama, LM Studio, vLLM"}
+HUBS = {"openwebui": "Open WebUI"}               # LiteLLM and CLI Proxy API join with their adapters (Phase 5)
 
 
 def load() -> dict[str, dict]:
@@ -102,6 +116,55 @@ def default() -> str:
                            f" scripts/init.py --endpoint NAME BASE_URL, or create {FILE}"
                            ' like {"name": {"base": "https://.../v1", "key": "name", "default": true}}')
     return next((n for n, e in data.items() if e.get("default")), next(iter(data)))
+
+
+def kind(name: str, data: dict | None = None) -> str:
+    """What an endpoint is: provider, aggregator, hub or local.
+
+    An entry without `kind` was written before it existed, and the owner's
+    whole instance is such entries; nothing rewrites them. It is taken as a
+    hub when its base is a server's bare `/api` root, which is where Open
+    WebUI serves its OpenAI-compatible API (`/api/models`,
+    `/api/chat/completions`) and the shape owui.py already needs to reach the
+    admin API; providers, aggregators and the other hubs end in a version or a
+    path (`/v1`, `/api/v1`, `/openai/v1`, `/inference`). Not "the default is
+    Open WebUI", which the code assumed until now: that would turn a kind-less
+    OpenRouter default into a hub and send it Open WebUI's admin calls, and
+    would move with Make default. Else local on this machine (Ollama's
+    `localhost:11434/v1`), since recorded_whole treats local apart.
+    ponytail: anything else without a kind is a provider; nothing treats an
+    aggregator apart from a provider yet, so none is guessed from a host."""
+    entry = (load() if data is None else data)[name]
+    if entry.get("kind") in KINDS:
+        return entry["kind"]
+    url = urllib.parse.urlsplit(entry.get("base", ""))
+    return ("hub" if url.path.rstrip("/").endswith("/api") else
+            "local" if url.hostname in ("localhost", "127.0.0.1", "::1") else "provider")
+
+
+def hub(name: str, data: dict | None = None) -> str:
+    """Which hub an endpoint is ("openwebui"), "" when it is not a hub. A hub
+    that does not say is Open WebUI, the only one before Phase 5's adapters."""
+    data = load() if data is None else data
+    return (data[name].get("hub") or "openwebui") if kind(name, data) == "hub" else ""
+
+
+def find_hub(which: str) -> str | None:
+    """The endpoint that is a `which` hub, the default first; None when none is.
+    ponytail: one hub of a type; a second Open WebUI is never asked."""
+    data = load()
+    first = default()
+    return next((n for n in sorted(data, key=lambda n: n != first) if hub(n, data) == which), None)
+
+
+def recorded_whole(name: str) -> bool:
+    """Does the daily served check (check_deprecations.py) record everything
+    this endpoint lists, or only the models registered on it? Whole only for
+    the default, and only when the user chose what is in its list: a hub (what
+    was added to Open WebUI) or a local runtime (what was pulled). A provider
+    or aggregator lists what it sells, OpenRouter 465 models and NVIDIA about
+    180, and the snapshot is not a mirror of anyone's catalogue."""
+    return name == default() and kind(name) in ("hub", "local")
 
 
 def base(name: str | None = None) -> str:
@@ -290,6 +353,22 @@ def _selftest() -> None:
             YAML.write_text(yaml_block("m1", "a", "or") + yaml_block("m2", "a", "or-2"), encoding="utf-8")
             assert {r["alias"]: r["endpoint"] for r in registry()} == {"m1": "or", "m2": "or-2"}, registry()
             assert entry_of("m2")["key"] == "or-2"
+            # Kind: what an entry says, else a hub at a bare /api root (Open WebUI's), else a provider.
+            FILE.write_text(json.dumps({
+                "owui": {"base": "http://hub.example:3000/api/", "key": "a"},
+                "or": {"base": "https://x.example/api/v1", "key": "b", "default": True},
+                "lite": {"base": "http://lite.example/v1", "key": "c", "kind": "hub", "hub": "litellm"},
+                "pulled": {"base": "http://localhost:11434/v1", "key": "d"},
+                "said": {"base": "http://said.example/api", "key": "e", "kind": "aggregator"}}), encoding="utf-8")
+            got = [(kind(n), hub(n)) for n in load()]
+            assert got == [("hub", "openwebui"), ("provider", ""), ("hub", "litellm"), ("local", ""),
+                           ("aggregator", "")], got
+            assert find_hub("openwebui") == "owui" and find_hub("cliproxy") is None
+            assert not recorded_whole("or") and not recorded_whole("pulled")    # an aggregator default; not the default
+            FILE.write_text(json.dumps({**load(), "or": {"base": "https://x.example/api/v1", "key": "b"},
+                                        "pulled": {"base": "http://localhost:11434/v1", "default": True}}),
+                            encoding="utf-8")
+            assert recorded_whole("pulled") and not recorded_whole("owui")
             # A list as an object or a bare list (GitHub's catalog); hidden ones left out.
             listing = pathlib.Path(tmp) / "models.json"
             for body in ('{"data": [{"id": "a"}, {"id": "b", "visibility": "hide"}]}', '[{"id": "a"}]'):

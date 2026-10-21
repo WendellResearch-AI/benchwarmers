@@ -24,7 +24,9 @@ Two things do need care, and this handles both:
    its suite outputs, and the router would treat it as a model it has never
    seen. The alias is the identity; the served name is just an address.
 
-Dry-run by default. `--apply` writes.
+Dry-run by default. `--apply` writes. Prefixes are an Open WebUI feature, so
+without an Open WebUI hub (endpoints.find_hub) this refuses before reading
+anything.
 """
 
 from __future__ import annotations
@@ -61,6 +63,11 @@ def main() -> None:
                     help='what Open WebUI now prepends, e.g. "llm7."')
     ap.add_argument("--apply", action="store_true", help="write the changes")
     args = ap.parse_args()
+    import endpoints
+    hub = endpoints.find_hub("openwebui")
+    if not hub:
+        sys.exit("no endpoint is an Open WebUI hub, and only Open WebUI prefixes connections:"
+                 " nothing to repoint")
 
     tags = json.loads(TAGS.read_text(encoding="utf-8"))
     served_now = set(tags)
@@ -109,6 +116,8 @@ def main() -> None:
         snap = json.loads(SNAPSHOT.read_text(encoding="utf-8"))
         moved = 0
         for _alias, old, new in changes:
+            # Keyed as the snapshot keys the hub's models: bare when it is the default.
+            old, new = endpoints.snapshot_key(old, hub), endpoints.snapshot_key(new, hub)
             if old in snap.get("last_seen", {}):
                 snap["last_seen"][new] = snap["last_seen"].pop(old)
                 moved += 1

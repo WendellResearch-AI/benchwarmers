@@ -182,12 +182,11 @@ def registered() -> dict[str, str]:
 
 
 def tag_for(llm_id: str) -> str:
-    """The Open WebUI connection a model arrives through, by its llm alias."""
-    tags = load_json(DATA / "config" / "provider-tags.json")
-    for model_name, alias in registered().items():
-        if alias == llm_id:
-            return tags.get(model_name, "")
-    return tags.get(llm_id, "")
+    """The connection a model arrives through, by its llm alias (route.full_tag_of:
+    its Open WebUI tag, else its endpoint); "" when unknown."""
+    import route
+    tag = route.full_tag_of(llm_id)
+    return "" if tag == "?" else tag
 
 
 RUN_LABELS = {"availability": "Availability", "deprecations": "Deprecations",
@@ -744,7 +743,7 @@ def onboard_candidates() -> dict:
         if isinstance(live, Exception):
             errors.append(f"cannot reach {name}: {live}")
             continue
-        default = name == endpoints.default()
+        owui, whole = endpoints.hub(name) == "openwebui", endpoints.recorded_whole(name)
         for served, entry in sorted(live.items()):
             key = endpoints.snapshot_key(served, name)
             if key in taken:
@@ -753,9 +752,11 @@ def onboard_candidates() -> dict:
             # endpoint is its own group.
             group = (tags.get(served, "").strip("?").split("/")[0] or (
                 "local" if entry.get("connection_type") == "local" else "unknown connection")
-            ) if default else f"{name} (direct)"
+            ) if owui else f"{name} (direct)"
+            # New since the daily check, where it records the whole list; on an
+            # aggregator that records only registered models, everything would be.
             row = {"served": served, "endpoint": name, "key": key, "group": group,
-                   "new": default and served not in first_seen}
+                   "new": whole and served not in first_seen}
             (gone if key in dismissed else open_).append(row)
     if not open_ and not gone and errors:
         return {"ok": False, "errors": errors}
@@ -783,10 +784,12 @@ def endpoint_list() -> dict:
     counts: dict[str, int] = {}
     for d in model_directory().values():               # decision models too: removing takes them as well
         counts[d["endpoint"]] = counts.get(d["endpoint"], 0) + 1
+    data = endpoints.load()
     rows = [{"name": n, "base": e["base"], "default": n == endpoints.default(),
+             "kind": endpoints.kind(n, data), "hub": endpoints.hub(n, data),
              "key_set": bool(endpoints.key(n)), "models": counts.get(n, 0),
              "connect": connect.standing(e.get("connect"))}
-            for n, e in endpoints.load().items()]
+            for n, e in data.items()]
     return {"ok": True, "errors": [], "endpoints": rows}
 
 
@@ -799,19 +802,28 @@ def free_name(stem: str) -> str:
 
 
 def save_endpoint(name: str, base: str, secret: str, who: str = "ui", extra: dict | None = None,
-                  new: bool = False) -> dict:
+                  new: bool = False, kind: str = "", hub: str = "") -> dict:
     """Add an endpoint, or change one's key. Tested before anything is saved.
 
     The key goes where `llm keys set` puts it (the CLI's own keys.json), never
     into this repository, the change log or a response. It is sent to the base
     URL typed here, which is the point: that is the endpoint being added.
     `extra` is fields from Connect (metrics/connect.py): its `connect` record,
-    `api`, `models_url`, and headers, which only a new endpoint takes. `new`
-    (the Add form) refuses a name in use: Change key is how one is edited.
+    its `kind`, `api`, `models_url`, and headers, which only a new endpoint
+    takes. `new` (the Add form) refuses a name in use: Change key is how one
+    is edited. `kind` (endpoints.KINDS), and `hub` (endpoints.HUBS) for a hub,
+    say what it is; a new endpoint is written with a kind (a provider unless
+    told), so nothing added here is left to endpoints.kind's inference. Left
+    out, an existing endpoint's kind stays as it was.
     """
     name, base, secret = (name or "").strip().lower(), (base or "").strip().rstrip("/"), (secret or "").strip()
+    kind, hub = (kind or "").strip(), (hub or "").strip()
     data = endpoints.load()
     errors = []
+    if kind and kind not in endpoints.KINDS:
+        errors.append(f"kind: one of {', '.join(endpoints.KINDS)}")
+    elif kind == "hub" and hub not in endpoints.HUBS:
+        errors.append(f"hub: which hub it is, one of {', '.join(endpoints.HUBS)}")
     if not endpoints.NAME.match(name):
         errors.append("name: 2-32 lower-case letters, digits or '-', e.g. openrouter")
     elif new and name in data:
@@ -825,7 +837,7 @@ def save_endpoint(name: str, base: str, secret: str, who: str = "ui", extra: dic
                       " a new URL would strand them. Add it under a new name instead")
     if errors:
         return {"ok": False, "errors": errors}
-    entry = dict(data.get(name) or {"key": name})
+    entry = dict(data.get(name) or {"key": name, "kind": "provider"})
     extra = dict(extra or {})
     if entry.get("headers"):
         extra.pop("headers", None)                 # never rewrite an endpoint's own attribution headers
@@ -834,6 +846,9 @@ def save_endpoint(name: str, base: str, secret: str, who: str = "ui", extra: dic
         # with its stale refresh token and overwrite the typed key.
         entry.pop("connect", None)
     entry.update(extra, base=base)
+    if kind:
+        entry.pop("hub", None)
+        entry.update(kind=kind, **({"hub": hub} if kind == "hub" else {}))
     secret = secret or endpoints.keys().get(entry["key"], "")
     listing = entry.get("models_url") or base + "/models"
     import urllib.error
@@ -1341,7 +1356,7 @@ def discover_add(connection: str, model: str, who: str = "ui") -> dict:
         return {"ok": False, "errors": [f"Open WebUI refused: {type(exc).__name__}: {exc}"]}
     _log_change(datetime.datetime.now().astimezone().isoformat(timespec="seconds"), who, "",
                 "openwebui-add", None, f"{served} on {connection}")
-    started = start_onboard(served, owui.ENDPOINT, who)
+    started = start_onboard(served, owui.endpoint(), who)
     return {**started, "served": served, "steps": steps,
             "errors": started["errors"] + ([] if started["ok"] else
                                           [f"Open WebUI now has {served}; onboard it from the Onboard dialog"])}
@@ -1401,6 +1416,8 @@ def model_status() -> dict[str, tuple[str, str, str]]:
     for row in perf_rows():
         latest[row["model"]] = row
     out = {alias: ("retired", "", r.get("why", "")) for alias, r in retired().items()}
+    # A bare snapshot key is a model on the default endpoint.
+    where = "Open WebUI" if endpoints.hub(endpoints.default()) == "openwebui" else endpoints.default()
     for served, alias in registered().items():
         row = latest.get(alias)
         if alias in pending:
@@ -1408,7 +1425,7 @@ def model_status() -> dict[str, tuple[str, str, str]]:
             out[alias] = (f"retiring in {days.group(1)}d" if days else "retiring",
                           "err", pending[alias].get("action", ""))
         elif served in missing:
-            out[alias] = ("not served", "err", f"missing from Open WebUI since {missing[served]}")
+            out[alias] = ("not served", "err", f"missing from {where} since {missing[served]}")
         elif row is None:
             out[alias] = ("untested", "", "no probe yet")
         elif int(row.get("answered") or 0) > 0:
@@ -1892,7 +1909,7 @@ def suite_card() -> str:
       <dt>timeout / refused / error</dt><dd>Not a score. The model did not
         answer — a filter, an overloaded service and a slow model are three
         different facts and are never merged.</dd>
-      <dt>(tag)</dt><dd>The Open WebUI connection it arrives through. Models
+      <dt>(tag)</dt><dd>The connection it arrives through: its Open WebUI tag, or its endpoint. Models
         sharing one share its rate limit.</dd>
     </dl>"""
     return chart_card("Our code", "Every task on our own code, one square each: green found everything,"
@@ -2519,7 +2536,7 @@ def endpoints_page() -> str:
             else:
                 gone = day and day != checked
                 cells = (f"<td class='muted'>not on the bench</td>"
-                         f"<td>{esc((tags.get(served, '').split('/')[0] if e['default'] else e['name']) or '—')}</td>"
+                         f"<td>{esc((tags.get(served, '').split('/')[0] if e['hub'] == 'openwebui' else e['name']) or '—')}</td>"
                          f"<td data-sort='{2 if gone else 1}'>"
                          + (chip(f"last seen {day}", "warn") if gone else chip("served", "")) + "</td>")
             rows.append(f"<tr><td class='mono'>{esc(served)}</td>{cells}</tr>")
@@ -2794,8 +2811,9 @@ def editor() -> str:
         # endpoints
         "<dialog id='endpoints-dialog' aria-labelledby='e-title'>"
         "<h2 id='e-title'>Endpoints</h2>"
-        "<p class='served'>Where models are served from. Open WebUI is the default; any"
-        " OpenAI-compatible API can be added (it must list <code>/models</code>). Prompts"
+        "<p class='served'>Where models are served from: providers, aggregators, a hub such as"
+        " Open WebUI, or a local runtime. Any OpenAI-compatible API can be added (it must list"
+        " <code>/models</code>). Prompts"
         " to a model go straight to its endpoint, so add only providers you are content"
         " to send private source to.</p>"
         "<div id='e-list'></div>"
@@ -2825,6 +2843,14 @@ def editor() -> str:
         "<input id='e-name' spellcheck='false' autocomplete='off' placeholder='e.g. openrouter'>"
         "<label class='field' for='e-base'>Base URL</label>"
         "<input id='e-base' spellcheck='false' autocomplete='off' placeholder='e.g. https://openrouter.ai/api/v1'>"
+        # What it is (endpoints.KINDS): a hub runs that hub's own steps (Open WebUI: owui.py,
+        # provider tags); the rest are called directly. Asked when adding only.
+        "<div id='e-kinds'><label class='field' for='e-kind'>Kind</label><select id='e-kind'>"
+        + "".join(f"<option value='{k}'>{k.capitalize()} ({esc(ex)})</option>" for k, ex in endpoints.KINDS.items())
+        + "</select><div id='e-hub-row' hidden><label class='field' for='e-hub'>Which hub</label><select id='e-hub'>"
+        + "".join(f"<option value='{k}'>{esc(label)}</option>" for k, label in endpoints.HUBS.items())
+        + "</select><p class='rules'>Open WebUI's base is its <code>/api</code>, e.g."
+        " <code>http://localhost:3000/api</code>, with an admin's API key.</p></div></div>"
         "<label class='field' for='e-key'>API key</label>"
         "<input id='e-key' type='password' autocomplete='off' placeholder='leave blank to keep the current one'>"
         "<p class='rules'>Stored where <code>llm keys set</code> stores it, never in the"
@@ -3028,7 +3054,8 @@ class Handler(gateway.Handler):
                                                  bool(p.get("undo"))),
                "/api/endpoint": lambda p: save_endpoint(str(p.get("name", "")),
                                                         str(p.get("base", "")),
-                                                        str(p.get("key", "")), new=bool(p.get("new"))),
+                                                        str(p.get("key", "")), new=bool(p.get("new")),
+                                                        kind=str(p.get("kind") or ""), hub=str(p.get("hub") or "")),
                "/api/endpoint/remove": lambda p: remove_endpoint(str(p.get("name", "")),
                                                                  with_models=bool(p.get("with_models"))),
                "/api/connect/start": lambda p: connect_start(str(p.get("provider") or ""),
