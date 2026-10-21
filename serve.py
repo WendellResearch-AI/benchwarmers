@@ -802,7 +802,7 @@ def free_name(stem: str) -> str:
 
 
 def save_endpoint(name: str, base: str, secret: str, who: str = "ui", extra: dict | None = None,
-                  new: bool = False, kind: str = "", hub: str = "") -> dict:
+                  new: bool = False, kind: str = "", hub: str = "", admin: str = "") -> dict:
     """Add an endpoint, or change one's key. Tested before anything is saved.
 
     The key goes where `llm keys set` puts it (the CLI's own keys.json), never
@@ -814,10 +814,13 @@ def save_endpoint(name: str, base: str, secret: str, who: str = "ui", extra: dic
     is edited. `kind` (endpoints.KINDS), and `hub` (endpoints.HUBS) for a hub,
     say what it is; a new endpoint is written with a kind (a provider unless
     told), so nothing added here is left to endpoints.kind's inference. Left
-    out, an existing endpoint's kind stays as it was.
+    out, an existing endpoint's kind stays as it was. `admin`, a hub's admin
+    key where it is not the API key (LiteLLM's master key, CLI Proxy API's
+    management key), is kept beside it under endpoints.admin_name; nothing
+    tests it here, since a refused CLI Proxy API key counts toward a ban.
     """
     name, base, secret = (name or "").strip().lower(), (base or "").strip().rstrip("/"), (secret or "").strip()
-    kind, hub = (kind or "").strip(), (hub or "").strip()
+    kind, hub, admin = (kind or "").strip(), (hub or "").strip(), (admin or "").strip()
     data = endpoints.load()
     errors = []
     if kind and kind not in endpoints.KINDS:
@@ -875,6 +878,9 @@ def save_endpoint(name: str, base: str, secret: str, who: str = "ui", extra: dic
             note = " The key was checked: the list needs it."
     if secret and secret != endpoints.keys().get(entry["key"]):
         endpoints.set_key(entry["key"], secret)
+    if admin and endpoints.kind(name, {name: entry}) == "hub":
+        endpoints.set_key(endpoints.admin_name(entry), admin)
+        note += f" The admin key is kept as {endpoints.admin_name(entry)}."
     data = dict(data)
     data[name] = entry
     _write_atomic(endpoints.FILE, _dump(data))
@@ -1341,28 +1347,35 @@ def start_onboard(served: str, endpoint: str = "", who: str = "ui") -> dict:
     return {"ok": True, "errors": [], "log": log.name}
 
 
-def discover_add(connection: str, model: str, who: str = "ui") -> dict:
-    """From the Discover tab: put a model into Open WebUI as it is otherwise done by hand
-    (metrics/owui.py: the connection's Model IDs, a public record with the
-    connection's tag and logo), then the normal onboarding. Only for a
-    provider Open WebUI is already connected to."""
+def discover_add(connection: str, model: str, who: str = "ui", endpoint: str = "") -> dict:
+    """From the Discover tab: put a model into a hub as it is otherwise done by
+    hand, through the adapter of the hub `endpoint` is (endpoints.adapter:
+    Open WebUI's connection Model IDs and a public, tagged record with a logo;
+    a LiteLLM deployment; a CLI Proxy API provider's models list), then the
+    normal onboarding. Only for a connection the hub already has. No endpoint
+    means Open WebUI's, as before there were other hubs."""
     if not re.fullmatch(r"[\w./:@+-]{1,200}", model or ""):
         return {"ok": False, "errors": ["the model id is the provider's id, e.g. vendor/model:free"]}
     if not re.fullmatch(r"[\w.-]{1,80}", connection or ""):
         return {"ok": False, "errors": ["choose a connection"]}
-    import owui
+    if endpoint and endpoint not in endpoints.load():
+        return {"ok": False, "errors": [f"no endpoint {endpoint!r}"]}
+    which = endpoints.hub(endpoint) if endpoint else "openwebui"
+    if not which:
+        return {"ok": False, "errors": [f"{endpoint} is not a hub; add the model on it from the Onboard dialog"]}
+    hub, label = endpoints.adapter(which), endpoints.HUBS[which]
     try:
-        served, steps = owui.add(connection, model)
+        served, steps = hub.add(connection, model)
     except ValueError as exc:
         return {"ok": False, "errors": [str(exc)]}
     except Exception as exc:                           # noqa: BLE001
-        return {"ok": False, "errors": [f"Open WebUI refused: {type(exc).__name__}: {exc}"]}
+        return {"ok": False, "errors": [f"{label} refused: {type(exc).__name__}: {exc}"]}
     _log_change(datetime.datetime.now().astimezone().isoformat(timespec="seconds"), who, "",
-                "openwebui-add", None, f"{served} on {connection}")
-    started = start_onboard(served, owui.endpoint(), who)
+                f"{which}-add", None, f"{served} on {connection}")
+    started = start_onboard(served, hub.endpoint(), who)
     return {**started, "served": served, "steps": steps,
             "errors": started["errors"] + ([] if started["ok"] else
-                                          [f"Open WebUI now has {served}; onboard it from the Onboard dialog"])}
+                                          [f"{label} now has {served}; onboard it from the Onboard dialog"])}
 
 
 def onboard_status(log_name: str) -> dict:
@@ -2205,16 +2218,19 @@ def _discover_rows() -> list[dict]:
 def discover_model(provider: str, model: str) -> dict:
     """One Discover row for its popup, with every route this install has to
     the same model: through each provider that offers it (`norm`, as
-    discover.py matches them), via Open WebUI and via an endpoint of its own."""
+    discover.py matches them), via Open WebUI and via an endpoint of its own,
+    and through any LiteLLM or CLI Proxy API hub, which is asked here."""
     rows = _discover_rows()
     row = next((r for r in rows if r["provider"] == provider and r["model"] == model), None)
     if row is None:
         return {"ok": False, "errors": [f"Discover has no {model!r} from {provider!r}; reload the page"]}
     same = [row] + [r for r in rows if r["norm"] == row["norm"] and r is not row]
+    import discover
+    hubs, errors = discover.hub_routes(same)
     routes = [{**x, "provider": r["provider_name"], "model": r["model"], "free": r["free"],
                "cost": r.get("cost"), "limits": r.get("limits")}
-              for r in same for x in r["routes"]]
-    return {"ok": True, "errors": [], "model": row, "routes": routes}
+              for r, more in zip(same, hubs) for x in r["routes"] + more]
+    return {"ok": True, "errors": errors, "model": row, "routes": routes}
 
 
 def discover_card() -> str:
@@ -2280,6 +2296,8 @@ def discover_card() -> str:
         adds the model to that connection's Model IDs (when it lists them), creates its model
         record public, tagged like the connection's other models and with their logo, then runs
         the bench's onboarding (register, 4-call probe, suite), so it is in the chats too.
+        <em>Via LiteLLM</em> or <em>CLI Proxy API</em> adds it to that hub's connection (one more
+        deployment, or the provider's models list); those hubs are asked when the popup opens.
         <em>Direct</em> onboards it on the provider's own endpoint: bench only. A new provider
         needs a connection or an endpoint first; hover its <em>easy to add</em> chip for the
         base URL.</dd>
@@ -2861,12 +2879,20 @@ def editor() -> str:
         + "</select><div id='e-hub-row' hidden><label class='field' for='e-hub'>Which hub</label><select id='e-hub'>"
         + "".join(f"<option value='{k}'>{esc(label)}</option>" for k, label in endpoints.HUBS.items())
         + "</select><p class='rules'>Open WebUI's base is its <code>/api</code>, e.g."
-        " <code>http://localhost:3000/api</code>, with an admin's API key.</p></div></div>"
+        " <code>http://localhost:3000/api</code>, with an admin's API key. LiteLLM's and CLI Proxy"
+        " API's are their <code>/v1</code>, e.g. <code>http://localhost:4000/v1</code> and"
+        " <code>http://localhost:8317/v1</code>.</p></div></div>"
         "<label class='field' for='e-key'>API key</label>"
         "<input id='e-key' type='password' autocomplete='off' placeholder='leave blank to keep the current one'>"
         "<p class='rules'>Stored where <code>llm keys set</code> stores it, never in the"
         " repository and never shown again. Saved only once <code>/models</code> answers;"
         " where that list is public, the key is proven by the first real call.</p>"
+        # A hub's admin key, where it is not the API key (endpoints.admin_key).
+        "<div id='e-admin-row' hidden><label class='field' for='e-admin'>Admin key</label>"
+        "<input id='e-admin' type='password' autocomplete='off' placeholder='only where it is not the API key'>"
+        "<p class='rules'>What adds a model to the hub: LiteLLM's master key (blank if the API key is it),"
+        " CLI Proxy API's management key (always its own). Open WebUI needs none beyond an admin's"
+        " API key. Kept like the API key; blank keeps the current one.</p></div>"
         "<div class='actions'><button class='btn' id='e-cancel'>Cancel</button>"
         "<button class='btn primary' id='e-save'>Test and save</button></div>"
         "</div></div>"
@@ -3058,7 +3084,8 @@ class Handler(gateway.Handler):
                "/api/restore": lambda p: restore_model(str(p.get("alias", ""))),
                "/api/retry": lambda p: retry_model(str(p.get("alias") or "")),
                "/api/discover/add": lambda p: discover_add(str(p.get("connection") or ""),
-                                                           str(p.get("model") or "")),
+                                                           str(p.get("model") or ""),
+                                                           endpoint=str(p.get("endpoint") or "")),
                "/api/onboard": lambda p: start_onboard(str(p.get("served", "")),
                                                        str(p.get("endpoint", ""))),
                "/api/dismiss": lambda p: dismiss(str(p.get("served", "")),
@@ -3066,7 +3093,8 @@ class Handler(gateway.Handler):
                "/api/endpoint": lambda p: save_endpoint(str(p.get("name", "")),
                                                         str(p.get("base", "")),
                                                         str(p.get("key", "")), new=bool(p.get("new")),
-                                                        kind=str(p.get("kind") or ""), hub=str(p.get("hub") or "")),
+                                                        kind=str(p.get("kind") or ""), hub=str(p.get("hub") or ""),
+                                                        admin=str(p.get("admin") or "")),
                "/api/endpoint/remove": lambda p: remove_endpoint(str(p.get("name", "")),
                                                                  with_models=bool(p.get("with_models"))),
                "/api/connect/start": lambda p: connect_start(str(p.get("provider") or ""),

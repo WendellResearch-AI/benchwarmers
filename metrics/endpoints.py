@@ -39,6 +39,14 @@ the passthrough hints) only for a hub that is Open WebUI, and the daily served
 check records a whole list only where the user chose what is in it. Ask
 `kind()` and `hub()`, never the entry: an entry written before `kind` existed
 is inferred (see `kind`).
+
+A hub adds a model through its adapter (`adapter()`: owui.py, litellm_hub.py,
+cliproxy.py), which calls the hub's admin API with the endpoint's ADMIN key:
+`admin_key` names it, by default `<key>-admin` (so the environment's
+BENCHWARMERS_KEY_<KEY>_ADMIN), the value kept like any other key. Open WebUI
+and LiteLLM fall back to the endpoint's own key, which is an admin's (Open
+WebUI) or often the master key (LiteLLM); CLI Proxy API's management key is
+never one of its API keys, so it has no fallback.
 """
 
 from __future__ import annotations
@@ -73,8 +81,31 @@ LLM_DIR = llm_dir()
 NAME = re.compile(r"^[a-z0-9][a-z0-9-]{1,31}$")
 # kind -> examples, as the Add form shows them
 KINDS = {"provider": "Groq, Mistral, NVIDIA", "aggregator": "OpenRouter, LLM7, NanoGPT",
-         "hub": "Open WebUI", "local": "Ollama, LM Studio, vLLM"}
-HUBS = {"openwebui": "Open WebUI"}               # LiteLLM and CLI Proxy API join with their adapters (Phase 5)
+         "hub": "Open WebUI, LiteLLM, CLI Proxy API", "local": "Ollama, LM Studio, vLLM"}
+HUBS = {"openwebui": "Open WebUI", "litellm": "LiteLLM", "cliproxy": "CLI Proxy API"}
+# hub -> its adapter module in metrics/; each exposes SUPPORTS, CHECKED,
+# endpoint(), plan(connection, model) and add(connection, model), and the two
+# whose connections only the hub knows also upstreams(), for Discover.
+ADAPTERS = {"openwebui": "owui", "litellm": "litellm_hub", "cliproxy": "cliproxy"}
+
+
+def adapter(which: str):
+    """The module that adds a model to a `which` hub. Imported here, on call:
+    every adapter imports this module."""
+    import importlib
+    return importlib.import_module(ADAPTERS[which])
+
+
+def version_note(which: str, version: str, checked: tuple[str, ...]) -> str:
+    """"" when a hub runs a release its adapter was checked against ("1.106"
+    covers 1.106.x), else a sentence saying so. Advice, not a refusal: these
+    admin APIs rarely change between releases, and the plan says what is sent."""
+    v = (version or "").strip().lstrip("v")
+    if any(v == c or v.startswith(c + ".") for c in checked):
+        return ""
+    label, known = HUBS.get(which, which), ", ".join(checked)
+    return (f"{label} {v} is not a release this adapter was checked against ({known})" if v
+            else f"{label} did not say which release it is; this adapter was checked against {known}")
 
 
 def load() -> dict[str, dict]:
@@ -196,6 +227,17 @@ def keys() -> dict:
 
 def key(name: str | None = None) -> str:
     return keys().get(load()[name or default()].get("key", ""), "")
+
+
+def admin_name(entry: dict) -> str:
+    """The name a hub's admin key is kept under (see the module docstring)."""
+    return entry.get("admin_key") or f"{entry.get('key', '')}-admin"
+
+
+def admin_key(name: str, fallback: bool = True) -> str:
+    """A hub's admin key, else (`fallback`) the endpoint's own key."""
+    entry, have = load()[name], keys()
+    return have.get(admin_name(entry), "") or (have.get(entry.get("key", ""), "") if fallback else "")
 
 
 def set_key(key_name: str, value: str) -> None:
@@ -366,6 +408,13 @@ def _selftest() -> None:
             assert got == [("hub", "openwebui"), ("provider", ""), ("hub", "litellm"), ("local", ""),
                            ("aggregator", "")], got
             assert find_hub("openwebui") == "owui" and find_hub("cliproxy") is None
+            # A hub's admin key: <key>-admin, else its own key unless the hub has none to fall back on.
+            set_key("c", "api")
+            assert admin_key("lite") == "api" and admin_key("lite", fallback=False) == ""
+            set_key("c-admin", "master")
+            assert admin_key("lite") == "master" == admin_key("lite", fallback=False)
+            assert version_note("litellm", "v1.106.3", ("1.106",)) == ""
+            assert "1.107.0" in version_note("litellm", "1.107.0", ("1.106",)) and version_note("litellm", "", ("1",))
             assert not recorded_whole("or") and not recorded_whole("pulled")    # an aggregator default; not the default
             FILE.write_text(json.dumps({**load(), "or": {"base": "https://x.example/api/v1", "key": "b"},
                                         "pulled": {"base": "http://localhost:11434/v1", "default": True}}),

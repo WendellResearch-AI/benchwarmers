@@ -48,6 +48,7 @@ CHECKS = [
     ("scripts/notice.py", ["--check"], False),
     ("scripts/check_themes.py", [], False),
     ("scripts/test_owui.py", [], False),
+    ("scripts/test_hubs.py", [], False),
     ("scripts/test_verdict.py", [], False),
     ("scripts/test_merged.py", [], False),
     ("scripts/test_serve_edit.py", [], False),
