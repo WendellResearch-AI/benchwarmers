@@ -1053,7 +1053,7 @@
     var ink = tok('--ink', '#24331f'), good = tok('--ok', '#327a16'), err = tok('--err', '#a12b2b'),
         warn = tok('--warn', '#7a4d00'),
         signal = tok('--signal', '#fae66c'), sky = tok('--sky', '#69bdeb'), muted = tok('--muted', '#6b685a'),
-        line = tok('--line', '#e4dfd2');
+        line = tok('--line', '#e4dfd2'), halo = tok('--paper-2', '#ffffff');
     var style = {background: 'transparent', color: ink, fontSize: '13px', overflow: 'visible'};
     // Tabs other than the open one have no width yet, so size from the column
     // the pages share. It was the whole page, which made every chart wider than
@@ -1105,9 +1105,13 @@
         x: {label: 'Finds real bugs in our code →', domain: [x0, 1], tickFormat: '.0%'},
         y: {label: '↑ Makes fewer things up', domain: [0, worst], reverse: true, tickFormat: '.0%'},
         marks: [
-          Plot.rect([{x1: x0 + (1 - x0) / 2, x2: 1, y1: 0, y2: worst / 4}], {x1: 'x1', x2: 'x2', y1: 'y1', y2: 'y2', fill: good, fillOpacity: 0.08}),
+          // The zone a reviewer should be in: outlined, so it reads on a dark ground too.
+          Plot.rect([{x1: x0 + (1 - x0) / 2, x2: 1, y1: 0, y2: worst / 4}], {x1: 'x1', x2: 'x2', y1: 'y1', y2: 'y2',
+            fill: good, fillOpacity: 0.12, stroke: good, strokeOpacity: 0.5, strokeDasharray: '4 3'}),
           Plot.dot(C.overview, {x: 'recall', y: 'wrong', r: 6, fill: good, stroke: ink, strokeWidth: 0.5}),
-          Plot.text(labels, {x: 'recall', y: 'ty', text: 'model', fontSize: 11, fill: ink}),
+          // A halo in the panel's colour keeps each name legible over dots, grid lines and the zone.
+          Plot.text(labels, {x: 'recall', y: 'ty', text: 'model', fontSize: 11, fill: ink,
+                             stroke: halo, strokeWidth: 3.5, strokeOpacity: 0.9, paintOrder: 'stroke'}),
           Plot.tip(C.overview, Plot.pointer({x: 'recall', y: 'wrong',
             title: function (d) { return d.model + '\nfinds ' + d.found + ' real findings\nconfidently wrong in ' + d.wrongN + ' answers'; }}))
         ]

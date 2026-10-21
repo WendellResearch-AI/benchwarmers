@@ -3,7 +3,8 @@
    - no pure black: the page is a soft charcoal;
    - depth by lighter surfaces, not lines: panels sit a clear step above the
      page, chips and bands a step above those;
-   - text about 91% white, not pure white; secondary text about 64%;
+   - text about 91% white, not pure white; secondary text about 74% (64%,
+     the usual figure, read as too grey here);
    - greys nearly neutral (a strong tint reads as muddy), the colour kept for
      the accents, which stay vivid but not neon. */
 :root {
@@ -16,7 +17,7 @@
   --band: #2e332f;
   --signal: #e0c050;
   --link: #7cc0f7;
-  --muted: #a3aaa0;
+  --muted: #bcc3b9;
   --muted-dark: #727a70;
   --line: #363c38;
   --line-dark: #2b302c;
