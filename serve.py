@@ -2089,7 +2089,7 @@ def gateway_card(limit: int = 30) -> str:
     except Exception:                                  # noqa: BLE001
         judged = {}
     owed = seats_total = 0
-    body = ["<table><thead><tr>", th("When"), th("Collection"), th("Explorer shape"),
+    body = ["<table><thead><tr>", th("When"), th("Collection"), th("Asked by"), th("Explorer shape"),
             th("Seats"), th("Owed", True), "</tr></thead><tbody>"]
     for r in records:
         chips, row_owed = [], 0
@@ -2106,15 +2106,19 @@ def gateway_card(limit: int = 30) -> str:
             # A button: it opens the answer with the verdict form (bench.js).
             chips.append(f"<button type='button' class='chip {css} seat' data-call='{esc(seat.get('call', ''))}'"
                          f" title='{esc(why)}'>{esc(seat.get('alias', ''))}{mark}</button>")
+        # Members an image could not be sent to: not asked, so no call and no verdict.
+        chips += [f"<span class='chip muted' title='{esc('not asked: ' + str(k.get('why', '')))}'>"
+                  f"{esc(k.get('alias', ''))} –</span>" for k in r.get("skipped", []) if isinstance(k, dict)]
         owed += row_owed
         body.append(
             f"<tr><td class='mono' data-sort='{esc(r.get('at', ''))}'>{esc(r.get('at', '')[:16].replace('T', ' '))}</td>"
             f"<td class='mono'>{esc(r.get('model', ''))}</td>"
+            f"<td class='mono'>{esc(r.get('key') or '—')}</td>"
             f"<td title='{esc(r.get('shape_by', ''))}'>{esc(r.get('shape', ''))}</td>"
             f"<td>{' '.join(chips)}</td>"
             f"<td class='num{' muted' if not row_owed else ''}'>{row_owed}</td></tr>")
     if not records:
-        body.append("<tr><td colspan='5' class='muted'>No gateway requests yet. Run"
+        body.append("<tr><td colspan='6' class='muted'>No gateway requests yet. Run"
                     " <code>python gateway.py</code> and call a collection.</td></tr>")
     body.append("</tbody></table>")
     key = """<dl>
@@ -2122,7 +2126,10 @@ def gateway_card(limit: int = 30) -> str:
         explorers, then the merger if the reply was merged. Green answered, amber came back empty, red failed. ✓ judged
         useful, ✗ judged not useful; no mark means the verdict is still owed.
         Hover a chip for its seat, timing and call id; click it to read the answer
-        and record a verdict.</dd>
+        and record a verdict. A grey chip with a dash is a member not asked because the
+        request carried images it cannot take; hover it for why.</dd>
+      <dt>Asked by</dt><dd>The gateway key that made the request, or <code>local</code>
+        when no key is asked for.</dd>
       <dt>Owed</dt><dd>Seats without a verdict. Each is recorded as an unjudged
         offload, so rotation still counts it; a verdict tells the router whether
         it helped. The orchestrator that called can also record one:
@@ -2405,16 +2412,27 @@ def save_theme(theme: str) -> dict:
     return {"ok": True, "errors": [], "theme": theme}
 
 
-def make_gateway_key(name: str, who: str = "ui") -> dict:
+def make_gateway_key(name: str, collections=None, rpm=None, who: str = "ui") -> dict:
     """A named gateway key, in this response only: the data folder keeps its
-    hash (metrics/guard.py), the change log its name."""
+    hash (metrics/guard.py), the change log its name. `collections`: the ones
+    it may call, none for all; `rpm`: its cap a minute, empty for none."""
     name = name.strip().lower()
+    collections = collections or []
+    if not (isinstance(collections, list) and all(isinstance(c, str) for c in collections)):
+        return {"ok": False, "errors": ["collections must be a list of collection names"]}
+    unknown = [c for c in collections if c not in bench_collections.load()]
+    if unknown:
+        return {"ok": False, "errors": [f"no collection named {', '.join(unknown)}"]}
+    if rpm in ("", None):
+        rpm = None
+    elif isinstance(rpm, str) and rpm.strip().isdigit():
+        rpm = int(rpm)
     try:
-        value = guard.make_key(name)
+        value = guard.make_key(name, collections, rpm)
     except ValueError as exc:
         return {"ok": False, "errors": [str(exc)]}
     _log_change(datetime.datetime.now().astimezone().isoformat(timespec="seconds"), who, "",
-                "gateway key", None, name)
+                "gateway key", None, {"name": name, "collections": sorted(set(collections)), "rpm": rpm})
     return {"ok": True, "errors": [], "name": name, "key": value}
 
 
@@ -2427,20 +2445,38 @@ def revoke_gateway_key(name: str, who: str = "ui") -> dict:
 
 
 def gateway_keys_card() -> str:
-    rows = "".join(f"<tr><td class='mono'>{esc(n)}</td><td>{esc(str(e.get('created', ''))[:16].replace('T', ' '))}</td>"
+    def when(stamp) -> str:
+        return esc(str(stamp or "")[:16].replace("T", " ")) or "<span class='muted'>never</span>"
+    rows = "".join(f"<tr><td class='mono'>{esc(n)} <span class='muted'>{guard.PREFIX}…{esc(e.get('hint', ''))}</span></td>"
+                   f"<td>{esc(', '.join(e.get('collections') or [])) or 'all'}</td>"
+                   f"<td class='num'>{esc(e.get('rpm') or '—')}</td>"
+                   f"<td>{when(e.get('created'))}</td><td>{when(e.get('last_used'))}</td>"
                    f"<td><button class='btn' data-revoke-key='{esc(n)}'>Revoke</button></td></tr>"
                    for n, e in sorted(guard.gateway_keys().items()) if isinstance(e, dict))
-    asked = ("An admin token is set, so every call to <code>/v1/…</code> and <code>/bench/verdict</code> needs one."
-             if guard.auth_on() else
-             "None is asked for yet: without an admin token (<code>BENCHWARMERS_ADMIN_TOKEN</code>) the gateway"
-             " serves this machine with no key, as before. Set one and every call needs a key.")
+    if guard.auth_on():
+        asked = "An admin token is set, so every call to <code>/v1/…</code> and <code>/bench/verdict</code> needs one."
+    elif guard.keys_required():
+        asked = ("<code>BENCHWARMERS_REQUIRE_KEYS</code> is set, so every call to the gateway needs one, on this"
+                 " machine too.")
+    else:
+        asked = ("None is asked for yet: without an admin token (<code>BENCHWARMERS_ADMIN_TOKEN</code>) the gateway"
+                 " serves this machine with no key, as before. Set one, or <code>BENCHWARMERS_REQUIRE_KEYS=1</code>"
+                 " to ask on this machine too, and every call needs a key.")
+    scopes = "".join(f"<label class='check'><input type='checkbox' name='k-scope' value='{esc(c)}'>"
+                     f" {bench_collections.PREFIX}{esc(c)}</label>" for c in sorted(bench_collections.load()))
     return ("<div class='panel form-panel'><h2>Gateway keys</h2><p class='muted'>For a chat UI, an agent or another"
             " machine, sent as <code>Authorization: Bearer &lt;key&gt;</code>. A key reaches the gateway only, never"
-            f" this dashboard; revoke it and it stops at once. {asked}</p>"
-            f"<table><thead><tr>{th('Name')}{th('Made')}<th></th></tr></thead>"
-            f"<tbody>{rows or '<tr><td colspan=3 class=muted>No keys yet.</td></tr>'}</tbody></table>"
+            " this dashboard; revoke it and it stops at once. Its name is on every call it makes (the Gateway"
+            f" card). {asked}</p>"
+            f"<table><thead><tr>{th('Name')}{th('May call')}{th('A minute', True)}{th('Made')}{th('Last used')}"
+            f"<th></th></tr></thead>"
+            f"<tbody>{rows or '<tr><td colspan=6 class=muted>No keys yet.</td></tr>'}</tbody></table>"
             "<label class='field' for='k-name'>Name for a new key</label>"
             "<input id='k-name' placeholder='e.g. open-webui' autocomplete='off'>"
+            "<fieldset><legend class='field'>Collections it may call (none ticked: all)</legend>"
+            f"{scopes or '<span class=muted>No collections yet.</span>'}</fieldset>"
+            "<label class='field' for='k-rpm'>Requests a minute (empty: no cap)</label>"
+            "<input id='k-rpm' type='number' min='1' max='10000' placeholder='no cap' autocomplete='off'>"
             "<div class='errors' id='k-errors' role='alert'></div>"
             "<div class='done' id='k-done' hidden><p>Copy it now: it is shown this once and kept only as a hash.</p>"
             "<input id='k-value' class='mono' readonly></div>"
@@ -3120,7 +3156,8 @@ class Handler(gateway.Handler):
                                                         p.get("false")),
                "/api/gateway-settings": lambda p: save_gateway_settings(
                    p.get("max_calls"), p.get("max_explorers")),
-               "/api/gateway-key": lambda p: make_gateway_key(str(p.get("name") or "")),
+               "/api/gateway-key": lambda p: make_gateway_key(str(p.get("name") or ""), p.get("collections"),
+                                                              p.get("rpm")),
                "/api/gateway-key/remove": lambda p: revoke_gateway_key(str(p.get("name") or "")),
                "/api/theme": lambda p: save_theme(str(p.get("theme") or ""))}
         # SAME ORIGIN ONLY. Any page open in the browser can POST a plain form
@@ -3190,7 +3227,7 @@ class Handler(gateway.Handler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _json(self, status: int, data: dict, cookie: str = "") -> None:
+    def _json(self, status: int, data: dict, cookie: str = "", headers: dict | None = None) -> None:
         body = json.dumps(data).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -3198,6 +3235,8 @@ class Handler(gateway.Handler):
         self.send_header("Cache-Control", "no-store")
         if cookie:
             self.send_header("Set-Cookie", cookie)
+        for k, v in (headers or {}).items():          # the gateway's WWW-Authenticate, Retry-After
+            self.send_header(k, v)
         self.end_headers()
         self.wfile.write(body)
 

@@ -48,13 +48,14 @@ def serve_on(handler) -> ThreadingHTTPServer:
     return server
 
 
-def call(port: int, path: str, body: dict | None = None, **headers) -> tuple[int, dict, str]:
+def call(port: int, path: str, body: dict | None = None, method: str | None = None,
+         **headers) -> tuple[int, dict, str]:
     """(status, headers, body text) for one request; HTTP errors are answers too."""
     headers = {"Host": f"127.0.0.1:{port}", **headers}
     data = None
     if body is not None:
         data, headers["Content-Type"] = json.dumps(body).encode(), "application/json"
-    req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", data, headers)
+    req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", data, headers, method=method)
     try:
         with OPENER.open(req, timeout=10) as r:
             return r.status, dict(r.headers), r.read().decode()
@@ -79,14 +80,20 @@ def main() -> int:
     dash, gw = serve_on(serve.Handler), serve_on(gateway.Handler)
     d, g = dash.server_port, gw.server_port
     saved = (guard.KEYS, serve.CHANGES_PATH, serve.PORT, gateway.bench_collections.FILE,
-             os.environ.pop("BENCHWARMERS_ADMIN_TOKEN", None), sys.stderr)
+             os.environ.pop("BENCHWARMERS_ADMIN_TOKEN", None), sys.stderr, gateway.run_collection,
+             os.environ.pop("BENCHWARMERS_REQUIRE_KEYS", None), os.environ.pop("BENCH_ALLOWED_ORIGINS", None))
     with tempfile.TemporaryDirectory() as tmp:
         t = pathlib.Path(tmp)
         try:
             guard.KEYS, serve.CHANGES_PATH, serve.PORT = t / "gateway-keys.json", t / "changes.jsonl", d
             gateway.bench_collections.FILE = t / "collections.json"
-            gateway.bench_collections.FILE.write_text(json.dumps({"core": {"members": [], "description": "x"}}),
+            gateway.bench_collections.FILE.write_text(json.dumps({"core": {"members": [], "description": "x"},
+                                                                  "vision": {"members": [], "description": "x"}}),
                                                       encoding="utf-8")
+            # The panel is test_merged's and test_vision's; here only who asked, and whether it ran.
+            ran = []
+            gateway.run_collection = lambda name, messages, nominated, reply, who: (
+                ran.append((name, who)) or "ok", {"seats": []})
 
             # NO TOKEN: everything as before -- no login, no key, any bearer ignored.
             assert call(d, "/api/stamp")[0] == 200
@@ -137,7 +144,8 @@ def main() -> int:
 
             # The gateway's routes, on both ports: the key, never the cookie.
             for port in (d, g):
-                assert call(port, "/v1/models")[0] == 401, port
+                status, headers, _ = call(port, "/v1/models")
+                assert status == 401 and headers["WWW-Authenticate"].startswith("Bearer"), (port, headers)
                 assert call(port, "/v1/models", **jar)[0] == 401, port
                 assert call(port, "/v1/models", Authorization="Bearer sk-dummy")[0] == 401, port
                 status, _, text = call(port, "/v1/models", **bearer)
@@ -157,20 +165,85 @@ def main() -> int:
             call(d, "/api/stamp", **jar)
             call(d, "/connect/callback?state=nope&code=secret-code")
             call(d, "/connect/callback/sid-in-path?code=secret-code")
-            sys.stderr = saved[-1]
+            sys.stderr = saved[5]
             lines = log.getvalue()
             assert "GET /v1/models 200 chat-ui" in lines and "GET /api/stamp 200 admin" in lines, lines
             assert key not in lines and "secret-code" not in lines and "sid-in-path" not in lines, lines
+
+            # A key limited to collections and a rate, made on Settings: it sees and calls only
+            # those, its name rides on the call, and past its cap it waits.
+            status, _, text = call(d, "/api/gateway-key", {"name": "estate", "collections": ["vision"], "rpm": "1"},
+                                   **jar)
+            assert status == 200, text
+            estate = {"Authorization": f"Bearer {json.loads(text)['key']}"}
+            assert call(d, "/api/gateway-key", {"name": "other", "collections": ["nope"]}, **jar)[0] == 400
+            assert call(d, "/api/gateway-key", {"name": "other", "rpm": "lots"}, **jar)[0] == 400
+            status, _, text = call(g, "/v1/models", **estate)
+            assert [m["id"] for m in json.loads(text)["data"]] == ["bench/vision", "bench/vision:merged"], text
+            ask = {"messages": [{"role": "user", "content": "hi"}]}
+            status, _, text = call(g, "/v1/chat/completions", {"model": "bench/core", **ask}, **estate)
+            assert status == 403 and "may call bench/vision" in text, text
+            assert call(g, "/v1/chat/completions", {"model": "bench/vision", **ask}, **estate)[0] == 200
+            assert call(g, "/v1/chat/completions", {"model": "bench/core", **ask}, **bearer)[0] == 200
+            assert ran == [("vision", "estate"), ("core", "chat-ui")], ran
+            status, headers, _ = call(g, "/v1/chat/completions", {"model": "bench/vision", **ask}, **estate)
+            assert status == 429 and int(headers["Retry-After"]) >= 1, (status, headers)
+            page = serve.settings_page()
+            assert "estate" in page and "bwk_…" in page and ">vision<" in page, page
+
+            # CORS for a browser app on an allowed origin, on the gateway's routes only.
+            os.environ["BENCH_ALLOWED_ORIGINS"] = "https://estate.example"
+            app, evil = {"Origin": "https://estate.example"}, {"Origin": "https://evil.example"}
+            asks = {"Access-Control-Request-Method": "POST",
+                    "Access-Control-Request-Headers": "authorization, content-type, x-stainless-os"}
+            for port in (d, g):
+                status, headers, _ = call(port, "/v1/chat/completions", method="OPTIONS", **app, **asks)
+                assert status == 204 and headers["Access-Control-Allow-Origin"] == "https://estate.example", headers
+                assert "Authorization" in headers["Access-Control-Allow-Headers"] and headers["Vary"] == "Origin"
+                assert "x-stainless-os" in headers["Access-Control-Allow-Headers"]      # the OpenAI JS SDK's
+                assert "Access-Control-Allow-Credentials" not in headers
+                status, headers, _ = call(port, "/v1/models", method="OPTIONS", **app,
+                                          **{"Access-Control-Request-Headers": "x-ok; not a name"})
+                assert status == 204 and headers["Access-Control-Allow-Headers"] == "Authorization, Content-Type"
+                status, headers, _ = call(port, "/v1/chat/completions", method="OPTIONS", **evil, **asks)
+                assert status == 403 and "Access-Control-Allow-Origin" not in headers, (port, headers)
+                status, headers, _ = call(port, "/v1/models", **bearer, **app)
+                assert status == 200 and headers["Access-Control-Allow-Origin"] == "https://estate.example"
+                assert "Access-Control-Allow-Origin" not in call(port, "/v1/models", **bearer, **evil)[1]
+                # The app reads a refusal too; cross-site is fine for it, for nobody else.
+                assert call(port, "/v1/models", **app)[1]["Access-Control-Allow-Origin"] == "https://estate.example"
+                status, _, text = call(port, "/bench/verdict", {"call": "x"}, **bearer, **app,
+                                       **{"Sec-Fetch-Site": "cross-site"})
+                assert status == 400 and "useful" in text, (port, text)
+                assert call(port, "/bench/verdict", {"call": "x"}, **bearer, **evil,
+                            **{"Sec-Fetch-Site": "cross-site"})[0] == 403
+            # The dashboard: no preflight, no CORS, same-origin as before.
+            assert call(d, "/api/stamp", method="OPTIONS", **app, **asks)[0] == 501
+            status, headers, _ = call(d, "/api/theme", {"theme": "nope"}, **jar, **app, **{"Sec-Fetch-Site": "cross-site"})
+            assert status == 403 and "Access-Control-Allow-Origin" not in headers, headers
+            assert "Access-Control-Allow-Origin" not in call(d, "/api/stamp", **jar, **app)[1]
+            del os.environ["BENCH_ALLOWED_ORIGINS"]
 
             # Revoked: refused at once.
             assert call(d, "/api/gateway-key/remove", {"name": "chat-ui"}, **jar)[0] == 200
             assert call(d, "/v1/models", **bearer)[0] == 401
             assert call(d, "/api/gateway-key/remove", {"name": "chat-ui"}, **jar)[0] == 400
+
+            # No admin token, keys required on this machine: the gateway asks, the dashboard does not.
+            del os.environ["BENCHWARMERS_ADMIN_TOKEN"]
+            os.environ["BENCHWARMERS_REQUIRE_KEYS"] = "1"
+            for port in (d, g):
+                assert call(port, "/v1/models", Authorization="Bearer sk-anything")[0] == 401, port
+                assert call(port, "/v1/models", **estate)[0] == 200, port
+            assert call(d, "/api/stamp")[0] == 200
         finally:
             (guard.KEYS, serve.CHANGES_PATH, serve.PORT, gateway.bench_collections.FILE) = saved[:4]
-            os.environ.pop("BENCHWARMERS_ADMIN_TOKEN", None)
-            if saved[4] is not None:
-                os.environ["BENCHWARMERS_ADMIN_TOKEN"] = saved[4]
+            gateway.run_collection = saved[6]
+            for name, value in (("BENCHWARMERS_ADMIN_TOKEN", saved[4]), ("BENCHWARMERS_REQUIRE_KEYS", saved[7]),
+                                ("BENCH_ALLOWED_ORIGINS", saved[8])):
+                os.environ.pop(name, None)
+                if value is not None:
+                    os.environ[name] = value
             sys.stderr = saved[5]
             dash.shutdown()
             gw.shutdown()

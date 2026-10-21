@@ -569,7 +569,9 @@
   // ---- gateway keys: shown once, then only their names ---------------------
   if ($('k-make')) $('k-make').addEventListener('click', function () {
     $('k-errors').textContent = '';
-    post('/api/gateway-key', {name: $('k-name').value}).then(function (r) {
+    var scope = Array.prototype.map.call(document.querySelectorAll('input[name=k-scope]:checked'),
+                                         function (c) { return c.value; });
+    post('/api/gateway-key', {name: $('k-name').value, collections: scope, rpm: $('k-rpm').value}).then(function (r) {
       if (!r.ok) { listErrors($('k-errors'), r.errors); return; }
       $('k-value').value = r.key;
       $('k-done').hidden = false;

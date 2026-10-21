@@ -13,11 +13,16 @@ other web pages: any site open in the browser can send requests to localhost.
   BENCH_ALLOWED_HOSTS, comma-separated host:port, and BENCHWARMERS_PUBLIC_URL.
 - **On POST, JSON only and never cross-site.** A page can send a plain form
   or text/plain to us without asking, but not application/json: that needs
-  a CORS preflight neither server answers. A browser also stamps
-  Sec-Fetch-Site and Origin, which a page cannot remove; cross-site or a
-  foreign Origin is refused. API clients (SDKs, curl, agents, Open WebUI's
-  backend) send neither and are unaffected. BENCH_ALLOWED_ORIGINS adds a
-  browser UI on another port.
+  a CORS preflight. A browser also stamps Sec-Fetch-Site and Origin, which a
+  page cannot remove; cross-site or a foreign Origin is refused. API clients
+  (SDKs, curl, agents, Open WebUI's backend) send neither and are
+  unaffected. BENCH_ALLOWED_ORIGINS adds a browser UI on another port.
+- **CORS on the gateway's routes only**, for a browser app calling the
+  gateway: a preflight is answered, and Access-Control-Allow-Origin echoed,
+  only for an allowed origin (BENCH_ALLOWED_ORIGINS, BENCHWARMERS_PUBLIC_URL),
+  which may then be cross-site. Never `*`, and never Allow-Credentials: a
+  gateway key travels in a header the page sets, not in a cookie. The
+  dashboard answers no preflight, so it stays same-origin.
 - **A body-size cap**, so one request cannot make a server read gigabytes.
 
 WHO MAY ASK (RELEASE-PLAN Phase 5, "Token login before Docker")
@@ -42,6 +47,13 @@ the gateway:
   servers answer as they always did (no login, no key), and the checks above
   are what keep web pages out. Binding anywhere else refuses to start without
   a token (`startup`), so a server on a network always asks.
+  BENCHWARMERS_REQUIRE_KEYS asks for gateway keys on this machine too (the
+  dashboard stays open), so each local app has its own name, scope and cap.
+
+A key may be limited to some collections (`collections`, none = all: 403
+otherwise, and /v1/models lists only those) and to a number of chat
+completions a minute (`rpm`: 429 with Retry-After). Each records when it was
+last used, and the gateway writes its name on every call it makes.
 """
 
 from __future__ import annotations
@@ -55,14 +67,17 @@ import os
 import re
 import secrets
 import sys
+import threading
 import time
 import urllib.parse
+from collections import deque
 
 from paths import DATA  # noqa: E402  -- the install's data folder (metrics/paths.py)
 import locked  # noqa: E402
 
 KEYS = DATA / "config" / "gateway-keys.json"
 KEY_NAME = re.compile(r"^[a-z0-9][a-z0-9-]{1,31}$")
+PREFIX = "bwk_"                    # every gateway key starts so: a secret scanner, or a person, can tell it
 COOKIE = "bw_session"
 SESSION_S = 7 * 24 * 3600
 MIN_TOKEN = 16
@@ -70,11 +85,13 @@ GATEWAY_ROUTES = ("/v1/", "/bench/")
 
 
 class Refused(Exception):
-    """The request is not served. `status` is the HTTP code to answer with."""
+    """The request is not served. `status` is the HTTP code to answer with,
+    `headers` any the answer must carry (WWW-Authenticate, Retry-After)."""
 
-    def __init__(self, status: int, message: str):
+    def __init__(self, status: int, message: str, headers: dict | None = None):
         super().__init__(message)
         self.status = status
+        self.headers = headers or {}
 
 
 def _env(name: str) -> set[str]:
@@ -106,18 +123,32 @@ def hosts(port: int) -> set[str]:
             | ({public} if public else set()))
 
 
-def check(headers, port: int, post: bool, max_body: int) -> int:
-    """Raise Refused, or return how many body bytes to read (0 for a GET)."""
+def origins(port: int) -> set[str]:
+    """Browser origins allowed to call: this server's own, BENCH_ALLOWED_ORIGINS
+    and the public URL's."""
+    return {f"http://{h}" for h in hosts(port)} | _env("BENCH_ALLOWED_ORIGINS") | ({_public()[1]} - {""})
+
+
+def cors_origin(headers, port: int) -> str:
+    """The request's Origin, as sent, when it is allowed; else "". What a
+    gateway reply echoes in Access-Control-Allow-Origin."""
+    origin = (headers.get("Origin") or "").strip() if headers else ""
+    return origin if origin.lower() in origins(port) else ""
+
+
+def check(headers, port: int, post: bool, max_body: int, cors: bool = False) -> int:
+    """Raise Refused, or return how many body bytes to read (0 for a GET).
+    `cors`: a gateway route, where an allowed origin may be cross-site."""
     host = (headers.get("Host") or "").strip().lower()
     if host not in hosts(port):
         raise Refused(403, f"unknown Host {host or '(none)'!r}; set BENCHWARMERS_PUBLIC_URL"
                            " or BENCH_ALLOWED_HOSTS to add one")
     if not post:
         return 0
-    if (headers.get("Sec-Fetch-Site") or "").lower() == "cross-site":
-        raise Refused(403, "cross-site requests are refused")
     origin = (headers.get("Origin") or "").strip().lower()
-    allowed = {f"http://{h}" for h in hosts(port)} | _env("BENCH_ALLOWED_ORIGINS") | {_public()[1]} - {""}
+    allowed = origins(port)
+    if (headers.get("Sec-Fetch-Site") or "").lower() == "cross-site" and not (cors and origin in allowed):
+        raise Refused(403, "cross-site requests are refused")
     if origin and origin not in allowed:
         raise Refused(403, f"Origin {origin!r} is not allowed; set BENCH_ALLOWED_ORIGINS to add one")
     if not (headers.get("Content-Type") or "").lower().startswith("application/json"):
@@ -141,6 +172,14 @@ def admin_token() -> str:
 
 def auth_on() -> bool:
     return bool(admin_token())
+
+
+def keys_required() -> bool:
+    """Gateway keys are asked for: always with an admin token, and without one
+    when BENCHWARMERS_REQUIRE_KEYS is set. Any value but 0/false/no/off counts,
+    so a misspelt "required" fails closed rather than silently open."""
+    return auth_on() or os.environ.get("BENCHWARMERS_REQUIRE_KEYS", "").strip().lower() \
+        not in ("", "0", "false", "no", "off")
 
 
 def _loopback(host: str) -> bool:
@@ -219,16 +258,69 @@ def admin_caller(headers) -> str:
 
 def gateway_caller(headers) -> str:
     """Who is asking for a gateway route: the gateway key's name, or "local"
-    when no admin token is set (any bearer is ignored then: SDKs send a dummy
-    one). Raises Refused(401). The cookie is never looked at."""
-    if not auth_on():
+    when keys are not required (any bearer is ignored then: SDKs send a dummy
+    one). Raises Refused(401), saying which of missing, malformed or unknown
+    it was. The cookie is never looked at."""
+    if not keys_required():
         return "local"
-    scheme, _, value = (headers.get("Authorization") or "").partition(" ")
-    name = key_name(value.strip()) if scheme.lower() == "bearer" else None
-    if not name:
+    challenge = {"WWW-Authenticate": 'Bearer realm="benchwarmers"'}     # RFC 6750: every 401 says how
+    raw = headers.get("Authorization")
+    if raw is None:
         raise Refused(401, "this route needs a gateway key (Authorization: Bearer <key>);"
-                           " make one on the dashboard's Settings page")
+                           " make one on the dashboard's Settings page", challenge)
+    scheme, _, value = raw.strip().partition(" ")
+    value = value.strip()
+    if scheme.lower() != "bearer" or not value:
+        raise Refused(401, "send the gateway key as 'Authorization: Bearer <key>'", challenge)
+    name = key_name(value)
+    if not name:
+        raise Refused(401, "unknown or revoked gateway key" + ("" if value.startswith(PREFIX) else
+                           f" (gateway keys start {PREFIX}; this is some other key)"), challenge)
+    _touch(name)
     return name
+
+
+def scope(name: str) -> list[str] | None:
+    """The collections key `name` may call: [] for all (and for "local", no
+    key), or None for none, when its entry is not a list (a hand edit gone
+    wrong fails closed)."""
+    entry = gateway_keys().get(name)
+    allowed = entry.get("collections") if isinstance(entry, dict) else None
+    if allowed is None or allowed == []:               # not `not allowed`: "" or 0 must fail closed
+        return []
+    return allowed if isinstance(allowed, list) and all(isinstance(c, str) for c in allowed) else None
+
+
+def may_call(name: str, collection: str) -> bool:
+    allowed = scope(name)
+    return allowed == [] or (allowed is not None and collection in allowed)
+
+
+_SPENT: dict[str, deque] = {}
+_SPENT_LOCK = threading.Lock()
+
+
+def spend(name: str) -> None:
+    """Count one chat completion against key `name`'s per-minute cap, if it has
+    one; Refused(429) with Retry-After over it. Each call fans out to every
+    seat, so a client stuck in a loop would otherwise empty free tiers in
+    seconds. ponytail: counted in this process, so the gateway's port and the
+    dashboard's count apart and a restart forgets; a shared count needs a
+    store both read."""
+    entry = gateway_keys().get(name)
+    cap = entry.get("rpm") if isinstance(entry, dict) else None
+    if not isinstance(cap, int) or isinstance(cap, bool) or cap < 1:
+        return
+    now = time.monotonic()
+    with _SPENT_LOCK:
+        recent = _SPENT.setdefault(name, deque())
+        while recent and recent[0] <= now - 60:
+            recent.popleft()
+        if len(recent) >= cap:
+            wait = int(recent[0] + 60 - now) + 1
+            raise Refused(429, f"the gateway key {name} may make {cap} requests a minute;"
+                               f" try again in {wait}s", {"Retry-After": str(wait)})
+        recent.append(now)
 
 
 # ---- gateway keys ------------------------------------------------------------
@@ -238,24 +330,58 @@ def _digest(value: str) -> bytes:
 
 
 def gateway_keys() -> dict[str, dict]:
-    """name -> {"sha256", "created"}. Never a key itself."""
+    """name -> {"sha256", "created", "hint", "collections", "rpm", "last_used"}.
+    Never a key itself."""
     return locked.read_json(KEYS)
 
 
-def make_key(name: str) -> str:
-    """A new key, returned this once: only its SHA-256 is kept. A slow hash
-    would add nothing, the key being 256 random bits rather than a password."""
+def make_key(name: str, collections: list[str] | None = None, rpm: int | None = None) -> str:
+    """A new key, returned this once: only its SHA-256 is kept, and its last
+    four characters, so a key found in a log or a repository can be told
+    apart (the bwk_ prefix says whose it is). A slow hash would add nothing,
+    the key being 256 random bits rather than a password. `collections`: the
+    ones it may call (none = all); `rpm`: chat completions a minute (none = no cap)."""
     if not KEY_NAME.match(name):
         raise ValueError("name: 2-32 lower-case letters, digits or '-', e.g. open-webui")
-    value = "bwk_" + secrets.token_urlsafe(32)
+    if name == "local":
+        raise ValueError("local is what a call without a key is recorded as; pick another name")
+    collections = sorted(set(collections or []))
+    if not all(isinstance(c, str) and KEY_NAME.match(c) for c in collections):
+        raise ValueError("collections: names such as core, as they follow bench/")
+    if rpm is not None and (not isinstance(rpm, int) or isinstance(rpm, bool) or not 1 <= rpm <= 10_000):
+        raise ValueError("requests a minute: a whole number from 1 to 10000, or empty for no cap")
+    value = PREFIX + secrets.token_urlsafe(32)
 
     def add(data: dict) -> None:
         if name in data:
             raise ValueError(f"there is already a key named {name}: revoke it first, or pick another name")
-        data[name] = {"sha256": _digest(value).decode(),
-                      "created": dt.datetime.now().astimezone().isoformat(timespec="seconds")}
+        data[name] = {"sha256": _digest(value).decode(), "hint": value[-4:],
+                      "created": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
+                      **({"collections": collections} if collections else {}),
+                      **({"rpm": rpm} if rpm else {})}
     locked.update(KEYS, add)
     return value
+
+
+def _touch(name: str) -> None:
+    """Note when key `name` was last used, at most once a minute: chat UIs poll
+    /v1/models, and a write per poll would be a write per page load."""
+    now = dt.datetime.now().astimezone()
+
+    def stamp(data: dict) -> None:
+        entry = data.get(name)
+        if not isinstance(entry, dict):
+            return                                     # revoked meanwhile
+        try:
+            if (now - dt.datetime.fromisoformat(entry.get("last_used", ""))).total_seconds() < 60:
+                return
+        except (TypeError, ValueError):
+            pass
+        entry["last_used"] = now.isoformat(timespec="seconds")
+    try:
+        locked.update(KEYS, stamp)
+    except (OSError, TimeoutError):                    # a busy file must not refuse the call
+        pass
 
 
 def revoke_key(name: str) -> bool:
@@ -291,9 +417,9 @@ def _selftest() -> None:
     global KEYS
     ok = {"Host": "127.0.0.1:8123", "Content-Type": "application/json", "Content-Length": "12"}
 
-    def status(port=8123, post=True, cap=100, **h):
+    def status(port=8123, post=True, cap=100, cors=False, **h):
         try:
-            check({**ok, **h}, port, post, cap)
+            check({**ok, **h}, port, post, cap, cors)
             return 0
         except Refused as r:
             return r.status
@@ -313,7 +439,8 @@ def _selftest() -> None:
     assert status(**{"Content-Length": "x"}) == 400
     assert status(**{"Content-Length": "-1"}) == 400
     saved = {k: os.environ.pop(k, None) for k in ("BENCH_ALLOWED_HOSTS", "BENCH_ALLOWED_ORIGINS",
-                                                    "BENCHWARMERS_PUBLIC_URL", "BENCHWARMERS_ADMIN_TOKEN")}
+                                                    "BENCHWARMERS_PUBLIC_URL", "BENCHWARMERS_ADMIN_TOKEN",
+                                                    "BENCHWARMERS_REQUIRE_KEYS")}
     try:
         os.environ["BENCH_ALLOWED_HOSTS"] = "bench:8123"
         os.environ["BENCH_ALLOWED_ORIGINS"] = "http://localhost:3000"
@@ -323,6 +450,14 @@ def _selftest() -> None:
         os.environ["BENCHWARMERS_PUBLIC_URL"] = "https://Bench.example.com/"
         assert status(Host="bench.example.com", Origin="https://bench.example.com") == 0
         assert status(Host="bench.example.com", Origin="https://evil.example") == 403
+        # CORS: on a gateway route an allowed origin may be cross-site; the dashboard's rule stands.
+        site = {"Sec-Fetch-Site": "cross-site"}
+        assert status(cors=True, Origin="http://localhost:3000", **site) == 0
+        assert status(Origin="http://localhost:3000", **site) == 403
+        assert status(cors=True, Origin="http://evil.example", **site) == 403
+        assert status(cors=True, **site) == 403                             # no Origin: not a CORS call
+        assert cors_origin({"Origin": "http://localhost:3000"}, 8123) == "http://localhost:3000"
+        assert cors_origin({"Origin": "http://evil.example"}, 8123) == "" and cors_origin({}, 8123) == ""
 
         # Binding: this machine needs nothing; anywhere else needs a long enough token.
         def refused(address: str) -> bool:
@@ -380,13 +515,44 @@ def _selftest() -> None:
                 assert key_name("") is None and key_name(key + "x") is None and key_name("bwk_é") is None
                 assert gateway_caller({"Authorization": f"Bearer {key}"}) == "chat-ui"
                 assert gateway_caller({"Authorization": f"bearer  {key} "}) == "chat-ui"
-                for headers in ({}, {"Authorization": key}, {"Authorization": f"Basic {key}"},
-                                {"Cookie": value}, {"Authorization": "Bearer sk-dummy"}):
+                entry = gateway_keys()["chat-ui"]
+                assert entry["hint"] == key[-4:] and entry["last_used"] and "rpm" not in entry, entry
+                # Each refusal says which it was, and how to authenticate (RFC 6750).
+                for headers, said in (({}, "needs a gateway key"), ({"Cookie": value}, "needs a gateway key"),
+                                      ({"Authorization": key}, "Bearer <key>"), ({"Authorization": "Bearer "}, "Bearer <key>"),
+                                      ({"Authorization": f"Basic {key}"}, "Bearer <key>"),
+                                      ({"Authorization": "Bearer sk-dummy"}, "some other key"),
+                                      ({"Authorization": f"Bearer {key}x"}, "unknown or revoked")):
                     try:
                         gateway_caller(headers)
                         raise AssertionError(f"gateway let in {headers}")
                     except Refused as r:
-                        assert r.status == 401
+                        assert r.status == 401 and said in str(r), (headers, str(r))
+                        assert r.headers["WWW-Authenticate"].startswith("Bearer"), r.headers
+                # Scope and cap, set when made: checked per collection, and per minute.
+                for name, kw in (("scoped", {"collections": ["Core"]}), ("scoped", {"rpm": 0}),
+                                 ("scoped", {"rpm": True}), ("scoped", {"rpm": "5"}), ("local", {})):
+                    try:
+                        make_key(name, **kw)
+                        raise AssertionError(f"made a key with {kw}")
+                    except ValueError:
+                        pass
+                make_key("scoped", ["vision", "core", "core"], 2)
+                assert gateway_keys()["scoped"]["collections"] == ["core", "vision"]
+                assert may_call("scoped", "vision") and not may_call("scoped", "reviewers")
+                assert may_call("chat-ui", "reviewers") and may_call("local", "reviewers")
+                spend("scoped")
+                spend("scoped")
+                try:
+                    spend("scoped")
+                    raise AssertionError("a third request in a minute on a cap of 2")
+                except Refused as r:
+                    assert r.status == 429 and 1 <= int(r.headers["Retry-After"]) <= 61, r.headers
+                for _ in range(5):
+                    spend("chat-ui")                                    # no cap
+                for bad in ("core", "", 0, False, [1]):                 # a bad edit fails closed
+                    locked.update(KEYS, lambda d: d["scoped"].__setitem__("collections", bad))
+                    assert scope("scoped") is None and not may_call("scoped", "core"), bad
                 try:                                                    # a key never opens the dashboard
                     admin_caller({"Authorization": f"Bearer {key}"})
                     raise AssertionError("a gateway key opened the dashboard")
@@ -398,6 +564,18 @@ def _selftest() -> None:
                 del os.environ["BENCHWARMERS_ADMIN_TOKEN"]
                 assert gateway_caller({}) == "local" and gateway_caller({"Authorization": "Bearer x"}) == "local"
                 assert admin_caller({}) == "local"
+                # ...unless keys are required on this machine too; a misspelt value still asks.
+                for v in ("1", "required", "TRUE"):
+                    os.environ["BENCHWARMERS_REQUIRE_KEYS"] = v
+                    assert gateway_caller({"Authorization": f"Bearer {other}"}) == "agent"
+                    try:
+                        gateway_caller({"Authorization": "Bearer x"})
+                        raise AssertionError(f"BENCHWARMERS_REQUIRE_KEYS={v} let a dummy bearer in")
+                    except Refused as r:
+                        assert r.status == 401
+                    assert admin_caller({}) == "local"                  # the dashboard stays open
+                os.environ["BENCHWARMERS_REQUIRE_KEYS"] = "off"
+                assert not keys_required() and gateway_caller({}) == "local"
             finally:
                 KEYS = real
         assert gateway_route("/v1/models") and gateway_route("/bench/verdict")
