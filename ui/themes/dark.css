@@ -1,30 +1,34 @@
-/* Dark: the same rainforest greens on a near-black ground. Softer than pure
-   contrast: the text is a warm off-white, not white; the panels sit a step
-   above the page so they read as surfaces; secondary text is light enough to
-   stand off them. */
+/* Rainforest Dark: the rainforest greens on a near-neutral dark ground, tuned the way
+   established dark themes are (Material, GitHub, Notion, VS Code):
+   - no pure black: the page is a soft charcoal;
+   - depth by lighter surfaces, not lines: panels sit a clear step above the
+     page, chips and bands a step above those;
+   - text about 91% white, not pure white; secondary text about 64%;
+   - greys nearly neutral (a strong tint reads as muddy), the colour kept for
+     the accents, which stay vivid but not neon. */
 :root {
   --scheme: dark;
-  --ink: #d4d9d0;
-  --ink-2: #c0c6bd;
-  --ink-deep: #0a0d0b;
-  --paper: #151a17;
-  --paper-2: #212824;
-  --band: #2b332e;
-  --signal: #c9a93c;
-  --link: #79bdf0;
-  --muted: #b2bbaf;
-  --muted-dark: #7a8378;
-  --line: #3a443e;
-  --line-dark: #2e3631;
-  --brand: #5fae49;
-  --primary: #6cbf57;
-  --primary-bright: #8fd67d;
-  --primary-deep: #a8e29b;
+  --ink: #e8ebe6;
+  --ink-2: #d0d5ce;
+  --ink-deep: #0b0d0c;
+  --paper: #191c1a;
+  --paper-2: #232724;
+  --band: #2e332f;
+  --signal: #e0c050;
+  --link: #7cc0f7;
+  --muted: #a3aaa0;
+  --muted-dark: #727a70;
+  --line: #363c38;
+  --line-dark: #2b302c;
+  --brand: #66b84e;
+  --primary: #74c75e;
+  --primary-bright: #93dc80;
+  --primary-deep: #b0e8a3;
   --sky: #69bdeb;
-  --warn: #e0a84b;
-  --err: #ff8a80;
+  --warn: #e7b25a;
+  --err: #ff8f85;
   /* Light text on these, unlike on paper. */
-  --on-err: #1a1f1c;
-  --log-ground: #0a0d0b;
-  --log-ink: #d4d9d0;
+  --on-err: #1b1e1c;
+  --log-ground: #0f1110;
+  --log-ink: #e8ebe6;
 }

@@ -65,10 +65,12 @@ UI = ROOT / "ui"
 # THE THEME IS A FILE IN THIS REPO. Until 2026-10-19 the colours and faces were
 # read live from the AI site's stylesheet in a sibling repository, which a
 # public install does not have; the Wendell Research palette is now
-# ui/themes/rainforest.css (the default theme) and the Chivo faces (OFL, licence
-# beside them) are in ui/fonts.
+# ui/themes/*.css, and the Chivo faces (OFL, licence beside them) in ui/fonts.
 THEMES = UI / "themes"
-DEFAULT_THEME = "rainforest"
+BASE_THEME = "rainforest"      # sets every token (faces, measure, radius); the others lay theirs over it
+DEFAULT_THEME = "hardwood"     # what an install shows until someone picks a theme
+# The names and the order on Settings; a theme file not named here follows, by its own name.
+THEME_LABELS = {"rainforest": "Rainforest Light", "dark": "Rainforest Dark", "hardwood": "Hardwood"}
 FONTS = {f"{family}-latin-{weight}-normal.woff2": family
          for family, weights in (("chivo", (400, 500, 700, 800)),
                                  ("chivo-mono", (400, 500)))
@@ -76,7 +78,8 @@ FONTS = {f"{family}-latin-{weight}-normal.woff2": family
 
 
 def themes() -> list[str]:
-    return sorted(p.stem for p in THEMES.glob("*.css"))
+    found = {p.stem for p in THEMES.glob("*.css")}
+    return [n for n in THEME_LABELS if n in found] + sorted(found - set(THEME_LABELS))
 
 
 def _tokens(name: str) -> dict[str, str]:
@@ -92,13 +95,13 @@ def brand_css() -> str:
     scripts/check_themes.py checks each one's contrast."""
     def block(name: str) -> str:
         return "".join(f"{k}:{v.strip()};" for k, v in _tokens(name).items())
-    scoped = "".join(f"html[data-theme='{name}']{{{block(name)}}}" for name in themes() if name != DEFAULT_THEME)
+    scoped = "".join(f"html[data-theme='{name}']{{{block(name)}}}" for name in themes() if name != BASE_THEME)
     faces = "".join(
         f"@font-face{{font-family:'{'Chivo Mono' if fam == 'chivo-mono' else 'Chivo'}';"
         f"font-weight:{name.split('-')[-2]};font-style:normal;font-display:swap;"
         f"src:url('/fonts/{name}') format('woff2');}}"
         for name, fam in FONTS.items())
-    return f":root{{{block(DEFAULT_THEME)}}}{scoped}{faces}"
+    return f":root{{{block(BASE_THEME)}}}{scoped}{faces}"
 
 
 def font_file(name: str) -> pathlib.Path | None:
@@ -193,31 +196,6 @@ def tag_for(llm_id: str) -> str:
     import route
     tag = route.full_tag_of(llm_id)
     return "" if tag == "?" else tag
-
-
-RUN_LABELS = {"availability": "Availability", "deprecations": "Deprecations",
-              "suite-free": "Suite (free tier)", "suite": "Suite (1 model)", "perf": "Performance"}
-
-
-def next_runs() -> list[tuple[str, str]]:
-    """When the scheduled checks fire next, from the bench's own scheduler
-    (metrics/scheduler.py). It used to ask Windows, five `schtasks` calls per
-    page render with a US date format, which no other system has. The times
-    are the same either way: during the switch-over the Windows tasks run the
-    jobs and the scheduler, log-only, keeps the identical schedule."""
-    import scheduler
-    conf = scheduler.settings()
-    if conf["mode"] == "off":
-        return [("Schedule", "off (Settings)")]
-    now = datetime.datetime.now()
-    on = scheduler.enabled(conf)
-    out = [(label, f"{scheduler.next_due(scheduler.JOBS[job][1], now):%a %H:%M}")
-           for job, label in RUN_LABELS.items() if job in on]
-    # Deliberate runs, not timed ones. The suite job rotates ONE paid model
-    # every six hours and suite-free one free model a day; a full sweep of
-    # every model is a different and much larger thing.
-    out.append(("Suite (full) / Floor / Tool use", "on demand only"))
-    return out
 
 
 def retired() -> dict[str, dict]:
@@ -2067,22 +2045,20 @@ def perf_card() -> str:
 
 def render(theme: str | None = None) -> str:
     theme = theme if theme in themes() else saved_theme()      # a ?theme preview, else the saved one
-    runs = "".join(f"<span>{esc(label)} <b>{esc(when)}</b></span>"
-                   for label, when in next_runs()) or "<span>schedule unavailable</span>"
     return (
         f"<!doctype html><html lang='en' data-theme='{esc(theme)}'><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width, initial-scale=1'>"
         "<title>Benchwarmers</title>"
         f"<style>{brand_css()}{read(UI / 'bench.css')}</style>"
         # One line: the name on its bench, the credit beside it, the actions at
-        # the far end; the schedule underneath.
+        # the far end. (The next scheduled runs were listed under it; Settings'
+        # scheduler table shows them, with what each job does.)
         "<header><h1><span>Benchwarmers</span></h1>"
         # The credit is fixed, not a setting (RELEASE-PLAN decision 7).
         "<p class='sub'>by <a href='https://wendellresearch.ai' target='_blank' rel='noopener'>Wendell Research</a></p>"
         "<div class='head-actions'>"
         "<button class='btn fresh' id='fresh' hidden>New results · Reload</button>"
-        "<button class='btn primary' id='onboard-open'>Onboard a model</button></div>"
-        f"<div class='runs' aria-label='Next scheduled runs'>{runs}</div></header>"
+        "<button class='btn primary' id='onboard-open'>Onboard a model</button></div></header>"
         # What needs a person first, then the pages; endpoints are managed from
         # Connections now (the header button moved there).
         f"<main>{first_run()}{problems()}<div class='layout'>{tabs()}</div></main>{editor()}"
@@ -2501,10 +2477,10 @@ def settings_page() -> str:
     swatch = ("--paper", "--band", "--ink", "--brand", "--primary", "--signal", "--link", "--err")
     cards = []
     for name in themes():
-        merged = {**_tokens(DEFAULT_THEME), **_tokens(name)}
+        merged = {**_tokens(BASE_THEME), **_tokens(name)}
         dots = "".join(f"<span style='background:{esc(merged.get(t, '').strip())}'></span>" for t in swatch)
         cards.append(f"<label class='theme-card'><input type='radio' name='theme' value='{esc(name)}'"
-                     f"{' checked' if name == current else ''}><b>{esc(name.title())}</b>"
+                     f"{' checked' if name == current else ''}><b>{esc(THEME_LABELS.get(name, name.title()))}</b>"
                      f"<span class='swatch'>{dots}</span></label>")
     conf, now = scheduler.settings(), datetime.datetime.now()
     state = load_json(scheduler.STATE)

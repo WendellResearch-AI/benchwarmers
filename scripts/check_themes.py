@@ -19,7 +19,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 THEMES = ROOT / "ui" / "themes"
 
 # Every colour token a theme must set (fonts, measure and radius come from
-# the default theme's file and may be repeated).
+# the base theme's file, rainforest.css, and may be repeated).
 REQUIRED = ("ink", "ink-2", "ink-deep", "paper", "paper-2", "band", "signal", "link", "muted",
             "line", "brand", "primary", "primary-deep", "sky", "warn", "err")
 
