@@ -584,6 +584,13 @@
           e.name.value = x.name; e.base.value = x.base; e.key.value = ''; e.key.focus();
         });
         acts.appendChild(edit);
+        if (x.connect && x.connect.flow && x.connect.flow !== 'local') {     // this endpoint, not a new one
+          var again = el('button', {class: 'btn small', type: 'button'}, 'Sign in again');
+          again.addEventListener('click', function () {
+            connectStart({id: x.connect.provider, flow: x.connect.flow, label: x.connect.label}, x.name);
+          });
+          acts.appendChild(again);
+        }
         if (!x.default && !x.models) {
           var rm = el('button', {class: 'btn small danger', type: 'button'}, 'Remove');
           rm.addEventListener('click', function () {
@@ -635,9 +642,10 @@
   }
   // The add / change-key form shows only when asked for, so the dialog opens
   // as a short list.
-  function showEndpointForm(title) {
+  function showEndpointForm(title, adding) {
     $('e-form').hidden = false; $('e-add').hidden = true; $('e-form-head').textContent = title;
     e.errors.textContent = ''; e.done.textContent = '';
+    e.adding = !!adding;           // Add refuses a name in use; Change key edits that one
   }
   function hideEndpointForm() {
     $('e-form').hidden = true; $('e-add').hidden = false;
@@ -645,14 +653,16 @@
   }
   $('endpoints-open').addEventListener('click', function () {
     e.errors.textContent = ''; e.done.textContent = ''; hideEndpointForm();
+    $('cn-errors').textContent = ''; $('cn-done').textContent = '';
+    $('cn-app-errors').textContent = ''; $('cn-app-done').textContent = '';
     ed.showModal(); loadEndpoints(); loadProviders(); loadLimits();
   });
-  $('e-add').addEventListener('click', function () { showEndpointForm('Add an endpoint'); e.name.focus(); });
+  $('e-add').addEventListener('click', function () { showEndpointForm('Add an endpoint', true); e.name.focus(); });
   $('e-cancel').addEventListener('click', hideEndpointForm);
   $('e-close').addEventListener('click', function () { ed.close(); });
   e.save.addEventListener('click', function () {
     e.errors.textContent = ''; e.done.textContent = ''; e.save.disabled = true; e.save.textContent = 'Testing…';
-    post('/api/endpoint', {name: e.name.value, base: e.base.value, key: e.key.value}).then(function (r) {
+    post('/api/endpoint', {name: e.name.value, base: e.base.value, key: e.key.value, new: e.adding}).then(function (r) {
       e.save.disabled = false; e.save.textContent = 'Test and save'; e.key.value = '';
       if (!r.ok) { listErrors(e.errors, r.errors); return; }
       var saved = 'Saved. ' + e.name.value.trim() + ' lists ' + r.served + ' models; they appear in the onboarding picker. ' + (r.note || '');
@@ -662,26 +672,27 @@
   });
 
   // ---- connect: sign in on the provider's page (metrics/connect.py) --------
-  var cn = {list: $('cn-list'), wait: $('cn-wait'), msg: $('cn-msg'), timer: null};
+  var cn = {list: $('cn-list'), wait: $('cn-wait'), msg: $('cn-msg'), errors: $('cn-errors'),
+            done: $('cn-done'), timer: null};
   function connectDone(r) {
     clearInterval(cn.timer); cn.timer = null; cn.wait.hidden = true;
-    if (!r.ok) { listErrors(e.errors, r.errors); return; }
-    e.done.textContent = r.label + ' is connected: it lists ' + r.served + ' models. ' + (r.note || '');
+    if (!r.ok) { listErrors(cn.errors, r.errors); return; }
+    cn.done.textContent = r.label + ' is connected as ' + r.endpoint + ': it lists ' + r.served + ' models. ' + (r.note || '');
     // The next step for a new connection: onboard what it serves.
     var go = el('button', {class: 'btn small', type: 'button', style: 'margin-left:.6rem'}, 'Onboard a model from it');
     go.addEventListener('click', function () {
       ed.close(); $('onboard-open').click(); o.find.value = r.endpoint;   // the picker filters on it once loaded
     });
-    e.done.appendChild(go);
+    cn.done.appendChild(go);
     loadEndpoints(); loadProviders();
   }
-  function connectStart(p) {
-    e.errors.textContent = ''; e.done.textContent = '';
+  function connectStart(p, endpoint) {
+    cn.errors.textContent = ''; cn.done.textContent = '';
     // Opened now, while this is still the click: a window opened after the
     // request returns is a popup the browser blocks.
     var tab = p.flow === 'key' || p.flow === 'oauth' ? window.open('', '_blank') : null;
     if (tab) tab.opener = null;
-    post('/api/connect/start', {provider: p.id}).then(function (r) {
+    post('/api/connect/start', {provider: p.id, endpoint: endpoint}).then(function (r) {
       if (!r.ok || r.state) { if (tab) tab.close(); connectDone(r); return; }   // refused, or local: saved at once
       cn.wait.hidden = false; cn.msg.textContent = '';
       if (r.url) {
@@ -699,21 +710,54 @@
         if (++tries > 450) { connectDone({ok: false, errors: ['No sign-in after fifteen minutes; start again.']}); return; }
         post('/api/connect/poll', {id: r.id}).then(function (s) { if (s.state !== 'pending') connectDone(s); });
       }, 2000);
-    }).catch(function (err) { if (tab) tab.close(); e.errors.textContent = String(err); });
+    }).catch(function (err) { if (tab) tab.close(); cn.errors.textContent = String(err); });
   }
   function loadProviders() {
     fetch('/api/connect').then(function (r) { return r.json(); }).then(function (res) {
-      cn.list.textContent = '';
+      cn.list.textContent = ''; $('cn-apps').textContent = ''; $('cn-form').hidden = true;
       res.providers.forEach(function (p) {
-        var b = el('button', {class: 'btn', type: 'button'}, (p.endpoint ? 'Reconnect ' : '') + p.label);
+        // A new endpoint, named first (a provider can be several: a pasted key
+        // and a sign-in, or two accounts). Signing an existing one in again is
+        // its row's button.
+        var b = el('button', {class: 'btn', type: 'button'}, p.label);
         if (p.missing) { b.disabled = true; b.title = p.missing; }
         b.addEventListener('click', function () {
-          if (p.endpoint && !confirm('Replace the key on the ' + p.endpoint + ' endpoint with a new sign-in?')) return;
-          connectStart(p);
+          cn.pick = p; $('cn-name').value = p.suggest; $('cn-form').hidden = false;
+          $('cn-go').textContent = (p.flow === 'local' ? 'Add ' : 'Sign in to ') + p.label;
+          cn.errors.textContent = ''; cn.done.textContent = ''; $('cn-name').select();
         });
         cn.list.appendChild(b);
+        if (p.register) $('cn-apps').appendChild(appRow(p));
       });
     });
+  }
+  // The Sign in click itself opens the provider's tab (connectStart), so the
+  // browser does not block it as a popup.
+  $('cn-go').addEventListener('click', function () { $('cn-form').hidden = true; connectStart(cn.pick, $('cn-name').value); });
+  $('cn-cancel').addEventListener('click', function () { $('cn-form').hidden = true; });
+  // Use your own app: a provider's own client id, instead of the shipped one.
+  function appRow(p) {
+    var row = el('div', {class: 'endpoint'});
+    var left = el('div');
+    left.appendChild(el('div', {class: 'what'}, p.label));
+    left.appendChild(el('div', {class: 'base'}, 'Register ' + p.register));
+    var box = el('input', {spellcheck: 'false', autocomplete: 'off', 'aria-label': p.label + ' client id',
+                           placeholder: p.shipped ? "Wendell Research's app (leave blank)" : 'client id, needed to sign in'});
+    box.value = p.own_id || '';
+    left.appendChild(box);
+    row.appendChild(left);
+    var save = el('button', {class: 'btn small', type: 'button'}, 'Save');
+    save.addEventListener('click', function () {
+      $('cn-app-errors').textContent = ''; $('cn-app-done').textContent = '';
+      post('/api/connect/app', {provider: p.id, client_id: box.value}).then(function (r) {
+        if (!r.ok) { listErrors($('cn-app-errors'), r.errors); return; }
+        $('cn-app-done').textContent = box.value.trim() ? p.label + ' signs in with your app now.'
+          : p.label + (p.shipped ? " is back to Wendell Research's app." : ' has no app until one is added.');
+        loadProviders();
+      });
+    });
+    var acts = el('div', {class: 'acts'}); acts.appendChild(save); row.appendChild(acts);
+    return row;
   }
 
   // ---- collections: what the bench gateway runs together (its own tab) -----

@@ -777,20 +777,33 @@ def endpoint_list() -> dict:
     return {"ok": True, "errors": [], "endpoints": rows}
 
 
-def save_endpoint(name: str, base: str, secret: str, who: str = "ui", extra: dict | None = None) -> dict:
+def free_name(stem: str) -> str:
+    """The first of stem, stem-2, stem-3... that is neither an endpoint nor a key
+    already in the store: one provider can be several endpoints (a pasted key
+    and a sign-in, or two accounts), each under its own name and key."""
+    have, keys = endpoints.load(), endpoints.keys()
+    return next(n for n in [stem] + [f"{stem}-{i}" for i in range(2, 1000)] if n not in have and n not in keys)
+
+
+def save_endpoint(name: str, base: str, secret: str, who: str = "ui", extra: dict | None = None,
+                  new: bool = False) -> dict:
     """Add an endpoint, or change one's key. Tested before anything is saved.
 
     The key goes where `llm keys set` puts it (the CLI's own keys.json), never
     into this repository, the change log or a response. It is sent to the base
     URL typed here, which is the point: that is the endpoint being added.
     `extra` is fields from Connect (metrics/connect.py): its `connect` record,
-    `api`, `models_url`, and headers, which only a new endpoint takes.
+    `api`, `models_url`, and headers, which only a new endpoint takes. `new`
+    (the Add form) refuses a name in use: Change key is how one is edited.
     """
     name, base, secret = (name or "").strip().lower(), (base or "").strip().rstrip("/"), (secret or "").strip()
     data = endpoints.load()
     errors = []
     if not endpoints.NAME.match(name):
         errors.append("name: 2-32 lower-case letters, digits or '-', e.g. openrouter")
+    elif new and name in data:
+        errors.append(f"there is already an endpoint named {name}: give this one its own name, e.g."
+                      f" {free_name(name)}, or use Change key on {name}")
     if not re.fullmatch(r"https?://[^\s\"'<>]+", base):
         errors.append("base URL must start http:// or https://, e.g. https://openrouter.ai/api/v1")
     on_it = [r["alias"] for r in endpoints.registry() if r["endpoint"] == name]
@@ -861,22 +874,67 @@ def remove_endpoint(name: str, who: str = "ui") -> dict:
 # ---- Connect: sign in on a provider's page (metrics/connect.py) -------------
 
 def connect_list() -> dict:
-    """Every provider Connect knows, whether it can be used here, and its endpoint if added."""
-    have = endpoints.load()
-    return {"ok": True, "errors": [], "providers": [
-        {"id": pid, "label": p["label"], "flow": p["flow"], "missing": connect.ready(pid),
-         "endpoint": pid if pid in have else ""} for pid, p in connect.PROVIDERS.items()]}
+    """Every provider Connect knows: whether it can be used here, the name a
+    new endpoint would get, and for those needing an app registration, the
+    recipe and this install's own client id (Use your own app)."""
+    own = connect.own_ids()
+    rows = []
+    for pid, p in connect.PROVIDERS.items():
+        row = {"id": pid, "label": p["label"], "flow": p["flow"], "missing": connect.ready(pid),
+               "suggest": connect_list_suggest(pid)}
+        if p.get("register"):
+            row.update(register=p["register"], own_id=own.get(pid, ""), shipped=bool(p.get("client_id")))
+        rows.append(row)
+    return {"ok": True, "errors": [], "providers": rows}
 
 
-def connect_start(provider: str) -> dict:
+def _signed_in_as(name: str, provider: str) -> bool:
+    return ((endpoints.load().get(name) or {}).get("connect") or {}).get("provider") == provider
+
+
+def connect_list_suggest(provider: str) -> str:
+    """The name a new sign-in gets unless the user types one. A local Ollama
+    already added is offered again (adding it again refreshes it)."""
+    local = connect.PROVIDERS[provider]["flow"] == "local"
+    return provider if local and _signed_in_as(provider, provider) else free_name(provider)
+
+
+def connect_app(provider: str, client_id: str) -> dict:
+    """Use your own app: this install's client id for a provider that needs a
+    registration, instead of the one Benchwarmers ships. Empty goes back to it."""
+    try:
+        connect.set_own_id(provider, client_id)
+    except connect.ConnectError as exc:
+        return {"ok": False, "errors": [str(exc)]}
+    _log_change(datetime.datetime.now().astimezone().isoformat(timespec="seconds"), "ui", "",
+                "connect app", None, f"{provider} {'own' if client_id.strip() else 'shipped'}")
+    return {"ok": True, "errors": []}
+
+
+def connect_start(provider: str, endpoint: str = "") -> dict:
+    """A sign-in for an endpoint named `endpoint`: an existing one signed in to
+    this provider is signed in again; a free name is a new endpoint (a provider
+    can be several: a pasted key and a sign-in, two accounts). No name: the
+    next free one, provider, provider-2..."""
     p = connect.PROVIDERS.get(provider)
     if not p:
         return {"ok": False, "errors": [f"no provider {provider!r}"]}
+    endpoint = (endpoint or "").strip().lower() or connect_list_suggest(provider)
+    if endpoint in endpoints.load():
+        if not _signed_in_as(endpoint, provider):
+            return {"ok": False, "errors": [f"{endpoint} is already an endpoint: give this one another name,"
+                                            f" e.g. {free_name(endpoint)}"]}
+    elif not endpoints.NAME.match(endpoint):
+        return {"ok": False, "errors": ["name: 2-32 lower-case letters, digits or '-', e.g. " + free_name(provider)]}
+    elif endpoint in endpoints.keys():
+        # Never write over a key this install did not make for an endpoint.
+        return {"ok": False, "errors": [f"a key named {endpoint} is already in the llm key store:"
+                                        f" give this endpoint another name, e.g. {free_name(endpoint)}"]}
     if p["flow"] == "local":
         # Ollama ignores the key, but llm sends one, so the endpoint gets a stand-in.
-        return connect_save({"provider": provider, "secret": provider})
+        return connect_save({"provider": provider, "endpoint": endpoint, "secret": provider})
     try:
-        return {"ok": True, "errors": [], **connect.start(provider, PORT)}
+        return {"ok": True, "errors": [], **connect.start(provider, PORT, endpoint)}
     except connect.ConnectError as exc:
         return {"ok": False, "errors": [str(exc)]}
 
@@ -891,12 +949,13 @@ def connect_poll(sid: str) -> dict:
 
 
 def connect_save(tokens: dict) -> dict:
-    """Save a sign-in as the endpoint named after its provider, by save_endpoint's rules."""
+    """Save a sign-in as the endpoint it was started for, by save_endpoint's rules."""
     pid = tokens["provider"]
+    name = tokens.get("endpoint") or pid
     p = connect.PROVIDERS[pid]
-    key = (endpoints.load().get(pid) or {}).get("key", pid)
+    key = (endpoints.load().get(name) or {}).get("key", name)
     with connect.renewal_lock(key):              # a renewal in flight finishes first, then this wins
-        out = save_endpoint(pid, p["base"], tokens["secret"], who="connect",
+        out = save_endpoint(name, p["base"], tokens["secret"], who="connect",
                             extra={**p.get("entry", {}), "connect": connect.entry_field(tokens)})
         if out["ok"] and tokens.get("refresh"):
             endpoints.set_key(key + ".refresh", tokens["refresh"])
@@ -904,14 +963,14 @@ def connect_save(tokens: dict) -> dict:
         out["errors"].append(p["hint"])
     if p["flow"] == "local":
         out.pop("note", None)                      # "the key is unproven" means nothing where none is needed
-    return {**out, "state": "done" if out["ok"] else "error", "endpoint": pid, "label": p["label"]}
+    return {**out, "state": "done" if out["ok"] else "error", "endpoint": name, "label": p["label"]}
 
 
 def connect_page(out: dict) -> str:
     """What the sign-in tab shows when the provider sends it back here."""
     home = f"http://localhost:{PORT}/"
     if out.get("ok"):
-        head, text = (f"{out['label']} is connected",
+        head, text = (f"{out['label']} is connected as {out['endpoint']}",
                       f"It lists {out.get('served', 0):,} models. Back in Benchwarmers, onboard the ones you want.")
     else:
         head, text = "Not connected", " ".join(out.get("errors") or ["the sign-in did not finish"])
@@ -2571,13 +2630,7 @@ def editor() -> str:
         " to a model go straight to its endpoint, so add only providers you are content"
         " to send private source to.</p>"
         "<div id='e-list'></div>"
-        # Connect: sign in on the provider's page instead of pasting a key (metrics/connect.py)
-        "<h3 class='form-head'>Connect by signing in</h3>"
-        "<p class='rules'>Sign in on the provider's own page; the key it hands back is kept where a"
-        " pasted one is. Only providers that publish a sign-in for other apps are here.</p>"
-        "<div class='list-actions' id='cn-list'></div>"
-        "<div id='cn-wait' hidden><p class='served' id='cn-msg'></p></div>"
-        "<div class='list-actions'><button class='btn' id='e-add'>Add an endpoint by key</button></div>"
+        "<div class='list-actions'><button class='btn' id='e-add'>Add an endpoint</button></div>"
         # The form only when asked for: Add, or a row's Change key.
         "<div id='e-form' hidden>"
         "<h3 class='form-head' id='e-form-head'>Add an endpoint</h3>"
@@ -2594,6 +2647,29 @@ def editor() -> str:
         "<button class='btn primary' id='e-save'>Test and save</button></div>"
         "</div>"
         "<div class='errors' id='e-errors' role='alert'></div><div class='done' id='e-done'></div>"
+        # Connect: sign in on the provider's page instead of pasting a key
+        # (metrics/connect.py). Its own section, with its own messages.
+        "<h3 class='form-head'>Connect by signing in</h3>"
+        "<p class='rules'>Sign in on the provider's own page; the key it hands back is kept where a"
+        " pasted one is. Only providers that publish a sign-in for other apps are here.</p>"
+        "<div class='list-actions' id='cn-list'></div>"
+        # A provider's button opens this: the new endpoint's name, then the sign-in.
+        "<div id='cn-form' hidden>"
+        "<label class='field' for='cn-name'>Name for this endpoint</label>"
+        "<input id='cn-name' spellcheck='false' autocomplete='off'>"
+        "<p class='rules'>Its own name and its own key, so one provider can be several endpoints"
+        " (a pasted key and a sign-in, or two accounts).</p>"
+        "<div class='actions'><button class='btn' id='cn-cancel'>Cancel</button>"
+        "<button class='btn primary' id='cn-go'>Sign in</button></div></div>"
+        "<div id='cn-wait' hidden><p class='served' id='cn-msg'></p></div>"
+        "<div class='errors' id='cn-errors' role='alert'></div><div class='done' id='cn-done'></div>"
+        "<details class='limits-block'><summary class='form-head'>Use your own app</summary>"
+        "<p class='rules'>Some providers need an app registered with them before anyone can sign in."
+        " Benchwarmers ships Wendell Research's where it has one; register your own and paste its"
+        " public client id to use yours instead (never a secret: none of these use one). Endpoints"
+        " already signed in keep working with the app they were signed in with.</p>"
+        "<div id='cn-apps'></div><div class='errors' id='cn-app-errors' role='alert'></div>"
+        "<div class='done' id='cn-app-done'></div></details>"
         "<details class='limits-block'><summary class='form-head'>Rate limits per connection</summary>"
         "<p class='rules'>What a key behind each connection allows, from the provider's docs or"
         " freellmapi.co/models. Models on that connection share it; a model's own limits (its"
@@ -2752,10 +2828,13 @@ class Handler(BaseHTTPRequestHandler):
                                                  bool(p.get("undo"))),
                "/api/endpoint": lambda p: save_endpoint(str(p.get("name", "")),
                                                         str(p.get("base", "")),
-                                                        str(p.get("key", ""))),
+                                                        str(p.get("key", "")), new=bool(p.get("new"))),
                "/api/endpoint/remove": lambda p: remove_endpoint(str(p.get("name", ""))),
-               "/api/connect/start": lambda p: connect_start(str(p.get("provider") or "")),
+               "/api/connect/start": lambda p: connect_start(str(p.get("provider") or ""),
+                                                             str(p.get("endpoint") or "")),
                "/api/connect/poll": lambda p: connect_poll(str(p.get("id") or "")),
+               "/api/connect/app": lambda p: connect_app(str(p.get("provider") or ""),
+                                                         str(p.get("client_id") or "")),
                # `or ""`, not a default: JSON null must not become the text "None".
                "/api/collection": lambda p: save_collection(str(p.get("name") or ""), p.get("members"),
                                                             str(p.get("shape") or ""),

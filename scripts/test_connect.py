@@ -93,11 +93,11 @@ def main() -> int:
                 fo={**base, "label": "OAuth", "flow": "oauth", "authorize": fake + "/auth", "token": fake + "/token",
                     "client_id": "cid", "entry": {"api": "responses"}},
                 fd={**base, "label": "Device", "flow": "device", "device": fake + "/device",
-                    "token": fake + "/token", "client_id": "cid"},
+                    "token": fake + "/token", "client_id": "cid", "register": "an app at the fake"},
                 fl={**base, "label": "Local", "flow": "local"})
 
-            def callback(pid: str) -> str:
-                r = serve.connect_start(pid)
+            def callback(pid: str, endpoint: str = "") -> str:
+                r = serve.connect_start(pid, endpoint)
                 assert r["ok"], r
                 q = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(r["url"]).query))
                 back = q.get("callback_url") or q.get("redirect_uri")
@@ -112,12 +112,32 @@ def main() -> int:
                 assert serve.connect_poll(r["id"])["ok"], pid                  # the dashboard tab hears it
                 return page
 
+            # A provider can be several endpoints: "fk" is taken (the owner's, by
+            # key), so a sign-in adds "fk-2" and leaves "fk" exactly as it was.
+            before = serve.endpoints.load()["fk"]
             page = callback("fk")
-            assert "Key is connected" in page and "lists 2 models" in page, page
+            assert "Key is connected as fk-2" in page and "lists 2 models" in page, page
             data, keys = serve.endpoints.load(), serve.endpoints.keys()
-            assert data["fk"]["headers"] == {"X-Title": "owner"}, data["fk"]       # not rewritten
-            assert keys["fk"] == "sk-fake" and data["fk"]["connect"]["provider"] == "fk", (keys, data)
+            assert data["fk"] == before and "fk" not in keys, data["fk"]
+            assert data["fk-2"]["headers"] == {"X-Title": "Benchwarmers"}, data["fk-2"]
+            assert keys["fk-2"] == "sk-fake" and data["fk-2"]["connect"]["provider"] == "fk", (keys, data)
             assert "sk-fake" not in page and "sk-fake" not in serve.CHANGES_PATH.read_text(encoding="utf-8")
+            # Signing that one in again keeps its name and its own headers.
+            connect.locked.update(serve.endpoints.FILE, lambda d: d["fk-2"].update(headers={"X-Title": "mine"}))
+            assert "connected as fk-2" in callback("fk", "fk-2")
+            assert serve.endpoints.load()["fk-2"]["headers"] == {"X-Title": "mine"}
+            assert not serve.connect_start("fk", "fk")["ok"]                   # never signed in: not its button
+            # Add refuses a name in use and offers a free one; Change key edits it.
+            refused = serve.save_endpoint("fk", fake + "/v1", "k", new=True)
+            assert not refused["ok"] and "fk-3" in refused["errors"][0], refused
+            # A sign-in can be given its own name instead of the next number...
+            assert "connected as work-or" in callback("fk", "work-or")
+            # ...but not one in use, one that is not a name, or a key the store already holds.
+            serve.endpoints.set_key("someones", "theirs")
+            for name in ("hub", "Bad Name", "someones"):
+                assert not serve.connect_start("fk", name)["ok"], name
+            assert serve.endpoints.keys()["someones"] == "theirs"
+            assert {p["id"]: p for p in serve.connect_list()["providers"]}["fk"]["suggest"] == "fk-3"
 
             page = callback("fo")
             data, keys = serve.endpoints.load(), serve.endpoints.keys()
@@ -139,18 +159,28 @@ def main() -> int:
 
             local = serve.connect_start("fl")
             assert local["ok"] and serve.endpoints.load()["fl"]["base"] == fake + "/v1", local
+            assert serve.connect_list_suggest("fl") == "fl"                    # adding it again refreshes it
+
+            # Use your own app: this install's client id instead of the shipped one, and back.
+            assert serve.connect_app("fd", "Iv1.own")["ok"]
+            row = {p["id"]: p for p in serve.connect_list()["providers"]}["fd"]
+            assert row["own_id"] == "Iv1.own" and row["shipped"] and connect.client_id("fd") == "Iv1.own", row
+            assert serve.connect_app("fd", "")["ok"] and connect.client_id("fd") == "cid"
+            assert not serve.connect_app("fk", "x-id")["ok"]                  # nothing to register for it
 
             # A key typed over a sign-in replaces it, or the stale refresh would overwrite it.
             assert serve.save_endpoint("fo", fake + "/v1", "pasted")["ok"]
             assert "connect" not in serve.endpoints.load()["fo"] and serve.endpoints.keys()["fo"] == "pasted"
             assert client.backend("fo-m1") == "builtin"                    # still the Responses API
-            callback("fo")                                                 # and signed in again
+            assert not serve.connect_start("fo", "fo")["ok"]                # no longer a sign-in to renew
+            callback("fo")                                                 # a new sign-in: its own endpoint
+            assert serve.endpoints.load()["fo-2"]["connect"]["provider"] == "fo"
 
             listed = {p["id"]: p for p in serve.connect_list()["providers"]}
-            assert listed["fk"]["endpoint"] == "fk" and not listed["fk"]["missing"], listed["fk"]
+            assert not listed["fk"]["missing"] and listed["fk"]["flow"] == "key", listed["fk"]
             rows = {r["name"]: r for r in serve.endpoint_list()["endpoints"]}
-            assert rows["fo"]["connect"]["label"] == "OAuth" and not rows["fo"]["connect"]["expired"], rows["fo"]
-            assert rows["hub"]["connect"] is None
+            assert rows["fo-2"]["connect"]["label"] == "OAuth" and rows["fo-2"]["connect"]["flow"] == "oauth"
+            assert not rows["fo-2"]["connect"]["expired"] and rows["hub"]["connect"] is None
         finally:
             connect.PROVIDERS.clear()
             connect.PROVIDERS.update(saved[0])

@@ -63,6 +63,7 @@ import datetime as dt
 import hashlib
 import json
 import pathlib
+import re
 import secrets
 import sys
 import threading
@@ -174,14 +175,45 @@ def host_id() -> str:
 
 def client_id(provider: str) -> str:
     """The install's own (config/connect.json "client_ids"), else the shipped one."""
-    return (_config().get("client_ids") or {}).get(provider) or PROVIDERS[provider].get("client_id", "")
+    return own_ids().get(provider) or PROVIDERS[provider].get("client_id", "")
+
+
+def own_ids() -> dict:
+    """This install's own client ids, by provider: an app it registered itself
+    (Use your own app), or the one ChatGPT issued it at the first sign-in."""
+    ids = _config().get("client_ids")
+    return ids if isinstance(ids, dict) else {}
+
+
+CLIENT_ID = re.compile(r"^[A-Za-z0-9._~:-]{3,200}$")
+
+
+def set_own_id(provider: str, cid: str) -> None:
+    """Use your own app registration for `provider`, or "" to go back to the
+    shipped one. Also the way out if a shipped app is ever withdrawn: every
+    install can carry on with its own. Endpoints already signed in keep
+    renewing with the id they were signed in with."""
+    p = PROVIDERS.get(provider)
+    if not p or not p.get("register"):
+        raise ConnectError(f"{provider!r} has no app to register")
+    cid = (cid or "").strip()
+    if cid and not CLIENT_ID.match(cid):
+        raise ConnectError("a client id is 3-200 letters, digits or . _ ~ : - (a public id, never a secret)")
+
+    def change(data: dict) -> None:
+        ids = data.setdefault("client_ids", {})
+        if cid:
+            ids[provider] = cid
+        else:
+            ids.pop(provider, None)
+    locked.update(CONFIG, change)
 
 
 def ready(provider: str) -> str:
     """"" when this provider can be used here, else what is missing."""
     p = PROVIDERS[provider]
     if p["flow"] in ("oauth", "device") and not client_id(provider):
-        return f"needs a client id: register {p.get('register', 'an app')}, then add it to {CONFIG}"
+        return f"needs an app registration: under Use your own app, register {p.get('register', 'one')}"
     return ""
 
 
@@ -210,8 +242,9 @@ def _failed(reply: dict, what: str) -> ConnectError:
     return ConnectError(f"{what}: {why}")
 
 
-def _tokens(provider: str, reply: dict, cid: str) -> dict:
-    """What a successful token reply leaves for serve.py to save."""
+def _tokens(record: dict, reply: dict, cid: str) -> dict:
+    """What a successful token reply leaves for serve.py to save: for the
+    endpoint the sign-in was started for (a provider can be several)."""
     secret = reply.get("key") or reply.get("access_token")
     if not secret:
         raise _failed(reply, "the provider sent no key")
@@ -222,8 +255,8 @@ def _tokens(provider: str, reply: dict, cid: str) -> dict:
                        + dt.timedelta(seconds=int(reply["expires_in"]))).isoformat(timespec="seconds")
     except (TypeError, ValueError):
         pass                                     # an odd expiry: treated as none, and a 401 says when
-    return {"provider": provider, "secret": secret, "refresh": reply.get("refresh_token", ""),
-            "expires": expires, "client_id": cid}
+    return {"provider": record["provider"], "endpoint": record.get("endpoint") or record["provider"],
+            "secret": secret, "refresh": reply.get("refresh_token", ""), "expires": expires, "client_id": cid}
 
 
 def _sweep() -> None:
@@ -232,9 +265,10 @@ def _sweep() -> None:
         del _pending[k]
 
 
-def start(provider: str, port: int) -> dict:
-    """Begin a sign-in. {"url"} to open (key, oauth), or {"code", "verify"} to
-    show (device); either way an "id" to poll."""
+def start(provider: str, port: int, endpoint: str = "") -> dict:
+    """Begin a sign-in for `endpoint` (default: the provider's id). {"url"} to
+    open (key, oauth), or {"code", "verify"} to show (device); either way an
+    "id" to poll."""
     p = PROVIDERS.get(provider)
     if not p or p["flow"] == "local":
         raise ConnectError(f"{provider!r} has no sign-in")
@@ -242,7 +276,8 @@ def start(provider: str, port: int) -> dict:
         raise ConnectError(missing)
     cid = client_id(provider)
     sid = secrets.token_urlsafe(24)
-    record = {"provider": provider, "client_id": cid, "at": time.time(), "result": None}
+    record = {"provider": provider, "endpoint": endpoint or provider, "client_id": cid,
+              "at": time.time(), "result": None}
     if p["flow"] == "device":
         fields = {"client_id": cid, **({"scope": p["scope"]} if p.get("scope") else {})}
         reply = _post(p["device"], fields)
@@ -314,7 +349,7 @@ def finish(query: dict) -> dict:
             reply = _post(p["token"], {"grant_type": "authorization_code", "code": query["code"],
                                        "client_id": cid, "redirect_uri": record["redirect"],
                                        "code_verifier": record["verifier"], **p.get("token_params", {})})
-        return _tokens(record["provider"], reply, cid)
+        return _tokens(record, reply, cid)
     except ConnectError as exc:
         record["result"] = {"error": str(exc)}
         raise
@@ -356,7 +391,7 @@ def poll(sid: str) -> dict:
                 record["result"] = {"error": str(_failed(reply, "the sign-in did not finish"))}
             else:
                 try:
-                    record["result"] = _tokens(record["provider"], reply, record["client_id"])
+                    record["result"] = _tokens(record, reply, record["client_id"])
                 except ConnectError as exc:
                     record["result"] = {"error": str(exc)}
         finally:
@@ -402,7 +437,7 @@ def fresh(key_name: str) -> str:
                                    "client_id": conn.get("client_id") or client_id(conn["provider"]),
                                    **p.get("token_params", {})})
         try:
-            tokens = _tokens(conn["provider"], reply, conn.get("client_id", ""))
+            tokens = _tokens({"provider": conn["provider"], "endpoint": name}, reply, conn.get("client_id", ""))
         except ConnectError as exc:
             return f"the sign-in for {name} could not be renewed ({exc}); sign in again on the Endpoints page"
         # The refresh token first: it is spent now, and an access token without
@@ -435,7 +470,8 @@ def standing(conn: dict | None) -> dict | None:
     if not conn:
         return None
     gone = bool(conn.get("expires")) and not conn.get("refreshes") and _seconds_left(conn) <= 0
-    return {**conn, "label": PROVIDERS.get(conn.get("provider", ""), {}).get("label", ""), "expired": gone}
+    p = PROVIDERS.get(conn.get("provider", ""), {})
+    return {**conn, "label": p.get("label", ""), "flow": p.get("flow", ""), "expired": gone}
 
 
 def check() -> list[str]:
@@ -541,6 +577,7 @@ def _selftest() -> None:
             assert callback_id(f"/connect/callback/{q['state']}?code=x", {"code": "x"}) == q["state"]
             assert callback_id("/connect/callback?state=s&code=x", {"state": "s"}) == "s"
             assert got["secret"] == "sk-key" and not got["refresh"] and got["expires"] is None, got
+            assert got["endpoint"] == "k"                                    # by default, the provider's id
             assert poll(q["state"]) == {"state": "pending"}                  # until it is saved
             settle(q["state"], {"ok": True, "served": 3})
             assert poll(q["state"]) == {"state": "done", "ok": True, "served": 3}
@@ -577,18 +614,29 @@ def _selftest() -> None:
             except ConnectError:
                 pass
 
-            d = start("d", 8122)
+            d = start("d", 8122, endpoint="d-2")
             assert d["code"] == "ABCD-1234" and poll(d["id"]) == {"state": "pending"}
             done = poll(d["id"])
             assert done["state"] == "done" and done["secret"] == "ghu_x" and done["refresh"] == "ghr_x", done
+            assert done["endpoint"] == "d-2"                                 # the one it was started for
 
             try:
                 start("h", 8122)
                 raise AssertionError("started a sign-in with no client id")
             except ConnectError as exc:
-                assert "client id" in str(exc)
-            CONFIG.write_text(json.dumps({"host_id": host_id(), "client_ids": {"h": "hf-own"}}), encoding="utf-8")
-            assert "client_id=hf-own" in start("h", 8122)["url"]
+                assert "app registration" in str(exc)
+            # Use your own app: set, used, cleared; refused for a provider with nothing to register.
+            set_own_id("h", "hf-own")
+            assert "client_id=hf-own" in start("h", 8122)["url"] and own_ids()["h"] == "hf-own"
+            set_own_id("h", "")
+            assert "h" not in own_ids() and ready("h")
+            for bad in (("k", "x-id"), ("h", "has space"), ("h", "a" * 300)):
+                try:
+                    set_own_id(*bad)
+                    raise AssertionError(f"accepted {bad}")
+                except ConnectError:
+                    pass
+            set_own_id("h", "hf-own")
 
             # Renewal: due, renewed once, written where a key goes; then a dead refresh token.
             soon = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=60)).isoformat()

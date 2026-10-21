@@ -153,18 +153,20 @@ def list_models(entry: dict, secret: str = "", timeout: int = 30) -> dict[str, d
 
 
 def entry_of(alias: str) -> dict:
-    """The endpoints.json entry an alias is registered on, or {}. By base and
-    key name: two endpoints can share a base (the same provider signed in as
-    two accounts), never a key."""
-    reg = registrations().get(alias) or {}
-    want = reg.get("api_base", "").rstrip("/")
-    same = [e for e in load().values() if e["base"].rstrip("/") == want]
-    return next((e for e in same if e.get("key") == reg.get("api_key_name")), same[0] if same else {})
+    """The endpoints.json entry an alias is registered on, or {}."""
+    data = load()
+    name = endpoint_name(registrations().get(alias) or {}, data)
+    return data.get(name, {}) if name else {}
 
 
-def named_by_base(api_base: str) -> str | None:
-    want = api_base.rstrip("/")
-    return next((n for n, e in load().items() if e["base"].rstrip("/") == want), None)
+def endpoint_name(reg: dict, data: dict | None = None) -> str | None:
+    """The endpoint a registration is on, by base AND key name: one provider
+    can be two endpoints (a pasted key and a sign-in, or two accounts) on the
+    same base, but each endpoint has its own key. `data`: load(), if in hand."""
+    data = load() if data is None else data
+    want = (reg.get("api_base") or "").rstrip("/")
+    same = [n for n, e in data.items() if e["base"].rstrip("/") == want]
+    return next((n for n in same if data[n].get("key") == reg.get("api_key_name")), same[0] if same else None)
 
 
 def registrations() -> dict[str, dict]:
@@ -188,8 +190,8 @@ def registrations() -> dict[str, dict]:
 
 def registry() -> list[dict]:
     """Every yaml registration: alias, served name, and the endpoint it is on."""
-    return [{"alias": a, "served": r.get("model_name", ""),
-             "endpoint": named_by_base(r.get("api_base", "")) or "?"}
+    data = load()
+    return [{"alias": a, "served": r.get("model_name", ""), "endpoint": endpoint_name(r, data) or "?"}
             for a, r in registrations().items()]
 
 
@@ -244,6 +246,12 @@ def _selftest() -> None:
             assert (r["model_name"], r["api_key_name"], r["headers"]) == ("v/m:free", "or", {"X-Title": "t"}), r
             assert registry() == [{"alias": "m1", "served": "v/m:free", "endpoint": "or"}], registry()
             assert entry_of("m1")["key"] == "or" and entry_of("nobody") == {}
+            # One provider, two endpoints on one base: each model stays with its own.
+            FILE.write_text('{"or": {"base": "https://x.example/v1/", "key": "or"},'
+                            ' "or-2": {"base": "https://x.example/v1", "key": "or-2"}}', encoding="utf-8")
+            YAML.write_text(yaml_block("m1", "a", "or") + yaml_block("m2", "a", "or-2"), encoding="utf-8")
+            assert {r["alias"]: r["endpoint"] for r in registry()} == {"m1": "or", "m2": "or-2"}, registry()
+            assert entry_of("m2")["key"] == "or-2"
             # A list as an object or a bare list (GitHub's catalog); hidden ones left out.
             listing = pathlib.Path(tmp) / "models.json"
             for body in ('{"data": [{"id": "a"}, {"id": "b", "visibility": "hide"}]}', '[{"id": "a"}]'):

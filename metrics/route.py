@@ -114,7 +114,7 @@ def connection_of(alias: str) -> str:
     tag = tags.get(_registered_names().get(alias, alias))
     if not tag:
         import endpoints
-        tag = endpoints.named_by_base((endpoints.registrations().get(alias) or {}).get("api_base", ""))
+        tag = endpoints.endpoint_name(endpoints.registrations().get(alias) or {})
     return (tag or "?").split("/")[0]
 
 

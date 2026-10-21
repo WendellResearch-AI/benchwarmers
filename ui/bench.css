@@ -88,7 +88,7 @@ main { max-width: var(--page, 104rem); margin: 0 auto; padding: 0 var(--gutter) 
 .problems details > summary .muted { font-weight: 400; }
 .problem .what { font-weight: 500; }
 .problem .why { color: var(--muted); font-size: .875rem; overflow-wrap: anywhere; }
-.problem .acts { display: flex; gap: .5rem; flex-wrap: wrap; justify-content: flex-end; }
+.problem .acts, .endpoint .acts { display: flex; gap: .5rem; flex-wrap: wrap; justify-content: flex-end; }
 .problem .chip { margin-right: .4rem; }
 .problems .head { display: flex; align-items: baseline; gap: .5rem; }
 .problems .head h2 { margin-bottom: .25rem; }
