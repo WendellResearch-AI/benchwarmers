@@ -569,6 +569,11 @@
         if (x.default) title.appendChild(el('span', {class: 'chip'}, 'default'));
         title.appendChild(el('span', {class: 'chip ' + (x.key_set ? 'ok' : 'warn'), style: 'margin-left:.3rem'},
                              x.key_set ? 'key set' : 'no key'));
+        if (x.connect) {                                    // signed in from Connect
+          var until = x.connect.expires && !x.connect.refreshes ? ' until ' + x.connect.expires.slice(0, 10) : '';
+          title.appendChild(el('span', {class: 'chip ' + (x.connect.expired ? 'warn' : 'via'), style: 'margin-left:.3rem'},
+                               x.connect.expired ? 'sign in again' : 'signed in' + until));
+        }
         left.appendChild(title);
         left.appendChild(el('div', {class: 'base mono'}, x.base + ' · ' + x.models + ' model' + (x.models === 1 ? '' : 's') + ' on the bench'));
         row.appendChild(left);
@@ -640,7 +645,7 @@
   }
   $('endpoints-open').addEventListener('click', function () {
     e.errors.textContent = ''; e.done.textContent = ''; hideEndpointForm();
-    ed.showModal(); loadEndpoints(); loadLimits();
+    ed.showModal(); loadEndpoints(); loadProviders(); loadLimits();
   });
   $('e-add').addEventListener('click', function () { showEndpointForm('Add an endpoint'); e.name.focus(); });
   $('e-cancel').addEventListener('click', hideEndpointForm);
@@ -655,6 +660,61 @@
       loadEndpoints();
     }).catch(function (err) { e.errors.textContent = String(err); e.save.disabled = false; e.save.textContent = 'Test and save'; });
   });
+
+  // ---- connect: sign in on the provider's page (metrics/connect.py) --------
+  var cn = {list: $('cn-list'), wait: $('cn-wait'), msg: $('cn-msg'), timer: null};
+  function connectDone(r) {
+    clearInterval(cn.timer); cn.timer = null; cn.wait.hidden = true;
+    if (!r.ok) { listErrors(e.errors, r.errors); return; }
+    e.done.textContent = r.label + ' is connected: it lists ' + r.served + ' models. ' + (r.note || '');
+    // The next step for a new connection: onboard what it serves.
+    var go = el('button', {class: 'btn small', type: 'button', style: 'margin-left:.6rem'}, 'Onboard a model from it');
+    go.addEventListener('click', function () {
+      ed.close(); $('onboard-open').click(); o.find.value = r.endpoint;   // the picker filters on it once loaded
+    });
+    e.done.appendChild(go);
+    loadEndpoints(); loadProviders();
+  }
+  function connectStart(p) {
+    e.errors.textContent = ''; e.done.textContent = '';
+    // Opened now, while this is still the click: a window opened after the
+    // request returns is a popup the browser blocks.
+    var tab = p.flow === 'key' || p.flow === 'oauth' ? window.open('', '_blank') : null;
+    if (tab) tab.opener = null;
+    post('/api/connect/start', {provider: p.id}).then(function (r) {
+      if (!r.ok || r.state) { if (tab) tab.close(); connectDone(r); return; }   // refused, or local: saved at once
+      cn.wait.hidden = false; cn.msg.textContent = '';
+      if (r.url) {
+        if (tab) tab.location = r.url; else window.open(r.url, '_blank', 'noopener');
+        cn.msg.textContent = 'Sign in to ' + p.label + ' in the tab that opened. This updates when it is done.';
+      } else {
+        cn.msg.appendChild(document.createTextNode('Open '));
+        cn.msg.appendChild(el('a', {href: r.verify, target: '_blank', rel: 'noopener'}, r.verify));
+        cn.msg.appendChild(document.createTextNode(' and enter the code '));
+        cn.msg.appendChild(el('strong', {class: 'mono'}, r.code));
+      }
+      var tries = 0;
+      clearInterval(cn.timer);
+      cn.timer = setInterval(function () {
+        if (++tries > 450) { connectDone({ok: false, errors: ['No sign-in after fifteen minutes; start again.']}); return; }
+        post('/api/connect/poll', {id: r.id}).then(function (s) { if (s.state !== 'pending') connectDone(s); });
+      }, 2000);
+    }).catch(function (err) { if (tab) tab.close(); e.errors.textContent = String(err); });
+  }
+  function loadProviders() {
+    fetch('/api/connect').then(function (r) { return r.json(); }).then(function (res) {
+      cn.list.textContent = '';
+      res.providers.forEach(function (p) {
+        var b = el('button', {class: 'btn', type: 'button'}, (p.endpoint ? 'Reconnect ' : '') + p.label);
+        if (p.missing) { b.disabled = true; b.title = p.missing; }
+        b.addEventListener('click', function () {
+          if (p.endpoint && !confirm('Replace the key on the ' + p.endpoint + ' endpoint with a new sign-in?')) return;
+          connectStart(p);
+        });
+        cn.list.appendChild(b);
+      });
+    });
+  }
 
   // ---- collections: what the bench gateway runs together (its own tab) -----
   var c = {list: $('c-list'), name: $('c-name'), members: $('c-members'), count: $('c-count'),

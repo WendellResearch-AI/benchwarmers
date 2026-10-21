@@ -34,6 +34,12 @@ markers llm's produced:
 Redirects are not followed (see _NoRedirect): urllib would hand the key to
 whatever host a redirect names.
 
+ENDPOINTS CONNECTED BY SIGN-IN (metrics/connect.py) come through here even
+when BENCH_CLIENT is `llm` (see backend()): a token that renews is renewed
+just before the call, and ChatGPT's plan is reached through the Responses API
+(streamed, unstored) rather than chat completions. `llm -m` cannot do either,
+so for those models use `python metrics/client.py <alias> "prompt"`.
+
 RETRIES MATCH THE SDK UNDER llm: two more tries on a connection error, 408,
 409, 429 or 5xx, waiting the Retry-After when it is 60 s or less, else about
 0.5 then 1 s. Without them this client would surface 429s llm absorbed, and
@@ -64,6 +70,7 @@ import urllib.request
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 from paths import DATA  # noqa: E402  -- the install's data folder (metrics/paths.py)
 sys.path.insert(0, str(ROOT / "metrics"))
+import connect  # noqa: E402
 import endpoints  # noqa: E402
 
 OPTIONS = DATA / "config" / "model-options.json"
@@ -72,8 +79,14 @@ RETRY_STATUS = {408, 409, 429}
 MAX_REPLY = 32_000_000                             # bytes
 
 
-def backend() -> str:
-    """`llm` (default) or `builtin`, from BENCH_CLIENT."""
+def backend(alias: str = "") -> str:
+    """`llm` (default) or `builtin`, from BENCH_CLIENT. A model on an endpoint
+    connected by sign-in whose token renews, or that speaks only the Responses
+    API (ChatGPT's plan), is always `builtin`: llm can do neither."""
+    if alias:
+        entry = endpoints.entry_of(alias)
+        if entry.get("api") == "responses" or (entry.get("connect") or {}).get("refreshes"):
+            return "builtin"
     return (os.environ.get("BENCH_CLIENT") or "llm").strip().lower()
 
 
@@ -163,13 +176,24 @@ def chat(alias: str, prompt: str, system: str = "", timeout: float = 420) -> dic
     # urllib would also open file:// and ftp:// URLs given as a base.
     if not base.startswith(("http://", "https://")):
         return done(error=f"Error: client failed: endpoint base must be http(s), not {base!r}")
-    messages = ([{"role": "system", "content": system}] if system else []) \
-        + [{"role": "user", "content": prompt}]
-    body = json.dumps({"model": reg.get("model_name") or alias, "messages": messages,
-                       **_options(alias)}).encode()
+    model = reg.get("model_name") or alias
+    if responses := endpoints.entry_of(alias).get("api") == "responses":
+        # ChatGPT's plan (metrics/connect.py): streamed, unstored, no system
+        # message items, no sampling or length options.
+        url = base + "/responses"
+        body = json.dumps({"model": model, "input": [{"role": "user", "content": prompt}],
+                           "stream": True, "store": False,
+                           **({"instructions": system} if system else {})}).encode()
+    else:
+        url = base + "/chat/completions"
+        messages = ([{"role": "system", "content": system}] if system else []) \
+            + [{"role": "user", "content": prompt}]
+        body = json.dumps({"model": model, "messages": messages, **_options(alias)}).encode()
     headers = {"Content-Type": "application/json", "User-Agent": "benchwarmers",
                **reg.get("headers", {})}
     if name := reg.get("api_key_name", ""):
+        if why := connect.fresh(name):               # a signed-in token past renewal
+            return done(error=f"Error: client failed: {why}")
         # As llm does: a named key that is not set stops here, rather than
         # sending an unauthenticated call whose 401 would read as entitlement.
         if not (key := endpoints.keys().get(name, "")):
@@ -181,7 +205,7 @@ def chat(alias: str, prompt: str, system: str = "", timeout: float = 420) -> dic
         left = deadline - time.monotonic()
         if left <= 0:
             return done(timed_out=True)
-        request = urllib.request.Request(base + "/chat/completions", body, headers)
+        request = urllib.request.Request(url, body, headers)
         status = 0
         try:
             with _OPENER.open(request, timeout=left) as r:
@@ -224,6 +248,8 @@ def chat(alias: str, prompt: str, system: str = "", timeout: float = 420) -> dic
             continue
         except ValueError as e:                        # over MAX_REPLY, or a malformed URL
             return done(status=status, error=f"Error: client failed: {e}")
+        if responses:
+            return done(status=status, **_responses(raw))
         try:
             data = json.loads(raw or b"{}")
         except ValueError:
@@ -247,6 +273,37 @@ def chat(alias: str, prompt: str, system: str = "", timeout: float = 420) -> dic
     return done(timed_out=True)                        # unreachable: every path above returns
 
 
+def _responses(raw: bytes) -> dict:
+    """A streamed Responses API reply as chat()'s fields. It counts as an answer
+    only once `response.completed` arrives (OpenAI's rule for the plan flow); a
+    usage limit can arrive mid-stream as `response.failed`."""
+    deltas, final = [], None
+    for line in raw.decode("utf-8", "replace").splitlines():
+        if not line.startswith("data:"):
+            continue
+        try:
+            event = json.loads(line[5:].strip())
+        except ValueError:
+            continue
+        kind = event.get("type", "") if isinstance(event, dict) else ""
+        if kind == "response.output_text.delta":
+            deltas.append(event.get("delta") or "")
+        elif kind in ("response.completed", "response.failed", "response.incomplete", "error"):
+            final = event
+    if final is None:
+        return {"error": "Error: client failed: the stream ended before response.completed"}
+    resp = final.get("response") or {}
+    if final["type"] != "response.completed":
+        err = resp.get("error") or resp.get("incomplete_details") or final
+        code = err.get("code") if isinstance(err, dict) else ""
+        return {"error": f"Error: Error code: {code or final['type']} - {err}"}
+    text = "".join(part.get("text") or "" for item in resp.get("output") or []
+                   if item.get("type") == "message"
+                   for part in item.get("content") or [] if part.get("type") == "output_text")
+    return {"text": text or "".join(deltas), "model": resp.get("model") or "",
+            "usage": resp.get("usage") or {}}
+
+
 def output(res: dict, timeout: float) -> str:
     """The result as ask_once's text: the answer as llm prints it (with its
     closing newline), the error, or the timeout sentinel."""
@@ -255,8 +312,24 @@ def output(res: dict, timeout: float) -> str:
     return res["error"] or (res["text"] + "\n" if res["text"] else "")
 
 
+def _selftest() -> None:
+    """The Responses stream parser: an answer, a mid-stream usage limit, a cut-off stream."""
+    ok = (b'event: x\ndata: {"type":"response.output_text.delta","delta":"re"}\n\n'
+          b'data: {"type":"response.completed","response":{"model":"m","usage":{"total_tokens":3},'
+          b'"output":[{"type":"reasoning"},{"type":"message","content":[{"type":"output_text","text":"ready"}]}]}}\n')
+    assert _responses(ok) == {"text": "ready", "model": "m", "usage": {"total_tokens": 3}}, _responses(ok)
+    limit = (b'data: {"type":"response.output_text.delta","delta":"half"}\n'
+             b'data: {"type":"response.failed","response":{"error":{"code":"subscription_sharing_usage_limit_exceeded"}}}\n')
+    assert _responses(limit)["error"].startswith("Error: Error code: subscription_sharing_usage_limit_exceeded")
+    assert "before response.completed" in _responses(b'data: {"type":"response.output_text.delta","delta":"x"}\n')["error"]
+    print("ok")
+
+
 def main() -> int:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if sys.argv[1:] == ["--selftest"]:
+        _selftest()
+        return 0
     if len(sys.argv) != 3:
         print(__doc__.split("\n\n")[0])
         return 2

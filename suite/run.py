@@ -444,6 +444,14 @@ ERRORS = (
 # is deprecated, while one that is listed and failing might be either. A
 # listed model failing STRUCTURALLY every time is retired upstream and the
 # catalogue has not caught up -- which is exactly what `laguna-m1` did.
+# SIGNIN       the key itself was refused: 401, or a sign-in metrics/connect.py
+#              could not renew. Fixed on the Endpoints page, never by retiring.
+SIGNIN = (
+    "error code: 401",
+    "sign in again",
+    # ChatGPT's plan cannot share usage with apps: the account's, every model at once.
+    "sharing_usage_unavailable",
+)
 STRUCTURAL = (
     "model not found",
     "no endpoints found",
@@ -505,6 +513,8 @@ CAPACITY = (
     "rate limit",
     "quota exceeded",
     "insufficient_quota",
+    # ChatGPT's plan: the weekly cap the user set for this app, or the plan's own.
+    "usage_limit_exceeded",
     "too many requests",
     "request too large",
     "context length",
@@ -540,8 +550,8 @@ FAILURE_CLASSES = ("structural", "paywalled", "entitlement", "capacity",
 
 
 def failure_class(output: str, min_length: int = 40) -> str | None:
-    """`structural`, `paywalled`, `entitlement`, `capacity`, `timeout`, or
-    None if the model answered.
+    """`signin`, `structural`, `paywalled`, `entitlement`, `capacity`,
+    `timeout`, or None if the model answered.
 
     `min_length` carries the same meaning as in `outcome`, and for the same
     reason: without it a correct one-word reply falls through to the final
@@ -551,6 +561,12 @@ def failure_class(output: str, min_length: int = 40) -> str | None:
     head = output.strip().lower()[:400]
     if "<<timed out" in head:
         return "timeout"
+    # FIRST, because a refused key says nothing about the model: an expired
+    # sign-in (Pollinations keys last days) or a revoked key fails every model
+    # on the endpoint at once, and `entitlement` retired them the same day.
+    for marker in SIGNIN:
+        if marker in head:
+            return "signin"
     for marker in STRUCTURAL:
         if marker in head:
             return "structural"
@@ -807,7 +823,7 @@ def ask_once(binary: str, model: str, prompt: str,
     if str(ROOT / "metrics") not in sys.path:
         sys.path.insert(0, str(ROOT / "metrics"))
     import client
-    if client.backend() == "builtin":
+    if client.backend(model) == "builtin":
         res = client.chat(model, prompt, timeout=timeout)
         return client.output(res, timeout), res["seconds"]
     started = time.monotonic()

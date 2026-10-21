@@ -160,7 +160,7 @@ def retiring() -> set[str]:
 def ask_seat(alias: str, system: str, prompt: str) -> dict:
     cmd = ["llm", "-m", alias] + (["-s", system] if system else [])
     started = time.monotonic()
-    if client.backend() == "builtin":
+    if client.backend(alias) == "builtin":
         # No subprocess, and no shared llm log for parallel seats to lock.
         res = client.chat(alias, prompt, system, SEAT_TIMEOUT)
         answer = res["text"]

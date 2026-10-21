@@ -44,12 +44,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 ROOT = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "metrics"))
 from paths import DATA  # noqa: E402  -- the install's data folder (metrics/paths.py)
-PORT = 8122
+# BENCH_PORT: a second checkout (a dev worktree) beside the live one.
+PORT = int(os.environ.get("BENCH_PORT") or 8122)
 
 # Once, at import: roster() used to insert two entries on every page render.
 for _d in ("metrics", "suite", "scripts"):
     sys.path.insert(0, str(ROOT / _d))
 from aliases import current as current_alias  # noqa: E402
+import connect  # noqa: E402
 import guard  # noqa: E402
 
 
@@ -769,17 +771,20 @@ def endpoint_list() -> dict:
     for r in endpoints.registry():
         counts[r["endpoint"]] = counts.get(r["endpoint"], 0) + 1
     rows = [{"name": n, "base": e["base"], "default": n == endpoints.default(),
-             "key_set": bool(endpoints.key(n)), "models": counts.get(n, 0)}
+             "key_set": bool(endpoints.key(n)), "models": counts.get(n, 0),
+             "connect": connect.standing(e.get("connect"))}
             for n, e in endpoints.load().items()]
     return {"ok": True, "errors": [], "endpoints": rows}
 
 
-def save_endpoint(name: str, base: str, secret: str, who: str = "ui") -> dict:
+def save_endpoint(name: str, base: str, secret: str, who: str = "ui", extra: dict | None = None) -> dict:
     """Add an endpoint, or change one's key. Tested before anything is saved.
 
     The key goes where `llm keys set` puts it (the CLI's own keys.json), never
     into this repository, the change log or a response. It is sent to the base
     URL typed here, which is the point: that is the endpoint being added.
+    `extra` is fields from Connect (metrics/connect.py): its `connect` record,
+    `api`, `models_url`, and headers, which only a new endpoint takes.
     """
     name, base, secret = (name or "").strip().lower(), (base or "").strip().rstrip("/"), (secret or "").strip()
     data = endpoints.load()
@@ -795,22 +800,26 @@ def save_endpoint(name: str, base: str, secret: str, who: str = "ui") -> dict:
     if errors:
         return {"ok": False, "errors": errors}
     entry = dict(data.get(name) or {"key": name})
-    entry["base"] = base
-    headers = dict(entry.get("headers") or {})
-    if (secret := secret or endpoints.keys().get(entry["key"], "")):
-        headers["Authorization"] = f"Bearer {secret}"
+    extra = dict(extra or {})
+    if entry.get("headers"):
+        extra.pop("headers", None)                 # never rewrite an endpoint's own attribution headers
+    if secret and "connect" not in extra:
+        # A key typed over a sign-in replaces it: the old record would renew
+        # with its stale refresh token and overwrite the typed key.
+        entry.pop("connect", None)
+    entry.update(extra, base=base)
+    secret = secret or endpoints.keys().get(entry["key"], "")
+    listing = entry.get("models_url") or base + "/models"
     import urllib.error
     import urllib.request
     try:
-        with urllib.request.urlopen(urllib.request.Request(base + "/models", headers=headers),
-                                    timeout=30) as response:
-            count = len(json.load(response).get("data", []))
+        count = len(endpoints.list_models(entry, secret))
     except urllib.error.HTTPError as exc:
-        return {"ok": False, "errors": [f"{base}/models answered {exc.code}"
+        return {"ok": False, "errors": [f"{listing} answered {exc.code}"
                                         + (" — check the key" if exc.code in (401, 403) else "")
                                         + "; nothing saved"]}
     except Exception as exc:                           # noqa: BLE001
-        return {"ok": False, "errors": [f"could not list {base}/models ({type(exc).__name__}:"
+        return {"ok": False, "errors": [f"could not list {listing} ({type(exc).__name__}:"
                                         f" {exc}); nothing saved"]}
     # A LISTING PROVES THE URL, NOT ALWAYS THE KEY. OpenRouter lists its
     # models to anyone, so a wrong key sails through the test above. Asked
@@ -818,7 +827,7 @@ def save_endpoint(name: str, base: str, secret: str, who: str = "ui") -> dict:
     note = ""
     if secret:
         try:
-            with urllib.request.urlopen(base + "/models", timeout=15):
+            with urllib.request.urlopen(listing, timeout=15):
                 note = (" It lists models without a key, so the key itself is only"
                         " checked by the first call to one of its models.")
         except Exception:                              # noqa: BLE001
@@ -847,6 +856,69 @@ def remove_endpoint(name: str, who: str = "ui") -> dict:
                 who, "", "endpoint removed", name, None)
     return {"ok": True, "errors": [], "note": f"its key stays in the llm key store;"
                                               f" `llm keys` lists it"}
+
+
+# ---- Connect: sign in on a provider's page (metrics/connect.py) -------------
+
+def connect_list() -> dict:
+    """Every provider Connect knows, whether it can be used here, and its endpoint if added."""
+    have = endpoints.load()
+    return {"ok": True, "errors": [], "providers": [
+        {"id": pid, "label": p["label"], "flow": p["flow"], "missing": connect.ready(pid),
+         "endpoint": pid if pid in have else ""} for pid, p in connect.PROVIDERS.items()]}
+
+
+def connect_start(provider: str) -> dict:
+    p = connect.PROVIDERS.get(provider)
+    if not p:
+        return {"ok": False, "errors": [f"no provider {provider!r}"]}
+    if p["flow"] == "local":
+        # Ollama ignores the key, but llm sends one, so the endpoint gets a stand-in.
+        return connect_save({"provider": provider, "secret": provider})
+    try:
+        return {"ok": True, "errors": [], **connect.start(provider, PORT)}
+    except connect.ConnectError as exc:
+        return {"ok": False, "errors": [str(exc)]}
+
+
+def connect_poll(sid: str) -> dict:
+    res = connect.poll(sid)
+    if res["state"] == "pending":
+        return {"ok": True, "errors": [], "state": "pending"}
+    if res["state"] == "error" and "error" in res:
+        return {"ok": False, "errors": [res["error"]], "state": "error"}
+    return connect_save(res) if "secret" in res else res    # device tokens, or a callback's outcome
+
+
+def connect_save(tokens: dict) -> dict:
+    """Save a sign-in as the endpoint named after its provider, by save_endpoint's rules."""
+    pid = tokens["provider"]
+    p = connect.PROVIDERS[pid]
+    key = (endpoints.load().get(pid) or {}).get("key", pid)
+    with connect.renewal_lock(key):              # a renewal in flight finishes first, then this wins
+        out = save_endpoint(pid, p["base"], tokens["secret"], who="connect",
+                            extra={**p.get("entry", {}), "connect": connect.entry_field(tokens)})
+        if out["ok"] and tokens.get("refresh"):
+            endpoints.set_key(key + ".refresh", tokens["refresh"])
+    if not out["ok"] and p.get("hint"):
+        out["errors"].append(p["hint"])
+    if p["flow"] == "local":
+        out.pop("note", None)                      # "the key is unproven" means nothing where none is needed
+    return {**out, "state": "done" if out["ok"] else "error", "endpoint": pid, "label": p["label"]}
+
+
+def connect_page(out: dict) -> str:
+    """What the sign-in tab shows when the provider sends it back here."""
+    home = f"http://localhost:{PORT}/"
+    if out.get("ok"):
+        head, text = (f"{out['label']} is connected",
+                      f"It lists {out.get('served', 0):,} models. Back in Benchwarmers, onboard the ones you want.")
+    else:
+        head, text = "Not connected", " ".join(out.get("errors") or ["the sign-in did not finish"])
+    return (f"<!doctype html><meta charset='utf-8'><title>Benchwarmers</title>"
+            f"<body style='font:16px system-ui;max-width:36rem;margin:4rem auto;padding:0 1rem'>"
+            f"<h1>{html.escape(head)}</h1><p>{html.escape(text)}</p>"
+            f"<p><a href='{home}'>Back to Benchwarmers</a>. You can close this tab.</p>")
 
 
 def _clean_limits(raw) -> tuple[dict, list[str]]:
@@ -1173,6 +1245,7 @@ STATUS = {
     "structural": ("not found", "err", "no such model, or no provider behind it"),
     "paywalled": ("no longer free", "err", "the free tier moved behind a paid slug"),
     "entitlement": ("no access", "err", "payment, credit or permission refused"),
+    "signin": ("sign in again", "warn", "the key was refused: expired or revoked; fix it on the Endpoints page"),
     "other": ("failing", "err", "an error nothing here recognises"),
 }
 
@@ -2498,7 +2571,13 @@ def editor() -> str:
         " to a model go straight to its endpoint, so add only providers you are content"
         " to send private source to.</p>"
         "<div id='e-list'></div>"
-        "<div class='list-actions'><button class='btn' id='e-add'>Add an endpoint</button></div>"
+        # Connect: sign in on the provider's page instead of pasting a key (metrics/connect.py)
+        "<h3 class='form-head'>Connect by signing in</h3>"
+        "<p class='rules'>Sign in on the provider's own page; the key it hands back is kept where a"
+        " pasted one is. Only providers that publish a sign-in for other apps are here.</p>"
+        "<div class='list-actions' id='cn-list'></div>"
+        "<div id='cn-wait' hidden><p class='served' id='cn-msg'></p></div>"
+        "<div class='list-actions'><button class='btn' id='e-add'>Add an endpoint by key</button></div>"
         # The form only when asked for: Add, or a row's Change key.
         "<div id='e-form' hidden>"
         "<h3 class='form-head' id='e-form-head'>Add an endpoint</h3>"
@@ -2578,6 +2657,32 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/api/endpoints":
             self._json(200, endpoint_list())
             return
+        if self.path == "/api/connect":
+            self._json(200, connect_list())
+            return
+        if self.path.startswith((connect.CALLBACK + "?", connect.CALLBACK + "/")):
+            # The provider sends the browser back here. A GET that saves, as
+            # OAuth callbacks are: the state is single-use and unguessable, and
+            # only a sign-in this dashboard started has one.
+            from urllib.parse import parse_qsl, urlparse
+            query = dict(parse_qsl(urlparse(self.path).query))
+            query["state"] = connect.callback_id(self.path, query)
+            try:
+                out = connect_save(connect.finish(query))
+            except connect.ConnectError as exc:
+                out = {"ok": False, "errors": [str(exc)], "state": "error"}
+            except Exception as exc:                   # noqa: BLE001 -- the tab must still hear something
+                out = {"ok": False, "errors": [f"could not save it ({type(exc).__name__}: {exc})"], "state": "error"}
+            connect.settle(query.get("state", ""), out)
+            body = connect_page(out).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Referrer-Policy", "no-referrer")     # the code is in this URL
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if self.path == "/api/collections":
             self._json(200, collections_view())
             return
@@ -2649,6 +2754,8 @@ class Handler(BaseHTTPRequestHandler):
                                                         str(p.get("base", "")),
                                                         str(p.get("key", ""))),
                "/api/endpoint/remove": lambda p: remove_endpoint(str(p.get("name", ""))),
+               "/api/connect/start": lambda p: connect_start(str(p.get("provider") or "")),
+               "/api/connect/poll": lambda p: connect_poll(str(p.get("id") or "")),
                # `or ""`, not a default: JSON null must not become the text "None".
                "/api/collection": lambda p: save_collection(str(p.get("name") or ""), p.get("members"),
                                                             str(p.get("shape") or ""),

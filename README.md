@@ -62,6 +62,13 @@ the code where this page is thin.
 
        python serve.py                  # http://localhost:8122
 
+   More providers need no key to copy: Endpoints › Manage › **Connect by
+   signing in** opens the provider's own sign-in page (OpenRouter, NanoGPT,
+   Hugging Face, Pollinations, your ChatGPT plan, GitHub Models) or adds a
+   local Ollama, then offers to onboard what it serves. Only providers that
+   publish a sign-in for other apps are offered; adding one is an entry in
+   `metrics/connect.py` (its docstring says how).
+
 5. **Make a collection** on the Collections page (the models a panel always
    includes, and what it is for), then **start the gateway**:
 

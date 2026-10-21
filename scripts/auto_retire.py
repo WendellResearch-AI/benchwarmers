@@ -53,7 +53,8 @@ for _d in (ROOT, ROOT / "metrics", ROOT / "suite"):
 IMMEDIATE = {"structural", "paywalled", "entitlement"}
 MISSING_DAYS, OTHER_DAYS, BACKSTOP_DAYS = 3, 3, 7
 PROBE = "Reply with exactly one word: ready"
-ACCOUNT_QUOTAS = ("free-models-per-day",)        # see account_quota()
+# see account_quota(); the second is the weekly cap a ChatGPT plan sets per app
+ACCOUNT_QUOTAS = ("free-models-per-day", "usage_limit_exceeded")
 
 
 def account_quota(detail: str) -> bool:
@@ -85,7 +86,8 @@ def plan(today: dt.date, models: dict[str, str], live: set[str],
                       + ([answers[alias]] if alias in answers else []),
                       default=None)
         floor = max(d for d in (last_ok, restored.get(alias), dt.date.min) if d)
-        fails = sorted((r for r in mine if not r["answered"] and r["failure"]
+        # A refused key (`signin`) is the endpoint's, fixed by signing in again.
+        fails = sorted((r for r in mine if not r["answered"] and r["failure"] and r["failure"] != "signin"
                         and r["date"] > floor and not account_quota(r["detail"])),
                        key=lambda r: r["date"])
         missing_since = None
@@ -327,6 +329,15 @@ def _selfcheck() -> None:
                    detail="429 Rate limit exceeded: free-models-per-day") for n in (8, 5, 0)]
     p = plan(d, {"quota": "v/quota"}, {"v/quota"}, {}, shared, {}, {}, {"v/quota": "v"})
     assert not p["retire"] and not p["pending"], p
+    # A refused key is the endpoint's, never the model's (suite/run.py SIGNIN)
+    from run import failure_class
+    assert failure_class("Error: Error code: 401 - {'error': 'invalid key'}") == "signin"
+    assert failure_class("Error: Error code: 403 - payment required") == "entitlement"
+    assert failure_class("Error: Error code: subscription_sharing_usage_unavailable - {}") == "signin"
+    assert account_quota("Error: Error code: subscription_sharing_usage_limit_exceeded - {}")
+    refused = [row("pk", n, "signin") for n in (9, 5, 0)]
+    p = plan(d, {"pk": "v/pk"}, {"v/pk"}, {}, refused, {}, {}, {"v/pk": "v"})
+    assert not p["retire"] and not p["confirm"] and not p["pending"], p
     print("auto_retire: rules hold")
 
 

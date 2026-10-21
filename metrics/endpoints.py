@@ -130,13 +130,36 @@ def models(name: str | None = None, timeout: int = 30) -> dict[str, dict]:
     by hand. They are taken as served on the config's word, so availability
     cannot notice one going away."""
     entry = load()[name or default()]
-    headers = dict(entry.get("headers") or {})
-    if (secret := key(name)):
-        headers["Authorization"] = f"Bearer {secret}"
-    request = urllib.request.Request(base(name) + "/models", headers=headers)
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        live = {e["id"]: e for e in json.load(response).get("data", []) if e.get("id")}
+    import connect                                 # here: connect imports this module
+    connect.fresh(entry.get("key", ""))            # an expiring sign-in renewed first; a failure shows as a 401
+    live = list_models(entry, key(name), timeout)
     return {**{i: {"id": i} for i in entry.get("unlisted_models", [])}, **live}
+
+
+def list_models(entry: dict, secret: str = "", timeout: int = 30) -> dict[str, dict]:
+    """What an endpoint entry lists, saved or not yet (the dashboard tests one
+    before saving it). `models_url` when the list lives elsewhere (GitHub
+    Models: its catalog, a bare JSON list); entries marked `visibility` other
+    than "list" are left out (ChatGPT's plan lists ones it will not serve)."""
+    headers = dict(entry.get("headers") or {})
+    if secret:
+        headers["Authorization"] = f"Bearer {secret}"
+    url = entry.get("models_url") or entry["base"].rstrip("/") + "/models"
+    with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=timeout) as response:
+        data = json.load(response)
+    rows = data.get("data", []) if isinstance(data, dict) else data
+    return {e["id"]: e for e in rows
+            if isinstance(e, dict) and e.get("id") and e.get("visibility", "list") == "list"}
+
+
+def entry_of(alias: str) -> dict:
+    """The endpoints.json entry an alias is registered on, or {}. By base and
+    key name: two endpoints can share a base (the same provider signed in as
+    two accounts), never a key."""
+    reg = registrations().get(alias) or {}
+    want = reg.get("api_base", "").rstrip("/")
+    same = [e for e in load().values() if e["base"].rstrip("/") == want]
+    return next((e for e in same if e.get("key") == reg.get("api_key_name")), same[0] if same else {})
 
 
 def named_by_base(api_base: str) -> str | None:
@@ -149,6 +172,8 @@ def registrations() -> dict[str, dict]:
     api_key_name and a `headers` dict. Not a YAML parser; the file is ours."""
     out: dict[str, dict] = {}
     current = None
+    if not YAML.exists():                          # a fresh install has registered nothing yet
+        return out
     for line in YAML.read_text(encoding="utf-8").splitlines():
         if (m := re.match(r"\s*-\s*model_id:\s*(.+)", line)):
             current = out.setdefault(m.group(1).strip().strip("\"'"), {"headers": {}})
@@ -218,6 +243,12 @@ def _selftest() -> None:
             r = registrations()["m1"]
             assert (r["model_name"], r["api_key_name"], r["headers"]) == ("v/m:free", "or", {"X-Title": "t"}), r
             assert registry() == [{"alias": "m1", "served": "v/m:free", "endpoint": "or"}], registry()
+            assert entry_of("m1")["key"] == "or" and entry_of("nobody") == {}
+            # A list as an object or a bare list (GitHub's catalog); hidden ones left out.
+            listing = pathlib.Path(tmp) / "models.json"
+            for body in ('{"data": [{"id": "a"}, {"id": "b", "visibility": "hide"}]}', '[{"id": "a"}]'):
+                listing.write_text(body, encoding="utf-8")
+                assert list(list_models({"base": "x", "models_url": listing.as_uri()})) == ["a"], body
         finally:
             FILE, YAML = real
     print("ok")
