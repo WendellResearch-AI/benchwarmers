@@ -1,5 +1,6 @@
-"""Verdicts and the gateway's `bench` field, against a throwaway log. No model is
-called and the real offloads.jsonl and runs/gateway/ are never written.
+"""Verdicts and the gateway's `bench` field, against a throwaway log. No model or
+endpoint is called and the real offloads.jsonl and runs/gateway/ are never
+written. The collection comes from the data folder (in CI, tests/fixtures/data).
 
     python scripts/test_verdict.py
 """
@@ -18,6 +19,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path[:0] = [str(ROOT), str(ROOT / "metrics"), str(ROOT / "suite")]
 import gateway  # noqa: E402
 import offload  # noqa: E402
+import run  # noqa: E402
 import serve  # noqa: E402
 
 tmp = pathlib.Path(tempfile.mkdtemp(prefix="bench-verdict-"))
@@ -33,9 +35,9 @@ def verdicts() -> None:
     assert serve.record_verdict("pX.member1", True, "  found   it ", ["real one", " "], ["wrong one"])["ok"]
     e = offload.entries()[-1]
     assert (e["useful"], e["note"], e["real"], e["false"]) == (True, "found it", ["real one"], ["wrong one"]), e
-    n = len(offload.LOG.read_text().splitlines())
+    n = len(offload.LOG.read_text(encoding="utf-8").splitlines())
     assert serve.record_verdict("pX.member1", True, "found it", ["real one"], ["wrong one"])["ok"]
-    assert len(offload.LOG.read_text().splitlines()) == n, "the same verdict again wrote a line"
+    assert len(offload.LOG.read_text(encoding="utf-8").splitlines()) == n, "the same verdict again wrote a line"
     # The dashboard form shows note and claims for editing: blank means cleared.
     assert serve.record_verdict("pX.member1", False, "", [], [])["ok"]
     e = offload.entries()[-1]
@@ -51,6 +53,9 @@ def bench_field() -> None:
     gateway.pick_shape = lambda text: ("general", "test")
     gateway.ask_seat = lambda alias, system, prompt: {"status": "ok", "answer": f"answer from {alias}",
                                                       "error": "", "seconds": 0.1}
+    # The explorer seats ask every endpoint's /models; None is its own "cannot
+    # be asked, do not filter", so no request leaves the machine.
+    run._served_model_names = lambda cache=None: None
     srv = ThreadingHTTPServer(("127.0.0.1", 0), gateway.Handler)
     gateway.PORT = srv.server_address[1]          # the Host check expects the port it runs on
     threading.Thread(target=srv.serve_forever, daemon=True).start()

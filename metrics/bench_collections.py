@@ -104,8 +104,8 @@ def choose_message(model: str | None) -> str:
 
 
 if __name__ == "__main__":
-    assert explorers_for(1) == 2 and explorers_for(2) == 2 and explorers_for(3) == 2
-    assert explorers_for(4) == 1 and explorers_for(5) == 0 and explorers_for(6) == 0
+    # DEFAULTS, not settings(): the install's gateway.json must not decide the check.
+    assert [explorers_for(n, DEFAULTS) for n in range(1, 7)] == [2, 2, 2, 1, 0, 0]
     assert explorers_for(3, {"max_calls": 4, "max_explorers": 2}) == 1
     assert resolve("bench/") is None and resolve("bench/no-such") is None and resolve("") is None
     print("ok")

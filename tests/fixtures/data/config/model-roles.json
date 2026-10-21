@@ -1,0 +1,20 @@
+{
+  "_comment": ["Fixture roles for the self-checks (scripts/check.py)."],
+  "roles": {
+    "general": "do-it-all",
+    "code": "code completion and edits",
+    "light": "small, fast instruct model",
+    "image": "image generation",
+    "decision": "typed choice / score / yes-no"
+  },
+  "shapes": {
+    "general": ["general"],
+    "review": ["general", "code"],
+    "code": ["general", "code"],
+    "enumeration": ["general", "code", "light"],
+    "quick": ["general", "light"],
+    "image": ["image"]
+  },
+  "models": {"gamma-3": "code"},
+  "ad_hoc": []
+}

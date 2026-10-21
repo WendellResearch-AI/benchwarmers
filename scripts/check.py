@@ -1,14 +1,17 @@
 """Every self-check and test file, in one command.
 
-    python scripts/check.py           # all of them
-    python scripts/check.py --quick   # without the llm-vs-built-in comparison (about two minutes)
+    python scripts/check.py              # all of them
+    python scripts/check.py --quick      # without the llm-vs-built-in comparison (about two minutes)
+    python scripts/check.py --fixtures   # as CI runs them: on a copy of tests/fixtures/data
 
 RELEASE-PLAN.md Phase 6: one command a change is checked with, and what CI
-will run. Each check is its own process, so one that crashes cannot take the
-rest with it; the output of any that fail is shown. None of them call a model
-or write the owner's data: they use temp copies, stubs and a fake server.
-Some still READ the live config (the collections, the registry), which is
-fine here and gets fixtures before CI runs them on a clean machine.
+runs (.github/workflows/check.yml). Each check is its own process, so one that
+crashes cannot take the rest with it; the output of any that fail is shown.
+None of them call a model, reach past this machine, or write the install's
+data: they use temp copies, stubs and fake servers. Some READ the data folder
+(the collections, the registry, the alias history): this install's, or with
+--fixtures a temp copy of the repo's fixture folder, with llm's user folder
+pointed at an empty temp one, which is how they run on a clean machine.
 
 The export gate's full scan is not here: it fails by design until the public
 tree is clean (`python scripts/export_check.py`). Its pattern self-check is.
@@ -18,8 +21,10 @@ from __future__ import annotations
 
 import os
 import pathlib
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -31,6 +36,7 @@ CHECKS = [
     ("metrics/endpoints.py", ["--selftest"], False),
     ("metrics/connect.py", ["--selftest"], False),
     ("metrics/client.py", ["--selftest"], False),
+    ("metrics/bench_collections.py", [], False),
     ("metrics/learn.py", ["--selftest"], False),
     ("metrics/discover.py", ["--selftest"], False),
     ("metrics/test_decide.py", [], False),
@@ -58,6 +64,12 @@ def main() -> int:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     quick = "--quick" in sys.argv
     env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+    if "--fixtures" in sys.argv:
+        tmp = pathlib.Path(tempfile.mkdtemp(prefix="bench-check-"))
+        shutil.copytree(ROOT / "tests" / "fixtures" / "data", tmp / "data")
+        (tmp / "llm").mkdir()
+        env.update(BENCHWARMERS_HOME=str(tmp / "data"), LLM_USER_PATH=str(tmp / "llm"))
+        print(f"data  {tmp / 'data'}  (a copy of tests/fixtures/data)")
     failed = []
     for script, args, slow in CHECKS:
         if quick and slow:
@@ -76,7 +88,8 @@ def main() -> int:
         print(f"{'ok   ' if ok else 'FAIL '} {script}  ({time.monotonic() - started:.0f}s)")
         if not ok:
             failed.append(script)
-            print("\n".join("      " + line for line in out.splitlines()[-15:]))
+            # 40: test_client's whole report, so a CI log names the failing scenario.
+            print("\n".join("      " + line for line in out.splitlines()[-40:]))
     print(f"\n{len(failed)} failed: {', '.join(failed)}" if failed else "\nall checks pass")
     return 1 if failed else 0
 
