@@ -20,12 +20,18 @@
 
   // ---- tabs, remembered per browser ----------------------------------
   var tabs = document.querySelectorAll('.tabs button[data-tab]');      // not the sidebar's own toggle
+  var onShow = {};                     // a page's loader, run each time it is shown
   function show(id) {
     tabs.forEach(function (b) { b.setAttribute('aria-selected', String(b.dataset.tab === id)); });
     document.querySelectorAll('.tab').forEach(function (s) { s.classList.toggle('active', s.id === 'tab-' + id); });
     store('bench.tab', id);
+    if (onShow[id]) onShow[id]();
   }
   tabs.forEach(function (b) { b.addEventListener('click', function () { show(b.dataset.tab); }); });
+  // A button that opens another page (Endpoints' Manage), from the top.
+  document.querySelectorAll('[data-goto]').forEach(function (b) {
+    b.addEventListener('click', function () { show(b.dataset.goto); window.scrollTo(0, 0); });
+  });
   var wanted = store('bench.tab');
   show(wanted && $('tab-' + wanted) ? wanted : 'glance');
 
@@ -591,13 +597,16 @@
   });
 
   // ---- endpoints: keys go in, never come back out -------------------------
-  var ed = $('endpoints-dialog');
+  // The Manage page lists them; Add an endpoint and Change key are one dialog.
+  var ed = $('endpoint-dialog');
   var e = {list: $('e-list'), name: $('e-name'), base: $('e-base'), key: $('e-key'),
            kind: $('e-kind'), hub: $('e-hub'), admin: $('e-admin'),
-           errors: $('e-errors'), done: $('e-done'), save: $('e-save')};
+           errors: $('e-errors'), done: $('e-done'), test: $('e-test'), save: $('e-save'),
+           listErrors: $('el-errors'), listDone: $('el-done')};
   e.kind.addEventListener('change', function () {
     $('e-hub-row').hidden = $('e-admin-row').hidden = e.kind.value !== 'hub';
   });
+  ed.querySelectorAll('[data-close]').forEach(function (b) { b.addEventListener('click', function () { ed.close(); }); });
   function loadEndpoints() {
     fetch('/api/endpoints').then(function (r) { return r.json(); }).then(function (res) {
       e.list.textContent = '';
@@ -619,15 +628,12 @@
         row.appendChild(left);
         var acts = el('div', {class: 'acts'});
         var edit = el('button', {class: 'btn small', type: 'button'}, 'Change key');
-        edit.addEventListener('click', function () {
-          showEndpointForm('Change the key for ' + x.name);
-          e.name.value = x.name; e.base.value = x.base; e.key.value = ''; e.admin.value = ''; e.key.focus();
-          $('e-admin-row').hidden = !x.hub;                 // a hub's admin key changes here too
-        });
+        edit.addEventListener('click', function () { openEndpoint('change', x); });
         acts.appendChild(edit);
         if (x.connect && x.connect.flow && x.connect.flow !== 'local') {     // this endpoint, not a new one
           var again = el('button', {class: 'btn small', type: 'button'}, 'Sign in again');
           again.addEventListener('click', function () {
+            openEndpoint('again', x);
             connectStart({id: x.connect.provider, flow: x.connect.flow, label: x.connect.label}, x.name);
           });
           acts.appendChild(again);
@@ -638,8 +644,9 @@
             if (!confirm('Make ' + x.name + ' the default endpoint? The default is where a model is taken'
                          + ' to be when nothing says otherwise, and the one endpoint that cannot be removed.')) return;
             post('/api/endpoint/default', {name: x.name}).then(function (r) {
-              if (!r.ok) { listErrors(e.errors, r.errors); return; }
-              e.done.textContent = r.note + '.'; loadEndpoints();
+              e.listErrors.textContent = '';
+              if (!r.ok) { listErrors(e.listErrors, r.errors); return; }
+              e.listDone.textContent = r.note + '.'; loadEndpoints();
             });
           });
           acts.appendChild(def);
@@ -653,8 +660,9 @@
                              + ' Restore brings them back if an endpoint named ' + x.name + ' is added again.'
                            : 'Remove the ' + x.name + ' endpoint?')) return;
             post('/api/endpoint/remove', {name: x.name, with_models: n > 0}).then(function (r) {
-              if (!r.ok) { listErrors(e.errors, r.errors); return; }
-              e.done.textContent = 'Removed ' + x.name + '; ' + r.note + '.'; loadEndpoints();
+              e.listErrors.textContent = '';
+              if (!r.ok) { listErrors(e.listErrors, r.errors); return; }
+              e.listDone.textContent = 'Removed ' + x.name + '; ' + r.note + '.'; loadEndpoints();
               if (r.retired && r.retired.length) setTimeout(function () { location.reload(); }, 2500);   // the model tables changed
             });
           });
@@ -698,55 +706,118 @@
       });
     });
   }
-  // The add view shows only when asked for, so the dialog opens as a short
-  // list. Add: sign in with a provider, or paste a key. Change key: the key form.
-  function showEndpointForm(title, adding) {
-    $('e-new').hidden = false; $('e-add').hidden = true; $('e-form-head').textContent = title;
-    $('e-signin').hidden = !adding; $('e-key-head').hidden = !adding; $('e-kinds').hidden = !adding;
+  onShow.manage = function () {
+    e.listErrors.textContent = e.listDone.textContent = '';
+    $('cn-app-errors').textContent = $('cn-app-done').textContent = '';
+    loadEndpoints(); loadProviders(); loadLimits();
+  };
+  // The dialog, in one of three modes. add: the choices, API key first, then
+  // each provider's sign-in; change: one endpoint's key form; again: a
+  // sign-in under way for an endpoint that has one.
+  function openEndpoint(mode, x) {
+    cn.run++;
+    e.adding = mode === 'add';     // Add refuses a name in use; Change key edits that one
+    $('e-title').textContent = mode === 'change' ? 'Change the key for ' + x.name
+      : mode === 'again' ? 'Sign in to ' + x.connect.label + ' again' : 'Add an endpoint';
+    $('e-blurb').hidden = cn.list.hidden = $('e-kinds').hidden = !e.adding;
+    e.key.placeholder = e.adding ? 'blank if it needs none, as a local runtime' : 'leave blank to keep the current one';
+    cn.wait.hidden = true; $('e-after').hidden = true;
+    resetKeyForm();
+    choose(mode === 'again' ? null : 'key');
+    if (mode === 'change') {
+      e.name.value = x.name; e.base.value = x.base; e.name.readOnly = true;
+      $('e-admin-row').hidden = !x.hub;                     // a hub's admin key changes here too
+    }
+    if (e.adding) loadProviders();
+    if (!ed.open) ed.showModal();
+    (mode === 'change' ? e.key : e.name).focus();
+  }
+  // Which form shows: 'key' (paste an API key), a provider (sign in), or none.
+  function choose(p) {
+    cn.pick = p && p !== 'key' ? p : null;
+    $('e-form').hidden = p !== 'key';
+    $('cn-form').hidden = !cn.pick;
+    if (cn.pick) {
+      $('cn-name').value = cn.pick.suggest;
+      $('cn-go').textContent = (cn.pick.flow === 'local' ? 'Add ' : 'Sign in to ') + cn.pick.label;
+    }
     e.errors.textContent = ''; e.done.textContent = '';
-    e.adding = !!adding;           // Add refuses a name in use; Change key edits that one
+    press();
   }
-  function hideEndpointForm() {
-    $('e-new').hidden = true; $('e-add').hidden = false; $('cn-form').hidden = true;
-    e.name.value = ''; e.base.value = ''; e.key.value = ''; e.admin.value = '';
-    e.kind.value = 'provider'; $('e-hub-row').hidden = $('e-admin-row').hidden = true;
+  function press() {
+    var on = cn.pick ? cn.pick.id : $('e-form').hidden ? '' : 'key';
+    cn.list.querySelectorAll('button').forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.choice === on)); });
   }
-  $('endpoints-open').addEventListener('click', function () {
-    e.errors.textContent = ''; e.done.textContent = ''; hideEndpointForm();
-    $('cn-app-errors').textContent = ''; $('cn-app-done').textContent = '';
-    ed.showModal(); loadEndpoints(); loadProviders(); loadLimits();
-  });
-  $('e-add').addEventListener('click', function () { showEndpointForm('Add an endpoint', true); });
-  $('e-cancel').addEventListener('click', hideEndpointForm);
-  $('e-close').addEventListener('click', function () { ed.close(); });
-  e.save.addEventListener('click', function () {
-    e.errors.textContent = ''; e.done.textContent = ''; e.save.disabled = true; e.save.textContent = 'Testing…';
+  function resetKeyForm() {
+    e.name.value = e.base.value = e.key.value = e.admin.value = ''; e.name.readOnly = false;
+    e.kind.value = 'provider'; e.hub.selectedIndex = 0; $('e-hub-row').hidden = $('e-admin-row').hidden = true;
+    untested();
+  }
+  // Save opens only after Test passes, and closes again when anything in the
+  // form changes. The server tests again on Save: this is the form's manners,
+  // not the guarantee.
+  function untested() { e.save.disabled = true; e.save.title = 'Test it first'; }
+  $('e-form').addEventListener('input', function () { untested(); e.done.textContent = ''; });
+  function keyBody() {
     var body = {name: e.name.value, base: e.base.value, key: e.key.value, new: e.adding,
                 admin: $('e-admin-row').hidden ? '' : e.admin.value};
     if (e.adding) { body.kind = e.kind.value; body.hub = e.kind.value === 'hub' ? e.hub.value : ''; }   // Change key keeps its kind
+    return body;
+  }
+  $('e-add').addEventListener('click', function () { openEndpoint('add'); });
+  e.test.addEventListener('click', function () {
+    e.errors.textContent = ''; e.done.textContent = ''; untested();
+    e.test.disabled = true; e.test.textContent = 'Testing…';
+    var body = keyBody(), sent = JSON.stringify(body), run = cn.run; body.test = true;
+    function end() { e.test.disabled = false; e.test.textContent = 'Test'; }
     post('/api/endpoint', body).then(function (r) {
-      e.save.disabled = false; e.save.textContent = 'Test and save'; e.key.value = ''; e.admin.value = '';
+      end();
+      if (run !== cn.run || JSON.stringify(keyBody()) !== sent) return;   // opened afresh, or edited, meanwhile
       if (!r.ok) { listErrors(e.errors, r.errors); return; }
-      var name = e.name.value.trim().toLowerCase();
-      var saved = 'Saved. ' + name + ' lists ' + r.served + ' models; they appear in the onboarding picker. ' + (r.note || '');
-      hideEndpointForm(); e.done.textContent = saved;       // the form folds; the message stays
-      if (e.adding) e.done.appendChild(onboardFrom(name));
-      loadEndpoints();
-    }).catch(function (err) { e.errors.textContent = String(err); e.save.disabled = false; e.save.textContent = 'Test and save'; });
+      e.done.textContent = 'It answers: ' + r.served + ' models listed. ' + (r.note || '');
+      e.save.disabled = false; e.save.title = '';
+    }).catch(function (err) { end(); e.errors.textContent = String(err); });
   });
+  e.save.addEventListener('click', function () {
+    e.errors.textContent = ''; e.save.disabled = e.test.disabled = true; e.save.textContent = 'Saving…';
+    function end() { e.save.textContent = 'Save'; e.test.disabled = false; }
+    post('/api/endpoint', keyBody()).then(function (r) {
+      end();
+      if (!r.ok) { listErrors(e.errors, r.errors); return; }          // Save stays shut: test again
+      var name = e.name.value.trim().toLowerCase();
+      finished('Saved. ' + name + ' lists ' + r.served + ' models; they appear in the onboarding picker. '
+               + (r.note || ''), e.adding ? name : '');
+    }).catch(function (err) { end(); e.errors.textContent = String(err); });
+  });
+  // Saved or signed in: the forms fold, the message stays, with the next step.
+  function finished(message, endpoint) {
+    resetKeyForm(); choose(null);
+    cn.list.hidden = $('e-blurb').hidden = cn.wait.hidden = true; $('e-after').hidden = false;
+    e.done.textContent = message;
+    if (endpoint) e.done.appendChild(onboardFrom(endpoint));
+    loadEndpoints(); loadProviders();
+  }
 
   // ---- connect: sign in on the provider's page (metrics/connect.py) --------
-  var cn = {list: $('cn-list'), wait: $('cn-wait'), msg: $('cn-msg'), timer: null};
+  // `run` counts the dialog's openings: a sign-in still finishing after the
+  // dialog was closed or opened again reports on the Manage page instead.
+  var cn = {list: $('cn-list'), wait: $('cn-wait'), msg: $('cn-msg'), timer: null, run: 0};
   // Reached from another machine (a hosted install): a callback to this
   // machine's 127.0.0.1 could not arrive, so sign-ins go by code instead.
   var remote = !/^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
-  function connectDone(r) {
-    clearInterval(cn.timer); cn.timer = null; cn.wait.hidden = true;
-    if (!r.ok) { listErrors(e.errors, r.errors); return; }
-    hideEndpointForm();
-    e.done.textContent = r.label + ' is connected as ' + r.endpoint + ': it lists ' + r.served + ' models. ' + (r.note || '');
-    e.done.appendChild(onboardFrom(r.endpoint));
-    loadEndpoints(); loadProviders();
+  function connectDone(r, run) {
+    clearInterval(cn.timer); cn.timer = null;
+    var said = r.ok && r.label + ' is connected as ' + r.endpoint + ': it lists ' + r.served + ' models. ' + (r.note || '');
+    if (!ed.open || run !== cn.run) {
+      if (r.ok) { e.listDone.textContent = said; loadEndpoints(); loadProviders(); } else listErrors(e.listErrors, r.errors);
+      return;
+    }
+    cn.wait.hidden = true;
+    if (!r.ok) {                   // back to the provider's form to try again, or just Close
+      $('cn-form').hidden = !cn.pick; $('e-after').hidden = !!cn.pick;
+      listErrors(e.errors, r.errors); return;
+    }
+    finished(said, r.endpoint);
   }
   // The next step for a new endpoint, signed in or pasted: onboard what it serves.
   function onboardFrom(endpoint) {
@@ -758,14 +829,15 @@
   }
   function connectStart(p, endpoint) {
     e.errors.textContent = ''; e.done.textContent = '';
+    var run = cn.run;
     // Opened now, while this is still the click: a window opened after the
     // request returns is a popup the browser blocks.
     var byCode = remote && p.flow !== 'local';
     var tab = !byCode && (p.flow === 'key' || p.flow === 'oauth') ? window.open('', '_blank') : null;
     if (tab) tab.opener = null;
     post('/api/connect/start', {provider: p.id, endpoint: endpoint, code: byCode}).then(function (r) {
-      if (!r.ok || r.state) { if (tab) tab.close(); connectDone(r); return; }   // refused, or local: saved at once
-      cn.wait.hidden = false; cn.msg.textContent = '';
+      if (!r.ok || r.state) { if (tab) tab.close(); connectDone(r, run); return; }   // refused, or local: saved at once
+      cn.wait.hidden = false; cn.msg.textContent = ''; $('e-after').hidden = false;
       if (r.url) {
         if (tab) tab.location = r.url; else window.open(r.url, '_blank', 'noopener');
         cn.msg.textContent = 'Sign in to ' + p.label + ' in the tab that opened. This updates when it is done.';
@@ -778,36 +850,38 @@
       var tries = 0;
       clearInterval(cn.timer);
       cn.timer = setInterval(function () {
-        if (++tries > 450) { connectDone({ok: false, errors: ['No sign-in after fifteen minutes; start again.']}); return; }
-        post('/api/connect/poll', {id: r.id}).then(function (s) { if (s.state !== 'pending') connectDone(s); });
+        if (++tries > 450) { connectDone({ok: false, errors: ['No sign-in after fifteen minutes; start again.']}, run); return; }
+        post('/api/connect/poll', {id: r.id}).then(function (s) { if (s.state !== 'pending') connectDone(s, run); });
       }, 2000);
     }).catch(function (err) { if (tab) tab.close(); e.errors.textContent = String(err); });
   }
+  // The dialog's choices (API key, then each provider) and the Manage page's
+  // own-app rows, from one listing.
   function loadProviders() {
     fetch('/api/connect').then(function (r) { return r.json(); }).then(function (res) {
-      cn.list.textContent = ''; $('cn-apps').textContent = ''; $('cn-form').hidden = true;
+      cn.list.textContent = ''; $('cn-apps').textContent = '';
+      choice('key', 'API key', '').addEventListener('click', function () { choose('key'); e.name.focus(); });
       res.providers.forEach(function (p) {
         // A new endpoint, named first (a provider can be several: a pasted key
         // and a sign-in, or two accounts). Signing an existing one in again is
         // its row's button.
-        var b = el('button', {class: 'btn', type: 'button'}, p.label);
         var why = p.missing || (remote && !p.code ? p.label + ' signs in only through a page on the machine'
-                                + ' Benchwarmers runs on; from here, paste an API key below' : '');
-        if (why) { b.disabled = true; b.title = why; }
-        b.addEventListener('click', function () {
-          cn.pick = p; $('cn-name').value = p.suggest; $('cn-form').hidden = false;
-          $('cn-go').textContent = (p.flow === 'local' ? 'Add ' : 'Sign in to ') + p.label;
-          e.errors.textContent = ''; e.done.textContent = ''; $('cn-name').select();
-        });
-        cn.list.appendChild(b);
+                                + ' Benchwarmers runs on; from here, choose API key' : '');
+        choice(p.id, p.label, why).addEventListener('click', function () { choose(p); $('cn-name').select(); });
         if (p.register) $('cn-apps').appendChild(appRow(p));
       });
+      press();
     });
+  }
+  function choice(id, label, why) {
+    var b = el('button', {class: 'btn', type: 'button', 'data-choice': id, 'aria-pressed': 'false'}, label);
+    if (why) { b.disabled = true; b.title = why; }
+    cn.list.appendChild(b);
+    return b;
   }
   // The Sign in click itself opens the provider's tab (connectStart), so the
   // browser does not block it as a popup.
   $('cn-go').addEventListener('click', function () { $('cn-form').hidden = true; connectStart(cn.pick, $('cn-name').value); });
-  $('cn-cancel').addEventListener('click', function () { $('cn-form').hidden = true; });
   // Use your own app: a provider's own client id, instead of the shipped one.
   function appRow(p) {
     var row = el('div', {class: 'endpoint'});
@@ -835,12 +909,14 @@
     return row;
   }
 
+  if ($('tab-manage').classList.contains('active')) onShow.manage();   // the page opened on it
+
   // ---- first run: no endpoint yet, no model, no collection (serve.first_run) -
   var first = $('first-run');
   function firstStep() {
     if (first.dataset.step === 'onboard') { $('onboard-open').click(); return; }
     if (first.dataset.step === 'collection') { show('collections'); $('c-new').click(); return; }
-    $('endpoints-open').click(); $('e-add').click();
+    show('manage'); openEndpoint('add');
   }
   if (first) {
     $('first-go').addEventListener('click', firstStep);

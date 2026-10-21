@@ -434,7 +434,7 @@ ERRORS = (
 # listed model failing STRUCTURALLY every time is retired upstream and the
 # catalogue has not caught up -- which is exactly what `laguna-m1` did.
 # SIGNIN       the key itself was refused: 401, or a sign-in metrics/connect.py
-#              could not renew. Fixed on the Endpoints page, never by retiring.
+#              could not renew. Fixed on the Manage page (under Endpoints), never by retiring.
 SIGNIN = (
     "error code: 401",
     "sign in again",

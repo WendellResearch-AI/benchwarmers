@@ -57,7 +57,7 @@ def endpoint() -> str:
     dashboard shows it as the reason, and nothing has been sent anywhere."""
     name = endpoints.find_hub("openwebui")
     if not name:
-        raise ValueError("no endpoint is an Open WebUI hub; add it on the Endpoints page as kind hub, Open WebUI")
+        raise ValueError("no endpoint is an Open WebUI hub; add it on the Manage page (under Endpoints) as kind hub, Open WebUI")
     return name
 
 

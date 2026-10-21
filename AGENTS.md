@@ -138,7 +138,7 @@ gateway share one port and the data folder is a volume.
 - **A model answers with an empty string**: usually a reasoning model that ran
   out of its output budget, not a dead model.
 - **"sign in again"** on a model: the endpoint's key was refused (expired or
-  revoked). Fix it on Endpoints (Sign in again, or Change key); it never
+  revoked). Fix it on the Manage page under Endpoints (Sign in again, or Change key); it never
   retires the model.
 - **A server will not start**: it says why; beyond 127.0.0.1 it needs
   `BENCHWARMERS_ADMIN_TOKEN`.

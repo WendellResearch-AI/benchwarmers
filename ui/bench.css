@@ -146,6 +146,21 @@ main { max-width: var(--page, 104rem); margin: 0 auto; padding: 0 var(--gutter) 
    the header's old mark. */
 .tabs button[aria-selected="true"] { color: var(--ink); font-weight: 700;
                                      box-shadow: inset 0 -.42em 0 var(--signal); }
+/* Manage is a page of Endpoints, reached from its button: shown, indented
+   under it, only while you are on it, to say where you are. */
+.tabs button[data-tab="manage"] { margin-left: .9rem; }
+.tabs button[data-tab="manage"][aria-selected="false"] { display: none; }
+.tabs:has(button[data-tab="manage"][aria-selected="true"]) button[data-tab="endpoints"] { color: var(--ink); }
+/* Collections, the bench's own idea: brand-coloured, with a small sparkle
+   after it. The sparkle hangs outside the button, so the active page's
+   stroke still runs under the word alone. */
+.tabs button[data-tab="collections"] { position: relative; font-weight: 600;
+                                       color: color-mix(in oklab, var(--brand) 72%, var(--ink)); }
+.tabs button[data-tab="collections"][aria-selected="true"] { color: var(--ink); font-weight: 700; }
+.tabs button[data-tab="collections"]::after {
+  content: ""; position: absolute; left: calc(100% + .3em); top: -.05em; width: .75em; height: .75em;
+  background: var(--brand);
+  clip-path: polygon(50% 0, 62% 38%, 100% 50%, 62% 62%, 50% 100%, 38% 62%, 0 50%, 38% 38%); }
 .tab { display: none; } .tab.active { display: block; }
 /* One surface for the page's content: its panels are sections of it,
    divided by a hairline, rather than separate boxes with gaps between. A
@@ -160,6 +175,7 @@ main { max-width: var(--page, 104rem); margin: 0 auto; padding: 0 var(--gutter) 
   .tabs { position: static; flex-direction: row; flex-wrap: wrap; gap: .5rem 1.5rem; }
   .tabs .group { flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: .1rem 1rem; }
   .tabs h2 { margin: 0; }
+  .tabs button[data-tab="manage"] { margin: 0; }
 }
 
 /* settings, connections, logs, info */
@@ -300,6 +316,10 @@ dialog h2 { margin: 0 0 .2rem; font-size: 1.375rem; font-weight: 700; }
 .endpoint:hover { background: var(--step-1); }
 .endpoint .base { color: var(--muted); font-size: .875rem; overflow-wrap: anywhere; }
 :is(dialog, .form-panel) h3.form-head { margin: 1.25rem 0 0; font-size: 1rem; font-weight: 700; }
+:is(dialog, .form-panel) input[readonly] { background: var(--step-1); }
+/* Add an endpoint's choices: API key, then each provider; the chosen one pressed */
+.choices { display: flex; flex-wrap: wrap; gap: .5rem; margin: .2rem 0 .4rem; }
+.choices .btn[aria-pressed="true"] { border-color: var(--ink); box-shadow: 3px 3px 0 var(--brand); font-weight: 600; }
 
 /* onboarding picker */
 .picker { max-height: 22rem; overflow: auto; margin-top: .6rem; border-top: 1px solid var(--line); }

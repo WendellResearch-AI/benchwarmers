@@ -169,7 +169,11 @@ def stranger(fake: str) -> None:
     # Adding an endpoint: an explicit kind, a hub only with its type.
     assert not serve.save_endpoint("odd", fake + "/v1", "k", new=True, kind="cloud")["ok"]
     assert not serve.save_endpoint("odd", fake + "/v1", "k", new=True, kind="hub")["ok"]
+    # Test (the form's button before Save) answers as Save would and writes nothing, the key included.
+    t = serve.save_endpoint("tried", fake + "/v1", "k-tried", new=True, test_only=True)
+    assert t["ok"] and "served" in t and "tried" not in endpoints.load() and "tried" not in endpoints.keys(), t
     assert serve.save_endpoint("plain", fake + "/v1", "k", new=True)["ok"]
+    assert not serve.save_endpoint("plain", fake + "/v1", "k", new=True, test_only=True)["ok"]   # names checked in Test too
     assert serve.save_endpoint("mine", fake + "/v1", "k", new=True, kind="hub", hub="openwebui")["ok"]
     data = endpoints.load()
     assert data["plain"]["kind"] == "provider" and "hub" not in data["plain"], data["plain"]

@@ -59,7 +59,7 @@ ADDING A PROVIDER
      docs, hint            its docs; one line for when /models fails
 3. Run `python metrics/connect.py --selftest`: it checks every entry's shape,
    and every flow against a fake provider.
-4. Click Connect on the Endpoints page and sign in once for real.
+4. Add an endpoint on the Manage page (under Endpoints), pick the provider and sign in once for real.
 """
 
 from __future__ import annotations
@@ -446,14 +446,14 @@ def fresh(key_name: str) -> str:
         p = PROVIDERS.get(conn.get("provider", ""), {})
         token = endpoints.keys().get(f"{key_name}.refresh", "")
         if not (p and token):
-            return f"the sign-in for {name} has expired; sign in again on the Endpoints page"
+            return f"the sign-in for {name} has expired; sign in again on the Manage page (under Endpoints)"
         reply = _post(p["token"], {"grant_type": "refresh_token", "refresh_token": token,
                                    "client_id": conn.get("client_id") or client_id(conn["provider"]),
                                    **p.get("token_params", {})})
         try:
             tokens = _tokens({"provider": conn["provider"], "endpoint": name}, reply, conn.get("client_id", ""))
         except ConnectError as exc:
-            return f"the sign-in for {name} could not be renewed ({exc}); sign in again on the Endpoints page"
+            return f"the sign-in for {name} could not be renewed ({exc}); sign in again on the Manage page (under Endpoints)"
         # The refresh token first: it is spent now, and an access token without
         # its replacement could never be renewed. A crash after it only costs
         # one more renewal.

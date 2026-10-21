@@ -68,7 +68,7 @@ def endpoint() -> str:
     """The LiteLLM hub's endpoint name; ValueError when there is none."""
     name = endpoints.find_hub("litellm")
     if not name:
-        raise ValueError("no endpoint is a LiteLLM hub; add it on the Endpoints page as kind hub, LiteLLM")
+        raise ValueError("no endpoint is a LiteLLM hub; add it on the Manage page (under Endpoints) as kind hub, LiteLLM")
     return name
 
 

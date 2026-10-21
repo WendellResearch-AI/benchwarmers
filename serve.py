@@ -786,8 +786,10 @@ def free_name(stem: str) -> str:
 
 
 def save_endpoint(name: str, base: str, secret: str, who: str = "ui", extra: dict | None = None,
-                  new: bool = False, kind: str = "", hub: str = "", admin: str = "") -> dict:
-    """Add an endpoint, or change one's key. Tested before anything is saved.
+                  new: bool = False, kind: str = "", hub: str = "", admin: str = "",
+                  test_only: bool = False) -> dict:
+    """Add an endpoint, or change one's key. Tested before anything is saved;
+    `test_only` (the form's Test button) stops there and saves nothing.
 
     The key goes where `llm keys set` puts it (the CLI's own keys.json), never
     into this repository, the change log or a response. It is sent to the base
@@ -860,6 +862,8 @@ def save_endpoint(name: str, base: str, secret: str, who: str = "ui", extra: dic
                         " checked by the first call to one of its models.")
         except Exception:                              # noqa: BLE001
             note = " The key was checked: the list needs it."
+    if test_only:
+        return {"ok": True, "errors": [], "served": count, "note": note.strip()}
     if secret and secret != endpoints.keys().get(entry["key"]):
         endpoints.set_key(entry["key"], secret)
     if admin and endpoints.kind(name, {name: entry}) == "hub":
@@ -1398,7 +1402,7 @@ STATUS = {
     "structural": ("not found", "err", "no such model, or no provider behind it"),
     "paywalled": ("no longer free", "err", "the free tier moved behind a paid slug"),
     "entitlement": ("no access", "err", "payment, credit or permission refused"),
-    "signin": ("sign in again", "warn", "the key was refused: expired or revoked; fix it on the Endpoints page"),
+    "signin": ("sign in again", "warn", "the key was refused: expired or revoked; fix it on the Manage page (under Endpoints)"),
     "other": ("failing", "err", "an error nothing here recognises"),
 }
 
@@ -2375,8 +2379,10 @@ def collections_tab() -> str:
 SECTIONS = (("Observe", (("glance", "At a glance", "roster"),
                          ("suite", "Benchmarks", "benchmarks_tab"),
                          ("logs", "Logs", "logs_page"))),
-            ("Gateway", (("collections", "Collections", "collections_and_gateway"),
-                         ("endpoints", "Endpoints", "endpoints_page"),
+            ("Gateway", (("endpoints", "Endpoints", "endpoints_page"),
+                         ("manage", "Manage", "manage_page"),        # indented under Endpoints (bench.css)
+                         ("models", "Models", "models_page"),
+                         ("collections", "Collections", "collections_and_gateway"),
                          ("quotas", "Quota management", "quotas_page"),
                          ("discover", "Discover", "discover_card"))),
             ("Control", (("settings", "Settings", "settings_page"),
@@ -2580,15 +2586,16 @@ def endpoints_page() -> str:
             alias, day = mine.get(served), listed.get(served)
             if alias:
                 label, css, why = status.get(alias, ("decision", "", "a decision model"))
-                cells = (f"<td>{named(alias)}</td><td>{esc(catalog.connection_of(alias))}</td>"
-                         f"<td data-sort='0'>{chip(label, css, why)}</td>")
+                bench = f"<td>{named(alias)}</td>"
+                rest = (f"<td>{esc(catalog.connection_of(alias))}</td>"
+                        f"<td data-sort='0'>{chip(label, css, why)}</td>")
             else:
                 gone = day and day != checked
-                cells = (f"<td class='muted'>not on the bench</td>"
-                         f"<td>{esc((tags.get(served, '').split('/')[0] if e['hub'] == 'openwebui' else e['name']) or '—')}</td>"
-                         f"<td data-sort='{2 if gone else 1}'>"
-                         + (chip(f"last seen {day}", "warn") if gone else chip("served", "")) + "</td>")
-            rows.append(f"<tr><td class='mono'>{esc(served)}</td>{cells}</tr>")
+                bench = "<td class='muted'>not on the bench</td>"
+                rest = (f"<td>{esc((tags.get(served, '').split('/')[0] if e['hub'] == 'openwebui' else e['name']) or '—')}</td>"
+                        f"<td data-sort='{2 if gone else 1}'>"
+                        + (chip(f"last seen {day}", "warn") if gone else chip("served", "")) + "</td>")
+            rows.append(f"<tr>{bench}<td class='mono'>{esc(served)}</td>{rest}</tr>")
         extra = sum(1 for s, d in listed.items() if s not in mine and d == checked)
         blocks.append(
             f"<div class='ep'><div class='what'><span class='alias'>{esc(e['name'])}</span>"
@@ -2597,8 +2604,21 @@ def endpoints_page() -> str:
             + f"</div><div class='base mono'>{esc(e['base'])}</div>"
             f"<details class='models'><summary>{len(mine)} on the bench"
             + (f" · {extra} more served" if extra else "") + "</summary>"
-            "<table><thead><tr>" + th("Served as") + th("On the bench as") + th("Connection") + th("Status")
+            "<table><thead><tr>" + th("On the bench as") + th("Served as") + th("Connection") + th("Status")
             + f"</tr></thead><tbody>{''.join(rows)}</tbody></table></details></div>")
+    return (
+        "<div class='panel'><h2>Endpoints</h2><p class='sub'>Where calls go, whether each key is set"
+        " (never the key), and the models each serves: the bench's own, then what the daily served check"
+        f" listed{' on ' + esc(checked) if checked else ''}. For a model's full list, <em>Onboard a model</em>"
+        " asks every endpoint live. Add an endpoint or change a key with Manage.</p>"
+        "<div class='toolbar'><input type='search' data-filter placeholder='Find a model on any endpoint'"
+        " aria-label='Filter models'></div>"
+        f"{''.join(blocks)}"
+        "<div class='actions'><button class='btn' data-goto='manage'>Manage endpoints and limits</button></div></div>")
+
+
+def models_page() -> str:
+    """Every model on the bench by the connection it comes from."""
     cards = []
     # Which of this install's endpoints each model is reached THROUGH, beside
     # the connection (provider) it comes FROM: an OpenRouter model may be on
@@ -2628,19 +2648,36 @@ def endpoints_page() -> str:
                      + th("Context", True) + th("Max output", True)
                      + th("Input") + "".join(th(k, True) for k in catalog.LIMIT_KEYS)
                      + f"</tr></thead><tbody>{''.join(rows)}</tbody></table></div>")
+    return ("<div class='panel'><h2>Models</h2><p class='sub'>Every model on the bench by the connection it"
+            " comes from, with the endpoint it is reached through and what is known of its limits. A name"
+            " opens the model.</p></div>"
+            + "".join(cards))
+
+
+def manage_page() -> str:
+    """Endpoints' keys, sign-ins, own apps and rate limits; bench.js fills the
+    lists from /api/endpoints, /api/connect and /api/connections when shown."""
     return (
-        "<div class='panel'><h2>Endpoints</h2><p class='sub'>Where calls go, whether each key is set"
-        " (never the key), and the models each serves: the bench's own, then what the daily served check"
-        f" listed{' on ' + esc(checked) if checked else ''}. For a model's full list, <em>Onboard a model</em>"
-        " asks every endpoint live. Add an endpoint or change a key with Manage.</p>"
-        "<div class='toolbar'><input type='search' data-filter placeholder='Find a model on any endpoint'"
-        " aria-label='Filter models'></div>"
-        f"{''.join(blocks)}"
-        "<div class='actions'><button class='btn' id='endpoints-open'>Manage endpoints and limits</button></div></div>"
-        "<div class='panel'><h2>Models</h2><p class='sub'>Every model on the bench by the connection it"
-        " comes from, with the endpoint it is reached through and what is known of its limits. A name"
-        " opens the model.</p></div>"
-        + "".join(cards))
+        "<div class='panel form-panel'><h2>Manage endpoints</h2>"
+        "<p class='sub'>Where models are served from: providers, aggregators, a hub such as Open WebUI,"
+        " or a local runtime. Prompts to a model go straight to its endpoint, so add only ones you are"
+        " content to send private source to.</p>"
+        "<div id='e-list'></div>"
+        "<div class='errors' id='el-errors' role='alert'></div><div class='done' id='el-done'></div>"
+        "<div class='actions'><button class='btn primary' id='e-add'>Add an endpoint</button></div></div>"
+        "<div class='panel form-panel'><h2>Use your own app</h2>"
+        "<p class='sub'>Some providers need an app registered with them before anyone can sign in."
+        " Benchwarmers ships Wendell Research's where it has one; register your own and paste its"
+        " public client id to use yours instead (never a secret: none of these use one). Endpoints"
+        " already signed in keep working with the app they were signed in with.</p>"
+        "<div id='cn-apps'></div><div class='errors' id='cn-app-errors' role='alert'></div>"
+        "<div class='done' id='cn-app-done'></div></div>"
+        "<div class='panel form-panel'><h2>Rate limits per connection</h2>"
+        "<p class='sub'>What a key behind each connection allows, from the provider's docs or"
+        " freellmapi.co/models. Models on that connection share it; a model's own limits (its"
+        " popup) win, and limits the bench learns from errors only ever lower these.</p>"
+        "<div id='l-list'></div><div class='errors' id='l-errors' role='alert'></div>"
+        "<div class='done' id='l-done'></div></div>")
 
 
 def quotas_page() -> str:
@@ -2872,37 +2909,23 @@ def editor() -> str:
         "<div class='actions'><button class='btn' id='o-close'>Close</button>"
         "<button class='btn primary' id='o-start' disabled>Onboard</button></div>"
         "</dialog>"
-        # endpoints
-        "<dialog id='endpoints-dialog' aria-labelledby='e-title'>"
-        "<h2 id='e-title'>Endpoints</h2>"
-        "<p class='served'>Where models are served from: providers, aggregators, a hub such as"
-        " Open WebUI, or a local runtime. Any OpenAI-compatible API can be added (it must list"
-        " <code>/models</code>). Prompts"
-        " to a model go straight to its endpoint, so add only providers you are content"
-        " to send private source to.</p>"
-        "<div id='e-list'></div>"
-        "<div class='list-actions'><button class='btn' id='e-add'>Add an endpoint</button></div>"
-        # Shown only when asked for. Add: sign in with a provider, or paste a
-        # key. A row's Change key: the key form alone.
-        "<div id='e-new' hidden>"
-        "<h3 class='form-head' id='e-form-head'>Add an endpoint</h3>"
-        # Connect: sign in on the provider's page instead of pasting a key (metrics/connect.py)
-        "<div id='e-signin'>"
-        "<p class='sub-head'>Sign in with a provider</p>"
-        "<p class='rules'>On the provider's own page; the key it hands back is kept where a pasted"
-        " one is. Only providers that publish a sign-in for other apps are here.</p>"
-        "<div class='list-actions' id='cn-list'></div>"
-        # A provider's button opens this: the new endpoint's name, then the sign-in.
+        # Add an endpoint (Manage's button), or a row's Change key: the key form alone.
+        "<dialog id='endpoint-dialog' aria-labelledby='e-title'>"
+        "<h2 id='e-title'>Add an endpoint</h2>"
+        "<p class='served' id='e-blurb'>Paste an API key for any OpenAI-compatible API (one that lists"
+        " <code>/models</code>), or pick a provider and sign in on its own page: the key it hands back is"
+        " kept where a pasted one is. Only providers that publish a sign-in for other apps are listed.</p>"
+        # API key first, then each provider (metrics/connect.py); bench.js fills it.
+        "<div class='choices' id='cn-list' role='group' aria-label='How to add it'></div>"
+        # A provider: the new endpoint's name, then the sign-in.
         "<div id='cn-form' hidden>"
         "<label class='field' for='cn-name'>Name for this endpoint</label>"
         "<input id='cn-name' spellcheck='false' autocomplete='off'>"
         "<p class='rules'>Its own name and its own key, so one provider can be several endpoints"
         " (a pasted key and a sign-in, or two accounts).</p>"
-        "<div class='actions'><button class='btn' id='cn-cancel'>Cancel</button>"
+        "<div class='actions'><button class='btn' data-close>Cancel</button>"
         "<button class='btn primary' id='cn-go'>Sign in</button></div></div>"
-        "</div>"
         "<div id='e-form'>"
-        "<p class='sub-head' id='e-key-head'>Or paste an API key</p>"
         "<label class='field' for='e-name'>Name</label>"
         "<input id='e-name' spellcheck='false' autocomplete='off' placeholder='e.g. openrouter'>"
         "<label class='field' for='e-base'>Base URL</label>"
@@ -2920,34 +2943,22 @@ def editor() -> str:
         "<label class='field' for='e-key'>API key</label>"
         "<input id='e-key' type='password' autocomplete='off' placeholder='leave blank to keep the current one'>"
         "<p class='rules'>Stored where <code>llm keys set</code> stores it, never in the"
-        " repository and never shown again. Saved only once <code>/models</code> answers;"
-        " where that list is public, the key is proven by the first real call.</p>"
+        " repository and never shown again. Test asks <code>/models</code>; Save is open once it"
+        " answers. Where that list is public, the key is proven by the first real call.</p>"
         # A hub's admin key, where it is not the API key (endpoints.admin_key).
         "<div id='e-admin-row' hidden><label class='field' for='e-admin'>Admin key</label>"
         "<input id='e-admin' type='password' autocomplete='off' placeholder='only where it is not the API key'>"
         "<p class='rules'>What adds a model to the hub: LiteLLM's master key (blank if the API key is it),"
         " CLI Proxy API's management key (always its own). Open WebUI needs none beyond an admin's"
         " API key. Kept like the API key; blank keeps the current one.</p></div>"
-        "<div class='actions'><button class='btn' id='e-cancel'>Cancel</button>"
-        "<button class='btn primary' id='e-save'>Test and save</button></div>"
-        "</div></div>"
+        "<div class='actions'><button class='btn' data-close>Cancel</button>"
+        "<button class='btn' id='e-test'>Test</button>"
+        "<button class='btn primary' id='e-save' disabled title='Test it first'>Save</button></div>"
+        "</div>"
         # A sign-in in progress (from Add, or a row's Sign in again): where to finish it.
         "<div id='cn-wait' hidden><p class='served' id='cn-msg'></p></div>"
         "<div class='errors' id='e-errors' role='alert'></div><div class='done' id='e-done'></div>"
-        "<details class='limits-block'><summary class='form-head'>Use your own app</summary>"
-        "<p class='rules'>Some providers need an app registered with them before anyone can sign in."
-        " Benchwarmers ships Wendell Research's where it has one; register your own and paste its"
-        " public client id to use yours instead (never a secret: none of these use one). Endpoints"
-        " already signed in keep working with the app they were signed in with.</p>"
-        "<div id='cn-apps'></div><div class='errors' id='cn-app-errors' role='alert'></div>"
-        "<div class='done' id='cn-app-done'></div></details>"
-        "<details class='limits-block'><summary class='form-head'>Rate limits per connection</summary>"
-        "<p class='rules'>What a key behind each connection allows, from the provider's docs or"
-        " freellmapi.co/models. Models on that connection share it; a model's own limits (its"
-        " popup) win, and limits the bench learns from errors only ever lower these.</p>"
-        "<div id='l-list'></div><div class='errors' id='l-errors' role='alert'></div>"
-        "<div class='done' id='l-done'></div></details>"
-        "<div class='actions'><button class='btn' id='e-close'>Close</button></div>"
+        "<div class='actions' id='e-after' hidden><button class='btn' data-close>Close</button></div>"
         "</dialog>"
         # one Discover model: what is known, and the routes to add it by (bench.js fills it)
         "<dialog id='discover-dialog' aria-labelledby='d-title'>"
@@ -3132,7 +3143,8 @@ class Handler(gateway.Handler):
                                                         str(p.get("base", "")),
                                                         str(p.get("key", "")), new=bool(p.get("new")),
                                                         kind=str(p.get("kind") or ""), hub=str(p.get("hub") or ""),
-                                                        admin=str(p.get("admin") or "")),
+                                                        admin=str(p.get("admin") or ""),
+                                                        test_only=bool(p.get("test"))),
                "/api/endpoint/remove": lambda p: remove_endpoint(str(p.get("name", "")),
                                                                  with_models=bool(p.get("with_models"))),
                "/api/connect/start": lambda p: connect_start(str(p.get("provider") or ""),
