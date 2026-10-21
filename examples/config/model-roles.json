@@ -1,0 +1,11 @@
+{
+  "_comment": [
+    "Your models' roles, and the ones never chosen automatically (ad_hoc).",
+    "An alias not listed under models is general. The roles and task shapes",
+    "themselves ship with Benchwarmers (metrics/model_roles.py says what each",
+    "means); add \"roles\" or \"shapes\" here to define your own, which win over",
+    "a shipped one of the same name."
+  ],
+  "models": {},
+  "ad_hoc": []
+}

@@ -360,7 +360,9 @@
     var q = o.find.value.trim().toLowerCase();
     var groups = {};
     data.candidates.forEach(function (c) {
-      if (q && c.served.toLowerCase().indexOf(q) === -1 && c.group.indexOf(q) === -1) return;
+      // The endpoint too: "Onboard a model from it" filters on it, and the default
+      // endpoint's models are grouped by connection, not by its name.
+      if (q && [c.served, c.group, c.endpoint].every(function (s) { return s.toLowerCase().indexOf(q) === -1; })) return;
       (groups[c.group] = groups[c.group] || []).push(c);
     });
     var names = Object.keys(groups).sort();
@@ -682,8 +684,10 @@
     post('/api/endpoint', {name: e.name.value, base: e.base.value, key: e.key.value, new: e.adding}).then(function (r) {
       e.save.disabled = false; e.save.textContent = 'Test and save'; e.key.value = '';
       if (!r.ok) { listErrors(e.errors, r.errors); return; }
-      var saved = 'Saved. ' + e.name.value.trim() + ' lists ' + r.served + ' models; they appear in the onboarding picker. ' + (r.note || '');
+      var name = e.name.value.trim().toLowerCase();
+      var saved = 'Saved. ' + name + ' lists ' + r.served + ' models; they appear in the onboarding picker. ' + (r.note || '');
       hideEndpointForm(); e.done.textContent = saved;       // the form folds; the message stays
+      if (e.adding) e.done.appendChild(onboardFrom(name));
       loadEndpoints();
     }).catch(function (err) { e.errors.textContent = String(err); e.save.disabled = false; e.save.textContent = 'Test and save'; });
   });
@@ -698,13 +702,16 @@
     if (!r.ok) { listErrors(e.errors, r.errors); return; }
     hideEndpointForm();
     e.done.textContent = r.label + ' is connected as ' + r.endpoint + ': it lists ' + r.served + ' models. ' + (r.note || '');
-    // The next step for a new connection: onboard what it serves.
+    e.done.appendChild(onboardFrom(r.endpoint));
+    loadEndpoints(); loadProviders();
+  }
+  // The next step for a new endpoint, signed in or pasted: onboard what it serves.
+  function onboardFrom(endpoint) {
     var go = el('button', {class: 'btn small', type: 'button', style: 'margin-left:.6rem'}, 'Onboard a model from it');
     go.addEventListener('click', function () {
-      ed.close(); $('onboard-open').click(); o.find.value = r.endpoint;   // the picker filters on it once loaded
+      ed.close(); $('onboard-open').click(); o.find.value = endpoint;   // the picker filters on it once loaded
     });
-    e.done.appendChild(go);
-    loadEndpoints(); loadProviders();
+    return go;
   }
   function connectStart(p, endpoint) {
     e.errors.textContent = ''; e.done.textContent = '';
@@ -783,6 +790,18 @@
     });
     line.appendChild(save);
     return row;
+  }
+
+  // ---- first run: no endpoint yet, no model, no collection (serve.first_run) -
+  var first = $('first-run');
+  function firstStep() {
+    if (first.dataset.step === 'onboard') { $('onboard-open').click(); return; }
+    if (first.dataset.step === 'collection') { show('collections'); $('c-new').click(); return; }
+    $('endpoints-open').click(); $('e-add').click();
+  }
+  if (first) {
+    $('first-go').addEventListener('click', firstStep);
+    if (first.dataset.step === 'endpoint') firstStep();   // straight into Add: an empty bench offers nothing else
   }
 
   // ---- collections: what the bench gateway runs together (its own tab) -----

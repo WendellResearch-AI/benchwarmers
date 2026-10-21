@@ -1,0 +1,5 @@
+{
+  "_why": "Bench gateway settings, also set on the Collections page. A request runs a collection's members plus explorer seats picked by staleness: explorers = min(max_explorers, max_calls - members), so a 2- or 3-model collection gets 2 explorers, a 4-model one 1, a 5-model one none. There is no default collection: a request that names none is told what each one is for and asked to choose.",
+  "max_calls": 5,
+  "max_explorers": 2
+}

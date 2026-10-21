@@ -50,6 +50,7 @@ from paths import DATA  # noqa: E402  -- the install's data folder (metrics/path
 for _d in (ROOT, ROOT / "metrics", ROOT / "suite"):
     if str(_d) not in sys.path:
         sys.path.insert(0, str(_d))
+import locked  # noqa: E402
 IMMEDIATE = {"structural", "paywalled", "entitlement"}
 MISSING_DAYS, OTHER_DAYS, BACKSTOP_DAYS = 3, 3, 7
 PROBE = "Reply with exactly one word: ready"
@@ -171,8 +172,7 @@ def _current(alias: str, history: dict[str, str]) -> str:
 
 def evidence() -> tuple[list[dict], dict[str, dt.date], dict[str, dt.date]]:
     """(perf rows, last non-perf answer per alias, restore date per alias)."""
-    history = json.loads((DATA / "config" / "alias-history.json")
-                         .read_text(encoding="utf-8") or "{}")
+    history = locked.read_json(DATA / "config" / "alias-history.json")     # {} until a rename
     rows = []
     path = DATA / "perf" / "history.csv"
     if path.exists():
@@ -202,7 +202,7 @@ def evidence() -> tuple[list[dict], dict[str, dt.date], dict[str, dt.date]]:
             saw(o["model"], dt.date.fromisoformat(o["date"]))
 
     from run import outcome
-    for out in ROOT.glob("suite/tasks/*/output/*.md"):
+    for out in DATA.glob("suite/tasks/*/output/*.md"):    # the saved answers are the install's data
         if outcome(out.read_text(encoding="utf-8", errors="replace")) is None:
             saw(out.stem, dt.date.fromtimestamp(out.stat().st_mtime))
 
@@ -231,8 +231,7 @@ def run(models: dict[str, str], live: set[str], first_missing: dict[str, str],
         dry_run: bool = False) -> tuple[list[str], set[str]]:
     """Apply the plan. Returns (report lines, alert keys raised)."""
     rows, answers, restored = evidence()
-    tags = json.loads((DATA / "config" / "provider-tags.json")
-                      .read_text(encoding="utf-8"))
+    tags = locked.read_json(DATA / "config" / "provider-tags.json")        # none without Open WebUI
     # A model on a non-default endpoint is recorded as `served@endpoint`, and
     # the endpoint IS its connection for the guard.
     tags.update({k: k.rsplit("@", 1)[1] for k in models.values() if "@" in k})

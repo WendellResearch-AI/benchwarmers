@@ -38,36 +38,31 @@ the code where this page is thin.
    The built-in client (`metrics/client.py`) replaces it with
    `BENCH_CLIENT=builtin` and will become the default.
 
-2. **Choose a data folder.** Everything that is yours (endpoints, model
+2. **Make a data folder.** Everything that is yours (endpoints, model
    registrations, collections, verdicts, probe history, task answers) lives
-   there, never in the code. Set `BENCHWARMERS_HOME`, or write the folder's
-   path on one line in a `.benchwarmers-home` file at the top of the checkout.
-   Without either, the checkout itself is used.
+   there, never in the code:
 
-3. **Add an endpoint**: any OpenAI-compatible API. In
-   `<data folder>/config/endpoints.json`:
+       python scripts/init.py           # or: python scripts/init.py <folder>
 
-       {"openrouter": {"base": "https://openrouter.ai/api/v1", "key": "openrouter", "default": true}}
+   It starts the folder from `examples/` (in your OS's per-user data folder
+   unless you name one) and points the checkout at it with a
+   `.benchwarmers-home` file; `BENCHWARMERS_HOME` overrides that. With
+   `--endpoint NAME BASE_URL --key` it also adds a first endpoint and asks for
+   its key, which goes to the `llm` CLI's key store (`llm keys set NAME` does
+   the same), never into the data folder.
 
-   and give the key to the `llm` CLI (the value never enters the data folder's
-   JSON):
-
-       llm keys set openrouter
-
-   A hub such as Open WebUI or LiteLLM works the same way: its base URL and
-   key.
-
-4. **Start the dashboard** and onboard a few models from it ("Onboard a
-   model"): each is registered, probed and run through the suite.
+3. **Start the dashboard.** With no endpoint yet it opens on adding one: sign
+   in with a provider on its own page (OpenRouter, NanoGPT, Hugging Face,
+   Pollinations, your ChatGPT plan, GitHub Models, or a local Ollama), or paste
+   an API key for any OpenAI-compatible API, a hub such as Open WebUI or
+   LiteLLM included. Only providers that publish a sign-in for other apps are
+   offered; adding one is an entry in `metrics/connect.py` (its docstring says
+   how).
 
        python serve.py                  # http://localhost:8122
 
-   More providers need no key to copy: Endpoints › Manage › **Connect by
-   signing in** opens the provider's own sign-in page (OpenRouter, NanoGPT,
-   Hugging Face, Pollinations, your ChatGPT plan, GitHub Models) or adds a
-   local Ollama, then offers to onboard what it serves. Only providers that
-   publish a sign-in for other apps are offered; adding one is an entry in
-   `metrics/connect.py` (its docstring says how).
+4. **Onboard a few models** from it ("Onboard a model"): each is registered,
+   probed and run through the suite.
 
 5. **Make a collection** on the Collections page (the models a panel always
    includes, and what it is for), then **start the gateway**:

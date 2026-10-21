@@ -165,7 +165,8 @@ def family_of(alias: str) -> str:
 
 
 def _roles() -> dict:
-    return _json(DATA / "config" / "model-roles.json")
+    import model_roles                             # roles and shapes shipped, the install's on top
+    return model_roles.load()
 
 
 def role_of(alias: str) -> str:

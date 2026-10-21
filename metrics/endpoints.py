@@ -64,19 +64,23 @@ NAME = re.compile(r"^[a-z0-9][a-z0-9-]{1,31}$")
 
 
 def load() -> dict[str, dict]:
-    """Every endpoint. Refuses when there is none, rather than falling back to
-    one address: until 2026-10-19 a missing or broken file silently meant the
-    owner's own Open WebUI on his LAN, which on anyone else's machine is a
-    timeout with no explanation."""
+    """Every endpoint; {} on a fresh install (no file yet, or one naming none),
+    so the dashboard can render and offer to add the first. A file that cannot
+    be read still raises: a writer handed {} for it would save over it.
+
+    Never a fallback address: until 2026-10-19 a missing or broken file
+    silently meant the owner's own Open WebUI on his LAN, which on anyone
+    else's machine is a timeout with no explanation. Whatever needs an
+    endpoint asks default() (base, key, models and yaml_block all do), and
+    that refuses, so a job run before any endpoint exists says what to do."""
     try:
         data = json.loads(FILE.read_text(encoding="utf-8"))
     except FileNotFoundError:
-        raise RuntimeError(f"no endpoints configured: add one from the dashboard, or create {FILE}"
-                           ' like {"name": {"base": "https://.../v1", "key": "name", "default": true}}') from None
+        return {}
     except (OSError, ValueError) as exc:
         raise RuntimeError(f"{FILE} cannot be read: {exc}") from None
-    if not isinstance(data, dict) or not data:
-        raise RuntimeError(f"{FILE} names no endpoint")
+    if not isinstance(data, dict):
+        raise RuntimeError(f"{FILE} is not a JSON object of endpoints")
     return data
 
 
@@ -93,6 +97,10 @@ def connections() -> dict:
 
 def default() -> str:
     data = load()
+    if not data:
+        raise RuntimeError(f"no endpoints configured: add one from the dashboard (python serve.py), run"
+                           f" scripts/init.py --endpoint NAME BASE_URL, or create {FILE}"
+                           ' like {"name": {"base": "https://.../v1", "key": "name", "default": true}}')
     return next((n for n, e in data.items() if e.get("default")), next(iter(data)))
 
 
@@ -115,10 +123,8 @@ def set_key(key_name: str, value: str) -> None:
     """Store a key where `llm keys set` would. Atomic; other keys untouched."""
     data = keys()
     data[key_name] = value
-    path = LLM_DIR / "keys.json"
-    tmp = path.with_suffix(".json.part")
-    tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-    tmp.replace(path)
+    import locked                                  # creates llm's folder on a machine without llm
+    locked.write_atomic(LLM_DIR / "keys.json", json.dumps(data, indent=2) + "\n")
 
 
 def models(name: str | None = None, timeout: int = 30) -> dict[str, dict]:
@@ -224,21 +230,29 @@ def main() -> None:
 
 
 def _selftest() -> None:
-    """No endpoint means a refusal, not someone's LAN; the yaml parser keeps headers."""
+    """No endpoint means a refusal where one is needed, not someone's LAN; the
+    yaml parser keeps headers."""
     import tempfile
     global FILE, YAML
     real = FILE, YAML
     with tempfile.TemporaryDirectory() as tmp:
         FILE, YAML = pathlib.Path(tmp) / "endpoints.json", pathlib.Path(tmp) / "models.yaml"
         try:
-            for content in (None, "{}", "not json"):
+            for content in (None, "{}", "not json", "[]"):
                 if content is not None:
                     FILE.write_text(content, encoding="utf-8")
+                fresh = content in (None, "{}")           # a fresh install: nothing yet, not damage
                 try:
-                    load()
-                    raise AssertionError(f"load() accepted {content!r}")
+                    assert load() == {} and fresh, f"load() accepted {content!r}"
+                except RuntimeError:
+                    assert not fresh, f"load() refused {content!r}"
+                try:
+                    default()
+                    raise AssertionError(f"default() accepted {content!r}")
                 except RuntimeError:
                     pass
+            FILE.unlink()
+            assert registry() == [], "no yaml, no endpoints: nothing registered"
             FILE.write_text('{"or": {"base": "https://x.example/v1/", "key": "or"}}', encoding="utf-8")
             YAML.write_text(yaml_block("m1", "v/m:free", "or").replace(
                 "  api_key_name: or", '  api_key_name: or\n  headers:\n    X-Title: "t"'), encoding="utf-8")

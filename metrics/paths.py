@@ -45,6 +45,15 @@ def home() -> tuple[pathlib.Path, str]:
 
 
 DATA, WHY = home()
+LAYOUT = ("config", "metrics", "perf", "runs", "suite/tasks")
+
+
+def make(folder: pathlib.Path = DATA) -> None:
+    """The layout, empty. Writers that append (the change log, onboarding's log
+    and notes, the perf history) expect their folder to exist, which on a fresh
+    install it does not; serve.py and scripts/init.py make it once instead."""
+    for sub in LAYOUT:
+        (folder / sub).mkdir(parents=True, exist_ok=True)
 
 
 if __name__ == "__main__":
