@@ -87,6 +87,22 @@ a streaming client gets it on the first chunk):
           "verdict": "POST http://127.0.0.1:8123/bench/verdict {…}"}
 ```
 
+**Merged replies (opt-in).** A collection's `reply` is `all` (the default) or
+`merged`; a request overrides it with `"bench": {"reply": "merged"}` in the
+body, or a `:merged` / `:all` suffix on the model name for clients that can
+only pick a name (`bench/reviewers:merged`), and `GET /v1/models` lists each
+collection in its other mode too. Merged adds one call after the panel: a
+merger writes a single answer saying where the seats agreed, where they
+disagreed and who said what, and that becomes `content`. The merger is the
+collection's `merger`, or when empty the member with the most useful verdicts
+on the request's shape, else the router's primary, else the first member that
+fits. It gets its own call id (`<panel>.merger`, in `bench.merger`, the
+offload log and the Gateway card) so a verdict can judge the merge; `bench`
+still carries every seat. If no merger has the context window for the
+request plus every answer, or it fails, the reply is every answer with a
+one-line note (`bench.note`). A streaming client gets it as one chunk, like
+any reply.
+
 A verdict is `POST /bench/verdict` with `{"call", "useful": true|false, "note",
 "real": [...], "false": [...]}`, `offload.py verdict <call id>`, or the verdict
 dialog in the dashboard's Collections tab, under Gateway (click a seat). Sending the same verdict
@@ -115,7 +131,7 @@ With no explorer seats to fill, nothing is asked.
 | Collections tab | The collections and their form, then the gateway's recent requests: every seat's status and verdict, and how many verdicts are owed. Clicking a seat opens its answer and the verdict form. |
 | Catalog | `metrics/catalog.py`: context window, output limit, rate limits and capabilities per model, refreshed daily (scheduled task WRBench-Catalog); a free model whose price goes above zero raises a "went paid" alert. |
 | Discover tab | `metrics/discover.py`: models.dev and FreeLLMAPI merged into one list of models worth adding, free first, marked by whether you can already reach the provider and whether the model is on the bench (on another provider counts as "also on bench"). |
-| Council (not built) | Would return one merged answer instead of every answer; see Decisions. |
+| Merged replies | Opt-in: one merger answer as `content`, every seat still in `bench` (The reply). |
 
 ## Rules
 
@@ -149,7 +165,9 @@ copy of the alias table and a plugin to write bench evidence.
   caller that cannot read several answers; every caller so far can, and the
   orchestrator verifies against the code better than a merging model. A merge
   also hides who said what, which is the evidence the bench runs on. Revisit
-  if a single-answer client needs the bench.
+  if a single-answer client needs the bench. (Revisited 2026-10-19 for chat
+  UIs: merged replies, opt-in, with every seat still called, recorded and
+  returned in `bench`, and the merge told to keep who said what.)
 - **Collections replace `bench/panel`.** Every request names a collection;
   the bench adds the explorers.
 - **No single-model routes**, which also dropped the shadow worker and judge

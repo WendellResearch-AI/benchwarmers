@@ -19,6 +19,15 @@ The reply is every answer, each labelled by seat and model with a call id,
 including seats that failed or came back empty: who answered is evidence about
 the roster, and a summary naming only the good answer hides it.
 
+Unless the reply is `merged` (a collection's `reply`, or per request a
+`:merged` suffix on the model or `"bench": {"reply": "merged"}`; `:all` the
+other way): then, after the panel, one more model writes a single answer
+saying where the seats agreed, where they disagreed and who said what, for a
+client that can show only one. It has its own call id, so a verdict can judge
+the merge, and the `bench` field still carries every seat. If no merger has
+the context for the merge, or it fails, the reply is every answer with a
+one-line note: the panel the caller waited for is never lost.
+
 A collection's `shape` (review, design, …) decides which models may fill the
 explorer seats. Left empty, a decision model labels the prompt when one that
 takes choice questions is onboarded (not ad hoc); otherwise, or on any doubt,
@@ -98,6 +107,12 @@ SHAPES = {
 CONFIDENT = 0.6
 LARGE = 8000          # characters; route.py keeps models that fail big prompts off big tasks
 MAX_BODY = 16_000_000  # bytes; a million-token prompt is about 4 MB
+SEAT_KEYS = ("call", "seat", "alias", "status", "seconds", "answer", "error")
+# A merge that reads as consensus hides the dissent the bench runs on, so the
+# merger is told to keep who said what.
+MERGE_SYSTEM = ("Several models answered the same request. Write one answer to it from theirs: say where"
+                " they agreed, where they disagreed, and who said what, naming each model as labelled."
+                " Keep every dissent, and do not present a claim as settled because several made it.")
 
 
 def flatten(messages: list[dict]) -> tuple[str, str]:
@@ -226,9 +241,67 @@ def too_small(needed: int, aliases) -> dict[str, int]:
     return out
 
 
-def run_collection(name: str, messages: list[dict], nominated: list[str] | None = None) -> tuple[str, dict]:
+def record_seat(task: str, call: str, label: str, alias: str, r: dict) -> dict:
+    """Log one answer as an unjudged offload, the moment it is in, so explorer
+    rotation counts it even if nobody judges; returns the seat as logged."""
+    offload.add(alias, task, None, f"{label}; {r['status']} in {r['seconds']}s"
+                + (f": {r['error'][:120]}" if r["error"] else ""), call)
+    return {"call": call, "seat": label, "alias": alias, **r}
+
+
+def merger_candidates(collection: dict, members: list[str], shape: str, large: bool):
+    """Who may merge, best first. The collection's `merger` alone when set;
+    else the members with verdicts on this shape, most useful first, then the
+    router's primary, then the other members (a fresh install has neither
+    verdicts nor suite scores). A generator, so the router is asked only if
+    no member with a record fits."""
+    if collection.get("merger"):
+        yield collection["merger"]
+        return
+    record: dict[str, list[int]] = {}
+    for e in offload.entries():
+        # The shape ends each seat's task as run_collection writes it: "(bench/<name>, <shape>)".
+        if e["model"] in members and e.get("useful") is not None and e.get("task", "").endswith(f", {shape})"):
+            r = record.setdefault(e["model"], [0, 0])
+            r[0], r[1] = r[0] + bool(e["useful"]), r[1] + 1
+    # Useful verdicts counted, not a ratio, as route.py counts findings: one
+    # lucky verdict must not outrank a long good record.
+    yield from sorted(record, key=lambda a: (-record[a][0], -record[a][0] / record[a][1]))
+    try:
+        primary = route.panel(shape, large=large)["primary"]
+    except Exception:                                  # noqa: BLE001 -- the members can still merge
+        primary = None
+    if primary:
+        yield primary["model"]
+    yield from members
+
+
+def merge(collection: dict, members: list[str], shape: str, whole: str, seats: list[dict],
+          task: str, panel_id: str) -> tuple[dict | None, str]:
+    """The merger's seat, and why the reply falls back to every answer ("" if
+    it does not). The merger reads the request and every answer, so it gets
+    the members' size check; a failed merger is still logged like a seat."""
+    answered = [s for s in seats if s["status"] == "ok"]
+    if not answered:
+        return None, "no seat answered"
+    text = f"THE REQUEST\n\n{whole}\n\nTHE ANSWERS\n\n" + "\n\n".join(
+        f"## {s['seat']} — {s['alias']}\n\n{s['answer']}" for s in answered)
+    needed = estimate_tokens(f"{MERGE_SYSTEM}\n\n{text}")
+    alias = next((a for a in merger_candidates(collection, members, shape, len(text) > LARGE)
+                  if not too_small(needed, [a])), None)
+    if alias is None:
+        return None, f"no merger has the context window for the merge (about {needed:,} tokens)"
+    seat = record_seat(task, f"{panel_id}.merger", "merger", alias, ask_seat(alias, MERGE_SYSTEM, text))
+    if seat["status"] != "ok":
+        return seat, f"the merger {alias} came back {seat['status']}" + (f": {seat['error'][:120]}" if seat["error"] else "")
+    return seat, ""
+
+
+def run_collection(name: str, messages: list[dict], nominated: list[str] | None = None,
+                   reply: str = "") -> tuple[str, dict]:
     """The panel's reply as markdown, and the same seats as data for the
-    response's `bench` field."""
+    response's `bench` field. `reply`: the request's mode, "" for the
+    collection's own."""
     system, prompt = flatten(messages)
     if not prompt.strip():
         raise ValueError("no user message to put to the collection")
@@ -283,24 +356,38 @@ def run_collection(name: str, messages: list[dict], nominated: list[str] | None 
            f" explorers · explorer shape {shape} ({how})\n"]
     for (key, label, alias), r in zip(seats, results):
         call = f"{panel_id}.{key}"
-        offload.add(alias, task, None, f"{label}; {r['status']} in {r['seconds']}s"
-                    + (f": {r['error'][:120]}" if r["error"] else ""), call)
-        record["seats"].append({"call": call, "seat": label, "alias": alias, **r})
+        record["seats"].append(record_seat(task, call, label, alias, r))
         body = r["answer"] or (f"_error: {r['error'][:300]}_" if r["error"] else
                                "_empty reply — usually a token budget, not incapacity_")
         out.append(f"## {label} — {alias}\n`{call}` · {r['status']} · {r['seconds']}s\n\n{body}\n")
-    with (LOG_DIR / "calls.jsonl").open("a", encoding="utf-8") as fh:
-        fh.write(json.dumps(record, ensure_ascii=False) + "\n")
     out.append("---\nRecord a verdict per seat once checked against the code:\n"
                "`python metrics/offload.py verdict <call id> --useful|--not-useful --note \"...\"`")
+    content = "\n".join(out)
     # Beyond the OpenAI fields, so a caller reads seats without parsing the
     # markdown. Clients that do not know it ignore it.
     bench = {"panel": panel_id, "collection": model, "shape": shape, "shape_by": how,
-             "seats": [{k: s[k] for k in ("call", "seat", "alias", "status", "seconds", "answer", "error")}
-                       for s in record["seats"]],
+             "seats": [{k: s[k] for k in SEAT_KEYS} for s in record["seats"]],
              "verdict": f"POST http://127.0.0.1:{PORT}/bench/verdict"
                         ' {"call", "useful": true|false, "note", "real": [...], "false": [...]}'}
-    return "\n".join(out), bench
+    if (reply or collection.get("reply") or "all") == "merged":
+        try:
+            merger, note = merge(collection, members, shape, whole, record["seats"], task, panel_id)
+        except Exception as exc:                       # noqa: BLE001 -- never lose the panel to the merge
+            merger, note = None, f"the merge failed ({type(exc).__name__}: {exc})"
+        if merger:
+            bench["merger"] = {k: merger[k] for k in SEAT_KEYS}
+            record["seats"].append(merger)             # the dashboard shows it, verdict and all
+        if note:
+            bench.update(reply="all", note=note)
+            content = f"_Merged reply unavailable: {note}. Every answer follows._\n\n{content}"
+        else:
+            who = ", ".join(f"{s['alias']} {s['status']}" for s in bench["seats"])
+            bench["reply"] = "merged"
+            content = (f"{merger['answer']}\n\n---\nMerged by {merger['alias']} (`{merger['call']}`) from:"
+                       f" {who}. Every seat's answer and call id is in the response's `bench` field.")
+    with (LOG_DIR / "calls.jsonl").open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+    return content, bench
 
 
 def models() -> list[str]:
@@ -332,10 +419,17 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.split("?", 1)[0].rstrip("/") in ("/v1/models", "/models"):
             # Beyond the OpenAI fields: what each collection is for, so an
             # orchestrator can choose one by task. Clients ignore extra keys.
+            # Each collection twice: as set, and in the other reply mode, so a
+            # client that offers only listed models can still pick either.
             s, data = bench_collections.settings(), bench_collections.load()
-            self._json(200, {"object": "list", "data": [
-                {"id": bench_collections.PREFIX + n, "object": "model", "owned_by": "benchwarmers",
-                 **bench_collections.described(n, c, s)} for n, c in data.items()]})
+            rows = []
+            for n, c in data.items():
+                d = bench_collections.described(n, c, s)
+                other = "all" if d["reply"] == "merged" else "merged"
+                rows += [{"id": bench_collections.PREFIX + n, "object": "model", "owned_by": "benchwarmers", **d},
+                         {"id": f"{bench_collections.PREFIX}{n}:{other}", "object": "model",
+                          "owned_by": "benchwarmers", **d, "reply": other}]
+            self._json(200, {"object": "list", "data": rows})
         else:
             self._error(404, "GET /v1/models is the only GET here")
 
@@ -371,17 +465,21 @@ class Handler(BaseHTTPRequestHandler):
         model = body.get("model") or ""
         if not isinstance(model, str):
             return self._error(400, '"model" must be a collection name such as bench/core')
+        model, suffix = bench_collections.split_reply(model)
         name = bench_collections.resolve(model)
         if name is None:
             return self._error(400 if not model else 404, bench_collections.choose_message(model))
         model = bench_collections.PREFIX + name
-        messages, nominated = body.get("messages"), body.get("with") or []
+        messages, nominated, opts = body.get("messages"), body.get("with") or [], body.get("bench") or {}
         if not (isinstance(messages, list) and all(isinstance(m, dict) for m in messages)):
             return self._error(400, '"messages" must be a list of message objects')
         if not (isinstance(nominated, list) and all(isinstance(a, str) for a in nominated)):
             return self._error(400, '"with" must be a list of model aliases')
+        if not isinstance(opts, dict) or opts.get("reply", "all") not in bench_collections.REPLIES:
+            return self._error(400, '"bench" must be an object whose "reply" is "all" or "merged"')
         try:
-            content, bench = run_collection(name, messages, nominated)
+            # The body is the most specific, then the suffix, then the collection.
+            content, bench = run_collection(name, messages, nominated, opts.get("reply") or suffix)
         except TooLarge as exc:
             return self._error(413, str(exc))
         except ValueError as exc:
@@ -394,7 +492,12 @@ class Handler(BaseHTTPRequestHandler):
                 "id": reply_id, "object": "chat.completion", "created": created, "model": model,
                 "choices": [{"index": 0, "finish_reason": "stop",
                              "message": {"role": "assistant", "content": content}}], "bench": bench})
-        # A panel finishes all at once, so a streaming client gets it as one chunk.
+        # A panel finishes all at once, so a streaming client gets it as one
+        # chunk, merged or not. ponytail: nothing is sent until the panel and
+        # the merge are done, so a client or proxy with a shorter idle timeout
+        # drops it. Keep-alives mean sending the 200 before the panel runs, so
+        # the 413/503 refusals move into the stream; streaming the merge as it
+        # is written needs a streaming client.chat (RELEASE-PLAN acceptance 11).
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.end_headers()

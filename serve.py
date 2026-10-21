@@ -1186,7 +1186,7 @@ TAG_PURPOSES = ("second-opinion", "security", "long-context", "fast", "free")
 
 
 def save_collection(name: str, members, shape: str, description: str, tags=None,
-                    who: str = "ui") -> dict:
+                    reply: str = "all", merger: str = "", who: str = "ui") -> dict:
     """Create or replace a collection. Every member must be a chat model on the
     bench (a decision model cannot answer a prompt), no more than max_calls.
     The description and tags are what an orchestrator reads on /v1/models to
@@ -1223,6 +1223,8 @@ def save_collection(name: str, members, shape: str, description: str, tags=None,
         errors.append(f"tags are lower-case words joined by '-', up to 24 characters: {', '.join(bad)}")
     if len(tags) > 8:
         errors.append("at most 8 tags")
+    reply, merger = (reply or "all").strip(), (merger or "").strip()
+    errors += bench_collections.reply_errors(reply, merger, known)
     if bench_collections.unreadable(bench_collections.FILE):
         errors.append("config/collections.json is not valid JSON; fix it by hand first,"
                       " or this save would replace every collection in it")
@@ -1230,7 +1232,8 @@ def save_collection(name: str, members, shape: str, description: str, tags=None,
         return {"ok": False, "errors": errors}
     data = bench_collections.load()
     old = data.get(name)
-    data[name] = {"members": members, "shape": shape, "description": description, "tags": tags}
+    data[name] = {"members": members, "shape": shape, "description": description, "tags": tags,
+                  "reply": reply, "merger": merger}
     _write_atomic(bench_collections.FILE, _dump(data))
     _log_change(datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
                 who, "", f"collection {name}", old, data[name])
@@ -2119,7 +2122,7 @@ def gateway_card(limit: int = 30) -> str:
     body.append("</tbody></table>")
     key = """<dl>
       <dt>Seats</dt><dd>Every model that answered the request, members first, then
-        explorers. Green answered, amber came back empty, red failed. ✓ judged
+        explorers, then the merger if the reply was merged. Green answered, amber came back empty, red failed. ✓ judged
         useful, ✗ judged not useful; no mark means the verdict is still owed.
         Hover a chip for its seat, timing and call id; click it to read the answer
         and record a verdict.</dd>
@@ -2319,6 +2322,13 @@ def collections_tab() -> str:
         "<label class='field' for='c-shape'>Explorer shape</label><select id='c-shape'></select>"
         "<p class='rules'>Which models may fill the explorer seats. Automatic asks a decision"
         " model to label each prompt when one is onboarded, else general.</p>"
+        "<label class='field' for='c-reply'>Reply</label><select id='c-reply'>"
+        "<option value='all'>every answer</option><option value='merged'>merged</option></select>"
+        "<label class='field' for='c-merger'>Merger</label><select id='c-merger'></select>"
+        "<p class='rules'>Merged: after the panel, one model writes a single answer saying where the"
+        " seats agreed and who said what, for a chat UI that shows one answer; every seat is still"
+        " called and recorded. Automatic picks the member with the best verdicts on the task's shape."
+        " A caller can ask for either with <code>bench/&lt;name&gt;:merged</code> or <code>:all</code>.</p>"
         "<label class='field' for='c-desc'>Description</label>"
         "<textarea id='c-desc' rows='2' maxlength='300'"
         " placeholder='e.g. Adversarial code review: finding bugs and broken guarantees in a diff'></textarea>"
@@ -3069,7 +3079,8 @@ class Handler(gateway.Handler):
                "/api/collection": lambda p: save_collection(str(p.get("name") or ""), p.get("members"),
                                                             str(p.get("shape") or ""),
                                                             str(p.get("description") or ""),
-                                                            p.get("tags")),
+                                                            p.get("tags"), str(p.get("reply") or ""),
+                                                            str(p.get("merger") or "")),
                "/api/collection/remove": lambda p: delete_collection(str(p.get("name") or "")),
                "/api/model-facts": lambda p: save_model_facts(str(p.get("alias") or ""), p.get("facts")),
                "/api/connection-limits": lambda p: save_connection_limits(str(p.get("connection") or ""),
