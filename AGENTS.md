@@ -108,6 +108,10 @@ For a chat window that shows one answer, ask for `bench/<collection>:merged`
 (or set the collection's reply to merged): a merger model writes one answer
 saying where the seats agreed and disagreed, and every seat is still in
 `bench`.
+Photos go in as OpenAI `image_url` parts (an https URL, or a `data:` URL up to
+20 MB a request); only models that take images sit, and the others are listed
+in `bench.skipped`. One the catalog knows nothing about sits once its model
+popup ticks Vision / OCR.
 After the person checks an answer against the real work, record a verdict
 (dashboard, or `POST /bench/verdict`); verdicts choose the next panels. See
 GATEWAY.md for the whole contract.
@@ -122,7 +126,9 @@ Both servers refuse to listen anywhere but 127.0.0.1 without an admin token:
 
 The dashboard then asks for the token once (a session cookie for a week), and
 the gateway routes need a gateway key made on Settings (`Authorization: Bearer
-<key>`). In Docker: put the token and the `BENCHWARMERS_KEY_<NAME>` variables in
+<key>`). Give each app its own key, limited to the collections it uses and a
+rate; `BENCHWARMERS_REQUIRE_KEYS=1` asks for keys on this machine too. A
+browser app on another origin also needs `BENCH_ALLOWED_ORIGINS`. In Docker: put the token and the `BENCHWARMERS_KEY_<NAME>` variables in
 a `.env` beside `compose.yaml`, then `docker compose up -d`; the dashboard and
 gateway share one port and the data folder is a volume.
 

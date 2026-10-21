@@ -21,6 +21,11 @@ roles:   general  reasoning / do-it-all: eligible for every shape
 
 shapes:  today's task, `route.py --shape <name>`; general when none is given.
          `quick` is a short, bounded task where a fast small model is right.
+         `vision` is a question about images: the gateway gives it to a
+         request that carries any, unless its collection sets a shape, and
+         whatever the shape fills explorer seats only with models the catalog
+         says take images (gateway.py). A role is what a model is for, not
+         what it can read, so vision admits the roles that answer questions.
 
 ad_hoc:  aliases NEVER chosen automatically: not by the router's seats or
          reserve, not by a benchmark sweep or `--next` rotation, not by the
@@ -57,6 +62,7 @@ SHAPES = {
     "code": ["general", "code"],
     "enumeration": ["general", "code", "light"],
     "quick": ["general", "light"],
+    "vision": ["general", "light"],
     "image": ["image"],
 }
 

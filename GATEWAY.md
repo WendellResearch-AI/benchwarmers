@@ -71,6 +71,55 @@ Context windows come from `metrics/catalog.py`: your overrides in the model
 popup, then windows learned from real "maximum context length" errors (only
 ever lower), then the daily refresh from each model's own endpoint listing,
 models.dev and FreeLLMAPI. A model with no known window is never refused.
+Each image adds 2,500 tokens to the estimate (see Images).
+
+## Images
+
+A request whose messages carry OpenAI `image_url` parts, with an `https://`
+URL or a `data:image/...;base64,` URL, goes to every seat with its messages
+exactly as sent:
+
+```json
+{"model": "bench/vision", "messages": [{"role": "user", "content": [
+  {"type": "text", "text": "What is this chair, and what might it fetch?"},
+  {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,..."}}]}]}
+```
+
+- **Through the built-in client**, whatever `BENCH_CLIENT` says: the `llm`
+  CLI takes a prompt, not inline images. A text-only request takes the same
+  path as before.
+- **Only seats that can see.** A model sits only if the catalog says it takes
+  images: its input types from its endpoint's listing, models.dev or
+  OpenRouter, or **Vision / OCR** ticked in its model popup. A member that
+  cannot, or that the catalog knows nothing about, is not asked and is listed
+  in `bench.skipped` with why (`{"seat", "alias", "why"}`; a grey chip on the
+  Gateway card); so is a `with` nomination. Explorer seats go only to models
+  that take images. With no seat that can see, the request is refused (400)
+  rather than answered blind. Unknown counts as cannot because a model that
+  cannot see answers anyway, describing a photo it never got, and the popup
+  fixes it in one click. A model reached through the Responses API (a ChatGPT
+  plan) gets no images yet.
+- **A vision collection** is members that take images; `GET /v1/models` lists
+  `vision` in its `together.capabilities` when every member does. An image
+  request on a collection with no shape takes the shape `vision` (general and
+  light models), so verdicts on image work are counted apart.
+- **Size.** The body cap is 20 MB: a photo as a data URL is 4/3 of its file,
+  and 20 MB is the tightest whole-request limit among the big providers
+  (Gemini's for inline data). Above it the gateway answers 413 and says to
+  send http(s) URLs or smaller images; models scale a photo down to about
+  1,500-2,000 pixels on its long side anyway. Each image counts 2,500 tokens
+  in the context check, which errs high: OpenAI's, Anthropic's and Gemini's
+  models spend up to about 1,600 at their usual detail.
+- **Never written down.** In `runs/gateway/calls.jsonl`, the offload log,
+  learned limits, error text (an upstream may echo the request) and the
+  dashboard, an image is a placeholder: `[image: data URL, 412 KB]`, or an
+  http URL without its query string or user:password
+  (`[image: https://photos.example/chair.jpg?...]`). The gateway never
+  fetches an image URL; the upstream does.
+- **Merged replies.** The merger gets the request as text with those
+  placeholders, plus the seats' answers. Its job is to reconcile what the
+  seats said, not to look again, so any model can merge and a disagreement
+  about the picture is reported, not settled.
 
 ## The reply
 
@@ -118,11 +167,41 @@ labels the prompt, when one that takes choice questions is onboarded and not ad
 hoc; otherwise, or on failure or confidence under 0.6, the shape is `general`.
 With no explorer seats to fill, nothing is asked.
 
+## Who may call
+
+| Where it runs | Set | The gateway asks for |
+|---|---|---|
+| This machine, as installed | nothing | no key: every caller is `local`, any bearer is ignored |
+| This machine, one key per app | `BENCHWARMERS_REQUIRE_KEYS=1` | a gateway key; the dashboard stays open |
+| LAN, Docker or cloud | `BENCHWARMERS_ADMIN_TOKEN`, `BENCH_BIND`, `BENCHWARMERS_PUBLIC_URL` | a gateway key on every `/v1/...` and `/bench/...`; the dashboard asks for the token |
+| A browser app on another origin | `BENCH_ALLOWED_ORIGINS=https://app.example` (comma-separated), plus one of the rows above | as that row says |
+
+**Gateway keys** are made on Settings, sent as `Authorization: Bearer <key>`,
+shown once and kept as a SHA-256. Each has a name, written on every call it
+makes (`key` in `calls.jsonl`, "Asked by" on the Gateway card), and a "last
+used" on Settings. Optional, set when it is made: the **collections** it may
+call (others are refused with 403, and `GET /v1/models` lists only its own)
+and **requests a minute** (429 with `Retry-After` past it; counted per
+process). Keys start `bwk_`, so a leaked one is recognisable, and Settings
+shows each key's last four characters to tell which. A missing, malformed or
+unknown key is refused with 401, a message saying which, and
+`WWW-Authenticate: Bearer`.
+
+**CORS** is answered on the gateway's routes only, for an allowed origin
+(`BENCH_ALLOWED_ORIGINS`, and `BENCHWARMERS_PUBLIC_URL`'s): the preflight
+allows `Authorization`, `Content-Type` and any other plain header names it
+asks for (the OpenAI JS SDK sends `X-Stainless-*`), and every reply echoes
+the origin with `Vary: Origin`. Never `*`, never credentials: the key travels
+in a header, not a cookie. Such an origin may be cross-site; every other
+browser request stays same-origin, and the dashboard answers no preflight. A
+key in a page's code is visible to whoever opens it, so give a browser app a
+key limited to its collection and a rate, or keep the key on the app's server.
+
 ## Components
 
 | Part | Job |
 |---|---|
-| Gateway | `gateway.py`, stdlib server on 127.0.0.1. `GET /v1/models` lists the collections with description, tags and make-up; `POST /v1/chat/completions` runs one. A streaming client gets the finished answer as one chunk. |
+| Gateway | `gateway.py`, stdlib server on 127.0.0.1. `GET /v1/models` lists the collections with description, tags and make-up; `POST /v1/chat/completions` runs one, images included. A streaming client gets the finished answer as one chunk. |
 | Collections | `metrics/bench_collections.py` reads the two config files and computes explorer seats. |
 | Seat router | `route.panel(members=…, explorers=n)` fills explorer seats by staleness for the shape. |
 | Shape picker | Optional decision model (above). |
@@ -145,9 +224,9 @@ With no explorer seats to fill, nothing is asked.
 - **Privacy:** prompts go only to providers the bench already uses.
 - **Bind to 127.0.0.1**, as the dashboard does. Elsewhere only with an admin
   token set, and then every call carries a gateway key made on the
-  dashboard's Settings page (`Authorization: Bearer <key>`). The dashboard
-  answers the same routes on its own port, so one port can serve both
-  (README, "Security").
+  dashboard's Settings page (`Authorization: Bearer <key>`); see "Who may
+  call". The dashboard answers the same routes on its own port, so one port
+  can serve both (README, "Security").
 
 ## What is and isn't new
 

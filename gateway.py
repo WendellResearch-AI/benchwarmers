@@ -51,15 +51,34 @@ The real/false claims are what `suite/mine.py` turns into suite tasks.
 The verdict replaces the unjudged entry, and route.py's evidence — which
 explorers are due, which models earn a place in a collection — reads it.
 
+IMAGES
+------
+A request whose messages carry `image_url` parts (http(s) or data: URLs) goes
+to each seat with its messages as sent, through the built-in client whatever
+BENCH_CLIENT says (`llm -m` takes a prompt). Only models the catalog says take
+images sit (`cannot_see`): a member that cannot, or that the catalog knows
+nothing about, is skipped and named in `bench.skipped` with why; explorers
+are drawn from models that can, under the shape `vision` unless the
+collection sets one; with no seat that can see, the request is refused (400)
+rather than answered blind. Each image counts IMAGE_TOKENS in the size check.
+Wherever the request is written down (the call log, offloads, learned
+limits, error text, the dashboard) an image is a placeholder, never its
+bytes. The merger gets the request as text with those placeholders, plus
+the seats' answers: its job is to reconcile what the seats said, not to look
+again, so any model can merge and a disagreement about the picture is
+reported rather than settled.
+
 WHAT IT IS NOT
 --------------
 A single-model proxy. Tools such as Roo Code call Open WebUI directly; this
 exists only for the multi-model work. Seats are called with `llm -m`, exactly
-as offloads always were, so endpoints, headers and per-model options all come
-from the same registry. Full prompts and answers go to `runs/gateway/`,
-gitignored. Bound to 127.0.0.1, like the dashboard (BENCH_BIND and
+as offloads always were, or the built-in client (BENCH_CLIENT), so endpoints,
+headers and per-model options all come from the same registry. Full prompts
+and answers go to `runs/gateway/`, gitignored, with the name of the gateway
+key that asked. Bound to 127.0.0.1, like the dashboard (BENCH_BIND and
 BENCH_GATEWAY_PORT change that; beyond this machine it asks for a gateway key,
-metrics/guard.py). The dashboard answers these same routes on its own port.
+metrics/guard.py, which also covers keys on this machine, scopes, caps and
+CORS). The dashboard answers these same routes on its own port.
 """
 
 from __future__ import annotations
@@ -68,10 +87,12 @@ import datetime as dt
 import json
 import os
 import pathlib
+import re
 import secrets
 import subprocess
 import sys
 import time
+import urllib.parse
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -106,7 +127,18 @@ SHAPES = {
 }
 CONFIDENT = 0.6
 LARGE = 8000          # characters; route.py keeps models that fail big prompts off big tasks
-MAX_BODY = 16_000_000  # bytes; a million-token prompt is about 4 MB
+# Bytes. A million-token prompt is about 4 MB, and a photo sent as a data URL
+# is 4/3 of its file. 20 MB is the tightest whole-request limit among the big
+# providers (Gemini's for inline data), so what passes here they take too.
+MAX_BODY = 20_000_000
+TOO_BIG = (" Send images as http(s) URLs, or smaller ones: models scale a photo down to about"
+           " 1,500-2,000 pixels on its long side anyway.")
+IMAGE_TOKENS = 2_500   # per image, in the size check (estimate_tokens says why)
+IMAGE_URL = re.compile(r"(https?://[^\s/?#]+|data:image/[\w.+-]+;base64,)", re.I)
+DATA_URLS = re.compile(r"data:[\w/.+-]*;base64,[A-Za-z0-9+/=_\\-]*", re.I)
+URLS = re.compile(r"https?://[^\s\"'<>\\]+", re.I)
+BASE64 = re.compile(r"[A-Za-z0-9+/]{100,}={0,2}")
+HEADER_NAMES = re.compile(r"[A-Za-z0-9-]{1,64}(\s*,\s*[A-Za-z0-9-]{1,64}){0,31}")
 SEAT_KEYS = ("call", "seat", "alias", "status", "seconds", "answer", "error")
 # A merge that reads as consensus hides the dissent the bench runs on, so the
 # merger is told to keep who said what.
@@ -117,11 +149,13 @@ MERGE_SYSTEM = ("Several models answered the same request. Write one answer to i
 
 def flatten(messages: list[dict]) -> tuple[str, str]:
     """(system, prompt) for `llm`. A panel question is one prompt; a longer
-    conversation is kept as labelled turns rather than silently truncated."""
+    conversation is kept as labelled turns rather than silently truncated.
+    An image is its placeholder: this text is what gets written down."""
     def text(m):
         c = m.get("content") or ""
         return c if isinstance(c, str) else "\n".join(
-            str(p.get("text") or "") for p in c if isinstance(p, dict))
+            placeholder(_url(p)) if p.get("type") == "image_url" else str(p.get("text") or "")
+            for p in c if isinstance(p, dict))
     # Newer OpenAI SDKs send "developer" where older ones send "system".
     lead = ("system", "developer")
     system = "\n\n".join(text(m) for m in messages if m.get("role") in lead)
@@ -129,6 +163,80 @@ def flatten(messages: list[dict]) -> tuple[str, str]:
     if len(turns) == 1:
         return system, text(turns[0])
     return system, "\n\n".join(f"{m.get('role', 'user')}: {text(m)}" for m in turns)
+
+
+def _url(part: dict) -> str:
+    """An image part's URL: {"image_url": {"url": ...}} as OpenAI sends it, or a bare string."""
+    u = part.get("image_url")
+    u = u.get("url") if isinstance(u, dict) else u
+    return u if isinstance(u, str) else ""
+
+
+def images(messages: list[dict]) -> list[str]:
+    """Every image part's URL, in order. ValueError for one no seat could be
+    sent: the gateway never fetches an image, the upstream does, so only
+    http(s) URLs and inline base64 images pass; and an image in another API's
+    shape is refused rather than dropped, which would have a seat answer blind."""
+    urls = []
+    for m in messages:
+        parts = m.get("content")
+        for p in parts if isinstance(parts, list) else ():
+            kind = p.get("type") if isinstance(p, dict) else None
+            if kind in ("image", "input_image"):
+                raise ValueError(f'a "{kind}" part is another API\'s shape; send each image as'
+                                 ' {"type": "image_url", "image_url": {"url": "<http(s) or data: URL>"}}')
+            if kind == "image_url":
+                url = _url(p)
+                if not IMAGE_URL.match(url):
+                    raise ValueError("an image_url must be an http(s) URL or a data:image/...;base64, URL,"
+                                     f" not {placeholder(url) if url else 'empty'}")
+                urls.append(url)
+    return urls
+
+
+def placeholder(url: str) -> str:
+    """How an image is written down (the call log, offloads, the dashboard,
+    error text, the merger's copy of the request), never its bytes: a data
+    URL by its size, an http URL without its query (a signed URL's signature
+    is a credential) or a user:password."""
+    if url[:5].lower() == "data:":
+        return f"[image: data URL, {(len(url) * 3 // 4 + 999) // 1000:,} KB]"
+    u = urllib.parse.urlsplit(url)
+    return f"[image: {u.scheme}://{u.netloc.rpartition('@')[2]}{u.path[:200]}{'?...' if u.query else ''}]"
+
+
+def redact(text: str) -> str:
+    """`text` with each inline image as its placeholder, every http(s) URL
+    without its query or user:password, and any other long base64 run as its
+    size: an upstream may echo the request in an error, in whatever form, and
+    errors are logged, shown and learned from."""
+    def bare(m):
+        try:
+            u = urllib.parse.urlsplit(m.group())
+        except ValueError:                             # an unparseable netloc, such as "[::1"
+            return "[url]"
+        return f"{u.scheme}://{u.netloc.rpartition('@')[2]}{u.path}{'?...' if u.query else ''}"
+    text = URLS.sub(bare, DATA_URLS.sub(lambda m: placeholder(m.group()), text))
+    return BASE64.sub(lambda m: f"[base64, {(len(m.group()) * 3 // 4 + 999) // 1000:,} KB]", text)
+
+
+def cannot_see(alias: str) -> str:
+    """Why an image cannot be put to `alias`, or "" when it can. The catalog
+    decides (metrics/catalog.py: the model's input types, your Vision / OCR
+    override in its model popup, a capability seen working). A model the
+    catalog knows nothing about does not sit either: one that cannot see
+    answers anyway, describing a photo it never got, and the override is one
+    click."""
+    import catalog
+    import endpoints
+    if endpoints.entry_of(alias).get("api") == "responses":
+        return "reached through the Responses API, which the gateway sends no images to yet"
+    rec = catalog.info(alias)
+    if rec.get("vision"):
+        return ""
+    if rec.get("vision") is None:
+        return "the catalog does not say whether it takes images; tick Vision / OCR in its model popup if it does"
+    return f"does not take images (says {rec['sources'].get('vision', 'the catalog')})"
 
 
 def pick_shape(prompt: str) -> tuple[str, str]:
@@ -174,12 +282,15 @@ def retiring() -> set[str]:
     return out
 
 
-def ask_seat(alias: str, system: str, prompt: str) -> dict:
+def ask_seat(alias: str, system: str, prompt: str, messages: list[dict] | None = None) -> dict:
+    """One seat's answer. `messages`: the request as sent, when it carries
+    images; it goes through the built-in client whatever BENCH_CLIENT says,
+    since `llm -m` takes a prompt, not inline images."""
     cmd = ["llm", "-m", alias] + (["-s", system] if system else [])
     started = time.monotonic()
-    if client.backend(alias) == "builtin":
+    if messages is not None or client.backend(alias) == "builtin":
         # No subprocess, and no shared llm log for parallel seats to lock.
-        res = client.chat(alias, prompt, system, SEAT_TIMEOUT)
+        res = client.chat(alias, prompt, system, SEAT_TIMEOUT, messages=messages)
         answer = res["text"]
         error = res["error"] or (f"no answer in {SEAT_TIMEOUT}s" if res["timed_out"] else "")
     else:
@@ -189,6 +300,10 @@ def ask_seat(alias: str, system: str, prompt: str) -> dict:
     from run import provider_notice
     if not error and (notice := provider_notice(answer)):
         error, answer = f"provider notice in a success reply ({notice}): {answer[:200]}", ""
+    if messages is not None:
+        # Before the error is cut, logged or learned from. ponytail: the answer
+        # is not redacted; a seat gets an image as pixels, not as its URL or bytes.
+        error = redact(error)
     if error:
         # A stated context window, rate limit or wait is kept (metrics/learn.py);
         # a rate limit also cools the model, so explorer seats skip it.
@@ -226,7 +341,10 @@ class TooLarge(ValueError):
 def estimate_tokens(text: str) -> int:
     """Characters / 4 plus 10%: tokenizers differ by family, so this errs high.
     The windows it is compared with are corrected by learned 'maximum context
-    length' errors (metrics/learn.py)."""
+    length' errors (metrics/learn.py). An image adds IMAGE_TOKENS whatever its
+    size, which errs high too: OpenAI's, Anthropic's and Gemini's models spend
+    up to about 1,600 on one at their usual detail. Qwen and Llama vision
+    models can spend more on a very large image; a learned error corrects that."""
     return int(len(text) / 4 * 1.1)
 
 
@@ -298,10 +416,11 @@ def merge(collection: dict, members: list[str], shape: str, whole: str, seats: l
 
 
 def run_collection(name: str, messages: list[dict], nominated: list[str] | None = None,
-                   reply: str = "") -> tuple[str, dict]:
+                   reply: str = "", who: str = "local") -> tuple[str, dict]:
     """The panel's reply as markdown, and the same seats as data for the
     response's `bench` field. `reply`: the request's mode, "" for the
-    collection's own."""
+    collection's own. `who`: the gateway key that asked, for the call log."""
+    pictures = images(messages)
     system, prompt = flatten(messages)
     if not prompt.strip():
         raise ValueError("no user message to put to the collection")
@@ -313,47 +432,67 @@ def run_collection(name: str, messages: list[dict], nominated: list[str] | None 
     n_explorers = bench_collections.explorers_for(len(members), s)
     # A member named in `with` is already seated; it must not use up the slot.
     nominated = [a for a in dict.fromkeys(nominated or []) if a not in members]
+    # AN IMAGE GOES ONLY TO A MODEL THAT CAN SEE IT: one that cannot would
+    # answer anyway, about a picture it never got. Skipped, and named.
+    skipped = [{"seat": seat, "alias": a, "why": why} for seat, group in (("member", members), ("with", nominated))
+               for a in group if pictures and (why := cannot_see(a))]
+    unseen = {k["alias"] for k in skipped}
+    sitting = [a for a in members if a not in unseen]
+    nominated = [a for a in nominated if a not in unseen]
     # The system text goes to every seat too, so it counts for shape and size.
     whole = f"{system}\n\n{prompt}".strip()
     # REFUSE WHAT A MEMBER CANNOT READ, so the caller can trim the prompt or
     # pick another collection instead of collecting a seat's context error.
-    needed = estimate_tokens(whole)
-    small = too_small(needed, members)
+    needed = estimate_tokens(whole) + IMAGE_TOKENS * len(pictures)
+    small = too_small(needed, sitting)
     if small:
         windows = ", ".join(f"{a} {cw:,}" for a, cw in sorted(small.items(), key=lambda kv: kv[1]))
-        raise TooLarge(f"prompt is about {needed:,} tokens; too large for {windows} (context"
+        counted = f" (each image counted as {IMAGE_TOKENS:,})" if pictures else ""
+        raise TooLarge(f"prompt is about {needed:,} tokens{counted}; too large for {windows} (context"
                        f" windows) in bench/{name}. Trim it under {min(small.values()):,} tokens,"
                        " or choose a collection whose members have larger windows"
                        " (GET /v1/models lists each collection's context_window).")
-    if not n_explorers:
+    if pictures and not collection.get("shape"):
+        shape, how = "vision", "the request carries images"
+    elif not n_explorers:
         shape, how = collection.get("shape") or "general", "no explorer seats to fill"
     elif collection.get("shape"):
         shape, how = collection["shape"], "set on the collection"
     else:
         shape, how = pick_shape(whole)
-    seats = [(f"member{i}", "member", alias) for i, alias in enumerate(members, 1)]
+    seats = [(f"member{i}", "member", alias) for i, alias in enumerate(sitting, 1)]
     if n_explorers:
         # `with` in the request body is route.py's --with: an explorer seat.
         from run import _registered_names
         avoid = retiring() | set(too_small(needed, _registered_names()))   # explorers must fit too
+        if pictures:
+            avoid |= {a for a in _registered_names() if cannot_see(a)}    # and see
         p = route.panel(shape, large=len(whole) > LARGE, nominated=nominated or None,
-                        members=members, explorers=n_explorers, avoid=avoid)
+                        members=sitting, explorers=n_explorers, avoid=avoid)
         seats += [(key, label, p[key]["model"]) for key, label in
                   (("explorer", "explorer"), ("explorer2", "explorer 2")) if p.get(key)]
+    if not seats and pictures:
+        raise ValueError(f"no seat in bench/{name} can see images, so none is asked rather than answer"
+                         " blind: " + ("; ".join(f"{k['alias']} {k['why']}" for k in skipped) or "no members")
+                         + ", and no model that takes images was free for an explorer seat. Add one to the"
+                         " collection, or call one whose together.capabilities on GET /v1/models lists vision.")
     if not seats:
         raise LookupError(f"collection {name!r} has no members and no explorer could be seated")
     panel_id = f"p{dt.datetime.now():%Y%m%d-%H%M%S}-{secrets.token_hex(2)}"
     model = bench_collections.PREFIX + name
     with ThreadPoolExecutor(max_workers=len(seats)) as pool:
-        results = list(pool.map(lambda s: ask_seat(s[2], system, prompt), seats))
+        results = list(pool.map(lambda s: ask_seat(s[2], system, prompt, messages if pictures else None), seats))
 
     task = " ".join(prompt.split())[:90] + f" ({model}, {shape})"
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     record = {"panel": panel_id, "at": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
-              "model": model, "shape": shape, "shape_by": how, "system": system,
-              "prompt": prompt, "seats": []}
-    out = [f"Bench {model} {panel_id} · {len(members)} members + {len(seats) - len(members)}"
+              "model": model, "shape": shape, "shape_by": how, "key": who, "system": system,
+              "prompt": prompt, "seats": [], **({"skipped": skipped} if skipped else {})}
+    out = [f"Bench {model} {panel_id} · {len(sitting)} members + {len(seats) - len(sitting)}"
            f" explorers · explorer shape {shape} ({how})\n"]
+    if skipped:
+        out.append("Not asked, as they cannot be sent the images: "
+                   + "; ".join(f"{k['alias']} ({k['why']})" for k in skipped) + "\n")
     for (key, label, alias), r in zip(seats, results):
         call = f"{panel_id}.{key}"
         record["seats"].append(record_seat(task, call, label, alias, r))
@@ -368,7 +507,8 @@ def run_collection(name: str, messages: list[dict], nominated: list[str] | None 
     bench = {"panel": panel_id, "collection": model, "shape": shape, "shape_by": how,
              "seats": [{k: s[k] for k in SEAT_KEYS} for s in record["seats"]],
              "verdict": f"POST http://127.0.0.1:{PORT}/bench/verdict"
-                        ' {"call", "useful": true|false, "note", "real": [...], "false": [...]}'}
+                        ' {"call", "useful": true|false, "note", "real": [...], "false": [...]}',
+             **({"skipped": skipped} if skipped else {})}
     if (reply or collection.get("reply") or "all") == "merged":
         try:
             merger, note = merge(collection, members, shape, whole, record["seats"], task, panel_id)
@@ -399,23 +539,59 @@ class Handler(BaseHTTPRequestHandler):
     on the dashboard's port too, so the checks use the port actually served."""
     who = "-"
 
-    def _json(self, code: int, data: dict) -> None:
+    def _json(self, code: int, data: dict, headers: dict | None = None) -> None:
         body = json.dumps(data).encode()
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
+        for k, v in (headers or {}).items():
+            self.send_header(k, v)
         self.end_headers()
         self.wfile.write(body)
 
-    def _error(self, code: int, message: str) -> None:
-        self._json(code, {"error": {"message": message, "type": "bench_gateway", "code": code}})
+    def _error(self, code: int, message: str, headers: dict | None = None) -> None:
+        self._json(code, {"error": {"message": message, "type": "bench_gateway", "code": code}}, headers=headers)
+
+    def end_headers(self):
+        # CORS for a browser app on an allowed origin, on the gateway's routes
+        # only (metrics/guard.py); Vary, so a cache never hands one origin's
+        # answer to another. A request line too broken to parse has no headers.
+        headers = getattr(self, "headers", None)
+        if headers is not None and guard.gateway_route((getattr(self, "path", "") or "").split("?", 1)[0]) \
+                and (origin := guard.cors_origin(headers, self.server.server_port)):
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
+        super().end_headers()
+
+    def do_OPTIONS(self):                              # noqa: N802
+        """A browser's CORS preflight: answered on the gateway's routes, for an
+        allowed origin only. The dashboard's routes answer none, as before."""
+        if not guard.gateway_route(self.path.split("?", 1)[0]):
+            return self.send_error(501, f"Unsupported method ({self.command!r})")
+        try:
+            guard.check(self.headers, self.server.server_port, post=False, max_body=0)
+        except guard.Refused as r:
+            return self._error(r.status, str(r))
+        if not guard.cors_origin(self.headers, self.server.server_port):
+            return self._error(403, f"Origin {self.headers.get('Origin') or '(none)'!r} is not allowed;"
+                                    " set BENCH_ALLOWED_ORIGINS or BENCHWARMERS_PUBLIC_URL to add one")
+        # The headers it asks for as well, when they are plain names: the
+        # OpenAI JS SDK sends X-Stainless-* on every call, and a preflight that
+        # refused them would block it. The origin is the boundary, not these.
+        asked = (self.headers.get("Access-Control-Request-Headers") or "").strip()
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type"
+                         + (f", {asked}" if HEADER_NAMES.fullmatch(asked) else ""))
+        self.send_header("Access-Control-Max-Age", "600")
+        self.end_headers()
 
     def do_GET(self):                                  # noqa: N802
         try:
             guard.check(self.headers, self.server.server_port, post=False, max_body=0)
             self.who = guard.gateway_caller(self.headers)
         except guard.Refused as r:
-            return self._error(r.status, str(r))
+            return self._error(r.status, str(r), r.headers)
         if self.path.split("?", 1)[0].rstrip("/") in ("/v1/models", "/models"):
             # Beyond the OpenAI fields: what each collection is for, so an
             # orchestrator can choose one by task. Clients ignore extra keys.
@@ -424,6 +600,8 @@ class Handler(BaseHTTPRequestHandler):
             s, data = bench_collections.settings(), bench_collections.load()
             rows = []
             for n, c in data.items():
+                if not guard.may_call(self.who, n):    # a key limited to some collections sees those
+                    continue
                 d = bench_collections.described(n, c, s)
                 other = "all" if d["reply"] == "merged" else "merged"
                 rows += [{"id": bench_collections.PREFIX + n, "object": "model", "owned_by": "benchwarmers", **d},
@@ -437,10 +615,10 @@ class Handler(BaseHTTPRequestHandler):
         # Without this any web page could spend model calls, seat ad hoc
         # models through `with`, or write verdicts (metrics/guard.py).
         try:
-            length = guard.check(self.headers, self.server.server_port, post=True, max_body=MAX_BODY)
+            length = guard.check(self.headers, self.server.server_port, post=True, max_body=MAX_BODY, cors=True)
             self.who = guard.gateway_caller(self.headers)
         except guard.Refused as r:
-            return self._error(r.status, str(r))
+            return self._error(r.status, str(r) + (TOO_BIG if r.status == 413 else ""), r.headers)
         try:
             body = json.loads(self.rfile.read(length) or b"{}")
         except ValueError:
@@ -477,9 +655,16 @@ class Handler(BaseHTTPRequestHandler):
             return self._error(400, '"with" must be a list of model aliases')
         if not isinstance(opts, dict) or opts.get("reply", "all") not in bench_collections.REPLIES:
             return self._error(400, '"bench" must be an object whose "reply" is "all" or "merged"')
+        if not guard.may_call(self.who, name):
+            allowed = ", ".join(bench_collections.PREFIX + c for c in guard.scope(self.who) or []) or "none"
+            return self._error(403, f"the gateway key {self.who} may not call {model}; it may call {allowed}")
+        try:
+            guard.spend(self.who)                      # counted once it names a collection it may call
+        except guard.Refused as r:
+            return self._error(r.status, str(r), r.headers)
         try:
             # The body is the most specific, then the suffix, then the collection.
-            content, bench = run_collection(name, messages, nominated, opts.get("reply") or suffix)
+            content, bench = run_collection(name, messages, nominated, opts.get("reply") or suffix, self.who)
         except TooLarge as exc:
             return self._error(413, str(exc))
         except ValueError as exc:

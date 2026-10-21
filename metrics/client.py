@@ -157,9 +157,12 @@ def _read(response, deadline: float) -> bytes | None:
     return b"".join(chunks)
 
 
-def chat(alias: str, prompt: str, system: str = "", timeout: float = 420) -> dict:
+def chat(alias: str, prompt: str, system: str = "", timeout: float = 420,
+         messages: list[dict] | None = None) -> dict:
     """One chat completion. Returns {text, reasoning, error, timed_out, status,
-    model, usage, seconds}; `error` is "" on success, else the contract text."""
+    model, usage, seconds}; `error` is "" on success, else the contract text.
+    `messages`, when given, are sent as they are instead of system + prompt:
+    the gateway's requests that carry images, which `llm -m` cannot send."""
     started = time.monotonic()
     deadline = started + timeout
     res = {"text": "", "reasoning": "", "error": "", "timed_out": False, "status": 0,
@@ -180,14 +183,20 @@ def chat(alias: str, prompt: str, system: str = "", timeout: float = 420) -> dic
     if responses := endpoints.entry_of(alias).get("api") == "responses":
         # ChatGPT's plan (metrics/connect.py): streamed, unstored, no system
         # message items, no sampling or length options.
+        if messages is not None:
+            # ponytail: chat parts are not Responses input items; converting
+            # them (input_text, input_image) waits for a caller that needs it.
+            return done(error="Error: client failed: given messages are sent to chat completions only,"
+                              " not the Responses API")
         url = base + "/responses"
         body = json.dumps({"model": model, "input": [{"role": "user", "content": prompt}],
                            "stream": True, "store": False,
                            **({"instructions": system} if system else {})}).encode()
     else:
         url = base + "/chat/completions"
-        messages = ([{"role": "system", "content": system}] if system else []) \
-            + [{"role": "user", "content": prompt}]
+        if messages is None:
+            messages = ([{"role": "system", "content": system}] if system else []) \
+                + [{"role": "user", "content": prompt}]
         body = json.dumps({"model": model, "messages": messages, **_options(alias)}).encode()
     headers = {"Content-Type": "application/json", "User-Agent": "benchwarmers",
                **reg.get("headers", {})}

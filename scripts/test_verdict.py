@@ -51,8 +51,8 @@ def verdicts() -> None:
 
 def bench_field() -> None:
     gateway.pick_shape = lambda text: ("general", "test")
-    gateway.ask_seat = lambda alias, system, prompt: {"status": "ok", "answer": f"answer from {alias}",
-                                                      "error": "", "seconds": 0.1}
+    gateway.ask_seat = lambda alias, system, prompt, messages=None: {
+        "status": "ok", "answer": f"answer from {alias}", "error": "", "seconds": 0.1}
     # The explorer seats ask every endpoint's /models; None is its own "cannot
     # be asked, do not filter", so no request leaves the machine.
     run._served_model_names = lambda cache=None: None

@@ -156,6 +156,14 @@ refuse to start. With a token:
 - every request is logged to stderr: route, status, and who (a key's name or
   admin), never a secret.
 
+`BENCHWARMERS_REQUIRE_KEYS=1` asks for gateway keys on this machine too, with
+the dashboard left open, so each local app has its own. A key can be limited
+to some collections and to a number of requests a minute, and its name is on
+every call it makes. A browser app on another origin is let in by
+`BENCH_ALLOWED_ORIGINS` (CORS on the gateway's routes only; never `*`). The
+table is in [GATEWAY.md](GATEWAY.md), "Who may call". Images sent to the
+gateway are never written to its logs.
+
 Endpoint keys come from `BENCHWARMERS_KEY_<NAME>` (the key name upper-cased,
 `-` as `_`) first, then from the `llm` CLI's key store; they are never written
 to the data folder's JSON or shown back.
