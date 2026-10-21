@@ -1416,8 +1416,9 @@ def model_status() -> dict[str, tuple[str, str, str]]:
     for row in perf_rows():
         latest[row["model"]] = row
     out = {alias: ("retired", "", r.get("why", "")) for alias, r in retired().items()}
-    # A bare snapshot key is a model on the default endpoint.
-    where = "Open WebUI" if endpoints.hub(endpoints.default()) == "openwebui" else endpoints.default()
+    # A bare snapshot key is a model on the default endpoint (none on a fresh install).
+    default = endpoints.default() if endpoints.load() else ""
+    where = "Open WebUI" if default and endpoints.hub(default) == "openwebui" else default
     for served, alias in registered().items():
         row = latest.get(alias)
         if alias in pending:
