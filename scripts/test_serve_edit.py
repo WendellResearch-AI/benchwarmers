@@ -49,6 +49,12 @@ def main() -> int:
     import alerts
     shutil.copy(DATA / "metrics" / "alerts.json", tmp / "metrics" / "alerts.json")
     alerts.FILE = tmp / "metrics" / "alerts.json"
+    # Decision models too: a rename or removal of one writes decide.FILE, and
+    # which model the rename picks depends on the data (sorted first).
+    import decide
+    if (DATA / "config" / "decision-models.json").exists():
+        shutil.copy(DATA / "config" / "decision-models.json", cfg / "decision-models.json")
+    decide.FILE = cfg / "decision-models.json"
     shutil.copy(DATA / "config" / "endpoints.json", cfg / "endpoints.json")
     serve.endpoints.FILE = cfg / "endpoints.json"
     serve.endpoints.YAML = serve.YAML_PATH
