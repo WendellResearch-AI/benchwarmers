@@ -153,6 +153,8 @@ def find_hub(which: str) -> str | None:
     """The endpoint that is a `which` hub, the default first; None when none is.
     ponytail: one hub of a type; a second Open WebUI is never asked."""
     data = load()
+    if not data:                                   # a fresh install has no hub, and no default to ask
+        return None
     first = default()
     return next((n for n in sorted(data, key=lambda n: n != first) if hub(n, data) == which), None)
 
