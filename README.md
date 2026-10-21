@@ -1,6 +1,17 @@
-# Benchwarmers
+<h1 align="center">Benchwarmers</h1>
 
-*Ask the whole bench. Keep every answer. Learn who to trust.* By Wendell Research.
+<p align="center">
+  <a href="https://github.com/WendellResearch-AI/benchwarmers/actions/workflows/check.yml"><img src="https://github.com/WendellResearch-AI/benchwarmers/actions/workflows/check.yml/badge.svg" alt="Checks"></a>
+  <a href="#docker"><img src="https://img.shields.io/badge/Docker-compose-2496ED?logo=docker&logoColor=white" alt="Runs in Docker"></a>
+  <a href="GATEWAY.md"><img src="https://img.shields.io/badge/OpenAI--compatible-gateway-111111" alt="OpenAI-compatible gateway"></a>
+  <br>
+  <a href="#quick-start-from-source"><img src="https://img.shields.io/badge/Python-3.11_%7C_3.12_%7C_3.13-3776AB?logo=python&logoColor=white" alt="Python 3.11 to 3.13"></a>
+  <a href="#quick-start-from-source"><img src="https://img.shields.io/badge/core-stdlib_only-2ea44f" alt="The core needs only the Python standard library"></a>
+  <a href="#quick-start-from-source"><img src="https://img.shields.io/badge/runs_on-Windows_%7C_macOS_%7C_Linux-555555" alt="Windows, macOS and Linux"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license"></a>
+</p>
+
+<p align="center"><em>Ask the whole bench. Keep every answer. Learn who to trust.</em> By Wendell Research.</p>
 
 Benchwarmers is a self-hosted **panel gateway** for LLMs. One prompt goes to a
 named collection of models plus a couple of explorer seats; every answer comes
