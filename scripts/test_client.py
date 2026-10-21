@@ -175,7 +175,9 @@ def main() -> int:
         bodies = {}
         for backend in ("llm", "builtin"):
             os.environ["BENCH_CLIENT"] = backend
-            bodies[backend], _ = run.ask_once(binary, f"t-{s}", prompt, 4 if s == "slow" else 30)
+            # On Windows a refused connection takes about 2 s and the SDK retries:
+            # llm needed 19-41 s for "refused" there, past a 30 s deadline.
+            bodies[backend], _ = run.ask_once(binary, f"t-{s}", prompt, {"slow": 4, "refused": 90}.get(s, 30))
         a, b = bodies["llm"], bodies["builtin"]
 
         def kinds(x):

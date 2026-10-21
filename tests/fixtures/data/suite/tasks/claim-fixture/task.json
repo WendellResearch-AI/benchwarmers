@@ -1,0 +1,12 @@
+{
+  "id": "claim-fixture",
+  "title": "Claim verification (false claim)",
+  "why": "FALSE. A fixture for the self-checks: metrics/wrong.py counts an answer of TRUE here as confidently wrong.",
+  "shape": "claim",
+  "prompt": "Hypothesis: `sorted([3, 1, 2])` returns `[3, 2, 1]`.\n\nYour first line must be exactly `VERDICT: TRUE` or `VERDICT: FALSE`.",
+  "attach": [],
+  "must_find": [{"any_of": ["verdict: false"]}],
+  "must_not_claim": ["verdict: true"],
+  "score_in": "first_line",
+  "min_answer_chars": 10
+}

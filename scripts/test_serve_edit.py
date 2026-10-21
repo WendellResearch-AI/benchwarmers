@@ -56,7 +56,7 @@ def main() -> int:
 
     d = serve.model_directory()
     some = sorted(d)[0]
-    retired = next(iter(json.loads((cfg / "alias-history.json").read_text())))
+    retired = next(iter(json.loads((cfg / "alias-history.json").read_text(encoding="utf-8"))))
     other = next(a for a in d if a != some)
     failures = 0
 
@@ -96,9 +96,9 @@ def main() -> int:
     # rename
     r = serve.change_model(some, some + "-renamed", None)
     d2 = serve.model_directory()
-    hist = json.loads((cfg / "alias-history.json").read_text())
-    roles = json.loads((cfg / "model-roles.json").read_text())["models"]
-    held = json.loads((cfg / "model-roles.json").read_text())["ad_hoc"]
+    hist = json.loads((cfg / "alias-history.json").read_text(encoding="utf-8"))
+    roles = json.loads((cfg / "model-roles.json").read_text(encoding="utf-8"))["models"]
+    held = json.loads((cfg / "model-roles.json").read_text(encoding="utf-8"))["ad_hoc"]
     ok = (r["ok"] and some not in d2 and some + "-renamed" in d2
           and some + "-renamed" in held and some not in held
           and d2[some + "-renamed"]["served"] == d[some]["served"]
@@ -110,7 +110,7 @@ def main() -> int:
     # and the old name can never come back
     expect_refused("old name refused after rename", alias=some + "-renamed",
                    new_alias=some, new_role=None)
-    lines = (cfg / "changes.jsonl").read_text().splitlines()
+    lines = (cfg / "changes.jsonl").read_text(encoding="utf-8").splitlines()
     print(("ok   " if len(lines) == 3 else "FAIL ") + f"{len(lines)} changes logged")
     failures += 0 if len(lines) == 3 else 1
 
@@ -126,20 +126,20 @@ def main() -> int:
     before = len(serve.registered())
     r = serve.remove_model(victim, victim, "retired by provider on 2026-09-15")
     d3 = serve.model_directory()
-    retired = json.loads((cfg / "retired.json").read_text())
-    yaml = (cfg / "extra-openai-models.yaml").read_text()
+    retired = json.loads((cfg / "retired.json").read_text(encoding="utf-8"))
+    yaml = (cfg / "extra-openai-models.yaml").read_text(encoding="utf-8")
     ok = (r["ok"] and victim not in d3 and len(serve.registered()) == before - 1
           and retired[victim]["served"] == served and f"model_id: {victim}\n" not in yaml
-          and victim not in json.loads((cfg / "model-roles.json").read_text())["models"]
-          and victim not in json.loads((cfg / "model-roles.json").read_text())["ad_hoc"]
+          and victim not in json.loads((cfg / "model-roles.json").read_text(encoding="utf-8"))["models"]
+          and victim not in json.loads((cfg / "model-roles.json").read_text(encoding="utf-8"))["ad_hoc"]
           and served not in serve.registered())
     print(("ok   " if ok else "FAIL ") + f"removed {victim}; registry {before} -> {len(serve.registered())}")
     failures += 0 if ok else 1
     expect_refused("retired name never reused", alias=other, new_alias=victim, new_role=None)
     # restore: same alias back, out of retired.json, role and ad hoc kept
     r = serve.restore_model(victim)
-    retired = json.loads((cfg / "retired.json").read_text())
-    roles = json.loads((cfg / "model-roles.json").read_text())
+    retired = json.loads((cfg / "retired.json").read_text(encoding="utf-8"))
+    roles = json.loads((cfg / "model-roles.json").read_text(encoding="utf-8"))
     ok = (r["ok"] and serve.registered().get(served) == victim and victim not in retired
           and roles["models"].get(victim) == new_role and victim in roles["ad_hoc"])
     print(("ok   " if ok else "FAIL ") + f"restored {victim}" + ("" if ok else f" -> {r}"))
@@ -168,7 +168,7 @@ def main() -> int:
 
     # Removing an endpoint with a model on it: refused unless asked, then the
     # model retires with it, and Restore will not move it to another endpoint.
-    eps = json.loads((cfg / "endpoints.json").read_text())
+    eps = json.loads((cfg / "endpoints.json").read_text(encoding="utf-8"))
     eps["edit-test-ep"] = {"base": "https://edit-test.example/v1", "key": "edit-test-ep"}
     (cfg / "endpoints.json").write_text(json.dumps(eps), encoding="utf-8")
     serve.YAML_PATH.write_text(serve.read(serve.YAML_PATH).rstrip("\n") + "\n"
@@ -179,7 +179,7 @@ def main() -> int:
     back = serve.restore_model("edit-test-m")
     ok = (not refused["ok"] and "1 model" in refused["errors"][0]
           and r["ok"] and r["retired"] == ["edit-test-m"] and "edit-test-ep" not in serve.endpoints.load()
-          and "edit-test-m" in json.loads((cfg / "retired.json").read_text())
+          and "edit-test-m" in json.loads((cfg / "retired.json").read_text(encoding="utf-8"))
           and "edit-test-m" not in serve.model_directory()
           and not back["ok"] and "was removed" in back["errors"][0])
     print(("ok   " if ok else "FAIL ") + "endpoint removed with its model; restore refused without it"

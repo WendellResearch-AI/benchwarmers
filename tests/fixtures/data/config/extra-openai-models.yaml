@@ -1,0 +1,16 @@
+# Fixture registry for the self-checks: three made-up models on the fake endpoint.
+
+- model_id: alpha-1
+  model_name: "vendor/alpha-1"
+  api_base: "http://127.0.0.1:9/v1"
+  api_key_name: fake
+
+- model_id: beta-2
+  model_name: "vendor/beta-2:free"
+  api_base: "http://127.0.0.1:9/v1"
+  api_key_name: fake
+
+- model_id: gamma-3
+  model_name: "other/gamma-3"
+  api_base: "http://127.0.0.1:9/v1"
+  api_key_name: fake

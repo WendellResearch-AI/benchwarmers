@@ -1,0 +1,8 @@
+{
+  "core": {
+    "members": ["alpha-1"],
+    "shape": "",
+    "description": "Fixture collection for the self-checks.",
+    "tags": ["general"]
+  }
+}
