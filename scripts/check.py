@@ -49,6 +49,7 @@ CHECKS = [
     ("scripts/check_themes.py", [], False),
     ("scripts/test_owui.py", [], False),
     ("scripts/test_verdict.py", [], False),
+    ("scripts/test_merged.py", [], False),
     ("scripts/test_serve_edit.py", [], False),
     ("scripts/test_connect.py", [], False),
     ("scripts/test_auth.py", [], False),

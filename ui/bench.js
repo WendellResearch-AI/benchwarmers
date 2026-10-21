@@ -836,7 +836,7 @@
            shape: $('c-shape'), desc: $('c-desc'), tags: $('c-tags'), errors: $('c-errors'), done: $('c-done'),
            head: $('c-form-head'), maxCalls: $('g-max-calls'), maxExp: $('g-max-explorers'),
            gErrors: $('g-errors'), gDone: $('g-done'), form: $('c-form'), status: $('c-status'),
-           del: $('c-delete')};
+           del: $('c-delete'), reply: $('c-reply'), merger: $('c-merger')};
   var C = null, open = null;         // the collection whose details are showing
   function explorersFor(n) {
     return Math.max(0, Math.min(C.settings.max_explorers, C.settings.max_calls - n));
@@ -899,6 +899,12 @@
     C.shapes.forEach(function (s) {
       var o = el('option', {value: s}, s); if (row && row.shape === s) o.selected = true; c.shape.appendChild(o);
     });
+    c.reply.value = row ? row.reply : 'all';
+    c.merger.textContent = '';
+    c.merger.appendChild(el('option', {value: ''}, 'automatic'));
+    C.models.forEach(function (alias) {
+      var o = el('option', {value: alias}, alias); if (row && row.merger === alias) o.selected = true; c.merger.appendChild(o);
+    });
     recount();
   }
   function loadCollections(keep) {
@@ -915,7 +921,8 @@
         left.appendChild(title);
         if (row.description) left.appendChild(el('div', {}, row.description));
         left.appendChild(el('div', {class: 'base'}, row.members.join(', ') + ' + ' + row.explorers + ' explorer' +
-          (row.explorers === 1 ? '' : 's') + (row.shape ? ' (' + row.shape + ')' : '')));
+          (row.explorers === 1 ? '' : 's') + (row.shape ? ' (' + row.shape + ')' : '') +
+          (row.reply === 'merged' ? ' · merged by ' + (row.merger || 'verdicts') : '')));
         var t = row.together;
         if (t) {
           var lim = Object.keys(t.limits || {}).filter(function (k) { return t.limits[k]; })
@@ -958,7 +965,8 @@
     c.errors.textContent = ''; c.done.textContent = '';
     var name = c.name.value.trim().replace(/^bench\//, '');
     post('/api/collection', {name: name, members: picked(), shape: c.shape.value, description: c.desc.value,
-                             tags: c.tags.value.split(',')}).then(function (r) {
+                             tags: c.tags.value.split(','), reply: c.reply.value,
+                             merger: c.merger.value}).then(function (r) {
       if (!r.ok) { listErrors(c.errors, r.errors); return; }
       finished('Saved bench/' + name + '.');
     }).catch(function (err) { c.errors.textContent = String(err); });

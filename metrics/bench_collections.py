@@ -1,7 +1,8 @@
 """Bench-gateway collections: named groups of models a caller asks for by name.
 
     config/collections.json   {"core": {"members": [...], "shape": "",
-                                         "description": "...", "tags": ["general"]}}
+                                         "description": "...", "tags": ["general"],
+                                         "reply": "all", "merger": ""}}
     config/gateway.json       {"max_calls": 5, "max_explorers": 2}
 
 A request for `bench/core` runs every member, plus explorer seats that
@@ -12,8 +13,12 @@ the same collection is called every day:
 
 `shape` (review, design, …) decides which models may fill those explorer
 seats; empty means a decision model labels each prompt, or `general` without
-one. Named `bench_collections` because `collections` would shadow the
-standard library for everything importing from metrics/.
+one. `reply` is what the caller reads: `all` (every answer, the default) or
+`merged` (one answer a `merger` model writes from them; empty means chosen by
+verdict record, gateway.py). A request may override it with a `:merged` or
+`:all` suffix on the model name, or `"bench": {"reply": ...}` in the body.
+Named `bench_collections` because `collections` would shadow the standard
+library for everything importing from metrics/.
 """
 
 from __future__ import annotations
@@ -29,6 +34,7 @@ SETTINGS_FILE = DATA / "config" / "gateway.json"
 DEFAULTS = {"max_calls": 5, "max_explorers": 2}
 NAME = re.compile(r"^[a-z0-9][a-z0-9-]{1,31}$")
 PREFIX = "bench/"
+REPLIES = ("all", "merged")
 
 
 def _read(path: pathlib.Path) -> dict:
@@ -72,7 +78,8 @@ def described(name: str, c: dict, s: dict | None = None) -> dict:
     members = c.get("members", [])
     out = {"description": c.get("description") or c.get("note", ""),
            "tags": c.get("tags", []), "members": members, "shape": c.get("shape", ""),
-           "explorers": explorers_for(len(members), s)}
+           "explorers": explorers_for(len(members), s),
+           "reply": c.get("reply") or "all", "merger": c.get("merger", "")}
     # What the members can handle together (metrics/catalog.py): the smallest
     # context window is what the gateway refuses above.
     try:
@@ -89,6 +96,25 @@ def resolve(model: str | None) -> str | None:
     choose is told what each collection is for and asked to choose."""
     name = (model or "").strip().removeprefix(PREFIX)   # "bench/" alone names nothing
     return name if name and name in load() else None
+
+
+def split_reply(model: str) -> tuple[str, str]:
+    """`bench/core:merged` -> ("bench/core", "merged"), for clients that can
+    only pick a model name. No known suffix -> (model, ""): a collection name
+    cannot hold ':', so anything else stays and is refused as unknown."""
+    base, sep, mode = model.rpartition(":")
+    return (base, mode) if sep and mode in REPLIES else (model, "")
+
+
+def reply_errors(reply: str, merger: str, known) -> list[str]:
+    """What is wrong with a collection's reply mode and merger. `known`: the
+    chat models on the bench; the merger is any of them, member or not."""
+    errors = []
+    if reply not in REPLIES:
+        errors.append(f"reply must be one of {', '.join(REPLIES)}")
+    if merger and merger not in known:
+        errors.append(f"merger: {merger!r} is not a chat model on the bench; leave it empty to choose by verdicts")
+    return errors
 
 
 def choose_message(model: str | None) -> str:
@@ -108,4 +134,8 @@ if __name__ == "__main__":
     assert [explorers_for(n, DEFAULTS) for n in range(1, 7)] == [2, 2, 2, 1, 0, 0]
     assert explorers_for(3, {"max_calls": 4, "max_explorers": 2}) == 1
     assert resolve("bench/") is None and resolve("bench/no-such") is None and resolve("") is None
+    assert split_reply("bench/core:merged") == ("bench/core", "merged") and split_reply("core:all") == ("core", "all")
+    assert split_reply("bench/core") == ("bench/core", "") and split_reply("bench/core:x") == ("bench/core:x", "")
+    assert not reply_errors("merged", "", []) and not reply_errors("all", "m", ["m"])
+    assert len(reply_errors("", "m", [])) == 2
     print("ok")
