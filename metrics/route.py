@@ -136,7 +136,12 @@ def full_tag_of(alias: str) -> str:
     """
     from run import _registered_names
     import endpoints
-    tag = _json(DATA / "config" / "provider-tags.json").get(_registered_names().get(alias, alias))
+    # Tags are keyed by the served name. A decision model is not in the llm
+    # yaml, so its served name comes from config/decision-models.json.
+    served = (_registered_names().get(alias)
+              or (_json(DATA / "config" / "decision-models.json").get(alias) or {}).get("served")
+              or alias)
+    tag = _json(DATA / "config" / "provider-tags.json").get(served)
     if not tag:
         name = endpoints.endpoint_name(endpoints.registrations().get(alias) or {})
         tag = name if name and not endpoints.hub(name) else None

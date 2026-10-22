@@ -3009,16 +3009,24 @@ def models_page() -> str:
     # the connection (provider) it comes FROM: an OpenRouter model may be on
     # OpenRouter's own endpoint or arrive through Open WebUI's.
     through = {r["alias"]: r["endpoint"] for r in endpoints.registry()}
-    through.update({a: d["endpoint"] for a, d in decide.load().items()})
-    for c in connections_view()["connections"]:
+    decisions = decide.load()
+    through.update({a: d["endpoint"] for a, d in decisions.items()})
+    # Every model, decision models too (connections_view is chat models only,
+    # for what a collection may hold): they are on the bench like any other.
+    by: dict[str, list[str]] = {}
+    for a in model_directory():
+        by.setdefault(catalog.connection_of(a), []).append(a)
+    for c in ({"name": n, "models": sorted(m)} for n, m in sorted(by.items())):
         rows = []
         for a in c["models"]:
             f = catalog.info(a)
             lim = f.get("limits") or {}
             num = lambda v: f"{v:,}" if isinstance(v, int) else "—"          # noqa: E731
             ep = through.get(a, "?")
+            kind = (" " + chip("decision", "", "a decision model: answers typed questions, not chat")
+                    if a in decisions else "")
             rows.append(f"<tr><td><a href='#' class='model' data-alias='{esc(a)}'>"
-                        f"<span class='alias'>{esc(a)}</span></a></td>"
+                        f"<span class='alias'>{esc(a)}</span></a>{kind}</td>"
                         f"<td data-sort='{esc(ep)}'>{chip(ep, 'via', f'reached through the {ep} endpoint')}</td>"
                         f"<td class='num' data-sort='{f.get('context_window') or 0}'>{num(f.get('context_window'))}</td>"
                         f"<td class='num' data-sort='{f.get('max_output') or 0}'>{num(f.get('max_output'))}</td>"
