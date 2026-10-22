@@ -1330,8 +1330,11 @@ def start_onboard(served: str, endpoint: str = "", who: str = "ui") -> dict:
     hands the rest to the script. It runs for minutes and spends calls, so it
     runs in the background and the page tails its log.
     """
-    served = (served or "").strip()
-    endpoint = (endpoint or "").strip() or endpoints.default()
+    return _spawn_onboard(served, endpoint, who)[0]
+
+
+def _onboard_refusal(served: str, endpoint: str) -> list[str]:
+    """What start_onboard refuses without a call (its docstring)."""
     errors = []
     # It goes into a shell command line below, so only the characters model
     # ids actually use -- not merely "no spaces".
@@ -1352,8 +1355,16 @@ def start_onboard(served: str, endpoint: str = "", who: str = "ui") -> dict:
         errors.append(f"{served} was retired from the bench as {hit!r} on {retired[hit]['at'][:10]}"
                       f" ({retired[hit]['why']}); remove that entry from config/retired.json"
                       " first if you mean it")
+    return errors
+
+
+def _spawn_onboard(served: str, endpoint: str = "", who: str = "ui") -> tuple[dict, subprocess.Popen | None]:
+    """start_onboard's result, and the process (None when refused) for a caller that waits on it."""
+    served = (served or "").strip()
+    endpoint = (endpoint or "").strip() or endpoints.default()
+    errors = _onboard_refusal(served, endpoint)
     if errors:
-        return {"ok": False, "errors": errors}
+        return {"ok": False, "errors": errors}, None
     stamp = datetime.datetime.now().strftime("%Y%m%dT%H%M%S")
     safe = re.sub(r"[^A-Za-z0-9._-]+", "-", served)
     log = DATA / "runs" / f"onboard-{stamp}-{safe}.log"
@@ -1381,7 +1392,119 @@ def start_onboard(served: str, endpoint: str = "", who: str = "ui") -> dict:
     threading.Thread(target=sentinel, daemon=True).start()
     _log_change(datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
                 who, "", "onboard", None, served)
-    return {"ok": True, "errors": [], "log": log.name}
+    return {"ok": True, "errors": [], "log": log.name}, proc
+
+
+# ---- the onboarding queue ---------------------------------------------------
+# The picker's models, and Discover's Add, run ONE AT A TIME, each a 4-call
+# probe and a suite: a burst on one free tier gets its key throttled. A thread
+# of this server runs them, so closing the popup or reloading the page stops
+# nothing; the header shows progress from GET /api/onboard-queue. Only
+# POST /api/onboard (start_onboard) still starts one at once, for scripts.
+# ponytail: in memory; restarting serve.py drops the rest of a batch (each
+# started model's log stays in runs/). Persist it if restarts mid-batch matter.
+OQ_MAX = 50
+_OQ_LOCK = threading.Lock()
+_OQ: dict = {"items": [], "stop": False, "worker": None}
+
+
+def onboard_queue() -> dict:
+    """The batch: each model's state (queued, running, done, no answer,
+    failed, skipped) and whether it is still running."""
+    with _OQ_LOCK:
+        running = _OQ["worker"] is not None
+        return {"ok": True, "errors": [], "running": running, "stopping": running and _OQ["stop"],
+                "items": [dict(i) for i in _OQ["items"]]}
+
+
+def queue_onboard(items, who: str = "ui") -> dict:
+    """Add models to the queue, refused as a whole if any would be refused
+    alone (_onboard_refusal) or is already waiting. A new batch replaces a
+    finished one's results; a running one is added to."""
+    if not isinstance(items, list) or not 1 <= len(items) <= OQ_MAX:
+        return {"ok": False, "errors": [f"pick between 1 and {OQ_MAX} models"]}
+    picked, errors = [], []
+    for it in items:
+        it = it if isinstance(it, dict) else {}
+        served = str(it.get("served") or "").strip()
+        endpoint = str(it.get("endpoint") or "").strip() or endpoints.default()
+        errors += _onboard_refusal(served, endpoint)
+        picked.append((served, endpoint))
+    with _OQ_LOCK:
+        waiting = {(i["served"], i["endpoint"]) for i in _OQ["items"] if i["state"] in ("queued", "running")}
+        errors += [f"{s} from {e} is already in the queue" for s, e in picked if (s, e) in waiting]
+        if len(set(picked)) < len(picked):
+            errors.append("a model is picked twice")
+        if errors:
+            return {"ok": False, "errors": errors}
+        if _OQ["worker"] is None:
+            _OQ["items"] = []
+        _OQ["stop"] = False                              # added after a Stop: these run
+        _OQ["items"] += [{"served": s, "endpoint": e, "state": "queued", "alias": None, "log": None,
+                          "exit": None, "note": ""} for s, e in picked]
+        if _OQ["worker"] is None:
+            _OQ["worker"] = threading.Thread(target=_onboard_worker, args=(who,), daemon=True)
+            _OQ["worker"].start()
+    return onboard_queue()
+
+
+def stop_onboard_queue() -> dict:
+    """The model running now finishes; the ones still queued are skipped, now,
+    so a model picked after the Stop still runs."""
+    with _OQ_LOCK:
+        if _OQ["worker"] is None:
+            return {"ok": False, "errors": ["no onboarding is running"]}
+        for i in _OQ["items"]:
+            if i["state"] == "queued":
+                i.update(state="skipped", note="stopped before its turn")
+        _OQ["stop"] = True                               # shown as "Stopping after …" until it ends
+    return onboard_queue()
+
+
+def clear_onboard_queue() -> dict:
+    """Forget a finished batch's results (the logs stay in runs/)."""
+    with _OQ_LOCK:
+        if _OQ["worker"] is not None:
+            return {"ok": False, "errors": ["still running: Stop it first, or wait"]}
+        _OQ["items"] = []
+    return onboard_queue()
+
+
+def _onboard_outcome(code: int, text: str) -> tuple[str, str]:
+    """(state, note) from onboard.py's exit and log."""
+    if code == 0 and "STOPPING" not in text:
+        return "done", ""
+    body = text.rsplit("__ONBOARD_EXIT__", 1)[0].strip()
+    at = body.find("STOPPING")                     # why it stopped, else the last lines it printed
+    why = body[at:].splitlines()[:2] if at != -1 else body.splitlines()[-3:]
+    return ("no answer" if code == 0 else "failed"), " ".join(x.strip() for x in why)[:300]
+
+
+def _onboard_worker(who: str) -> None:
+    while True:
+        with _OQ_LOCK:
+            nxt = next((i for i in _OQ["items"] if i["state"] == "queued"), None)
+            if nxt is None:
+                _OQ.update(worker=None, stop=False)      # under the lock: a batch added now starts its own
+                return
+            nxt["state"] = "running"
+        try:
+            res, proc = _spawn_onboard(nxt["served"], nxt["endpoint"], who)
+            if proc is None:                             # refused now: the bench changed since it was queued
+                state, note, code = "failed", "; ".join(res["errors"]), None
+            else:
+                with _OQ_LOCK:
+                    nxt["log"] = res["log"]
+                code = proc.wait()
+                text = read(DATA / "runs" / res["log"])
+                alias = re.search(r"->\s+alias\s+(\S+)", text)
+                with _OQ_LOCK:
+                    nxt["alias"] = alias.group(1) if alias else None
+                state, note = _onboard_outcome(code, text)
+        except Exception as exc:                         # noqa: BLE001 -- one model must not end the batch
+            state, note, code = "failed", f"{type(exc).__name__}: {exc}", None
+        with _OQ_LOCK:
+            nxt.update(state=state, note=note, exit=code)
 
 
 def discover_add(connection: str, model: str, who: str = "ui", endpoint: str = "") -> dict:
@@ -1409,8 +1532,8 @@ def discover_add(connection: str, model: str, who: str = "ui", endpoint: str = "
         return {"ok": False, "errors": [f"{label} refused: {type(exc).__name__}: {exc}"]}
     _log_change(datetime.datetime.now().astimezone().isoformat(timespec="seconds"), who, "",
                 f"{which}-add", None, f"{served} on {connection}")
-    started = start_onboard(served, hub.endpoint(), who)
-    return {**started, "served": served, "steps": steps,
+    started = queue_onboard([{"served": served, "endpoint": hub.endpoint()}], who)
+    return {**started, "served": served, "endpoint": hub.endpoint(), "steps": steps,
             "errors": started["errors"] + ([] if started["ok"] else
                                           [f"{label} now has {served}; onboard it from the Onboard dialog"])}
 
@@ -2111,6 +2234,12 @@ def render(theme: str | None = None) -> str:
         "<p class='sub'>by <a href='https://wendellresearch.ai' target='_blank' rel='noopener'>Wendell Research</a></p>"
         "<div class='head-actions'>"
         "<button class='btn fresh' id='fresh' hidden>New results · Reload</button>"
+        # The onboarding queue's progress (bench.js fills it from /api/onboard-queue).
+        "<div class='oq' id='oq' hidden role='status'>"
+        "<span class='oq-chip' id='oq-chip'><span id='oq-text'></span></span>"
+        "<button class='linkish' id='oq-open'>Details</button>"
+        "<button class='linkish' id='oq-stop'>Stop</button>"
+        "<button class='linkish' id='oq-clear'>Clear</button></div>"
         "<button class='btn primary' id='onboard-open'>Onboard a model</button></div></header>"
         # What needs a person first, then the pages; endpoints are managed from
         # Connections now (the header button moved there).
@@ -3107,14 +3236,15 @@ def editor() -> str:
         "<div id='o-choose'>"
         "<p class='served'>Everything your endpoints serve that is not on the bench, retired or"
         " dismissed. Onboarding registers it, probes it (4 calls) and runs the internal"
-        " suite: minutes, and it spends calls. A model from somewhere else? Add its"
-        " endpoint first.</p>"
+        " suite: minutes, and it spends calls. Pick one or several: they run one at a time,"
+        " with progress in the header. A model from somewhere else? Add its endpoint first.</p>"
         "<input type='search' id='o-find' placeholder='Search models or connections'"
         " aria-label='Search models'>"
-        "<div class='picker' id='o-picker' role='radiogroup' aria-label='Served models'></div>"
+        "<div class='picker' id='o-picker' role='group' aria-label='Served models'></div>"
         "</div>"
         "<div id='o-run' hidden><p class='served' id='o-result'></p><ol class='steps' id='o-steps'></ol>"
         "<details><summary class='muted'>Full log</summary><pre class='log' id='o-log'></pre></details></div>"
+        "<div id='o-queue' hidden><p class='served' id='o-queue-sum'></p><ul class='oq-list' id='o-queue-list'></ul></div>"
         "<div class='errors' id='o-errors' role='alert'></div>"
         "<div class='actions'><button class='btn' id='o-close'>Close</button>"
         "<button class='btn primary' id='o-start' disabled>Onboard</button></div>"
@@ -3240,6 +3370,9 @@ class Handler(gateway.Handler):
         if self.path == "/api/candidates":
             self._json(200, onboard_candidates())
             return
+        if self.path == "/api/onboard-queue":
+            self._json(200, onboard_queue())
+            return
         if self.path == "/api/endpoints":
             self._json(200, endpoint_list())
             return
@@ -3347,6 +3480,9 @@ class Handler(gateway.Handler):
                                                            endpoint=str(p.get("endpoint") or "")),
                "/api/onboard": lambda p: start_onboard(str(p.get("served", "")),
                                                        str(p.get("endpoint", ""))),
+               "/api/onboard-queue": lambda p: queue_onboard(p.get("items")),
+               "/api/onboard-queue/stop": lambda p: stop_onboard_queue(),
+               "/api/onboard-queue/clear": lambda p: clear_onboard_queue(),
                "/api/dismiss": lambda p: dismiss(str(p.get("served", "")),
                                                  bool(p.get("undo"))),
                "/api/endpoint": lambda p: save_endpoint(str(p.get("name", "")),

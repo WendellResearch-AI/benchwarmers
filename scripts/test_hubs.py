@@ -278,8 +278,8 @@ def discover_add() -> None:
         os.environ["BENCHWARMERS_KEY_CPA_ADMIN"] = "mgmt-test"
 
     onboarded = []
-    serve.start_onboard = lambda served, ep, who="ui": onboarded.append((served, ep)) or {
-        "ok": True, "errors": [], "log": "onboard-x.log"}
+    serve.queue_onboard = lambda items, who="ui": onboarded.append((items[0]["served"], items[0]["endpoint"])) or {
+        "ok": True, "errors": [], "items": []}
     owui.add = lambda c, m: (m, [f"owui added {m} on {c}"])
     r = serve.discover_add("groq", "vendor/new", endpoint="lite")
     assert r["ok"] and "/lite/model/new" in writes() and onboarded[-1] == ("vendor/new", "lite"), r

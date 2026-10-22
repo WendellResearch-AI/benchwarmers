@@ -71,7 +71,9 @@ header h1 span::before {                                  /* legs and the rail b
 /* The credit at the bench's feet: level with the bottom of the name's group. */
 header .sub { align-self: flex-end; margin: 0 auto 0 -.6rem; line-height: 1; color: var(--muted); font-size: .9375rem; }
 header .sub a { color: var(--ink); font-weight: 500; text-decoration-color: var(--brand); }
-.head-actions { display: flex; flex-wrap: wrap; gap: .75rem; align-items: center; }
+/* Right-aligned, on the name's line or, when it does not fit, on its own. */
+.head-actions { display: flex; flex-wrap: wrap; gap: .75rem; align-items: center;
+                margin-left: auto; justify-content: flex-end; }
 
 /* ---- buttons -------------------------------------------------------- */
 button { font: inherit; cursor: pointer; }
@@ -327,6 +329,36 @@ dialog h2 { margin: 0 0 .2rem; font-size: 1.375rem; font-weight: 700; }
 .picker .empty { color: var(--muted); padding: 1rem 0; }
 .picker details { margin: .5rem 0; color: var(--muted); }
 .picker details summary { cursor: pointer; font-size: .875rem; }
+
+/* the onboarding queue: its progress in the header, its list in the popup */
+.oq { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: .3rem .75rem;
+      font-size: .875rem; color: var(--ink); }
+/* Short enough to sit beside the button; the whole line is its title. */
+.oq #oq-text { max-width: min(17rem, 100%); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The status as a chip whose fill wipes across as models finish (bench.js
+   sets --fill), ending green, or red with one shake. */
+.oq-chip { position: relative; isolation: isolate; overflow: hidden; display: inline-flex; align-items: center;
+           max-width: 100%; min-height: 2.1rem; padding: 0 .8rem; border: 1px solid var(--line);
+           border-radius: var(--radius); background: var(--paper-2); }
+.oq-chip::before { content: ""; position: absolute; inset: 0 auto 0 0; z-index: -1; width: var(--fill, 0%);
+                   background: color-mix(in oklab, var(--brand) 22%, var(--paper-2)); transition: width .6s ease; }
+.oq-chip.done { border-color: var(--ok); }
+.oq-chip.done::before { background: var(--ok-ground); }
+.oq-chip.fail { border-color: var(--err); color: var(--err); animation: oq-shake .45s ease 1; }
+.oq-chip.fail::before { background: var(--err-ground); }
+@keyframes oq-shake { 20% { transform: translateX(-5px); } 45% { transform: translateX(5px); }
+                      70% { transform: translateX(-3px); } 90% { transform: translateX(2px); } }
+@media (prefers-reduced-motion: reduce) {
+  .oq-chip { animation: none; }
+  .oq-chip::before { transition: none; }
+}
+.oq [hidden] { display: none; }
+ul.oq-list { list-style: none; padding: 0; margin: .75rem 0 0; display: grid; gap: .5rem;
+             max-height: 22rem; overflow: auto; }
+ul.oq-list li { padding: .4rem .25rem; border-bottom: 1px solid var(--line); }
+ul.oq-list .what { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
+ul.oq-list .alias { overflow-wrap: anywhere; font-size: .9375rem; }
+ul.oq-list small { display: block; color: var(--muted); font-size: .875rem; overflow-wrap: anywhere; }
 
 /* onboarding progress */
 ol.steps { list-style: none; padding: 0; margin: 1rem 0 0; display: grid; gap: .35rem; }

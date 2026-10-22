@@ -273,6 +273,72 @@ def main() -> int:
     print(("ok   " if ok else "FAIL ") + "free only in their own app" + ("" if ok else f" -> {wrote} {cleared} {refused}"))
     failures += 0 if ok else 1
 
+    # The onboarding queue, with onboard.py faked: one at a time, Stop skips the
+    # rest, each outcome read from its exit and log, Clear forgets a finished batch.
+    import threading
+    import time
+    hold = threading.Event()
+    runs = tmp / "runs"
+    runs.mkdir(exist_ok=True)
+    outcome = {"a": (0, ""), "ok": (0, ""), "quiet": (0, "  STOPPING: it answered nothing.\n"),
+               "bad": (1, "bad is not served.\n")}
+    order = []
+
+    class Proc:
+        def __init__(self, served):
+            self.served = served
+
+        def wait(self):
+            if self.served == "a":
+                hold.wait(10)
+            return outcome[self.served][0]
+
+    def fake_spawn(served, endpoint="", who="ui"):
+        order.append(served)
+        (runs / f"onboard-{served}.log").write_text(f"onboarding {served} from e  ->  alias {served}-x\n"
+                                                    + outcome[served][1], encoding="utf-8")
+        return {"ok": True, "errors": [], "log": f"onboard-{served}.log"}, Proc(served)
+
+    def settle():
+        for _ in range(200):
+            if not serve.onboard_queue()["running"]:
+                return
+            time.sleep(0.05)
+
+    kept = (serve._spawn_onboard, serve._onboard_refusal, serve.DATA)
+    serve._spawn_onboard, serve._onboard_refusal, serve.DATA = fake_spawn, lambda s, e: [], tmp
+    try:
+        first = serve.queue_onboard([{"served": "a", "endpoint": "e"}, {"served": "ok", "endpoint": "e"}])
+        twice = serve.queue_onboard([{"served": "ok", "endpoint": "e"}])["ok"]
+        for _ in range(200):                             # Stop once `a` is under way, as a person would
+            if order:
+                break
+            time.sleep(0.05)
+        stop = serve.stop_onboard_queue()
+        stopping = stop["stopping"] and [i["state"] for i in stop["items"]] == ["running", "skipped"]
+        busy_clear = serve.clear_onboard_queue()["ok"]
+        after_stop = serve.queue_onboard([{"served": "quiet", "endpoint": "e"}])["ok"]   # picked after Stop: runs
+        hold.set()
+        settle()
+        stopped = {i["served"]: i["state"] for i in serve.onboard_queue()["items"]}
+        order.remove("quiet")
+        serve.queue_onboard([{"served": s, "endpoint": "e"} for s in ("ok", "quiet", "bad")])
+        settle()
+        batch = {i["served"]: (i["state"], i["alias"], bool(i["note"])) for i in serve.onboard_queue()["items"]}
+        cleared = serve.clear_onboard_queue()["items"]
+        bad_input = (serve.queue_onboard([])["ok"], serve.queue_onboard("ok")["ok"],
+                     serve.stop_onboard_queue()["ok"])
+    finally:
+        hold.set()
+        serve._spawn_onboard, serve._onboard_refusal, serve.DATA = kept
+    ok = (first["ok"] and not twice and stopping and not busy_clear and after_stop
+          and stopped == {"a": "done", "ok": "skipped", "quiet": "no answer"} and order == ["a", "ok", "quiet", "bad"]
+          and batch == {"ok": ("done", "ok-x", False), "quiet": ("no answer", "quiet-x", True),
+                        "bad": ("failed", "bad-x", True)}
+          and cleared == [] and bad_input == (False, False, False))
+    print(("ok   " if ok else "FAIL ") + "onboarding queue" + ("" if ok else f" -> {stopped} {order} {batch}"))
+    failures += 0 if ok else 1
+
     # The owner's files are as they were. alerts.json can change under a
     # running suite, so only what this test could do counts: the victim's
     # alerts cleared from the real file.

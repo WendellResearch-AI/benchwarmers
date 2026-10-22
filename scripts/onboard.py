@@ -21,6 +21,7 @@ WHAT IT DOES, AND WHY IN THIS ORDER
 3. **Register and sync**, then, with an Open WebUI hub, refresh the provider
    tags so the connection behind it is known — which is what the router uses
    to keep a panel independent. Without one the endpoint is the connection.
+   Then refresh the catalog, so its details (context, tools, vision) show now.
 4. **Probe availability** before spending anything: two prompt sizes, two
    samples. A model that cannot answer "ready" will not answer a 46 KB task,
    and finding that out here costs four calls instead of six large ones.
@@ -258,7 +259,14 @@ def main() -> None:
         run("scripts/provider_tags.py", timeout=300)
     import route
     connection = route.full_tag_of(alias)
-    print(f"  [3/5] synced; connection is {connection}")
+    # Its details (context, output limit, tools, vision) now, not at the
+    # catalog's next scheduled run: the catalog knows the connection serving
+    # it, so it reads that provider's models.dev entry. Here rather than at the
+    # end, so a model whose probe fails below has them too.
+    catalog = run("metrics/catalog.py", timeout=300)
+    details = ("details from the catalog" if catalog.returncode == 0
+               else f"catalog refresh failed (exit {catalog.returncode}); details at its next run")
+    print(f"  [3/5] synced; connection is {connection}; {details}")
 
     # 4. availability
     print("  [4/5] probing availability (4 calls)...")

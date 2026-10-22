@@ -354,12 +354,20 @@
            log: $('o-log'), title: $('o-title'), result: $('o-result')};
   var STEPS = ['Served by the endpoint','Registered', 'Synced to the llm CLI', 'Availability probe, 4 calls', 'Internal suite'];
   var timer = null, data = null;
+  // What is ticked, by the candidate's key (served@endpoint): kept while the
+  // search redraws the list, so you can search, tick, search again, tick.
+  var chosen = {};
 
+  function armStart() {
+    var n = Object.keys(chosen).length;
+    o.start.disabled = !n; o.start.textContent = n > 1 ? 'Onboard ' + n + ' models' : 'Onboard';
+  }
   function pickRow(c, dismissed) {
     var row = el('label', {class: 'pick'});
-    var radio = el('input', {type: 'radio', name: 'o-pick', value: c.served, 'data-endpoint': c.endpoint});
-    if (dismissed) radio.disabled = true;
-    row.appendChild(radio);
+    var box = el('input', {type: 'checkbox', name: 'o-pick', value: c.served, 'data-endpoint': c.endpoint});
+    if (dismissed) box.disabled = true;
+    box.checked = !dismissed && !!chosen[c.key];
+    row.appendChild(box);
     var name = el('span', {class: 'alias'}, c.served);
     row.appendChild(name);
     var side = el('span');
@@ -367,11 +375,16 @@
     var b = el('button', {type: 'button', class: 'linkish', style: 'margin-left:.6rem'}, dismissed ? 'Bring back' : 'Dismiss');
     b.addEventListener('click', function (e) {
       e.preventDefault();
+      delete chosen[c.key];
       post('/api/dismiss', {served: c.key, undo: dismissed}).then(loadCandidates);
     });
     side.appendChild(b);
     row.appendChild(side);
-    radio.addEventListener('change', function () { o.start.disabled = false; });
+    box.addEventListener('change', function () {
+      if (box.checked) chosen[c.key] = {served: c.served, endpoint: c.endpoint};
+      else delete chosen[c.key];
+      armStart();
+    });
     return row;
   }
   function renderPicker() {
@@ -405,11 +418,17 @@
       o.find.readOnly = false; o.find.focus();
       if (!res.ok) { o.picker.textContent = ''; listErrors(o.errors, res.errors); return; }
       if (res.errors.length) listErrors(o.errors, res.errors);   // one endpoint down; the rest listed
-      data = res; renderPicker();
+      data = res;
+      // Only what is still offered stays ticked.
+      var offered = {};
+      res.candidates.forEach(function (c) { offered[c.key] = 1; });
+      Object.keys(chosen).forEach(function (k) { if (!offered[k]) delete chosen[k]; });
+      renderPicker(); armStart();
     }).catch(function (err) { o.find.readOnly = false; o.errors.textContent = String(err); });
   }
   $('onboard-open').addEventListener('click', function () {
     o.errors.textContent = ''; o.find.value = ''; o.choose.hidden = false; o.run.hidden = true;
+    $('o-queue').hidden = true; chosen = {}; waitToken++;
     o.start.hidden = false; o.start.textContent = 'Onboard'; o.title.textContent = 'Onboard a model';
     od.showModal(); o.find.focus(); loadCandidates();
   });
@@ -438,15 +457,127 @@
       o.steps.appendChild(li);
     });
   }
+  // Everything ticked goes to the queue (serve.queue_onboard), which runs one
+  // model at a time. One model with nothing ahead of it is followed here step
+  // by step, as before; otherwise this shows the queue.
   o.start.addEventListener('click', function () {
-    var pick = od.querySelector('input[name=o-pick]:checked');
-    if (!pick) return;
+    var items = Object.keys(chosen).map(function (k) { return chosen[k]; });
+    if (!items.length) return;
     o.errors.textContent = ''; o.start.disabled = true; o.start.textContent = 'Starting…';
-    post('/api/onboard', {served: pick.value, endpoint: pick.dataset.endpoint}).then(function (res) {
-      if (!res.ok) { listErrors(o.errors, res.errors); o.start.disabled = false; o.start.textContent = 'Onboard'; return; }
-      follow(res.log, 'Onboarding ' + pick.value + ' from ' + pick.dataset.endpoint, '');
-    }).catch(function (err) { o.errors.textContent = String(err); o.start.disabled = false; o.start.textContent = 'Onboard'; });
+    post('/api/onboard-queue', {items: items}).then(function (res) {
+      if (!res.ok) { listErrors(o.errors, res.errors); armStart(); return; }
+      afterQueued(res, items.length === 1 ? items[0] : null, '');
+    }).catch(function (err) { o.errors.textContent = String(err); armStart(); });
   });
+  // After anything is queued (the picker, Discover's Add): one model with
+  // nothing ahead of it is followed step by step, otherwise the queue shows.
+  var waitToken = 0;
+  function afterQueued(res, one, title, before) {
+    oqPoll();
+    var at = -1;            // its LAST entry: an earlier, finished one may share its name
+    res.items.forEach(function (i, n) { if (one && i.served === one.served && i.endpoint === one.endpoint) at = n; });
+    var ahead = at === -1 ? [] : res.items.slice(0, at).filter(function (i) { return i.state === 'queued' || i.state === 'running'; });
+    if (one && at !== -1 && !ahead.length) waitAndFollow(one, at, title || 'Onboarding ' + one.served + ' from ' + one.endpoint, before || '', ++waitToken, 20);
+    else showQueue(res);
+  }
+  // The queue starts it within a moment; follow its log once it has one,
+  // unless the popup was closed or reopened meanwhile (the header has it then).
+  function waitAndFollow(one, at, title, before, token, tries) {
+    if (token !== waitToken || !od.open) return;
+    fetch('/api/onboard-queue').then(function (r) { return r.json(); }).then(function (q) {
+      if (!q.ok || token !== waitToken || !od.open) return;
+      var it = q.items[at];
+      if (!it || it.served !== one.served || it.endpoint !== one.endpoint) { showQueue(q); return; }
+      if (it.log) { follow(it.log, title, before); return; }
+      if (it.state !== 'queued' && it.state !== 'running' || tries <= 0) { showQueue(q); return; }
+      setTimeout(function () { waitAndFollow(one, at, title, before, token, tries - 1); }, 500);
+    });
+  }
+
+  // ---- the onboarding queue: progress in the header (serve.onboard_queue) --
+  // Polled while it runs, and once on every page load, so a batch started
+  // before a reload still shows. Its results stay until Clear.
+  var oq = {box: $('oq'), text: $('oq-text'), chip: $('oq-chip'), stop: $('oq-stop'), clear: $('oq-clear'),
+            view: $('o-queue'), sum: $('o-queue-sum'), list: $('o-queue-list')};
+  var OQ_CHIP = {queued: '', running: 'new', done: 'ok', 'no answer': 'warn', failed: 'err', skipped: ''};
+  var oqTimer = null, oqLast = '';
+  function oqCount(q, state) { return q.items.filter(function (i) { return i.state === state; }).length; }
+  function oqRender(q) {
+    var n = q.items.length;
+    oq.box.hidden = !n;
+    var now = q.items.filter(function (i) { return i.state === 'running'; })[0];
+    var finished = n - oqCount(q, 'queued') - (now ? 1 : 0);
+    // The chip fills as models finish; at the end it is green when every one
+    // is on the bench, red (with one shake) when any failed or did not answer.
+    oq.chip.style.setProperty('--fill', (n ? Math.round(100 * finished / n) : 0) + '%');
+    var bad = oqCount(q, 'failed') + oqCount(q, 'no answer');
+    oq.chip.classList.toggle('done', !q.running && n > 0 && oqCount(q, 'done') === n);
+    oq.chip.classList.toggle('fail', !q.running && bad > 0);
+    if (q.running) {
+      oq.text.textContent = (q.stopping ? 'Stopping after ' : 'Onboarding ' + (finished + 1) + ' of ' + n + ': ')
+        + (now ? now.served : '…');
+    } else {
+      oq.text.textContent = 'Onboarded ' + oqCount(q, 'done') + ' of ' + n
+        + [['failed', 'failed'], ['no answer', 'did not answer'], ['skipped', 'skipped']].map(function (s) {
+          var c = oqCount(q, s[0]); return c ? ' · ' + c + ' ' + s[1] : '';
+        }).join('');
+    }
+    oq.text.title = oq.text.textContent;                 // cut short beside the button; whole on hover
+    oq.stop.hidden = !q.running || q.stopping; oq.clear.hidden = q.running;
+    var sig = JSON.stringify(q);
+    if (sig !== oqLast) { oqLast = sig; if (!oq.view.hidden) oqList(q); }
+  }
+  function oqList(q) {
+    oq.sum.textContent = q.running
+      ? 'One at a time, in this order. Closing this does not stop it; Stop in the header lets the model running now finish and skips the rest.'
+      : q.items.length ? 'Finished. Each log is in runs/.' : 'Nothing queued.';
+    oq.list.textContent = '';
+    q.items.forEach(function (i) {
+      var li = el('li'), head = el('div', {class: 'what'});
+      head.appendChild(el('span', {class: 'alias'}, i.served));
+      head.appendChild(el('span', {class: 'chip ' + (OQ_CHIP[i.state] || '')}, i.state));
+      if (i.alias && i.state !== 'failed') head.appendChild(el('span', {class: 'muted'}, 'as ' + i.alias));
+      li.appendChild(head);
+      if (i.note) li.appendChild(el('small', {}, i.note));
+      if (i.log) {
+        var d = el('details'), pre = el('pre', {class: 'log'});
+        d.appendChild(el('summary', {class: 'muted'}, 'Log'));
+        d.appendChild(pre);
+        d.addEventListener('toggle', function () {
+          if (!d.open) return;
+          fetch('/api/onboard?log=' + encodeURIComponent(i.log)).then(function (r) { return r.json(); })
+            .then(function (s) { pre.textContent = s.ok ? (s.tail || '(no output yet)') : s.errors.join(' '); });
+        });
+        li.appendChild(d);
+      }
+      oq.list.appendChild(li);
+    });
+  }
+  function showQueue(q) {
+    if (timer) { clearInterval(timer); timer = null; }   // a model followed step by step: the queue view replaces it
+    waitToken++;
+    o.errors.textContent = ''; o.choose.hidden = true; o.run.hidden = true; o.start.hidden = true;
+    oq.view.hidden = false; o.title.textContent = 'Onboarding queue';
+    if (!od.open) od.showModal();
+    oqLast = ''; oqRender(q);
+  }
+  function oqPoll() {
+    fetch('/api/onboard-queue').then(function (r) { return r.json(); }).then(function (q) {
+      if (!q.ok) return;
+      oqRender(q);
+      if (q.running && !oqTimer) oqTimer = setInterval(oqPoll, 3000);
+      if (!q.running && oqTimer) { clearInterval(oqTimer); oqTimer = null; }
+    });
+  }
+  function oqAct(path) {
+    post(path, {}).then(function (r) { if (r.ok) oqRender(r); else oq.text.textContent = r.errors.join(' '); });
+  }
+  $('oq-open').addEventListener('click', function () {
+    fetch('/api/onboard-queue').then(function (r) { return r.json(); }).then(function (q) { showQueue(q); oqPoll(); });
+  });
+  oq.stop.addEventListener('click', function () { oqAct('/api/onboard-queue/stop'); });
+  oq.clear.addEventListener('click', function () { oqAct('/api/onboard-queue/clear'); if (!oq.view.hidden) od.close(); });
+  oqPoll();
   // ---- Discover: a row opens its model, with every route to add it by -----
   // The rest of what is known comes from /api/discover-model, so the page does
   // not carry 1,200 models' details it will mostly never show.
@@ -468,16 +599,18 @@
         + '2. Open WebUI: a public model record, tagged and with the logo of the connection\'s other models\n'
         + '3. The bench: register, a 4-call probe, then the suite'))) return;
     b.disabled = true; b.textContent = 'Adding…'; $('d-errors').textContent = '';
-    var call = direct ? post('/api/onboard', {served: x.model, endpoint: x.endpoint})
+    // Either way the onboarding joins the queue (serve.queue_onboard): one at a time.
+    var call = direct ? post('/api/onboard-queue', {items: [{served: x.model, endpoint: x.endpoint}]})
       : post('/api/discover/add', {connection: x.connection, model: x.model, endpoint: x.endpoint});
     call.then(function (res) {
-      if (!res.ok && !res.log) {
+      if (!res.ok) {
         listErrors($('d-errors'), (res.steps || []).concat(res.errors));
         b.disabled = false; b.textContent = 'Add via this'; return;
       }
       dd.close(); o.errors.textContent = ''; od.showModal();
-      follow(res.log, 'Adding ' + (res.served || x.model) + ' via ' + x.label,
-             res.steps && res.steps.length ? res.steps.join('. ') + '. ' : '');
+      afterQueued(res, {served: res.served || x.model, endpoint: res.endpoint || x.endpoint},
+                  'Adding ' + (res.served || x.model) + ' via ' + x.label,
+                  res.steps && res.steps.length ? res.steps.join('. ') + '. ' : '');
     }).catch(function (err) { $('d-errors').textContent = String(err); b.disabled = false; b.textContent = 'Add via this'; });
   }
   function openDiscover(provider, model) {
@@ -541,7 +674,7 @@
   });
   $('d-close').addEventListener('click', function () { dd.close(); });
   function follow(log, title, before) {
-    o.choose.hidden = true; o.run.hidden = false; o.start.hidden = true;
+    o.choose.hidden = true; o.run.hidden = false; o.start.hidden = true; $('o-queue').hidden = true;
     o.title.textContent = title; o.result.className = 'served';
     o.result.textContent = before + 'Running in the background; closing this does not stop it. Log: runs/' + log;
     renderSteps('', false, null);
