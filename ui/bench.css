@@ -111,7 +111,7 @@ main { max-width: var(--page, 104rem); margin: 0 auto; padding: 0 var(--gutter) 
 .problems details > summary .muted { font-weight: 400; }
 .problem .what { font-weight: 500; }
 .problem .why { color: var(--muted); font-size: .875rem; overflow-wrap: anywhere; }
-.problem .acts, .endpoint .acts { display: flex; gap: .5rem; flex-wrap: wrap; justify-content: flex-end; }
+.problem .acts, .endpoint .acts, .ep .acts { display: flex; gap: .5rem; flex-wrap: wrap; justify-content: flex-end; }
 .row-input { display: flex; gap: .5rem; align-items: center; margin-top: .35rem; }
 .row-input input { flex: 1; min-width: 0; margin: 0 !important; }
 .sub-head { font-weight: 600; margin: 1rem 0 .25rem; }
@@ -146,17 +146,10 @@ main { max-width: var(--page, 104rem); margin: 0 auto; padding: 0 var(--gutter) 
    the header's old mark. */
 .tabs button[aria-selected="true"] { color: var(--ink); font-weight: 700;
                                      box-shadow: inset 0 -.42em 0 var(--signal); }
-/* Manage is a page of Endpoints, reached from its button: shown, indented
-   under it, only while you are on it, to say where you are. */
-.tabs button[data-tab="manage"] { margin-left: .9rem; }
-.tabs button[data-tab="manage"][aria-selected="false"] { display: none; }
-.tabs:has(button[data-tab="manage"][aria-selected="true"]) button[data-tab="endpoints"] { color: var(--ink); }
-/* Collections, the bench's own idea: brand-coloured, with a small sparkle
-   after it. The sparkle hangs outside the button, so the active page's
-   stroke still runs under the word alone. */
-.tabs button[data-tab="collections"] { position: relative; font-weight: 600;
-                                       color: color-mix(in oklab, var(--brand) 72%, var(--ink)); }
-.tabs button[data-tab="collections"][aria-selected="true"] { color: var(--ink); font-weight: 700; }
+/* Collections, the bench's own idea: a small brand sparkle after it. It
+   hangs outside the button, so the active page's stroke still runs under
+   the word alone. */
+.tabs button[data-tab="collections"] { position: relative; }
 .tabs button[data-tab="collections"]::after {
   content: ""; position: absolute; left: calc(100% + .3em); top: -.05em; width: .75em; height: .75em;
   background: var(--brand);
@@ -175,7 +168,6 @@ main { max-width: var(--page, 104rem); margin: 0 auto; padding: 0 var(--gutter) 
   .tabs { position: static; flex-direction: row; flex-wrap: wrap; gap: .5rem 1.5rem; }
   .tabs .group { flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: .1rem 1rem; }
   .tabs h2 { margin: 0; }
-  .tabs button[data-tab="manage"] { margin: 0; }
 }
 
 /* settings, connections, logs, info */
@@ -210,6 +202,7 @@ a.dmodel { color: var(--ink); text-decoration: none; font-weight: 500; }
 a.dmodel:hover .alias { box-shadow: inset 0 -.3em 0 var(--signal); }
 /* Connections: each endpoint, its models folded under it */
 .ep { padding: .75rem 0; border-top: 1px solid var(--line); }
+.ep-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .4rem 1rem; align-items: center; }
 .ep .base { color: var(--muted); font-size: .875rem; overflow-wrap: anywhere; }
 .ep details.models > summary { cursor: pointer; color: var(--link); font-size: .9375rem; margin-top: .3rem; }
 .ep details.models[open] > summary { margin-bottom: .5rem; }
@@ -360,6 +353,7 @@ h3.chart-head { font-size: 1rem; margin: 1rem 0 .2rem; }
 /* a list of things you open (collections), with its New button above */
 .list-actions { display: flex; align-items: center; gap: 1rem; margin: .75rem 0; flex-wrap: wrap; }
 .list-actions .done { margin: 0; color: var(--ok); font-size: .9375rem; }
+.list-actions .errors { color: var(--err); font-size: .9375rem; }
 button.c-row { width: 100%; text-align: left; font: inherit; color: inherit; background: none; border: 0;
                border-radius: var(--radius); cursor: pointer; }
 button.c-row:hover, button.c-row:focus-visible { background: var(--step-1); }
@@ -386,6 +380,8 @@ dialog .pick { display: flex; gap: 1.5rem; }
   header h1 { font-size: 1.75rem; }
   .problem { grid-template-columns: minmax(0, 1fr); }
   .problem .acts { justify-content: flex-start; }
+  .ep-head { grid-template-columns: minmax(0, 1fr); }
+  .ep .acts { justify-content: flex-start; }
   details.key dl { grid-template-columns: minmax(0, 1fr); }
   .toolbar input[type=search] { min-width: 0; width: 100%; }
 }

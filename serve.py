@@ -1402,7 +1402,7 @@ STATUS = {
     "structural": ("not found", "err", "no such model, or no provider behind it"),
     "paywalled": ("no longer free", "err", "the free tier moved behind a paid slug"),
     "entitlement": ("no access", "err", "payment, credit or permission refused"),
-    "signin": ("sign in again", "warn", "the key was refused: expired or revoked; fix it on the Manage page (under Endpoints)"),
+    "signin": ("sign in again", "warn", "the key was refused: expired or revoked; fix it on the Endpoints page"),
     "other": ("failing", "err", "an error nothing here recognises"),
 }
 
@@ -2378,12 +2378,11 @@ def collections_tab() -> str:
 # requests under the collections they ran; Benchmarks holds Performance.
 SECTIONS = (("Observe", (("glance", "At a glance", "roster"),
                          ("suite", "Benchmarks", "benchmarks_tab"),
+                         ("quotas", "Quota management", "quotas_page"),
                          ("logs", "Logs", "logs_page"))),
             ("Gateway", (("endpoints", "Endpoints", "endpoints_page"),
-                         ("manage", "Manage", "manage_page"),        # indented under Endpoints (bench.css)
                          ("models", "Models", "models_page"),
-                         ("collections", "Collections", "collections_and_gateway"),
-                         ("quotas", "Quota management", "quotas_page"),
+                         ("collections", "Collections", "collections_and_gateway"),   # starred (bench.css)
                          ("discover", "Discover", "discover_card"))),
             ("Control", (("settings", "Settings", "settings_page"),
                          ("info", "Info", "info_page"))))
@@ -2556,8 +2555,8 @@ def settings_page() -> str:
 
 
 def endpoints_page() -> str:
-    """Each connection, what it serves and what is known of each model's
-    limits. Quotas arrive with the built-in client's quota records (Phase 2b)."""
+    """Each endpoint, its actions, what it serves; your own apps and rate limits
+    per connection (bench.js fills those two from /api/connect and /api/connections)."""
     eps = endpoint_list()["endpoints"]
     # What each endpoint serves, without asking it: the bench's own models on
     # it, plus what the daily served check (scripts/check_deprecations.py)
@@ -2597,24 +2596,52 @@ def endpoints_page() -> str:
                         + (chip(f"last seen {day}", "warn") if gone else chip("served", "")) + "</td>")
             rows.append(f"<tr>{bench}<td class='mono'>{esc(served)}</td>{rest}</tr>")
         extra = sum(1 for s, d in listed.items() if s not in mine and d == checked)
+        # Its actions (bench.js reads the row from data-ep): a sign-in again
+        # where it came from one; Make default and Remove on all but the default.
+        signed = e["connect"]
+        acts = "<button class='btn small' data-ep-act='change'>Change key</button>"
+        if signed and signed.get("flow") and signed["flow"] != "local":
+            acts += "<button class='btn small' data-ep-act='again'>Sign in again</button>"
+        if not e["default"]:
+            acts += ("<button class='btn small' data-ep-act='default'>Make default</button>"
+                     "<button class='btn small danger' data-ep-act='remove'>Remove</button>")
+        until = (" until " + signed["expires"][:10]) if signed and signed.get("expires") and not signed.get("refreshes") else ""
         blocks.append(
-            f"<div class='ep'><div class='what'><span class='alias'>{esc(e['name'])}</span>"
+            f"<div class='ep' data-ep='{esc(json.dumps(e))}'><div class='ep-head'><div>"
+            f"<div class='what'><span class='alias'>{esc(e['name'])}</span>"
             + (" " + chip("default", "") if e["default"] else "")
             + " " + chip("key set" if e["key_set"] else "no key", "ok" if e["key_set"] else "warn")
-            + f"</div><div class='base mono'>{esc(e['base'])}</div>"
+            + ((" " + chip("sign in again", "warn") if signed.get("expired") else " " + chip("signed in" + until, "via"))
+               if signed else "")
+            + f"</div><div class='base mono'>{esc(e['base'])}</div></div><div class='acts'>{acts}</div></div>"
             f"<details class='models'><summary>{len(mine)} on the bench"
             + (f" · {extra} more served" if extra else "") + "</summary>"
             "<table><thead><tr>" + th("On the bench as") + th("Served as") + th("Connection") + th("Status")
             + f"</tr></thead><tbody>{''.join(rows)}</tbody></table></details></div>")
     return (
-        "<div class='panel'><h2>Endpoints</h2><p class='sub'>Where calls go, whether each key is set"
-        " (never the key), and the models each serves: the bench's own, then what the daily served check"
-        f" listed{' on ' + esc(checked) if checked else ''}. For a model's full list, <em>Onboard a model</em>"
-        " asks every endpoint live. Add an endpoint or change a key with Manage.</p>"
+        "<div class='panel'><h2>Endpoints</h2><p class='sub'>Where models are served from: providers,"
+        " aggregators, a hub such as Open WebUI, or a local runtime. Prompts to a model go straight to its"
+        " endpoint, so add only ones you are content to send private source to. Each shows whether its key"
+        " is set (never the key) and what it serves: the bench's own models, then what the daily served"
+        f" check listed{' on ' + esc(checked) if checked else ''}.</p>"
+        "<div class='list-actions'><button class='btn primary' id='e-add'>Add an endpoint</button>"
+        "<span class='done' id='el-done'></span><span class='errors' id='el-errors' role='alert'></span></div>"
         "<div class='toolbar'><input type='search' data-filter placeholder='Find a model on any endpoint'"
         " aria-label='Filter models'></div>"
-        f"{''.join(blocks)}"
-        "<div class='actions'><button class='btn' data-goto='manage'>Manage endpoints and limits</button></div></div>")
+        f"{''.join(blocks)}</div>"
+        "<div class='panel form-panel'><h2>Use your own app</h2>"
+        "<p class='sub'>Some providers need an app registered with them before anyone can sign in."
+        " Benchwarmers ships Wendell Research's where it has one; register your own and paste its"
+        " public client id to use yours instead (never a secret: none of these use one). Endpoints"
+        " already signed in keep working with the app they were signed in with.</p>"
+        "<div id='cn-apps'></div><div class='errors' id='cn-app-errors' role='alert'></div>"
+        "<div class='done' id='cn-app-done'></div></div>"
+        "<div class='panel form-panel'><h2>Rate limits per connection</h2>"
+        "<p class='sub'>What a key behind each connection allows, from the provider's docs or"
+        " freellmapi.co/models. Models on that connection share it; a model's own limits (its"
+        " popup) win, and limits the bench learns from errors only ever lower these.</p>"
+        "<div id='l-list'></div><div class='errors' id='l-errors' role='alert'></div>"
+        "<div class='done' id='l-done'></div></div>")
 
 
 def models_page() -> str:
@@ -2652,32 +2679,6 @@ def models_page() -> str:
             " comes from, with the endpoint it is reached through and what is known of its limits. A name"
             " opens the model.</p></div>"
             + "".join(cards))
-
-
-def manage_page() -> str:
-    """Endpoints' keys, sign-ins, own apps and rate limits; bench.js fills the
-    lists from /api/endpoints, /api/connect and /api/connections when shown."""
-    return (
-        "<div class='panel form-panel'><h2>Manage endpoints</h2>"
-        "<p class='sub'>Where models are served from: providers, aggregators, a hub such as Open WebUI,"
-        " or a local runtime. Prompts to a model go straight to its endpoint, so add only ones you are"
-        " content to send private source to.</p>"
-        "<div id='e-list'></div>"
-        "<div class='errors' id='el-errors' role='alert'></div><div class='done' id='el-done'></div>"
-        "<div class='actions'><button class='btn primary' id='e-add'>Add an endpoint</button></div></div>"
-        "<div class='panel form-panel'><h2>Use your own app</h2>"
-        "<p class='sub'>Some providers need an app registered with them before anyone can sign in."
-        " Benchwarmers ships Wendell Research's where it has one; register your own and paste its"
-        " public client id to use yours instead (never a secret: none of these use one). Endpoints"
-        " already signed in keep working with the app they were signed in with.</p>"
-        "<div id='cn-apps'></div><div class='errors' id='cn-app-errors' role='alert'></div>"
-        "<div class='done' id='cn-app-done'></div></div>"
-        "<div class='panel form-panel'><h2>Rate limits per connection</h2>"
-        "<p class='sub'>What a key behind each connection allows, from the provider's docs or"
-        " freellmapi.co/models. Models on that connection share it; a model's own limits (its"
-        " popup) win, and limits the bench learns from errors only ever lower these.</p>"
-        "<div id='l-list'></div><div class='errors' id='l-errors' role='alert'></div>"
-        "<div class='done' id='l-done'></div></div>")
 
 
 def quotas_page() -> str:
@@ -2722,7 +2723,7 @@ def quotas_page() -> str:
         + "</div>"
         "<div class='panel'><h3 class='chart-head'>Known limits</h3><p class='sub'>How much each connection"
         " or model allows (tokens or requests per minute or day), so the bench can space its calls."
-        " Two sources: what you enter per connection (Endpoints, Manage, Rate limits), and what a"
+        " Two sources: what you enter per connection (Endpoints, Rate limits per connection), and what a"
         " provider states in a rate-limit error, which the bench writes down by itself. The list grows on"
         " its own as models meet their limits. A model's own limits (its popup) win, and learned ones"
         " only ever lower a limit.</p>"

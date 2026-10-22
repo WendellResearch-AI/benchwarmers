@@ -59,7 +59,7 @@ def endpoint() -> str:
     """The CLI Proxy API hub's endpoint name; ValueError when there is none."""
     name = endpoints.find_hub("cliproxy")
     if not name:
-        raise ValueError("no endpoint is a CLI Proxy API hub; add it on the Manage page (under Endpoints) as kind hub,"
+        raise ValueError("no endpoint is a CLI Proxy API hub; add it on the Endpoints page as kind hub,"
                          " CLI Proxy API")
     return name
 
@@ -71,7 +71,7 @@ def _call(method: str = "GET", body: dict | None = None) -> tuple[dict, str]:
     if not secret:
         env = endpoints.ENV_KEY + endpoints.admin_name(endpoints.load()[name]).upper().replace("-", "_")
         raise ValueError(f"CLI Proxy API's management key is not stored: give it as the admin key on the"
-                         f" Manage page under Endpoints (Change key on {name}), or set {env}")
+                         f" Endpoints page (Change key on {name}), or set {env}")
     req = urllib.request.Request(endpoints.base(name).removesuffix("/v1") + PATH, method=method,
                                  data=None if body is None else json.dumps(body).encode(),
                                  headers={"Authorization": f"Bearer {secret}", "Content-Type": "application/json",

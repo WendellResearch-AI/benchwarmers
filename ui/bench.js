@@ -28,10 +28,6 @@
     if (onShow[id]) onShow[id]();
   }
   tabs.forEach(function (b) { b.addEventListener('click', function () { show(b.dataset.tab); }); });
-  // A button that opens another page (Endpoints' Manage), from the top.
-  document.querySelectorAll('[data-goto]').forEach(function (b) {
-    b.addEventListener('click', function () { show(b.dataset.goto); window.scrollTo(0, 0); });
-  });
   var wanted = store('bench.tab');
   show(wanted && $('tab-' + wanted) ? wanted : 'glance');
 
@@ -597,82 +593,55 @@
   });
 
   // ---- endpoints: keys go in, never come back out -------------------------
-  // The Manage page lists them; Add an endpoint and Change key are one dialog.
+  // The Endpoints page lists them (serve.endpoints_page, each row's data in
+  // data-ep); Add an endpoint and Change key are one dialog. The page is
+  // drawn by the server, so a change reloads it, as the model popup does.
   var ed = $('endpoint-dialog');
-  var e = {list: $('e-list'), name: $('e-name'), base: $('e-base'), key: $('e-key'),
+  var e = {name: $('e-name'), base: $('e-base'), key: $('e-key'),
            kind: $('e-kind'), hub: $('e-hub'), admin: $('e-admin'),
            errors: $('e-errors'), done: $('e-done'), test: $('e-test'), save: $('e-save'),
-           listErrors: $('el-errors'), listDone: $('el-done')};
+           listErrors: $('el-errors'), listDone: $('el-done'), changed: false};
   e.kind.addEventListener('change', function () {
     $('e-hub-row').hidden = $('e-admin-row').hidden = e.kind.value !== 'hub';
   });
   ed.querySelectorAll('[data-close]').forEach(function (b) { b.addEventListener('click', function () { ed.close(); }); });
-  function loadEndpoints() {
-    fetch('/api/endpoints').then(function (r) { return r.json(); }).then(function (res) {
-      e.list.textContent = '';
-      res.endpoints.forEach(function (x) {
-        var row = el('div', {class: 'endpoint'});
-        var left = el('div');
-        var title = el('div', {class: 'what'});
-        title.appendChild(el('span', {class: 'alias'}, x.name + ' '));
-        if (x.default) title.appendChild(el('span', {class: 'chip'}, 'default'));
-        title.appendChild(el('span', {class: 'chip ' + (x.key_set ? 'ok' : 'warn'), style: 'margin-left:.3rem'},
-                             x.key_set ? 'key set' : 'no key'));
-        if (x.connect) {                                    // signed in from Connect
-          var until = x.connect.expires && !x.connect.refreshes ? ' until ' + x.connect.expires.slice(0, 10) : '';
-          title.appendChild(el('span', {class: 'chip ' + (x.connect.expired ? 'warn' : 'via'), style: 'margin-left:.3rem'},
-                               x.connect.expired ? 'sign in again' : 'signed in' + until));
-        }
-        left.appendChild(title);
-        left.appendChild(el('div', {class: 'base mono'}, x.base + ' · ' + x.models + ' model' + (x.models === 1 ? '' : 's') + ' on the bench'));
-        row.appendChild(left);
-        var acts = el('div', {class: 'acts'});
-        var edit = el('button', {class: 'btn small', type: 'button'}, 'Change key');
-        edit.addEventListener('click', function () { openEndpoint('change', x); });
-        acts.appendChild(edit);
-        if (x.connect && x.connect.flow && x.connect.flow !== 'local') {     // this endpoint, not a new one
-          var again = el('button', {class: 'btn small', type: 'button'}, 'Sign in again');
-          again.addEventListener('click', function () {
-            openEndpoint('again', x);
-            connectStart({id: x.connect.provider, flow: x.connect.flow, label: x.connect.label}, x.name);
-          });
-          acts.appendChild(again);
-        }
-        if (!x.default) {
-          var def = el('button', {class: 'btn small', type: 'button'}, 'Make default');
-          def.addEventListener('click', function () {
-            if (!confirm('Make ' + x.name + ' the default endpoint? The default is where a model is taken'
-                         + ' to be when nothing says otherwise, and the one endpoint that cannot be removed.')) return;
-            post('/api/endpoint/default', {name: x.name}).then(function (r) {
-              e.listErrors.textContent = '';
-              if (!r.ok) { listErrors(e.listErrors, r.errors); return; }
-              e.listDone.textContent = r.note + '.'; loadEndpoints();
-            });
-          });
-          acts.appendChild(def);
-          // Its models go with it, after saying how many: each is retired as by
-          // hand (evidence kept, restorable once the endpoint is back).
-          var rm = el('button', {class: 'btn small danger', type: 'button'}, 'Remove');
-          rm.addEventListener('click', function () {
-            var n = x.models, them = n + ' model' + (n === 1 ? '' : 's');
-            if (!confirm(n ? 'Remove the ' + x.name + ' endpoint and the ' + them + ' on the bench through it?\n\n'
-                             + 'The ' + them + ' will be retired too. Their results and history are kept, and'
-                             + ' Restore brings them back if an endpoint named ' + x.name + ' is added again.'
-                           : 'Remove the ' + x.name + ' endpoint?')) return;
-            post('/api/endpoint/remove', {name: x.name, with_models: n > 0}).then(function (r) {
-              e.listErrors.textContent = '';
-              if (!r.ok) { listErrors(e.listErrors, r.errors); return; }
-              e.listDone.textContent = 'Removed ' + x.name + '; ' + r.note + '.'; loadEndpoints();
-              if (r.retired && r.retired.length) setTimeout(function () { location.reload(); }, 2500);   // the model tables changed
-            });
-          });
-          acts.appendChild(rm);
-        }
-        row.appendChild(acts);
-        e.list.appendChild(row);
-      });
-    });
+  ed.addEventListener('close', function () { if (e.changed) location.reload(); });
+  function reloadSoon(message) {
+    e.listErrors.textContent = ''; e.listDone.textContent = message + ' Reloading…';
+    setTimeout(function () { location.reload(); }, 900);
   }
+  var rowActs = {
+    change: function (x) { openEndpoint('change', x); },
+    again: function (x) {          // this endpoint, not a new one
+      openEndpoint('again', x);
+      connectStart({id: x.connect.provider, flow: x.connect.flow, label: x.connect.label}, x.name);
+    },
+    'default': function (x) {
+      if (!confirm('Make ' + x.name + ' the default endpoint? The default is where a model is taken'
+                   + ' to be when nothing says otherwise, and the one endpoint that cannot be removed.')) return;
+      post('/api/endpoint/default', {name: x.name}).then(function (r) {
+        if (!r.ok) { listErrors(e.listErrors, r.errors); return; }
+        reloadSoon(r.note + '.');
+      });
+    },
+    // Its models go with it, after saying how many: each is retired as by
+    // hand (evidence kept, restorable once the endpoint is back).
+    remove: function (x) {
+      var n = x.models, them = n + ' model' + (n === 1 ? '' : 's');
+      if (!confirm(n ? 'Remove the ' + x.name + ' endpoint and the ' + them + ' on the bench through it?\n\n'
+                       + 'The ' + them + ' will be retired too. Their results and history are kept, and'
+                       + ' Restore brings them back if an endpoint named ' + x.name + ' is added again.'
+                     : 'Remove the ' + x.name + ' endpoint?')) return;
+      post('/api/endpoint/remove', {name: x.name, with_models: n > 0}).then(function (r) {
+        if (!r.ok) { listErrors(e.listErrors, r.errors); return; }
+        reloadSoon('Removed ' + x.name + '; ' + r.note + '.');
+      });
+    }
+  };
+  $('tab-endpoints').addEventListener('click', function (ev) {
+    var b = ev.target.closest('.ep button[data-ep-act]');
+    if (b) rowActs[b.dataset.epAct](JSON.parse(b.closest('.ep').dataset.ep));
+  });
   function loadLimits() {
     var list = $('l-list');
     fetch('/api/connections').then(function (r) { return r.json(); }).then(function (res) {
@@ -706,10 +675,9 @@
       });
     });
   }
-  onShow.manage = function () {
-    e.listErrors.textContent = e.listDone.textContent = '';
+  onShow.endpoints = function () {             // its own-app and rate-limit sections
     $('cn-app-errors').textContent = $('cn-app-done').textContent = '';
-    loadEndpoints(); loadProviders(); loadLimits();
+    loadProviders(); loadLimits();
   };
   // The dialog, in one of three modes. add: the choices, API key first, then
   // each provider's sign-in; change: one endpoint's key form; again: a
@@ -785,22 +753,23 @@
       end();
       if (!r.ok) { listErrors(e.errors, r.errors); return; }          // Save stays shut: test again
       var name = e.name.value.trim().toLowerCase();
-      finished('Saved. ' + name + ' lists ' + r.served + ' models; they appear in the onboarding picker. '
+      endpointDone('Saved. ' + name + ' lists ' + r.served + ' models; they appear in the onboarding picker. '
                + (r.note || ''), e.adding ? name : '');
     }).catch(function (err) { end(); e.errors.textContent = String(err); });
   });
   // Saved or signed in: the forms fold, the message stays, with the next step.
-  function finished(message, endpoint) {
+  function endpointDone(message, endpoint) {
     resetKeyForm(); choose(null);
     cn.list.hidden = $('e-blurb').hidden = cn.wait.hidden = true; $('e-after').hidden = false;
     e.done.textContent = message;
     if (endpoint) e.done.appendChild(onboardFrom(endpoint));
-    loadEndpoints(); loadProviders();
+    e.changed = true;              // the page reloads when the dialog closes
   }
 
   // ---- connect: sign in on the provider's page (metrics/connect.py) --------
   // `run` counts the dialog's openings: a sign-in still finishing after the
-  // dialog was closed or opened again reports on the Manage page instead.
+  // dialog was closed or opened again reports on the Endpoints page instead,
+  // and reloads it once nothing is open over it.
   var cn = {list: $('cn-list'), wait: $('cn-wait'), msg: $('cn-msg'), timer: null, run: 0};
   // Reached from another machine (a hosted install): a callback to this
   // machine's 127.0.0.1 could not arrive, so sign-ins go by code instead.
@@ -809,7 +778,9 @@
     clearInterval(cn.timer); cn.timer = null;
     var said = r.ok && r.label + ' is connected as ' + r.endpoint + ': it lists ' + r.served + ' models. ' + (r.note || '');
     if (!ed.open || run !== cn.run) {
-      if (r.ok) { e.listDone.textContent = said; loadEndpoints(); loadProviders(); } else listErrors(e.listErrors, r.errors);
+      if (!r.ok) listErrors(e.listErrors, r.errors);
+      else if (ed.open) { e.listDone.textContent = said; e.changed = true; }
+      else reloadSoon(said);
       return;
     }
     cn.wait.hidden = true;
@@ -817,13 +788,15 @@
       $('cn-form').hidden = !cn.pick; $('e-after').hidden = !!cn.pick;
       listErrors(e.errors, r.errors); return;
     }
-    finished(said, r.endpoint);
+    endpointDone(said, r.endpoint);
   }
   // The next step for a new endpoint, signed in or pasted: onboard what it serves.
   function onboardFrom(endpoint) {
     var go = el('button', {class: 'btn small', type: 'button', style: 'margin-left:.6rem'}, 'Onboard a model from it');
     go.addEventListener('click', function () {
-      ed.close(); $('onboard-open').click(); o.find.value = endpoint;   // the picker filters on it once loaded
+      // No reload on the way: onboarding opens over the page, and the page's
+      // fresh-results button offers the reload once the files have changed.
+      e.changed = false; ed.close(); $('onboard-open').click(); o.find.value = endpoint;   // the picker filters on it once loaded
     });
     return go;
   }
@@ -909,14 +882,14 @@
     return row;
   }
 
-  if ($('tab-manage').classList.contains('active')) onShow.manage();   // the page opened on it
+  if ($('tab-endpoints').classList.contains('active')) onShow.endpoints();   // the page opened on it
 
   // ---- first run: no endpoint yet, no model, no collection (serve.first_run) -
   var first = $('first-run');
   function firstStep() {
     if (first.dataset.step === 'onboard') { $('onboard-open').click(); return; }
     if (first.dataset.step === 'collection') { show('collections'); $('c-new').click(); return; }
-    show('manage'); openEndpoint('add');
+    show('endpoints'); openEndpoint('add');
   }
   if (first) {
     $('first-go').addEventListener('click', firstStep);
