@@ -1,0 +1,2 @@
+# The npm launcher runs on macOS and Linux through its #! line, which a CRLF breaks.
+bin/benchwarmers.js text eol=lf

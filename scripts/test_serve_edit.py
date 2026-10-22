@@ -231,7 +231,11 @@ def main() -> int:
     model_client.CHOICE = cfg / "client.json"
     env, real_which = os.environ.pop("BENCH_CLIENT", None), shutil.which
     try:
+        shutil.which = lambda name: "/usr/bin/" + name                 # llm installed: the default is llm
         first = model_client.chosen()
+        shutil.which = lambda name: None                               # not installed (npm, a container)
+        bare = model_client.chosen()
+        shutil.which = real_which
         made = serve.save_client("builtin")
         picked = (model_client.chosen(), model_client.backend())
         os.environ["BENCH_CLIENT"] = "llm"
@@ -246,7 +250,7 @@ def main() -> int:
         os.environ.pop("BENCH_CLIENT", None)
         if env is not None:
             os.environ["BENCH_CLIENT"] = env
-    ok = (first == ("llm", "default") and made["ok"] and picked == (("builtin", "settings"), "builtin")
+    ok = (first == ("llm", "default") and bare == ("builtin", "default") and made["ok"] and picked == (("builtin", "settings"), "builtin")
           and pinned == (("llm", "environment"), False) and not no_llm and not unknown)
     print(("ok   " if ok else "FAIL ") + "model client choice" + ("" if ok else f" -> {first} {made} {picked} {pinned}"))
     failures += 0 if ok else 1

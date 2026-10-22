@@ -63,6 +63,7 @@ import json
 import os
 import pathlib
 import random
+import shutil
 import sys
 import time
 import urllib.error
@@ -86,8 +87,10 @@ CHOICE = DATA / "config" / "client.json"           # the Settings page's choice
 
 def chosen() -> tuple[str, str]:
     """The configured client and what set it: BENCH_CLIENT ("environment"),
-    else the Settings page's choice ("settings"), else `llm` ("default").
-    Read on every call, so a change applies to the next one."""
+    else the Settings page's choice ("settings"), else ("default") `llm` where
+    the llm CLI is installed and the built-in client where it is not, as in
+    an install from npm or a container. Read on every call, so a change
+    applies to the next one."""
     env = (os.environ.get("BENCH_CLIENT") or "").strip().lower()
     if env:
         return env, "environment"
@@ -95,7 +98,7 @@ def chosen() -> tuple[str, str]:
         saved = json.loads(CHOICE.read_text(encoding="utf-8")).get("client")
     except (OSError, ValueError, AttributeError):
         saved = None
-    return (saved, "settings") if saved in CLIENTS else ("llm", "default")
+    return (saved, "settings") if saved in CLIENTS else ("llm" if shutil.which("llm") else "builtin", "default")
 
 
 def backend(alias: str = "") -> str:

@@ -7,6 +7,7 @@
 
 <p align="center">
   <a href="https://github.com/WendellResearch-AI/benchwarmers/releases"><img src="https://img.shields.io/github/v/release/WendellResearch-AI/benchwarmers?color=990000" alt="Latest release"></a>
+  <a href="https://www.npmjs.com/package/@wendellresearch-ai/benchwarmers"><img src="https://img.shields.io/npm/v/@wendellresearch-ai/benchwarmers?color=cb3837&logo=npm" alt="npm"></a>
   <a href="https://github.com/WendellResearch-AI/benchwarmers/actions/workflows/check.yml"><img src="https://github.com/WendellResearch-AI/benchwarmers/actions/workflows/check.yml/badge.svg" alt="Checks"></a>
   <a href="#docker"><img src="https://img.shields.io/badge/Docker-compose-2496ED?logo=docker&logoColor=white" alt="Runs in Docker"></a>
   <a href="GATEWAY.md"><img src="https://img.shields.io/badge/OpenAI--compatible-gateway-111111" alt="OpenAI-compatible gateway"></a>
@@ -77,10 +78,20 @@ with [AGENTS.md](AGENTS.md).
 
 ## Try it
 
-**v0.1, early.** It runs from a checkout with Python 3.11 or later on Windows,
-macOS and Linux, or in Docker. An installer (`pipx install benchwarmers`) is
-still to come; until then, expect rough edges and read the code where these
-pages are thin.
+**v0.1, early.** It runs with Python 3.11 or later on Windows, macOS and
+Linux, from npm, a checkout or Docker. Expect rough edges, and read the code
+where these pages are thin.
+
+**Quickest**, with Node 18+ and Python 3.11+ installed:
+
+    npx @wendellresearch-ai/benchwarmers
+
+It keeps your data in your user profile (`BENCHWARMERS_HOME` to choose
+another folder), sets it up on the first run, and opens the dashboard on
+http://localhost:8122, where steps 3 to 5 below continue. The built-in model
+client makes every call, so nothing else needs installing.
+
+**From source:**
 
 1. **Get the code** and a Python 3.11+ environment:
 

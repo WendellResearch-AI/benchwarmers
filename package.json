@@ -1,0 +1,64 @@
+{
+  "name": "@wendellresearch-ai/benchwarmers",
+  "version": "0.1.1",
+  "description": "Self-hosted panel gateway for LLMs: ask a collection of models at once, keep every answer side by side, rotate explorer models in, and let your verdicts pick the next panel.",
+  "license": "MIT",
+  "author": "Wendell Research",
+  "homepage": "https://github.com/WendellResearch-AI/benchwarmers#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/WendellResearch-AI/benchwarmers.git"
+  },
+  "bugs": {
+    "url": "https://github.com/WendellResearch-AI/benchwarmers/issues"
+  },
+  "keywords": [
+    "llm",
+    "llm-gateway",
+    "openai-compatible",
+    "multi-model",
+    "code-review",
+    "llm-evaluation",
+    "benchmark",
+    "model-routing",
+    "self-hosted",
+    "open-webui",
+    "openrouter",
+    "litellm"
+  ],
+  "bin": {
+    "benchwarmers": "bin/benchwarmers.js"
+  },
+  "files": [
+    "bin/",
+    "serve.py",
+    "gateway.py",
+    "metrics/*.py",
+    "scripts/*.py",
+    "suite/*.py",
+    "suite/*.md",
+    "suite/*.json",
+    "suite/tasks/",
+    "perf/*.py",
+    "perf/*.md",
+    "repoqa/*.py",
+    "repoqa/*.md",
+    "ui/",
+    "examples/",
+    "VERSION",
+    "NOTICE",
+    "AGENTS.md",
+    "BENCHMARKS.md",
+    "GATEWAY.md",
+    "PRIVACY.md",
+    "SECURITY.md",
+    "TERMS.md",
+    "USAGE.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

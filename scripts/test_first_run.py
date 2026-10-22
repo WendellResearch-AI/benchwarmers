@@ -64,6 +64,9 @@ def serve_on(handler) -> ThreadingHTTPServer:
 
 def main() -> int:
     assert serve.DATA == DATA and serve.endpoints.LLM_DIR == LLM, "not on the temp folders"
+    # The npm package (bin/benchwarmers.js) carries the app at the app's version.
+    pkg = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
+    assert pkg["version"] == (ROOT / "VERSION").read_text(encoding="utf-8").strip(), "package.json and VERSION differ"
     provider, dash = serve_on(Provider), serve_on(serve.Handler)
     serve.PORT = dash.server_port
     home = f"http://127.0.0.1:{dash.server_port}"

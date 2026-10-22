@@ -97,7 +97,9 @@ def run(folder, endpoint: tuple[str, str] | None = None, secret: str = "") -> tu
         said.append(f"Endpoint {name} added: it lists {r['served']} models. {r.get('note', '')}".strip() if ok else
                     "Endpoint not added: " + "; ".join(r["errors"]) + ". Add it from the dashboard instead.")
     port = os.environ.get("BENCH_PORT") or 8122
-    said.append(f"Next: python serve.py, then open http://localhost:{port} to "
+    # From npm (bin/benchwarmers.js) the dashboard starts next by itself.
+    start = "the dashboard starts now: open" if os.environ.get("BENCHWARMERS_LAUNCHER") else "python serve.py, then open"
+    said.append(f"Next: {start} http://localhost:{port} to "
                 + ("onboard models from it." if endpoint and ok else
                    "add an endpoint (sign in with a provider, or paste a key) and onboard models."))
     return ok, said
