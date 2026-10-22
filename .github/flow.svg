@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 60 820 330" width="820" height="330" role="img" aria-labelledby="t d">
+  <title id="t">How a Benchwarmers panel works</title>
+  <desc id="d">Your agent or app asks the gateway for a collection. The gateway seats the collection's members and an explorer, the model unused longest. Every answer comes back labelled by model and seat. You check them against the real work and record a verdict. Verdicts, health probes and the suite choose the next panel.</desc>
+  <style>
+    text { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; fill: #1a1410; }
+    .t { font-size: 15px; font-weight: 700; }
+    .s { font-size: 12.5px; fill: #4c4136; }
+    .box { fill: #fffaf3; stroke: #1a1410; stroke-width: 1.5; }
+    .gate { fill: #fffaf3; stroke: #990000; stroke-width: 2.5; }
+    .seat { fill: #fffaf3; stroke: #2f6b34; stroke-width: 1.5; }
+    .explore { fill: #fffaf3; stroke: #b07800; stroke-width: 1.5; stroke-dasharray: 5 4; }
+    .line { fill: none; stroke: #1a1410; stroke-width: 1.5; marker-end: url(#a); }
+    .loop { fill: none; stroke: #990000; stroke-width: 1.5; marker-end: url(#b); }
+    .lab { font-size: 12.5px; fill: #990000; font-weight: 600; }
+  </style>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#1a1410"/></marker>
+    <marker id="b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#990000"/></marker>
+  </defs>
+
+  <rect class="box" x="20" y="150" width="145" height="70" rx="10"/>
+  <text class="t" x="92" y="180" text-anchor="middle">Your agent or app</text>
+  <text class="s" x="92" y="200" text-anchor="middle">asks bench/reviewers</text>
+
+  <rect class="gate" x="205" y="150" width="140" height="70" rx="10"/>
+  <text class="t" x="275" y="180" text-anchor="middle">Gateway</text>
+  <text class="s" x="275" y="200" text-anchor="middle">seats a panel</text>
+
+  <rect class="seat" x="395" y="75" width="155" height="52" rx="10"/>
+  <text class="t" x="472" y="98" text-anchor="middle">Member</text>
+  <text class="s" x="472" y="116" text-anchor="middle">from the collection</text>
+  <rect class="seat" x="395" y="159" width="155" height="52" rx="10"/>
+  <text class="t" x="472" y="182" text-anchor="middle">Member</text>
+  <text class="s" x="472" y="200" text-anchor="middle">from the collection</text>
+  <rect class="explore" x="395" y="243" width="155" height="52" rx="10"/>
+  <text class="t" x="472" y="266" text-anchor="middle">Explorer</text>
+  <text class="s" x="472" y="284" text-anchor="middle">the one unused longest</text>
+
+  <rect class="box" x="600" y="150" width="200" height="70" rx="10"/>
+  <text class="t" x="700" y="180" text-anchor="middle">Every answer back</text>
+  <text class="s" x="700" y="200" text-anchor="middle">labelled by model and seat</text>
+
+  <rect class="box" x="600" y="305" width="200" height="70" rx="10"/>
+  <text class="t" x="700" y="335" text-anchor="middle">You check them</text>
+  <text class="s" x="700" y="355" text-anchor="middle">and record a verdict</text>
+
+  <path class="line" d="M165 185 H203"/>
+  <path class="line" d="M345 185 C370 185 370 101 393 101"/>
+  <path class="line" d="M345 185 H393"/>
+  <path class="line" d="M345 185 C370 185 370 269 393 269"/>
+  <path class="line" d="M550 101 C575 101 575 185 598 185"/>
+  <path class="line" d="M550 185 H598"/>
+  <path class="line" d="M550 269 C575 269 575 185 598 185"/>
+  <path class="line" d="M700 220 V303"/>
+  <path class="loop" d="M600 340 H275 V222"/>
+  <text class="lab" x="438" y="360" text-anchor="middle">verdicts, probes and the suite choose the next panel</text>
+</svg>

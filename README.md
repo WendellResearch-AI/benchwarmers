@@ -1,13 +1,18 @@
+<p align="center">
+  <img src="ui/mascot.png" width="170" alt="The Benchwarmers mascot: a green parrot with a yellow face, a blue crown and a black beak, standing side-on">
+</p>
+
 <h1 align="center">Benchwarmers</h1>
 
 <p align="center">
+  <a href="https://github.com/WendellResearch-AI/benchwarmers/releases"><img src="https://img.shields.io/github/v/release/WendellResearch-AI/benchwarmers?color=990000" alt="Latest release"></a>
   <a href="https://github.com/WendellResearch-AI/benchwarmers/actions/workflows/check.yml"><img src="https://github.com/WendellResearch-AI/benchwarmers/actions/workflows/check.yml/badge.svg" alt="Checks"></a>
   <a href="#docker"><img src="https://img.shields.io/badge/Docker-compose-2496ED?logo=docker&logoColor=white" alt="Runs in Docker"></a>
   <a href="GATEWAY.md"><img src="https://img.shields.io/badge/OpenAI--compatible-gateway-111111" alt="OpenAI-compatible gateway"></a>
   <br>
-  <a href="#quick-start-from-source"><img src="https://img.shields.io/badge/Python-3.11_%7C_3.12_%7C_3.13-3776AB?logo=python&logoColor=white" alt="Python 3.11 to 3.13"></a>
-  <a href="#quick-start-from-source"><img src="https://img.shields.io/badge/core-stdlib_only-2ea44f" alt="The core needs only the Python standard library"></a>
-  <a href="#quick-start-from-source"><img src="https://img.shields.io/badge/runs_on-Windows_%7C_macOS_%7C_Linux-555555" alt="Windows, macOS and Linux"></a>
+  <a href="#try-it"><img src="https://img.shields.io/badge/Python-3.11_%7C_3.12_%7C_3.13-3776AB?logo=python&logoColor=white" alt="Python 3.11 to 3.13"></a>
+  <a href="#try-it"><img src="https://img.shields.io/badge/core-stdlib_only-2ea44f" alt="The core needs only the Python standard library"></a>
+  <a href="#try-it"><img src="https://img.shields.io/badge/runs_on-Windows_%7C_macOS_%7C_Linux-555555" alt="Windows, macOS and Linux"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license"></a>
 </p>
 
@@ -29,14 +34,36 @@ error messages, and a review suite built from real bugs.
 | Side-by-side tools | Several answers shown together | Records verdicts and uses them to pick the next panel |
 | Eval tools | Score models offline on fixed sets | Scores them on your real work and your own code |
 
-## Status
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset=".github/flow-dark.svg">
+    <img src=".github/flow.svg" width="820" alt="Your agent or app asks the gateway for a collection, such as bench/reviewers. The gateway seats a panel: the collection's members and an explorer, the model unused longest. Every answer comes back labelled by model and seat. You check them against the real work and record a verdict; verdicts, health probes and the suite choose the next panel.">
+  </picture>
+</p>
 
-**Early.** It runs from a checkout with Python 3.11 or later on Windows, macOS
-and Linux, or in Docker. An installer (`pipx install benchwarmers`) is on the
-way to v0.1. Until then, expect rough edges and read the code where this page
-is thin.
+## Contents
 
-## Quick start (from source)
+- [Try it](#try-it)
+- [How it works](#how-it-works)
+- [Asking a panel](#asking-a-panel)
+- [The suite](#the-suite)
+- [Docker](#docker)
+- [What leaves your machine](#what-leaves-your-machine)
+- [Limits](#limits)
+- [Security](#security)
+- [Development](#development)
+- [Licence](#licence)
+
+Day-to-day use (the dashboard's pages, connecting apps, onboarding in bulk) is
+in [USAGE.md](USAGE.md). A coding agent setting it up for someone should start
+with [AGENTS.md](AGENTS.md).
+
+## Try it
+
+**v0.1, early.** It runs from a checkout with Python 3.11 or later on Windows,
+macOS and Linux, or in Docker. An installer (`pipx install benchwarmers`) is
+still to come; until then, expect rough edges and read the code where these
+pages are thin.
 
 1. **Get the code** and a Python 3.11+ environment:
 
@@ -72,32 +99,57 @@ is thin.
 
        python serve.py                  # http://localhost:8122
 
-4. **Onboard a few models** from it ("Onboard a model"): each is registered,
-   probed and run through the suite.
+4. **Onboard a few models** from it ("Onboard a model"): tick one or several;
+   each is registered, probed and run through the suite, one at a time, with
+   the progress beside the button.
 
 5. **Make a collection** on the Collections page (the models a panel always
-   includes, and what it is for), then **start the gateway**:
+   includes, and what it is for). The dashboard answers the gateway's routes on
+   its own port (`http://127.0.0.1:8122/v1`); `python gateway.py` runs the
+   gateway alone on `http://127.0.0.1:8123/v1`.
 
-       python gateway.py                # http://127.0.0.1:8123/v1
+## How it works
+
+- **Collections and seats.** A collection names the models a panel always
+  includes and the shape of work it is for (review, design, enumeration...).
+  Each call adds explorer seats chosen by how long a model has gone unused, so
+  the bench keeps learning about models a router would stop asking.
+- **Verdicts.** Each seat's answer carries a call id. Once you have checked an
+  answer against the real work, record whether it was useful, and which of its
+  claims were real or false. Verdicts, not vibes, decide the next panel; a
+  model that is often confidently wrong shows as that.
+- **The catalog.** Context window, output limit, tools, vision and price come
+  from models.dev for the provider that actually serves a model, then
+  OpenRouter's public catalog and FreeLLMAPI, and anything you set by hand.
+- **Health.** Every morning each model gets a one-word prompt; once a week, a
+  short and a long one for speed. A model that stops answering, or that its
+  endpoint no longer serves, is retired automatically after one confirming
+  call, with the evidence kept, and can be restored in one click. Rate limits
+  are learned from providers' own error messages and kept per connection,
+  since models behind one key share them. The built-in scheduler runs all of
+  this once Settings switches it on; a fresh install spends no calls until then.
+- **Discover.** models.dev and FreeLLMAPI, merged into one list of models
+  worth adding, each with the routes this install has to it.
 
 ## Asking a panel
 
 Any OpenAI-compatible client works: ask for the model `bench/<collection>`.
 
-    curl http://127.0.0.1:8123/v1/chat/completions \
+    curl http://127.0.0.1:8122/v1/chat/completions \
       -H "Content-Type: application/json" \
       -d '{"model": "bench/reviewers", "messages": [{"role": "user", "content": "Where can this function return a stale value? ..."}]}'
 
 The reply carries every seat's answer in the message, and the same seats as
-data in a `bench` field: model, seat, status, seconds and a call id. Record a
-verdict per call once you have checked it:
+data in a `bench` field: model, seat, status, seconds and a call id. For a chat
+window that shows one answer, ask for `bench/<collection>:merged`: a merger
+model writes one answer saying where the seats agreed and disagreed, and every
+seat is still in `bench`. Record a verdict per call once you have checked it:
 
-    curl http://127.0.0.1:8123/bench/verdict -H "Content-Type: application/json" \
+    curl http://127.0.0.1:8122/bench/verdict -H "Content-Type: application/json" \
       -d '{"call": "<call id>", "useful": true, "note": "found the real bug", "real": ["..."], "false": ["..."]}'
 
-or from the dashboard. Explorer seats rotate by how long a model has gone
-unused, so the bench keeps learning about models a router would stop asking.
-See [GATEWAY.md](GATEWAY.md) for the full contract.
+or from the dashboard. See [GATEWAY.md](GATEWAY.md) for the full contract:
+images, prompt sizes, who may call, and the reply's shape.
 
 ## The suite
 
@@ -116,10 +168,6 @@ code makes the best tasks, because no model has trained on it. See
 [suite/README.md](suite/README.md), [suite/REBENCH.md](suite/REBENCH.md) and
 [BENCHMARKS.md](BENCHMARKS.md).
 
-## Checks
-
-    python scripts/check.py             # every self-check and test (--quick skips the slow one)
-
 ## Docker
 
 One container runs the dashboard, the gateway (on the same port, at `/v1`)
@@ -133,46 +181,65 @@ built-in client makes every call). Put the secrets in a `.env` file beside
 then `docker compose up -d` and open http://127.0.0.1:8122. The compose file
 publishes on this machine only; see its comments for a proxy.
 
+## What leaves your machine
+
+Benchwarmers has no account, no telemetry and no server of its own; nothing
+reaches Wendell Research. What it sends, and where:
+
+- **Your prompts**, only to the endpoints you add: a provider, an aggregator,
+  a hub such as Open WebUI, or a local runtime. That includes the probes, the
+  suite and onboarding, which spend calls on your keys. Add only endpoints you
+  are content to send that work to.
+- **Catalog reads**, no key and nothing of yours: models.dev and FreeLLMAPI
+  once a day, and OpenRouter's public model list.
+- **Sign-ins**, only when you choose one: the provider's own sign-in page.
+- **Charts**: the dashboard's browser page loads Observable Plot from jsDelivr
+  at a pinned version.
+- **Seeding real-bug tasks**, only when you run `suite/rebench.py`: the
+  SWE-rebench-V2 rows from Hugging Face and the files from GitHub.
+
+Keys stay in the environment or the `llm` CLI's key store, never in the data
+folder. [PRIVACY.md](PRIVACY.md) and [SECURITY.md](SECURITY.md) have the
+detail.
+
+## Limits
+
+- **Early.** v0.1: no installer yet, no streaming replies, and the LiteLLM and
+  CLI Proxy API hub adapters are built from those projects' source, not yet
+  run against a real hub.
+- **Calls cost.** Probes, onboarding and the suite run on your keys and free
+  tiers. Onboarding runs one model at a time for that reason; a suite pass is
+  paced, not burst.
+- **One install, one person** at heart. Logins and gateway keys exist for a
+  LAN or a server, but there are no per-user views or roles.
+- **The onboarding queue lives in the dashboard's memory.** Restarting it
+  drops the rest of a batch; each started model's log stays in `runs/`.
+- **Free tiers change without notice.** Discover's prices come from public
+  catalogs, and some providers' free models work only in their own app
+  (switched per provider on Settings).
+
 ## Security
 
-Both servers listen on 127.0.0.1 by default. Every request is checked for the
-server's own host name (against DNS rebinding), and every write must be a
-same-origin JSON request, so a web page in your browser cannot drive either
-server. On this machine with no admin token there is no login and the gateway
-asks for no key, as before.
+Both servers listen on 127.0.0.1 by default and accept only same-origin writes
+for their own host name, so a web page in your browser cannot drive them. To
+listen anywhere else, set `BENCHWARMERS_ADMIN_TOKEN` first; without it they
+refuse to start. With it, the dashboard asks for a login and the gateway takes
+named, revocable **gateway keys**. Settings, under Server and access, shows how
+this stands (whether a secret is set, never its value).
 
-To listen anywhere else (`BENCH_BIND`, and `BENCH_PORT` / `BENCH_GATEWAY_PORT`
-for the ports), set `BENCHWARMERS_ADMIN_TOKEN` first; without it both servers
-refuse to start. With a token:
+[SECURITY.md](SECURITY.md) has the whole model and how to report a
+vulnerability.
 
-- the dashboard asks for it once, then keeps an `HttpOnly; SameSite=Strict`
-  session cookie for a week (changing the token signs everyone out);
-- the gateway's routes (`/v1/...`, `/bench/verdict`) take a **gateway key** as
-  `Authorization: Bearer <key>`. Make named keys on Settings: each is shown
-  once, kept only as a hash, revocable, and never opens the dashboard;
-- `BENCHWARMERS_PUBLIC_URL` (e.g. `https://bench.example.com`) is the address
-  browsers use behind a proxy or on a LAN address; its host and origin are
-  accepted, and the cookie is `Secure` when it is https;
-- every request is logged to stderr: route, status, and who (a key's name or
-  admin), never a secret.
+## Development
 
-`BENCHWARMERS_REQUIRE_KEYS=1` asks for gateway keys on this machine too, with
-the dashboard left open, so each local app has its own. A key can be limited
-to some collections and to a number of requests a minute, and its name is on
-every call it makes. A browser app on another origin is let in by
-`BENCH_ALLOWED_ORIGINS` (CORS on the gateway's routes only; never `*`). The
-table is in [GATEWAY.md](GATEWAY.md), "Who may call". Images sent to the
-gateway are never written to its logs.
+    python scripts/check.py             # every self-check and test (--quick skips the slow one)
 
-Endpoint keys come from `BENCHWARMERS_KEY_<NAME>` (the key name upper-cased,
-`-` as `_`) first, then from the `llm` CLI's key store; they are never written
-to the data folder's JSON or shown back.
-
-Settings, under Server and access, shows how all of this stands right now
-(whether a secret is set, never its value); it is changed only in the
-environment, then a restart.
+The core is the Python standard library only. CI runs the checks on Linux and
+Windows for Python 3.11 to 3.13, and on macOS. [CONTRIBUTING.md](CONTRIBUTING.md)
+says how to propose a change.
 
 ## Licence
 
 MIT, Copyright (c) 2026 Wendell Research ([LICENSE](LICENSE)). The starter
 tasks and bundled fonts carry their own licences, listed in [NOTICE](NOTICE).
+Use is also covered by [TERMS.md](TERMS.md).
