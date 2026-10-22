@@ -1,8 +1,9 @@
-<p align="center">
-  <img src="ui/mascot.png" width="170" alt="The Benchwarmers mascot: a green parrot with a yellow face, a blue crown and a black beak, standing side-on">
-</p>
-
-<h1 align="center">Benchwarmers</h1>
+<h1 align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset=".github/logo-dark.svg">
+    <img src=".github/logo.svg" width="480" alt="Benchwarmers, by Wendell Research: the name sitting on a crimson team bench">
+  </picture>
+</h1>
 
 <p align="center">
   <a href="https://github.com/WendellResearch-AI/benchwarmers/releases"><img src="https://img.shields.io/github/v/release/WendellResearch-AI/benchwarmers?color=990000" alt="Latest release"></a>
@@ -16,28 +17,44 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license"></a>
 </p>
 
-<p align="center"><em>Ask the whole bench. Keep every answer. Learn who to trust.</em> By Wendell Research.</p>
+<p align="center"><strong><em>Put me in, coach.</em></strong><br>Every model on your bench gets its minutes.</p>
 
-Benchwarmers is a self-hosted **panel gateway** for LLMs. One prompt goes to a
-named collection of models plus a couple of explorer seats; every answer comes
-back, labelled by model and seat. You check the answers against the real work
-and record a verdict, and those verdicts decide who sits on the next panel.
+Benchwarmers is a self-hosted **panel gateway** for LLMs. Your app asks for one
+of your **collections**, and the whole panel answers: the models you picked
+for that kind of work, plus **explorer** seats that rotate in the models you
+have used least. Every answer comes back side by side, labelled by model and
+seat. You check them against the real work and record a verdict, and those
+verdicts decide who sits on the next panel.
 
-Around that loop: a dashboard, a catalog of model facts, health probes that
-retire models which stop answering, rate limits learned from providers' own
-error messages, and a review suite built from real bugs.
+**What it is best at:**
 
-| Neighbour | What it does | What Benchwarmers does differently |
-|---|---|---|
-| Gateways and routers | One request to one model, with fallback | Fans one prompt out to a panel and returns every answer |
-| Councils and ensembles | Several models merged into one answer | Keeps every answer, because who said what is the evidence |
-| Side-by-side tools | Several answers shown together | Records verdicts and uses them to pick the next panel |
-| Eval tools | Score models offline on fixed sets | Scores them on your real work and your own code |
+- **Asking several models at once.** One OpenAI-compatible request, a panel of
+  answers. Where they disagree is where to look.
+- **Reviewing.** Code review, claims about code, designs: different models
+  catch different things, and two models agreeing is not proof.
+- **Playing to each model's strengths.** A collection per kind of work
+  (reviewers, designers, enumerators), each with the models that do it best.
+- **Giving every model playing time.** Explorers cycle through the rest of
+  the bench, so new and free models get tried beside the ones you trust,
+  without you choosing them by hand.
+- **Benchmarking on your own projects.** A review suite seeded from your own
+  repositories, plus your verdicts on real work, instead of public leaderboards.
+- **Knowing who to bench.** Who is confidently wrong, who has stopped
+  answering (retired automatically), and who is resting after a rate limit.
+- **Keeping free and cheap models useful.** Health probes, learned rate limits
+  and one endpoint for every app, over any OpenAI-compatible provider or hub.
+
+| Related tools | Examples | What they do well | How Benchwarmers builds on it |
+|---|---|---|---|
+| Gateways and routers | LiteLLM, OpenRouter, Portkey | One OpenAI-compatible endpoint in front of many providers | The same endpoint, fanned out to a panel; LiteLLM and OpenRouter can sit behind it as a hub or an endpoint |
+| Councils and ensembles | LLM Council, Mixture-of-Agents | Several models answer one question | Several models answer and every answer is kept; `:merged` adds one summary when you want it |
+| Side-by-side chat | Open WebUI, LMArena | Answers next to each other, to compare | Side by side, then a verdict per answer that picks future panels; Open WebUI can be its hub |
+| Evaluation harnesses | promptfoo, Inspect, SWE-bench | Score models on fixed test sets | A review suite from real bugs (SWE-rebench) and your own code, scored beside your verdicts on real work |
 
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset=".github/flow-dark.svg">
-    <img src=".github/flow.svg" width="820" alt="Your agent or app asks the gateway for a collection, such as bench/reviewers. The gateway seats a panel: the collection's members and an explorer, the model unused longest. Every answer comes back labelled by model and seat. You check them against the real work and record a verdict; verdicts, health probes and the suite choose the next panel.">
+    <img src=".github/flow.svg" width="900" alt="Your app or agent asks the gateway for one of your collections. The gateway seats a panel: the collection's members, always seated, and an explorer that rotates in the model unused longest. Every answer comes back side by side, labelled by model and seat. You check them against the real work and record a verdict. Verdicts, daily health probes and the review suite make up the bench's record, which chooses who sits on the next panel.">
   </picture>
 </p>
 
@@ -137,7 +154,7 @@ Any OpenAI-compatible client works: ask for the model `bench/<collection>`.
 
     curl http://127.0.0.1:8122/v1/chat/completions \
       -H "Content-Type: application/json" \
-      -d '{"model": "bench/reviewers", "messages": [{"role": "user", "content": "Where can this function return a stale value? ..."}]}'
+      -d '{"model": "bench/<collection>", "messages": [{"role": "user", "content": "Where can this function return a stale value? ..."}]}'
 
 The reply carries every seat's answer in the message, and the same seats as
 data in a `bench` field: model, seat, status, seconds and a call id. For a chat
@@ -235,8 +252,10 @@ vulnerability.
     python scripts/check.py             # every self-check and test (--quick skips the slow one)
 
 The core is the Python standard library only. CI runs the checks on Linux and
-Windows for Python 3.11 to 3.13, and on macOS. [CONTRIBUTING.md](CONTRIBUTING.md)
-says how to propose a change.
+Windows for Python 3.11 to 3.13, and on macOS.
+
+Benchwarmers isn't taking outside contributions yet; that opens once it is
+more established. A security problem goes through [SECURITY.md](SECURITY.md).
 
 ## Licence
 

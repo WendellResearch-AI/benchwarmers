@@ -89,7 +89,7 @@ from openai import OpenAI
 
 bench = OpenAI(base_url="http://127.0.0.1:8122/v1", api_key="local")
 reply = bench.chat.completions.create(
-    model="bench/reviewers",
+    model="bench/<collection>",
     messages=[{"role": "user", "content": "Where can this function return a stale value? ..."}],
 )
 print(reply.choices[0].message.content)   # every seat's answer, labelled

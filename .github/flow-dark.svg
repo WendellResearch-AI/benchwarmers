@@ -1,57 +1,69 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 60 820 330" width="820" height="330" role="img" aria-labelledby="t d">
-  <title id="t">How a Benchwarmers panel works</title>
-  <desc id="d">Your agent or app asks the gateway for a collection. The gateway seats the collection's members and an explorer, the model unused longest. Every answer comes back labelled by model and seat. You check them against the real work and record a verdict. Verdicts, health probes and the suite choose the next panel.</desc>
-  <style>
-    text { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; fill: #e8ebe6; }
-    .t { font-size: 15px; font-weight: 700; }
-    .s { font-size: 12.5px; fill: #bcc3b9; }
-    .box { fill: #232724; stroke: #e8ebe6; stroke-width: 1.5; }
-    .gate { fill: #232724; stroke: #e0705a; stroke-width: 2.5; }
-    .seat { fill: #232724; stroke: #74c75e; stroke-width: 1.5; }
-    .explore { fill: #232724; stroke: #e0c050; stroke-width: 1.5; stroke-dasharray: 5 4; }
-    .line { fill: none; stroke: #e8ebe6; stroke-width: 1.5; marker-end: url(#a); }
-    .loop { fill: none; stroke: #e0705a; stroke-width: 1.5; marker-end: url(#b); }
-    .lab { font-size: 12.5px; fill: #e0705a; font-weight: 600; }
-  </style>
-  <defs>
-    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#e8ebe6"/></marker>
-    <marker id="b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#e0705a"/></marker>
-  </defs>
-
-  <rect class="box" x="20" y="150" width="145" height="70" rx="10"/>
-  <text class="t" x="92" y="180" text-anchor="middle">Your agent or app</text>
-  <text class="s" x="92" y="200" text-anchor="middle">asks bench/reviewers</text>
-
-  <rect class="gate" x="205" y="150" width="140" height="70" rx="10"/>
-  <text class="t" x="275" y="180" text-anchor="middle">Gateway</text>
-  <text class="s" x="275" y="200" text-anchor="middle">seats a panel</text>
-
-  <rect class="seat" x="395" y="75" width="155" height="52" rx="10"/>
-  <text class="t" x="472" y="98" text-anchor="middle">Member</text>
-  <text class="s" x="472" y="116" text-anchor="middle">from the collection</text>
-  <rect class="seat" x="395" y="159" width="155" height="52" rx="10"/>
-  <text class="t" x="472" y="182" text-anchor="middle">Member</text>
-  <text class="s" x="472" y="200" text-anchor="middle">from the collection</text>
-  <rect class="explore" x="395" y="243" width="155" height="52" rx="10"/>
-  <text class="t" x="472" y="266" text-anchor="middle">Explorer</text>
-  <text class="s" x="472" y="284" text-anchor="middle">the one unused longest</text>
-
-  <rect class="box" x="600" y="150" width="200" height="70" rx="10"/>
-  <text class="t" x="700" y="180" text-anchor="middle">Every answer back</text>
-  <text class="s" x="700" y="200" text-anchor="middle">labelled by model and seat</text>
-
-  <rect class="box" x="600" y="305" width="200" height="70" rx="10"/>
-  <text class="t" x="700" y="335" text-anchor="middle">You check them</text>
-  <text class="s" x="700" y="355" text-anchor="middle">and record a verdict</text>
-
-  <path class="line" d="M165 185 H203"/>
-  <path class="line" d="M345 185 C370 185 370 101 393 101"/>
-  <path class="line" d="M345 185 H393"/>
-  <path class="line" d="M345 185 C370 185 370 269 393 269"/>
-  <path class="line" d="M550 101 C575 101 575 185 598 185"/>
-  <path class="line" d="M550 185 H598"/>
-  <path class="line" d="M550 269 C575 269 575 185 598 185"/>
-  <path class="line" d="M700 220 V303"/>
-  <path class="loop" d="M600 340 H275 V222"/>
-  <text class="lab" x="438" y="360" text-anchor="middle">verdicts, probes and the suite choose the next panel</text>
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="464" viewBox="0 0 960 464" role="img" aria-labelledby="flow-dark-title flow-dark-desc">
+<title id="flow-dark-title">How a Benchwarmers panel works</title>
+<desc id="flow-dark-desc">Your app or agent asks the gateway for one of your collections. The gateway seats a panel: the collection's members, always seated, and an explorer that rotates in the model unused longest. Every seat answers the same prompt and every answer comes back side by side, labelled by model and seat. You check them against the real work and record a verdict. Verdicts, daily health probes and the review suite make up the bench's record, which chooses who sits on the next panel.</desc>
+<defs>
+<marker id="flow-dark-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#9da7b3"/></marker>
+<marker id="flow-dark-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#ff7b72"/></marker>
+</defs>
+<rect width="960" height="464" rx="8" fill="#0d1117"/>
+<path d="M208 220 H254" fill="none" stroke="#9da7b3" stroke-width="1.6" marker-end="url(#flow-dark-arrow)"/>
+<path d="M416 192 H432 Q440 192 440 184 V112 Q440 104 448 104 H462" fill="none" stroke="#9da7b3" stroke-width="1.6" marker-end="url(#flow-dark-arrow)"/>
+<path d="M416 220 H462" fill="none" stroke="#9da7b3" stroke-width="1.6" marker-end="url(#flow-dark-arrow)"/>
+<path d="M416 248 H432 Q440 248 440 256 V328 Q440 336 448 336 H462" fill="none" stroke="#9da7b3" stroke-width="1.6" marker-end="url(#flow-dark-arrow)"/>
+<path d="M640 104 H656 Q664 104 664 112 V176 Q664 184 672 184 H686" fill="none" stroke="#9da7b3" stroke-width="1.6" marker-end="url(#flow-dark-arrow)"/>
+<path d="M640 220 H686" fill="none" stroke="#9da7b3" stroke-width="1.6" marker-end="url(#flow-dark-arrow)"/>
+<path d="M640 336 H656 Q664 336 664 328 V264 Q664 256 672 256 H686" fill="none" stroke="#9da7b3" stroke-width="1.6" marker-end="url(#flow-dark-arrow)"/>
+<path d="M808 292 V326" fill="none" stroke="#9da7b3" stroke-width="1.6" marker-end="url(#flow-dark-arrow)"/>
+<path d="M688 400 H410" fill="none" stroke="#9da7b3" stroke-width="1.6" marker-end="url(#flow-dark-arrow)"/>
+<path d="M336 360 V278" fill="none" stroke="#ff7b72" stroke-width="1.6" marker-end="url(#flow-dark-arrow-accent)"/>
+<rect x="32" y="160" width="176" height="120" rx="6" fill="#0d1117"/>
+<rect x="32" y="160" width="176" height="120" rx="6" fill="#9da7b3" fill-opacity="0.12" stroke="#8b949e" stroke-width="1.6"/>
+<rect x="256" y="164" width="160" height="112" rx="6" fill="#0d1117"/>
+<rect x="256" y="164" width="160" height="112" rx="6" fill="#161b22" stroke="#f0f6fc" stroke-width="1.6"/>
+<rect x="464" y="64" width="176" height="80" rx="6" fill="#0d1117"/>
+<rect x="464" y="64" width="176" height="80" rx="6" fill="#161b22" stroke="#f0f6fc" stroke-width="1.6"/>
+<rect x="464" y="180" width="176" height="80" rx="6" fill="#0d1117"/>
+<rect x="464" y="180" width="176" height="80" rx="6" fill="#161b22" stroke="#f0f6fc" stroke-width="1.6"/>
+<rect x="464" y="296" width="176" height="80" rx="6" fill="#0d1117"/>
+<rect x="464" y="296" width="176" height="80" rx="6" fill="#ff7b72" fill-opacity="0.14" stroke="#ff7b72" stroke-width="1.6" stroke-dasharray="5 4"/>
+<rect x="688" y="148" width="240" height="144" rx="6" fill="#0d1117"/>
+<rect x="688" y="148" width="240" height="144" rx="6" fill="#161b22" stroke="#f0f6fc" stroke-width="1.6"/>
+<rect x="688" y="328" width="240" height="104" rx="6" fill="#0d1117"/>
+<rect x="688" y="328" width="240" height="104" rx="6" fill="#161b22" stroke="#f0f6fc" stroke-width="1.6"/>
+<rect x="32" y="360" width="376" height="80" rx="6" fill="#0d1117"/>
+<rect x="32" y="360" width="376" height="80" rx="6" fill="#f0f6fc" fill-opacity="0.05" stroke="#9da7b3" stroke-width="1.6"/>
+<rect x="516" y="380" width="64" height="12" rx="2" fill="#0d1117"/>
+<text x="548" y="389" font-family="ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace" font-size="8" fill="#8b949e" letter-spacing="0.14em" text-anchor="middle">VERDICT</text>
+<rect x="344" y="316" width="92" height="12" rx="2" fill="#0d1117"/>
+<text x="348" y="325" font-family="ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace" font-size="8" fill="#ff7b72" letter-spacing="0.14em" text-anchor="start">CHOOSES SEATS</text>
+<text x="120" y="188" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="16" font-weight="600" fill="#f0f6fc" text-anchor="middle">Your app or agent</text>
+<text x="120" y="212" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="middle">any OpenAI-compatible</text>
+<text x="120" y="228" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="middle">client asks for</text>
+<text x="120" y="252" font-family="ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace" font-size="12" fill="#f0f6fc" text-anchor="middle">bench/&lt;collection&gt;</text>
+<text x="336" y="196" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="16" font-weight="600" fill="#f0f6fc" text-anchor="middle">Gateway</text>
+<text x="336" y="220" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="middle">reads the collection</text>
+<text x="336" y="236" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="middle">and seats a panel</text>
+<text x="552" y="92" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="16" font-weight="600" fill="#f0f6fc" text-anchor="middle">Member</text>
+<text x="552" y="112" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="middle">in the collection,</text>
+<text x="552" y="128" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="middle">always seated</text>
+<text x="552" y="208" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="16" font-weight="600" fill="#f0f6fc" text-anchor="middle">Member</text>
+<text x="552" y="228" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="middle">another of its</text>
+<text x="552" y="244" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="middle">chosen models</text>
+<text x="552" y="324" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="16" font-weight="600" fill="#f0f6fc" text-anchor="middle">Explorer</text>
+<text x="552" y="344" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="middle">rotates in the model</text>
+<text x="552" y="360" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="middle">unused longest</text>
+<text x="808" y="176" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="16" font-weight="600" fill="#f0f6fc" text-anchor="middle">Every answer back</text>
+<text x="808" y="200" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="middle">side by side, each labelled</text>
+<text x="808" y="216" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="middle">with its model and seat</text>
+<line x1="704" y1="232" x2="912" y2="232" stroke="#9da7b3" stroke-opacity="0.40" stroke-width="0.8"/>
+<text x="808" y="256" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="600" fill="#f0f6fc" text-anchor="middle">nothing merged away</text>
+<text x="808" y="276" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="middle">or ask :merged for one summary</text>
+<text x="808" y="356" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="16" font-weight="600" fill="#f0f6fc" text-anchor="middle">You check them</text>
+<text x="808" y="380" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="middle">against the real work, then</text>
+<text x="808" y="396" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="middle">record a verdict per call:</text>
+<text x="808" y="416" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="600" fill="#f0f6fc" text-anchor="middle">useful? real or false?</text>
+<text x="220" y="388" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="16" font-weight="600" fill="#f0f6fc" text-anchor="middle">The bench's record</text>
+<text x="220" y="412" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="middle">verdicts, daily health probes, the review suite</text>
+<text x="220" y="428" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="middle">choose who sits on the next panel</text>
 </svg>

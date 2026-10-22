@@ -102,7 +102,7 @@ shape of work it is for (review, design, ...). Then:
 Any OpenAI-compatible client asks for the model `bench/<collection>`:
 
     curl http://127.0.0.1:8123/v1/chat/completions -H "Content-Type: application/json" \
-      -d '{"model": "bench/reviewers", "messages": [{"role": "user", "content": "..."}]}'
+      -d '{"model": "bench/<collection>", "messages": [{"role": "user", "content": "..."}]}'
 
 Every seat's answer comes back, plus a `bench` field with each seat's call id.
 For a chat window that shows one answer, ask for `bench/<collection>:merged`
