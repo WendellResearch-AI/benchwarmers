@@ -59,7 +59,12 @@ def main() -> int:
     shutil.copy(DATA / "config" / "endpoints.json", cfg / "endpoints.json")
     serve.endpoints.FILE = cfg / "endpoints.json"
     serve.endpoints.YAML = serve.YAML_PATH
+    # Collections: removing a model takes it out of them, and Restore puts it back.
+    serve.bench_collections.FILE = cfg / "collections.json"
+    serve.bench_collections.SETTINGS_FILE = cfg / "gateway.json"
     real = {p: p.read_bytes() for p in (DATA / "metrics" / "alerts.json", DATA / "config" / "endpoints.json")}
+    real_collections = (DATA / "config" / "collections.json").read_bytes() \
+        if (DATA / "config" / "collections.json").exists() else None
 
     d = serve.model_directory()
     some = sorted(d)[0]
@@ -130,6 +135,13 @@ def main() -> int:
         r = serve.remove_model("no-such" if "unknown" in label else victim, **kw)
         ok = not r["ok"] and not r["changed"]
         print(("ok   " if ok else "FAIL ") + label); failures += 0 if ok else 1
+    # In three collections: a member of two, the merger of one; a fourth without it.
+    colls = {"with-it": {"members": [other, victim], "merger": victim, "reply": "merged"},
+             "member": {"members": [victim, other], "merger": ""},
+             "doomed": {"members": [victim], "merger": ""},
+             "without": {"members": [other], "merger": other}}
+    (cfg / "collections.json").write_text(json.dumps(colls), encoding="utf-8")
+    logged = len(serve.CHANGES_PATH.read_text(encoding="utf-8").splitlines())
     before = len(serve.registered())
     r = serve.remove_model(victim, victim, "retired by provider on 2026-09-15")
     d3 = serve.model_directory()
@@ -142,8 +154,30 @@ def main() -> int:
           and served not in serve.registered())
     print(("ok   " if ok else "FAIL ") + f"removed {victim}; registry {before} -> {len(serve.registered())}")
     failures += 0 if ok else 1
+    after = json.loads((cfg / "collections.json").read_text(encoding="utf-8"))
+    log = [json.loads(x) for x in serve.CHANGES_PATH.read_text(encoding="utf-8").splitlines()[logged:]]
+    ok = (after == {"with-it": {"members": [other], "merger": "", "reply": "merged"},
+                    "member": {"members": [other], "merger": ""},
+                    "doomed": {"members": [], "merger": ""},
+                    "without": colls["without"]}
+          and retired[victim]["collections"] == {"with-it": ["members", "merger"], "member": ["members"],
+                                                 "doomed": ["members"]}
+          and "config/collections.json" in r["changed"]
+          and sorted(e["field"] for e in log if e["field"].startswith("collection "))
+          == ["collection doomed", "collection member", "collection with-it"])
+    print(("ok   " if ok else "FAIL ") + "removed from its collections, recorded and logged"
+          + ("" if ok else f" -> {after} {retired[victim]} {r['changed']} {log}")); failures += 0 if ok else 1
     expect_refused("retired name never reused", alias=other, new_alias=victim, new_role=None)
-    # restore: same alias back, out of retired.json, role and ad hoc kept
+    # The collection dialog's member search matches the served name too, so the view carries it.
+    view = serve.collections_view()
+    ok = (set(view["served"]) == set(view["models"]) and victim not in view["served"]
+          and view["served"].get(other) == d3[other]["served"])
+    print(("ok   " if ok else "FAIL ") + "collection view: served name for every member choice"); failures += 0 if ok else 1
+    # restore: same alias back, out of retired.json, role and ad hoc kept, and
+    # back into the collections that still exist (one deleted, one changed since)
+    serve.delete_collection("doomed")
+    serve.bench_collections.FILE.write_text(json.dumps({**json.loads(serve.bench_collections.FILE.read_text(
+        encoding="utf-8")), "member": {"members": [other, "someone-new"], "merger": ""}}), encoding="utf-8")
     r = serve.restore_model(victim)
     retired = json.loads((cfg / "retired.json").read_text(encoding="utf-8"))
     roles = json.loads((cfg / "model-roles.json").read_text(encoding="utf-8"))
@@ -151,6 +185,22 @@ def main() -> int:
           and roles["models"].get(victim) == new_role and victim in roles["ad_hoc"])
     print(("ok   " if ok else "FAIL ") + f"restored {victim}" + ("" if ok else f" -> {r}"))
     failures += 0 if ok else 1
+    back = json.loads((cfg / "collections.json").read_text(encoding="utf-8"))
+    ok = (back == {"with-it": {"members": [other, victim], "merger": victim, "reply": "merged"},
+                   "member": {"members": [other, "someone-new", victim], "merger": ""},
+                   "without": colls["without"]}
+          and "config/collections.json" in r["changed"])
+    print(("ok   " if ok else "FAIL ") + "restored into the collections that still exist"
+          + ("" if ok else f" -> {back} {r['changed']}")); failures += 0 if ok else 1
+    # One that was in no collection: collections.json untouched and not reported.
+    (cfg / "collections.json").write_text(json.dumps({"without": colls["without"]}), encoding="utf-8")
+    r = serve.remove_model(victim, victim, "retired for the no-collection check")
+    ok = (r["ok"] and "config/collections.json" not in r["changed"]
+          and "collections" not in json.loads((cfg / "retired.json").read_text(encoding="utf-8"))[victim])
+    r2 = serve.restore_model(victim)
+    ok = ok and r2["ok"] and "config/collections.json" not in r2["changed"]
+    print(("ok   " if ok else "FAIL ") + "in no collection: collections.json not touched"
+          + ("" if ok else f" -> {r} {r2}")); failures += 0 if ok else 1
     ok = not serve.restore_model(victim)["ok"]
     print(("ok   " if ok else "FAIL ") + "restore refused when not retired"); failures += 0 if ok else 1
     serve.remove_model(victim, victim, "retired again for the onboarding checks")
@@ -374,8 +424,10 @@ def main() -> int:
     real_alerts = DATA / "metrics" / "alerts.json"
     victim_keys = {k for k in json.loads(real[real_alerts] or b"{}") if k.endswith(f":{served}")}
     ok = (real[DATA / "config" / "endpoints.json"] == (DATA / "config" / "endpoints.json").read_bytes()
-          and victim_keys <= set(json.loads(real_alerts.read_bytes() or b"{}")))
-    print(("ok   " if ok else "FAIL ") + "the real alerts and endpoints were not touched")
+          and victim_keys <= set(json.loads(real_alerts.read_bytes() or b"{}"))
+          and real_collections == ((DATA / "config" / "collections.json").read_bytes()
+                                   if (DATA / "config" / "collections.json").exists() else None))
+    print(("ok   " if ok else "FAIL ") + "the real alerts, endpoints and collections were not touched")
     failures += 0 if ok else 1
     shutil.rmtree(tmp, ignore_errors=True)
     print("\nall rules hold" if not failures else f"\n{failures} FAILED")

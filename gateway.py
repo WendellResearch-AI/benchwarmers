@@ -34,6 +34,11 @@ takes choice questions is onboarded (not ad hoc); otherwise, or on any doubt,
 the shape is `general`. A request body may add `"with": ["<alias>"]` to seat a
 model in an explorer chair, as `route.py --with` does.
 
+A retired model (`config/retired.json`) is never called: retiring takes it out
+of every collection, and one a collection still names — as a member, `with`
+or its merger — is skipped and named in `bench.skipped`, its seat going to an
+explorer and the merge to a merger chosen by verdicts.
+
 THE LOOP
 --------
 Every seat is recorded in `metrics/offloads.jsonl` as an unjudged offload the
@@ -263,6 +268,24 @@ def pick_shape(prompt: str) -> tuple[str, str]:
     return answer["choice"], f"{picker}, {conf:.2f}"
 
 
+def retired() -> dict[str, dict]:
+    """config/retired.json: alias -> its record (when, why). Retiring a model
+    takes it out of every collection (serve.remove_model); this is for a
+    collection that still names one -- a hand edit, or one saved before that
+    -- so the seat is skipped with a reason instead of failing on the call."""
+    try:
+        data = json.loads((DATA / "config" / "retired.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def retired_why(entry: dict) -> str:
+    when = str(entry.get("at", ""))[:10] if isinstance(entry, dict) else ""
+    return (f"retired from the bench{' on ' + when if when else ''}; take it out of the collection"
+            " (Restore in its model popup brings it back)")
+
+
 def retiring() -> set[str]:
     """Aliases not to spend an explorer seat on: those on a retiring alert
     (failing their probes; 2026-10-16 both explorers of a bench/core call were
@@ -428,14 +451,30 @@ def run_collection(name: str, messages: list[dict], nominated: list[str] | None 
     s = bench_collections.settings()
     raw = collection.get("members") or []
     # The editor dedupes and caps; a hand-edited file may not have.
-    members = list(dict.fromkeys(m for m in raw if isinstance(m, str) and m))[:s["max_calls"]]
-    n_explorers = bench_collections.explorers_for(len(members), s)
+    members = list(dict.fromkeys(m for m in raw if isinstance(m, str) and m))
+    # A RETIRED MODEL IS NOT CALLED: it is no longer registered, so the call
+    # could only fail ("Unknown model"). Skipped, and named, before the cap so
+    # it frees its seat for the next member or an explorer. Retiring takes it
+    # out of the collection, so this is a collection that still names one.
+    gone = retired()
+    skipped = [{"seat": "member", "alias": a, "why": retired_why(gone[a])} for a in members if a in gone]
+    members = [a for a in members if a not in gone][:s["max_calls"]]
     # A member named in `with` is already seated; it must not use up the slot.
     nominated = [a for a in dict.fromkeys(nominated or []) if a not in members]
+    skipped += [{"seat": "with", "alias": a, "why": retired_why(gone[a])} for a in nominated
+                if a in gone and a not in {k["alias"] for k in skipped}]
+    nominated = [a for a in nominated if a not in gone]
+    merged = (reply or collection.get("reply") or "all") == "merged"
+    if collection.get("merger") in gone:
+        if merged:
+            skipped.append({"seat": "merger", "alias": collection["merger"],
+                            "why": retired_why(gone[collection["merger"]]) + "; the merger is chosen by verdicts"})
+        collection = {**collection, "merger": ""}
+    n_explorers = bench_collections.explorers_for(len(members), s)
     # AN IMAGE GOES ONLY TO A MODEL THAT CAN SEE IT: one that cannot would
     # answer anyway, about a picture it never got. Skipped, and named.
-    skipped = [{"seat": seat, "alias": a, "why": why} for seat, group in (("member", members), ("with", nominated))
-               for a in group if pictures and (why := cannot_see(a))]
+    skipped += [{"seat": seat, "alias": a, "why": why} for seat, group in (("member", members), ("with", nominated))
+                for a in group if pictures and (why := cannot_see(a))]
     unseen = {k["alias"] for k in skipped}
     sitting = [a for a in members if a not in unseen]
     nominated = [a for a in nominated if a not in unseen]
@@ -477,7 +516,8 @@ def run_collection(name: str, messages: list[dict], nominated: list[str] | None 
                          + ", and no model that takes images was free for an explorer seat. Add one to the"
                          " collection, or call one whose together.capabilities on GET /v1/models lists vision.")
     if not seats:
-        raise LookupError(f"collection {name!r} has no members and no explorer could be seated")
+        raise LookupError(f"collection {name!r} has no members and no explorer could be seated"
+                          + "".join(f"; {k['alias']} not asked: {k['why']}" for k in skipped))
     panel_id = f"p{dt.datetime.now():%Y%m%d-%H%M%S}-{secrets.token_hex(2)}"
     model = bench_collections.PREFIX + name
     with ThreadPoolExecutor(max_workers=len(seats)) as pool:
@@ -491,8 +531,7 @@ def run_collection(name: str, messages: list[dict], nominated: list[str] | None 
     out = [f"Bench {model} {panel_id} · {len(sitting)} members + {len(seats) - len(sitting)}"
            f" explorers · explorer shape {shape} ({how})\n"]
     if skipped:
-        out.append("Not asked, as they cannot be sent the images: "
-                   + "; ".join(f"{k['alias']} ({k['why']})" for k in skipped) + "\n")
+        out.append("Not asked: " + "; ".join(f"{k['alias']} ({k['why']})" for k in skipped) + "\n")
     for (key, label, alias), r in zip(seats, results):
         call = f"{panel_id}.{key}"
         record["seats"].append(record_seat(task, call, label, alias, r))
@@ -511,7 +550,7 @@ def run_collection(name: str, messages: list[dict], nominated: list[str] | None 
              # proxy the caller came through (the dashboard serves these routes too).
              "verdict": 'POST /bench/verdict {"call", "useful": true|false, "note", "real": [...], "false": [...]}',
              **({"skipped": skipped} if skipped else {})}
-    if (reply or collection.get("reply") or "all") == "merged":
+    if merged:
         try:
             merger, note = merge(collection, members, shape, whole, record["seats"], task, panel_id)
         except Exception as exc:                       # noqa: BLE001 -- never lose the panel to the merge

@@ -181,6 +181,27 @@ def main() -> int:
         assert serve.save_collection("chat", ["m1"], "", "", [], "merged", "mg")["ok"]
         saved = json.loads((TMP / "config" / "collections.json").read_text(encoding="utf-8"))["chat"]
         assert (saved["reply"], saved["merger"]) == ("merged", "mg"), saved
+
+        # 9. A retired model a collection still names (member, `with`, merger) is
+        # not called: skipped with why, and the merge goes to a merger chosen by verdicts.
+        write("retired.json", {"gone": {"served": "gone", "at": "2026-10-20T05:00:00+02:00", "why": "withdrawn"}})
+        collection(members=["m1", "gone"], merger="gone")
+        ASKED.clear()
+        r, b, content = ask("bench/core:merged", **{"with": ["gone"]})
+        assert [s["alias"] for s in b["seats"]] == ["m1"] and not any(q["model"] == "gone" for q in ASKED), b
+        assert {(k["seat"], k["alias"]) for k in b["skipped"]} == {("member", "gone"), ("merger", "gone")}, b
+        assert all("retired from the bench on 2026-10-20" in k["why"] for k in b["skipped"]), b["skipped"]
+        assert b["reply"] == "merged" and b["merger"]["alias"] != "gone", b
+        # Asked for every answer, the reply says who was not asked; `with` a retired model is skipped too.
+        collection(members=["m1"])
+        r, b, content = ask("bench/core", **{"with": ["gone"]})
+        assert b["skipped"] == [{"seat": "with", "alias": "gone", "why": b["skipped"][0]["why"]}], b
+        assert "Not asked: gone (retired from the bench" in content and not any(q["model"] == "gone" for q in ASKED)
+        # Skipped before the max_calls cap (2 here), so the member after it still sits.
+        collection(members=["gone", "m1", "m2"])
+        r, b, content = ask("bench/core")
+        assert [s["alias"] for s in b["seats"]] == ["m1", "m2"] and [k["alias"] for k in b["skipped"]] == ["gone"], b
+        (TMP / "config" / "retired.json").unlink()
     finally:
         upstream.shutdown()
         gw.shutdown()
