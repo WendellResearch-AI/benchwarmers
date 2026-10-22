@@ -3280,8 +3280,8 @@ def editor() -> str:
         "<div id='o-queue' hidden><p class='served' id='o-queue-sum'></p><ul class='oq-list' id='o-queue-list'></ul></div>"
         "<div class='errors' id='o-errors' role='alert'></div>"
         "<div class='actions'><button class='btn' id='o-close'>Close</button>"
-        "<button class='btn' id='o-dismiss' disabled>Dismiss</button>"
-        "<button class='btn primary' id='o-start' disabled>Onboard</button></div>"
+        "<button class='btn' id='o-dismiss' disabled>Dismiss model</button>"
+        "<button class='btn primary' id='o-start' disabled>Onboard model</button></div>"
         "</dialog>"
         # Add an endpoint (Manage's button), or a row's Change key: the key form alone.
         "<dialog id='endpoint-dialog' aria-labelledby='e-title'>"

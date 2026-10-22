@@ -308,10 +308,15 @@
     m.save.disabled = true; m.save.textContent = 'Saving…'; m.errors.textContent = '';
     post('/api/model', body).then(after(m.errors, m.save, 'Save')).catch(function (err) { m.errors.textContent = String(err); m.save.disabled = false; m.save.textContent = 'Save'; });
   });
+  // The confirm is the last word: the popup closes at once and the page
+  // reloads when the retirement is done. A refusal reopens it with the reason.
   m.remove.addEventListener('click', function () {
     if (!editing || !confirm('Retire ' + editing + '? The registry entry goes; the evidence stays, and Restore brings it back.')) return;
-    m.remove.disabled = true;
-    post('/api/remove', {alias: editing, typed: m.typed.value, reason: m.reason.value}).then(after(m.errors, null)).catch(function (err) { m.errors.textContent = String(err); armRemove(); });
+    m.remove.disabled = true; m.errors.textContent = ''; md.close();
+    function refused(errors) { md.showModal(); listErrors(m.errors, errors); armRemove(); }
+    post('/api/remove', {alias: editing, typed: m.typed.value, reason: m.reason.value}).then(function (res) {
+      if (res.ok) location.reload(); else refused(res.errors);
+    }).catch(function (err) { refused([String(err)]); });
   });
   m.restore.addEventListener('click', function () {
     m.restore.disabled = true; m.restore.textContent = 'Restoring…';
@@ -367,8 +372,8 @@
   function armStart() {
     var n = Object.keys(chosen).length;
     o.start.disabled = o.dismiss.disabled = !n;
-    o.start.textContent = n > 1 ? 'Onboard ' + n + ' models' : 'Onboard';
-    o.dismiss.textContent = n > 1 ? 'Dismiss ' + n : 'Dismiss';
+    o.start.textContent = n > 1 ? 'Onboard ' + n + ' models' : 'Onboard model';
+    o.dismiss.textContent = n > 1 ? 'Dismiss ' + n + ' models' : 'Dismiss model';
   }
   // Rows move between the lists here rather than by asking every endpoint again.
   function moveRows(keys, from, to) {
