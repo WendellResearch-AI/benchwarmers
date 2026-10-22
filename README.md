@@ -44,12 +44,12 @@ verdicts decide who sits on the next panel.
 - **Keeping free and cheap models useful.** Health probes, learned rate limits
   and one endpoint for every app, over any OpenAI-compatible provider or hub.
 
-| Related tools | Examples | What they do well | How Benchwarmers builds on it |
+| Related tools | Examples | What they do | What Benchwarmers does differently |
 |---|---|---|---|
-| Gateways and routers | LiteLLM, OpenRouter, Portkey | One OpenAI-compatible endpoint in front of many providers | The same endpoint, fanned out to a panel; LiteLLM and OpenRouter can sit behind it as a hub or an endpoint |
-| Councils and ensembles | LLM Council, Mixture-of-Agents | Several models answer one question | Several models answer and every answer is kept; `:merged` adds one summary when you want it |
-| Side-by-side chat | Open WebUI, LMArena | Answers next to each other, to compare | Side by side, then a verdict per answer that picks future panels; Open WebUI can be its hub |
-| Evaluation harnesses | promptfoo, Inspect, SWE-bench | Score models on fixed test sets | A review suite from real bugs (SWE-rebench) and your own code, scored beside your verdicts on real work |
+| Gateways and routers | LiteLLM, OpenRouter, Portkey | One request to one model, with fallback | Fans one prompt out to a panel and returns every answer |
+| Councils and ensembles | LLM Council, Mixture-of-Agents | Several models merged into one answer | Keeps every answer, because who said what is the evidence; one merged summary only if you ask |
+| Side-by-side chat | Open WebUI, LMArena | Several answers shown together | Records a verdict per answer and uses them to pick the next panel |
+| Evaluation harnesses | promptfoo, Inspect, SWE-bench | Score models offline on fixed test sets | Scores them on your real work and your own code, and keeps rotating new models in |
 
 <p align="center">
   <picture>

@@ -287,9 +287,17 @@ def main() -> None:
         print("  [5/5] suite skipped by request")
     else:
         print("  [5/5] running the internal suite...")
-        suite = run("suite/run.py", "--model", alias, "--timeout", "300",
-                    timeout=3600)
-        for line in suite.stdout.splitlines():
+        try:
+            suite = run("suite/run.py", "--model", alias, "--timeout", "300",
+                        timeout=3600)
+        except subprocess.TimeoutExpired:
+            # A slow model can need more than the hour for 52 tasks. Crashing
+            # here lost the onboarding note of a model that is on the bench
+            # and answering (step-5-preview, 2026-10-22); the answers saved so
+            # far stay, and the scheduled passes (--next) ask only its gaps.
+            suite = None
+            print("        stopped after an hour; the scheduled suite passes fill in the rest")
+        for line in (suite.stdout if suite else "").splitlines():
             if alias in line or line.startswith("## "):
                 print(f"        {line.strip()[:110]}")
 
