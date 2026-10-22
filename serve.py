@@ -1436,11 +1436,18 @@ _OQ: dict = {"items": [], "stop": False, "worker": None}
 
 def onboard_queue() -> dict:
     """The batch: each model's state (queued, running, done, no answer,
-    failed, skipped) and whether it is still running."""
+    failed, skipped) and whether it is still running. The running model also
+    has `step`, the last of onboard.py's five steps its log has reached (0
+    before the first), so the header can fill by fifths of a model."""
     with _OQ_LOCK:
         running = _OQ["worker"] is not None
-        return {"ok": True, "errors": [], "running": running, "stopping": running and _OQ["stop"],
-                "items": [dict(i) for i in _OQ["items"]]}
+        out = {"ok": True, "errors": [], "running": running, "stopping": running and _OQ["stop"],
+               "items": [dict(i) for i in _OQ["items"]]}
+    for i in out["items"]:
+        if i["state"] == "running":
+            text = read(DATA / "runs" / i["log"]) if i["log"] else ""
+            i["step"] = max((int(s) for s in re.findall(r"\[([1-5])/5\]", text)), default=0)
+    return out
 
 
 def queue_onboard(items, who: str = "ui") -> dict:

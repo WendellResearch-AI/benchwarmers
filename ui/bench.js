@@ -546,15 +546,18 @@
     oq.box.hidden = !n; batchRunning = !!q.running;
     var now = q.items.filter(function (i) { return i.state === 'running'; })[0];
     var finished = n - oqCount(q, 'queued') - (now ? 1 : 0);
-    // The chip fills as models finish; at the end it is green when every one
-    // is on the bench, red (with one shake) when any failed or did not answer.
-    oq.chip.style.setProperty('--fill', (n ? Math.round(100 * finished / n) : 0) + '%');
+    // The chip fills as models finish, and by fifths of the running one as its
+    // log reaches each of onboard.py's five steps (serve.onboard_queue `step`).
+    // At the end it is green when every one is on the bench, red (with one
+    // shake) when any failed or did not answer.
+    var step = now && now.step ? now.step : 0;
+    oq.chip.style.setProperty('--fill', (n ? Math.round(100 * (finished + step / 5) / n) : 0) + '%');
     var bad = oqCount(q, 'failed') + oqCount(q, 'no answer');
     oq.chip.classList.toggle('done', !q.running && n > 0 && oqCount(q, 'done') === n);
     oq.chip.classList.toggle('fail', !q.running && bad > 0);
     if (q.running) {
-      oq.text.textContent = (q.stopping ? 'Stopping after ' : 'Onboarding ' + (finished + 1) + ' of ' + n + ': ')
-        + (now ? now.served : '…');
+      oq.text.textContent = (q.stopping ? 'Stopping after ' : 'Onboarding ' + (finished + 1) + ' of ' + n
+        + (step ? ', step ' + step + '/5' : '') + ': ') + (now ? now.served : '…');
     } else {
       oq.text.textContent = 'Onboarded ' + oqCount(q, 'done') + ' of ' + n
         + [['failed', 'failed'], ['no answer', 'did not answer'], ['skipped', 'skipped']].map(function (s) {

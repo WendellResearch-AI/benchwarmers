@@ -280,7 +280,8 @@ def main() -> int:
     hold = threading.Event()
     runs = tmp / "runs"
     runs.mkdir(exist_ok=True)
-    outcome = {"a": (0, ""), "ok": (0, ""), "quiet": (0, "  STOPPING: it answered nothing.\n"),
+    outcome = {"a": (0, "  [1/5] served\n  [3/5] synced\n"), "ok": (0, ""),
+               "quiet": (0, "  STOPPING: it answered nothing.\n"),
                "bad": (1, "bad is not served.\n")}
     order = []
 
@@ -318,6 +319,13 @@ def main() -> int:
         stopping = stop["stopping"] and [i["state"] for i in stop["items"]] == ["running", "skipped"]
         busy_clear = serve.clear_onboard_queue()["ok"]
         after_stop = serve.queue_onboard([{"served": "quiet", "endpoint": "e"}])["ok"]   # picked after Stop: runs
+        step = None                                      # the running model's step, from its log
+        for _ in range(200):
+            run = [i for i in serve.onboard_queue()["items"] if i["state"] == "running"]
+            if run and run[0].get("step"):
+                step = run[0]["step"]
+                break
+            time.sleep(0.05)
         hold.set()
         settle()
         stopped = {i["served"]: i["state"] for i in serve.onboard_queue()["items"]}
@@ -331,7 +339,7 @@ def main() -> int:
     finally:
         hold.set()
         serve._spawn_onboard, serve._onboard_refusal, serve.DATA = kept
-    ok = (first["ok"] and not twice and stopping and not busy_clear and after_stop
+    ok = (first["ok"] and not twice and stopping and not busy_clear and after_stop and step == 3
           and stopped == {"a": "done", "ok": "skipped", "quiet": "no answer"} and order == ["a", "ok", "quiet", "bad"]
           and batch == {"ok": ("done", "ok-x", False), "quiet": ("no answer", "quiet-x", True),
                         "bad": ("failed", "bad-x", True)}
