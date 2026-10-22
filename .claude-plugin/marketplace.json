@@ -1,0 +1,12 @@
+{
+  "name": "benchwarmers",
+  "owner": { "name": "Wendell Research" },
+  "description": "Benchwarmers for Claude Code: ask a collection of models from a running Benchwarmers server, and send verdicts back.",
+  "plugins": [
+    {
+      "name": "benchwarmers",
+      "source": "./plugin",
+      "description": "Ask a Benchwarmers collection for a second, third and fourth opinion; every seat named, a verdict per seat."
+    }
+  ]
+}

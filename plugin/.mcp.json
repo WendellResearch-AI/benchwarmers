@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "benchwarmers": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/mcp.js"],
+      "env": {
+        "BENCHWARMERS_URL": "${BENCHWARMERS_URL:-http://127.0.0.1:8122}",
+        "BENCHWARMERS_KEY": "${BENCHWARMERS_KEY:-}"
+      }
+    }
+  }
+}

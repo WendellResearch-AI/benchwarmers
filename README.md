@@ -64,6 +64,7 @@ verdicts decide who sits on the next panel.
 - [Try it](#try-it)
 - [How it works](#how-it-works)
 - [Asking a panel](#asking-a-panel)
+- [From Claude Code and other agents](#from-claude-code-and-other-agents)
 - [The suite](#the-suite)
 - [Docker](#docker)
 - [What leaves your machine](#what-leaves-your-machine)
@@ -178,6 +179,44 @@ seat is still in `bench`. Record a verdict per call once you have checked it:
 
 or from the dashboard. See [GATEWAY.md](GATEWAY.md) for the full contract:
 images, prompt sizes, who may call, and the reply's shape.
+
+## From Claude Code and other agents
+
+`benchwarmers mcp` is an MCP server on stdio with three tools:
+`list_collections`, `ask` (a collection, a prompt, optionally `merged`,
+`with` and `system`) and `verdict`. It is a client of a Benchwarmers that is
+already running, over the routes above, so start the dashboard (or the
+service) first. The tool descriptions carry the rules: ask a collection, not
+a favourite model; verify before acting; name every seat; send a verdict per
+seat you judged.
+
+**Claude Code plugin.** The plugin adds the MCP server, a `/benchwarmers:ask
+<collection> <what to ask>` command and a `benchwarmers` skill saying when a
+panel helps (adversarial review, exhaustive enumeration over real files) and
+how to judge it:
+
+    /plugin marketplace add WendellResearch-AI/benchwarmers
+    /plugin install benchwarmers@benchwarmers
+
+It needs Node 18 or later and Python 3.11 or later on PATH.
+
+**Any other MCP client** (or Claude Code without the plugin): run
+`npx -y @wendellresearch-ai/benchwarmers mcp`, or `python mcp_server.py` from a
+checkout. For example:
+
+```json
+{"mcpServers": {"benchwarmers": {"command": "npx", "args": ["-y", "@wendellresearch-ai/benchwarmers", "mcp"],
+                                 "env": {"BENCHWARMERS_URL": "http://127.0.0.1:8122"}}}}
+```
+
+On native Windows, a client that cannot start `npx` itself needs
+`"command": "cmd", "args": ["/c", "npx", "-y", "@wendellresearch-ai/benchwarmers", "mcp"]`.
+
+| Variable | Meaning |
+| --- | --- |
+| `BENCHWARMERS_URL` | the server, default `http://127.0.0.1:8122` (a `/v1` on the end is fine) |
+| `BENCHWARMERS_KEY` | a gateway key from Settings, sent as `Authorization: Bearer`; needed for a server on another machine, or where keys are required |
+| `BENCHWARMERS_TIMEOUT` | seconds to wait for a panel, default 900 |
 
 ## The suite
 

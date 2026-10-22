@@ -104,6 +104,14 @@ Images go in as OpenAI `image_url` parts; only models that take images sit,
 and the rest are listed in `bench.skipped`. [GATEWAY.md](GATEWAY.md) has the
 limits and the reply's full shape.
 
+**A coding agent** connects over MCP instead: the Claude Code plugin
+(`/plugin marketplace add WendellResearch-AI/benchwarmers`, then
+`/plugin install benchwarmers@benchwarmers`), or `benchwarmers mcp` in any MCP
+client, with `BENCHWARMERS_URL` and, where keys are required, a gateway key in
+`BENCHWARMERS_KEY`. Its `ask` tool returns every seat with its call id and its
+`verdict` tool records the verdicts; README, "From Claude Code and other
+agents", has the set-up.
+
 ## Recording verdicts
 
 A panel's answers are worth something only once someone has checked them
