@@ -122,9 +122,12 @@
   applyPaid();
 
   // ---- fresh results: offered, never forced ----------------------------
-  var fresh = $('fresh');
+  // Not while an onboarding batch runs: each model's probe writes results, so
+  // it would be offered after every model. The first poll after the batch
+  // ends offers it once.
+  var fresh = $('fresh'), batchRunning = false;
   setInterval(function () {
-    if (document.hidden || !fresh.hidden) return;
+    if (document.hidden || !fresh.hidden || batchRunning) return;
     fetch('/api/stamp').then(function (r) { return r.json(); }).then(function (s) {
       if (s.stamp > D.stamp + 0.5) fresh.hidden = false;
     }).catch(function () {});
@@ -351,16 +354,26 @@
   var od = $('onboard-dialog');
   var o = {find: $('o-find'), picker: $('o-picker'), errors: $('o-errors'), start: $('o-start'),
            close: $('o-close'), choose: $('o-choose'), run: $('o-run'), steps: $('o-steps'),
-           log: $('o-log'), title: $('o-title'), result: $('o-result')};
+           log: $('o-log'), title: $('o-title'), result: $('o-result'), dismiss: $('o-dismiss')};
   var STEPS = ['Served by the endpoint','Registered', 'Synced to the llm CLI', 'Availability probe, 4 calls', 'Internal suite'];
   var timer = null, data = null;
   // What is ticked, by the candidate's key (served@endpoint): kept while the
   // search redraws the list, so you can search, tick, search again, tick.
   var chosen = {};
+  // Folded groups, per browser: openrouter (direct) alone is hundreds of rows.
+  var NEW = 'New since the daily check', folded = {};
+  try { (JSON.parse(store('bench.picker.folded') || '[]') || []).forEach(function (g) { folded[g] = 1; }); } catch (e) { folded = {}; }
 
   function armStart() {
     var n = Object.keys(chosen).length;
-    o.start.disabled = !n; o.start.textContent = n > 1 ? 'Onboard ' + n + ' models' : 'Onboard';
+    o.start.disabled = o.dismiss.disabled = !n;
+    o.start.textContent = n > 1 ? 'Onboard ' + n + ' models' : 'Onboard';
+    o.dismiss.textContent = n > 1 ? 'Dismiss ' + n : 'Dismiss';
+  }
+  // Rows move between the lists here rather than by asking every endpoint again.
+  function moveRows(keys, from, to) {
+    data[from] = data[from].filter(function (c) { if (keys.indexOf(c.key) === -1) return true; data[to].push(c); return false; });
+    data[to].sort(function (a, b) { return a.served < b.served ? -1 : a.served > b.served ? 1 : 0; });
   }
   function pickRow(c, dismissed) {
     var row = el('label', {class: 'pick'});
@@ -371,14 +384,18 @@
     var name = el('span', {class: 'alias'}, c.served);
     row.appendChild(name);
     var side = el('span');
-    if (c.new) side.appendChild(el('span', {class: 'chip new'}, 'new'));
-    var b = el('button', {type: 'button', class: 'linkish', style: 'margin-left:.6rem'}, dismissed ? 'Bring back' : 'Dismiss');
-    b.addEventListener('click', function (e) {
-      e.preventDefault();
-      delete chosen[c.key];
-      post('/api/dismiss', {served: c.key, undo: dismissed}).then(loadCandidates);
-    });
-    side.appendChild(b);
+    if (c.new && !dismissed) side.appendChild(el('span', {class: 'muted'}, c.group));   // under New: where it comes from
+    if (dismissed) {
+      var b = el('button', {type: 'button', class: 'linkish', style: 'margin-left:.6rem'}, 'Bring back');
+      b.addEventListener('click', function (e) {
+        e.preventDefault();
+        post('/api/dismiss', {served: c.key, undo: true}).then(function (res) {
+          if (!res.ok) { listErrors(o.errors, res.errors); return; }
+          moveRows([c.key], 'dismissed', 'candidates'); renderPicker();
+        });
+      });
+      side.appendChild(b);
+    }
     row.appendChild(side);
     box.addEventListener('change', function () {
       if (box.checked) chosen[c.key] = {served: c.served, endpoint: c.endpoint};
@@ -396,13 +413,25 @@
       // The endpoint too: "Onboard a model from it" filters on it, and the default
       // endpoint's models are grouped by connection, not by its name.
       if (q && [c.served, c.group, c.endpoint].every(function (s) { return s.toLowerCase().indexOf(q) === -1; })) return;
-      (groups[c.group] = groups[c.group] || []).push(c);
+      // New ones in a group of their own, first: just added to the hub is what
+      // you came to onboard, and it is there without scrolling or unfolding.
+      var g = c.new ? NEW : c.group;
+      (groups[g] = groups[g] || []).push(c);
     });
-    var names = Object.keys(groups).sort();
+    var names = Object.keys(groups).sort(function (a, b) { return (b === NEW) - (a === NEW) || (a < b ? -1 : a > b ? 1 : 0); });
     if (!names.length) o.picker.appendChild(el('p', {class: 'empty'}, data.candidates.length ? 'Nothing matches.' : 'Everything the endpoints serve is already on the bench, retired or dismissed.'));
     names.forEach(function (g) {
-      o.picker.appendChild(el('h3', {}, g + ' · ' + groups[g].length));
-      groups[g].forEach(function (c) { o.picker.appendChild(pickRow(c, false)); });
+      // Folds, remembered per browser; a search opens every group it matches in.
+      var d = el('details', {class: 'grp'});
+      d.open = !!q || !folded[g];
+      d.appendChild(el('summary', {}, g + ' · ' + groups[g].length));
+      groups[g].forEach(function (c) { d.appendChild(pickRow(c, false)); });
+      d.addEventListener('toggle', function () {
+        if (q) return;                                   // opened by the search, not by you
+        if (d.open) delete folded[g]; else folded[g] = 1;
+        store('bench.picker.folded', JSON.stringify(Object.keys(folded)));
+      });
+      o.picker.appendChild(d);
     });
     if (data.dismissed.length) {
       var d = el('details'); d.appendChild(el('summary', {}, data.dismissed.length + ' dismissed'));
@@ -412,7 +441,7 @@
   }
   function loadCandidates() {
     o.picker.textContent = ''; o.picker.appendChild(el('p', {class: 'empty'}, 'Asking the endpoints what they serve…'));
-    o.start.disabled = true;
+    o.start.disabled = o.dismiss.disabled = true;
     o.find.readOnly = true;   // typing before the list arrives is lost, or lands on a row
     fetch('/api/candidates').then(function (r) { return r.json(); }).then(function (res) {
       o.find.readOnly = false; o.find.focus();
@@ -429,7 +458,7 @@
   $('onboard-open').addEventListener('click', function () {
     o.errors.textContent = ''; o.find.value = ''; o.choose.hidden = false; o.run.hidden = true;
     $('o-queue').hidden = true; chosen = {}; waitToken++;
-    o.start.hidden = false; o.start.textContent = 'Onboard'; o.title.textContent = 'Onboard a model';
+    o.start.hidden = o.dismiss.hidden = false; armStart(); o.title.textContent = 'Onboard a model';
     od.showModal(); o.find.focus(); loadCandidates();
   });
   o.find.addEventListener('input', renderPicker);
@@ -458,19 +487,29 @@
     });
   }
   // Everything ticked goes to the queue (serve.queue_onboard), which runs one
-  // model at a time. One model with nothing ahead of it is followed here step
-  // by step, as before; otherwise this shows the queue.
+  // model at a time. The popup closes: the header's chip shows the batch, and
+  // its Details the queue. Refused, it stays open with the reasons.
   o.start.addEventListener('click', function () {
     var items = Object.keys(chosen).map(function (k) { return chosen[k]; });
     if (!items.length) return;
-    o.errors.textContent = ''; o.start.disabled = true; o.start.textContent = 'Starting…';
+    o.errors.textContent = ''; o.start.disabled = o.dismiss.disabled = true; o.start.textContent = 'Starting…';
     post('/api/onboard-queue', {items: items}).then(function (res) {
       if (!res.ok) { listErrors(o.errors, res.errors); armStart(); return; }
-      afterQueued(res, items.length === 1 ? items[0] : null, '');
+      od.close(); oqPoll();
     }).catch(function (err) { o.errors.textContent = String(err); armStart(); });
   });
-  // After anything is queued (the picker, Discover's Add): one model with
-  // nothing ahead of it is followed step by step, otherwise the queue shows.
+  // Every ticked model at once (serve.dismiss); the dismissed list brings one back.
+  o.dismiss.addEventListener('click', function () {
+    var keys = Object.keys(chosen);
+    if (!keys.length) return;
+    o.errors.textContent = ''; o.start.disabled = o.dismiss.disabled = true;
+    post('/api/dismiss', {served: keys}).then(function (res) {
+      if (!res.ok) { listErrors(o.errors, res.errors); armStart(); return; }
+      moveRows(keys, 'candidates', 'dismissed'); chosen = {}; renderPicker(); armStart();
+    }).catch(function (err) { o.errors.textContent = String(err); armStart(); });
+  });
+  // After Discover's Add queues a model: with nothing ahead of it, it is
+  // followed step by step, otherwise the queue shows.
   var waitToken = 0;
   function afterQueued(res, one, title, before) {
     oqPoll();
@@ -504,7 +543,7 @@
   function oqCount(q, state) { return q.items.filter(function (i) { return i.state === state; }).length; }
   function oqRender(q) {
     var n = q.items.length;
-    oq.box.hidden = !n;
+    oq.box.hidden = !n; batchRunning = !!q.running;
     var now = q.items.filter(function (i) { return i.state === 'running'; })[0];
     var finished = n - oqCount(q, 'queued') - (now ? 1 : 0);
     // The chip fills as models finish; at the end it is green when every one
@@ -556,7 +595,7 @@
   function showQueue(q) {
     if (timer) { clearInterval(timer); timer = null; }   // a model followed step by step: the queue view replaces it
     waitToken++;
-    o.errors.textContent = ''; o.choose.hidden = true; o.run.hidden = true; o.start.hidden = true;
+    o.errors.textContent = ''; o.choose.hidden = true; o.run.hidden = true; o.start.hidden = o.dismiss.hidden = true;
     oq.view.hidden = false; o.title.textContent = 'Onboarding queue';
     if (!od.open) od.showModal();
     oqLast = ''; oqRender(q);
@@ -674,7 +713,7 @@
   });
   $('d-close').addEventListener('click', function () { dd.close(); });
   function follow(log, title, before) {
-    o.choose.hidden = true; o.run.hidden = false; o.start.hidden = true; $('o-queue').hidden = true;
+    o.choose.hidden = true; o.run.hidden = false; o.start.hidden = o.dismiss.hidden = true; $('o-queue').hidden = true;
     o.title.textContent = title; o.result.className = 'served';
     o.result.textContent = before + 'Running in the background; closing this does not stop it. Log: runs/' + log;
     renderSteps('', false, null);

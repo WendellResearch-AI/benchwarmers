@@ -339,6 +339,23 @@ def main() -> int:
     print(("ok   " if ok else "FAIL ") + "onboarding queue" + ("" if ok else f" -> {stopped} {order} {batch}"))
     failures += 0 if ok else 1
 
+    # Dismiss: one picker key or many in one write, a change-log line each;
+    # undo brings back only the ones named; nothing named is refused.
+    serve.DISMISSED_PATH = cfg / "dismissed.json"
+    seen = len(serve.CHANGES_PATH.read_text(encoding="utf-8").splitlines())
+    many, one = serve.dismiss(["vendor/a", "vendor/b@openrouter"]), serve.dismiss("vendor/c")
+    gone = set(json.loads(serve.DISMISSED_PATH.read_text(encoding="utf-8")))
+    back = serve.dismiss(["vendor/a", "vendor/c"], undo=True)
+    left = set(json.loads(serve.DISMISSED_PATH.read_text(encoding="utf-8")))
+    log = [(e["field"], e["new"]) for e in map(json.loads, serve.CHANGES_PATH.read_text(encoding="utf-8").splitlines()[seen:])]
+    refused = tuple(serve.dismiss(x)["ok"] for x in ([], "  ", None, [3]))
+    ok = (many["ok"] and one["ok"] and back["ok"] and gone == {"vendor/a", "vendor/b@openrouter", "vendor/c"}
+          and left == {"vendor/b@openrouter"} and refused == (False, False, False, False)
+          and log == [("dismissed", "vendor/a"), ("dismissed", "vendor/b@openrouter"), ("dismissed", "vendor/c"),
+                      ("undismissed", "vendor/a"), ("undismissed", "vendor/c")])
+    print(("ok   " if ok else "FAIL ") + "dismiss in bulk, and undo" + ("" if ok else f" -> {gone} {left} {log} {refused}"))
+    failures += 0 if ok else 1
+
     # The owner's files are as they were. alerts.json can change under a
     # running suite, so only what this test could do counts: the victim's
     # alerts cleared from the real file.

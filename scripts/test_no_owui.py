@@ -234,6 +234,26 @@ def owner(fake: str) -> None:
     c = serve.onboard_candidates()
     groups = {x["served"]: (x["group"], x["new"]) for x in c["candidates"]}
     assert groups["fresh-2"] == ("groq", True) and groups["vendor/y"] == ("openrouter (direct)", False), groups
+    assert "never-read" not in json.dumps(c), c
+    # Added to Open WebUI after provider_tags.py ran: named live from its urlIdx,
+    # not "unknown connection"; the tags file answers when the connections
+    # cannot be read (a key that is not an admin's), and the rest still list.
+    OWUI_MODELS.append({"id": "just-added", "urlIdx": 1})
+    real_names = provider_tags.connection_names
+    try:
+        live = {x["served"]: x["group"] for x in serve.onboard_candidates()["candidates"]}
+
+        def refused(hub):
+            raise OSError("401")
+        provider_tags.connection_names = refused
+        c = serve.onboard_candidates()
+    finally:
+        provider_tags.connection_names = real_names
+        OWUI_MODELS.pop()
+    fallback = {x["served"]: x["group"] for x in c["candidates"]}
+    assert live["just-added"] == "llm7-api" and live["fresh-2"] == "groq", live
+    assert c["ok"] and not c["errors"] and fallback["just-added"] == "unknown connection", c
+    assert fallback["fresh-2"] == "groq" and fallback["vendor/y"] == "openrouter (direct)", fallback
 
     # Auto-retire: a prefix added in Open WebUI is a rename, said in Open WebUI's words.
     models = {"fast-1": "fast-1", "codestral": "codestral", "x-free": "vendor/x:free@openrouter"}

@@ -701,6 +701,12 @@ def onboard_candidates() -> dict:
     so one being down only empties its own group. The live calls this page
     makes happen only when the picker opens: a dashboard that needs the
     network to render would be down exactly when you want to look at it.
+
+    An Open WebUI model's group is its connection, named live from its
+    `urlIdx` the way provider_tags.py names them (base URLs only, never the
+    keys): provider-tags.json is written by that script on its schedule, so a
+    model added to Open WebUI since was "unknown connection" until it ran.
+    The file is the fallback when the hub's connections cannot be read.
     """
     names = list(endpoints.load())
     if not names:
@@ -718,12 +724,20 @@ def onboard_candidates() -> dict:
 
     def ask(name: str):
         try:
-            return endpoints.models(name)
+            live = endpoints.models(name)
         except Exception as exc:                       # noqa: BLE001
-            return exc
+            return exc, []
+        conns = []
+        if endpoints.hub(name) == "openwebui":
+            import provider_tags
+            try:
+                conns = provider_tags.connection_names(name)
+            except Exception:                          # noqa: BLE001 -- the tags file answers instead
+                pass
+        return live, conns
     with ThreadPoolExecutor(max_workers=len(names)) as pool:   # all at once, not in turn
         answers = dict(zip(names, pool.map(ask, names)))
-    for name, live in answers.items():
+    for name, (live, conns) in answers.items():
         if isinstance(live, Exception):
             errors.append(f"cannot reach {name}: {live}")
             continue
@@ -734,9 +748,15 @@ def onboard_candidates() -> dict:
                 continue
             # On Open WebUI the group is the connection behind it; any other
             # endpoint is its own group.
-            group = (tags.get(served, "").strip("?").split("/")[0] or (
-                "local" if entry.get("connection_type") == "local" else "unknown connection")
-            ) if owui else f"{name} (direct)"
+            at = entry.get("urlIdx")
+            if not owui:
+                group = f"{name} (direct)"
+            elif entry.get("connection_type") == "local":
+                group = "local"
+            elif isinstance(at, int) and 0 <= at < len(conns):
+                group = conns[at]
+            else:
+                group = tags.get(served, "").strip("?").split("/")[0] or "unknown connection"
             # New since the daily check, where it records the whole list; on an
             # aggregator that records only registered models, everything would be.
             row = {"served": served, "endpoint": name, "key": key, "group": group,
@@ -747,19 +767,25 @@ def onboard_candidates() -> dict:
     return {"ok": True, "errors": errors, "candidates": open_, "dismissed": gone}
 
 
-def dismiss(served: str, undo: bool = False, who: str = "ui") -> dict:
-    """Stop offering a served model in the picker (image models, arena, …)."""
-    served = (served or "").strip()
-    if not served:
+def dismiss(served, undo: bool = False, who: str = "ui") -> dict:
+    """Stop offering served models in the picker (image models, arena, …), or
+    bring them back. `served` is one picker key (served@endpoint) or a list of
+    them, the picker's ticked rows: one locked write, a change-log line each."""
+    keys = [served] if isinstance(served, str) else served if isinstance(served, list) else []
+    keys = [k.strip() for k in keys if isinstance(k, str) and k.strip()]
+    if not keys:
         return {"ok": False, "errors": ["which model?"]}
-    data = load_json(DISMISSED_PATH)
     stamp = datetime.datetime.now().astimezone().isoformat(timespec="seconds")
-    if undo:
-        data.pop(served, None)
-    else:
-        data[served] = {"at": stamp, "by": who}
-    _write_atomic(DISMISSED_PATH, _dump(data))
-    _log_change(stamp, who, "", "undismissed" if undo else "dismissed", None, served)
+
+    def change(data: dict) -> None:
+        for k in keys:
+            if undo:
+                data.pop(k, None)
+            else:
+                data[k] = {"at": stamp, "by": who}
+    locked.update(DISMISSED_PATH, change, ensure_ascii=False)
+    for k in keys:
+        _log_change(stamp, who, "", "undismissed" if undo else "dismissed", None, k)
     return {"ok": True, "errors": []}
 
 
@@ -3247,6 +3273,7 @@ def editor() -> str:
         "<div id='o-queue' hidden><p class='served' id='o-queue-sum'></p><ul class='oq-list' id='o-queue-list'></ul></div>"
         "<div class='errors' id='o-errors' role='alert'></div>"
         "<div class='actions'><button class='btn' id='o-close'>Close</button>"
+        "<button class='btn' id='o-dismiss' disabled>Dismiss</button>"
         "<button class='btn primary' id='o-start' disabled>Onboard</button></div>"
         "</dialog>"
         # Add an endpoint (Manage's button), or a row's Change key: the key form alone.
@@ -3483,8 +3510,7 @@ class Handler(gateway.Handler):
                "/api/onboard-queue": lambda p: queue_onboard(p.get("items")),
                "/api/onboard-queue/stop": lambda p: stop_onboard_queue(),
                "/api/onboard-queue/clear": lambda p: clear_onboard_queue(),
-               "/api/dismiss": lambda p: dismiss(str(p.get("served", "")),
-                                                 bool(p.get("undo"))),
+               "/api/dismiss": lambda p: dismiss(p.get("served"), bool(p.get("undo"))),
                "/api/endpoint": lambda p: save_endpoint(str(p.get("name", "")),
                                                         str(p.get("base", "")),
                                                         str(p.get("key", "")), new=bool(p.get("new")),
