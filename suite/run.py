@@ -497,6 +497,10 @@ PAYWALLED = (
     "unavailable for free",
     "use this slug instead",
     "the paid version is available",
+    # OpenRouter's 404 when a launch-only `:free` ends (minimax-m3.1-flash-free,
+    # 2026-10-22): "The free launch period ... ended ... variant has been retired".
+    "free launch period",
+    "variant has been retired",
 )
 CAPACITY = (
     "rate limit",

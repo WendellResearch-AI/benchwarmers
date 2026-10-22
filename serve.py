@@ -13,7 +13,7 @@ It writes three kinds of thing, each behind a popup and each logged to
 the bench itself — a role the config defines; an alias in the standing form,
 unused, never a retired name — written atomically, the rename recorded in
 `config/alias-history.json`, the `llm` registry re-synced. A model's REMOVAL
-(same popup, typed back to confirm, reason required): deregistered, taken
+(same popup, confirmed, reason optional): deregistered, taken
 out of every collection, and recorded in `config/retired.json`; no evidence
 is deleted. And ONBOARDING
 (header button): `scripts/onboard.py` started in the background with its log
@@ -564,7 +564,7 @@ def _sync_cli() -> str:
             f" {(result.stderr or result.stdout).strip()[:300]} — run it by hand")
 
 
-def remove_model(alias: str, typed: str, reason: str, who: str = "ui") -> dict:
+def remove_model(alias: str, reason: str = "", who: str = "ui") -> dict:
     """Retire a model from the bench by hand.
 
     The daily check (`scripts/check_deprecations.py`, via `auto_retire.py`)
@@ -578,15 +578,10 @@ def remove_model(alias: str, typed: str, reason: str, who: str = "ui") -> dict:
     perf history and run notes stay exactly as they are.
     """
     directory = model_directory()
-    errors = []
     if alias not in directory:
         return {"ok": False, "errors": [f"{alias!r} is not a registered alias"], "changed": [], "sync": ""}
-    if (typed or "").strip() != alias:
-        errors.append("type the alias exactly to confirm removal")
-    if len((reason or "").strip()) < 5:
-        errors.append("give a reason (it is recorded)")
-    if errors:
-        return {"ok": False, "errors": errors, "changed": [], "sync": ""}
+    # The page's confirm popup is the safeguard; a reason is recorded when given.
+    reason = (reason or "").strip() or "retired by hand"
 
     served = directory[alias]["served"]
     stamp = datetime.datetime.now().astimezone().isoformat(timespec="seconds")
@@ -1003,7 +998,7 @@ def remove_endpoint(name: str, who: str = "ui", with_models: bool = False) -> di
     if errors:
         return {"ok": False, "errors": errors}
     for i, alias in enumerate(on_it):
-        r = remove_model(alias, alias, f"its endpoint {name} was removed", who)
+        r = remove_model(alias, f"its endpoint {name} was removed", who)
         if not r["ok"]:
             # Stop with the endpoint still there: the rest stay registered on it.
             return {"ok": False, "errors": [f"stopped at {alias} after retiring {i} of {len(on_it)};"
@@ -1494,7 +1489,8 @@ def _spawn_onboard(served: str, endpoint: str = "", who: str = "ui") -> tuple[di
     # child is not tied to this server's terminal.
     proc = subprocess.Popen(cmd, cwd=str(ROOT), creationflags=flags, stdin=subprocess.DEVNULL,
                             stdout=out, stderr=subprocess.STDOUT, start_new_session=os.name != "nt",
-                            env={**os.environ, "PYTHONUNBUFFERED": "1", "PYTHONIOENCODING": "utf-8"})
+                            env={**os.environ, "PYTHONUNBUFFERED": "1", "PYTHONIOENCODING": "utf-8",
+                                 "BENCH_ONBOARD_LOG": log.name})     # named in onboard-issues.json
 
     def sentinel() -> None:
         # The process outlives this request and nothing else reports its exit.
@@ -1598,6 +1594,10 @@ def _onboard_outcome(code: int, text: str) -> tuple[str, str]:
     body = text.rsplit("__ONBOARD_EXIT__", 1)[0].strip()
     at = body.find("STOPPING")                     # why it stopped, else the last lines it printed
     why = body[at:].splitlines()[:2] if at != -1 else body.splitlines()[-3:]
+    # The probe's own reason (onboard.py prints "tiny: capacity — ...") says more than STOPPING.
+    reason = re.search(r"^\s+(?:tiny|large): (.+)$", body, re.M)
+    if code == 0 and reason:
+        why = [reason.group(1)]
     return ("no answer" if code == 0 else "failed"), " ".join(x.strip() for x in why)[:300]
 
 
@@ -1732,6 +1732,25 @@ def model_status() -> dict[str, tuple[str, str, str]]:
             cls = row.get("failure") or ("timeout" if int(row.get("timeout") or 0) else "other")
             label, css, reading = STATUS.get(cls, STATUS["other"])
             out[alias] = (label, css, row.get("detail") or reading)
+    return out
+
+
+ONBOARD_ISSUES_PATH = DATA / "metrics" / "onboard-issues.json"
+
+
+def onboard_issues(status: dict | None = None) -> dict[str, dict]:
+    """alias -> how its onboarding stopped (scripts/onboard.py writes these:
+    at, step, failure, detail, log), for each model still registered that has
+    not answered a probe since. One that answers later drops out by itself;
+    the file keeps the record."""
+    status = status if status is not None else model_status()
+    names = set(registered().values())
+    out = {}
+    for alias, issue in load_json(ONBOARD_ISSUES_PATH).items():
+        alias = current_alias(alias)                 # renamed since: it follows
+        if alias in names and status.get(alias, ("", "", ""))[1] != "ok" and isinstance(issue, dict):
+            label, css, reading = STATUS.get(issue.get("failure") or "other", STATUS["other"])
+            out[alias] = {**issue, "label": label, "css": css, "reading": reading}
     return out
 
 
@@ -1922,6 +1941,7 @@ def roster() -> str:
             if r["prompt"] == "tiny" and int(r.get("answered") or 0) > 0}
     status = model_status()
     new = recently_onboarded()
+    stuck = onboard_issues(status)
     directory = model_directory()
     severity = {"err": 0, "warn": 1, "": 2, "ok": 3}
 
@@ -1966,6 +1986,10 @@ def roster() -> str:
             f"{tr(alias, attrs)}<td>{named(alias)}</td>"
             f"<td data-sort='{severity[css]}'>{chip(label, css, why)}"
             + (" " + chip("new", "new", "onboarded this week") if alias in new else "")
+            + (" " + chip("onboard stopped", stuck[alias]["css"],
+                          f"onboarding stopped at the {stuck[alias].get('step', 'probe')}:"
+                          f" {stuck[alias]['label']}. Open the model for the error.")
+               if alias in stuck else "")
             + f"</td><td>{esc(role)}</td>{facts_cells(alias, f)}"
             f"<td class='num'>{w.get('offloads', 0)}</td>"
             f"<td data-sort='{rate:.3f}'>{helped}</td>{suite_cell}"
@@ -3282,7 +3306,7 @@ def directory_json() -> str:
     facts = {a: catalog.info(a) for a, d in directory.items() if d.get("kind") != "decision"}
     options = {a: o for a, o in load_json(OPTIONS_PATH).items() if a in facts and isinstance(o, dict)}
     return json.dumps({"models": directory, "facts": facts, "options": options, "roles": model_roles.load()["roles"],
-                       "retired": retired(), "stamp": data_stamp()},
+                       "retired": retired(), "onboard": onboard_issues(), "stamp": data_stamp()},
                       ensure_ascii=False).replace("</", "<\\/")
 
 
@@ -3291,6 +3315,7 @@ def editor() -> str:
         "<dialog id='model-dialog' aria-labelledby='m-title'>"
         "<h2 id='m-title'></h2><p class='served' id='m-served'></p>"
         "<div class='note' id='m-gone' hidden></div>"
+        "<div class='note' id='m-onboard' hidden></div>"
         "<div id='m-editor'>"
         "<label class='field' for='m-alias'>Alias</label><input id='m-alias' spellcheck='false'>"
         "<p class='rules' id='m-alias-why'>The name <code>llm -m</code> takes and every record is"
@@ -3359,12 +3384,15 @@ def editor() -> str:
         " and clears its problems. Deletes no evidence, and Restore brings it back, into the"
         " collections that still exist. The daily check also retires models on its own when they are"
         " clearly gone.</p>"
-        "<label class='field' for='m-reason'>Why</label>"
+        "<label class='field' for='m-reason'>Why <span class='muted'>(optional, recorded)</span></label>"
         "<input id='m-reason' placeholder='e.g. free tier withdrawn 2026-10-15'>"
-        "<label class='field' for='m-typed'>Type the alias to confirm</label>"
-        "<input id='m-typed' spellcheck='false' autocomplete='off'>"
-        "<div class='actions'><button class='btn danger' id='m-remove' disabled>Retire</button></div>"
+        "<div class='actions'><button class='btn danger' id='m-remove'>Retire</button></div>"
         "</details></dialog>"
+        # The page's own confirm (bench.js ask): window.confirm can be blocked.
+        "<dialog id='ask-dialog' aria-labelledby='ask-text'>"
+        "<p id='ask-text' style='white-space:pre-line'></p>"
+        "<div class='actions'><button class='btn' id='ask-no' type='button'>Cancel</button>"
+        "<button class='btn primary' id='ask-yes' type='button'>OK</button></div></dialog>"
         # onboarding
         "<dialog id='onboard-dialog' aria-labelledby='o-title'>"
         "<h2 id='o-title'>Onboard a model</h2>"
@@ -3607,8 +3635,7 @@ class Handler(gateway.Handler):
                                                     p.get("new_alias"), p.get("new_role"),
                                                     new_ad_hoc=p.get("new_ad_hoc"),
                                                     new_question_types=p.get("new_question_types")),
-               "/api/remove": lambda p: remove_model(str(p.get("alias", "")),
-                                                     str(p.get("typed", "")), str(p.get("reason", ""))),
+               "/api/remove": lambda p: remove_model(str(p.get("alias", "")), str(p.get("reason", ""))),
                "/api/restore": lambda p: restore_model(str(p.get("alias", ""))),
                "/api/retry": lambda p: retry_model(str(p.get("alias") or "")),
                "/api/discover/add": lambda p: discover_add(str(p.get("connection") or ""),

@@ -37,8 +37,10 @@ work there is a decision with a person in it.
 from __future__ import annotations
 
 import argparse
+import csv
 import datetime as dt
 import json
+import os
 import pathlib
 import re
 import subprocess
@@ -148,6 +150,26 @@ def probe_answered(stdout: str, alias: str) -> bool:
     rows = (re.search(r"\b(\d+)a/\d+r/", line) for line in stdout.splitlines()
             if line.split()[:1] == [alias])
     return any(m and int(m.group(1)) > 0 for m in rows)
+
+
+ISSUES = DATA / "metrics" / "onboard-issues.json"     # serve.onboard_issues reads it
+
+
+def probe_failures(alias: str, since: str) -> list[dict]:
+    """The probe's failed rows for this model in perf/history.csv, written
+    at or after `since`: what the log used to call only "error"."""
+    path = DATA / "perf" / "history.csv"
+    if not path.exists():
+        return []
+    with path.open(encoding="utf-8", newline="") as fh:
+        return [r for r in csv.DictReader(fh) if r.get("model") == alias
+                and r.get("timestamp", "") >= since and int(r.get("answered") or 0) == 0]
+
+
+def record_issue(alias: str, issue: dict | None) -> None:
+    """Note how this model's onboarding stopped, or (None) that it did not."""
+    locked.update(ISSUES, lambda d: d.__setitem__(alias, issue) if issue else d.pop(alias, None),
+                  ensure_ascii=False)
 
 
 def run(*args: str, timeout: int = 3600) -> subprocess.CompletedProcess:
@@ -270,17 +292,29 @@ def main() -> None:
 
     # 4. availability
     print("  [4/5] probing availability (4 calls)...")
+    since = dt.datetime.now().isoformat(timespec="seconds")
     probe = run("perf/run.py", "--model", alias, "-n", "2", "--timeout", "90",
                 timeout=1200)
     answered = probe_answered(probe.stdout, alias)
     for line in probe.stdout.splitlines():
         if alias in line and ("tiny" in line or "large" in line):
             print(f"        {line.strip()}")
+    failed = [] if answered else probe_failures(alias, since)
+    for r in failed:                               # why, not only "error"
+        print(f"        {r['prompt']}: {r.get('failure') or 'other'} — {(r.get('detail') or '').strip()[:240]}")
     if not answered:
+        worst = failed[0] if failed else {}
+        record_issue(alias, {"at": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
+                             "served": name, "endpoint": endpoint, "step": "availability probe",
+                             "failure": worst.get("failure") or "other",
+                             "detail": (worst.get("detail") or probe.stdout.strip()[-400:]
+                                        or f"perf/run.py exited {probe.returncode}")[:1000],
+                             "log": os.environ.get("BENCH_ONBOARD_LOG", "")})
         print("\n  STOPPING: it answered nothing. Registered so availability "
               "keeps watching it,\n  but there is no point spending suite "
               "calls on a model that cannot reply.")
         return
+    record_issue(alias, None)
 
     # 5. the tier that decides routing
     if args.skip_suite:

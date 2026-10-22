@@ -129,12 +129,9 @@ def main() -> int:
     # removal
     victim = some + "-renamed"
     served = d2[victim]["served"]
-    for label, kw in (("remove: alias not typed", dict(typed="nope", reason="retired by provider")),
-                      ("remove: no reason", dict(typed=victim, reason="")),
-                      ("remove: unknown alias", dict(typed="x", reason="whatever it is"))):
-        r = serve.remove_model("no-such" if "unknown" in label else victim, **kw)
-        ok = not r["ok"] and not r["changed"]
-        print(("ok   " if ok else "FAIL ") + label); failures += 0 if ok else 1
+    r = serve.remove_model("no-such", "whatever it is")
+    ok = not r["ok"] and not r["changed"]
+    print(("ok   " if ok else "FAIL ") + "remove: unknown alias"); failures += 0 if ok else 1
     # In three collections: a member of two, the merger of one; a fourth without it.
     colls = {"with-it": {"members": [other, victim], "merger": victim, "reply": "merged"},
              "member": {"members": [victim, other], "merger": ""},
@@ -143,7 +140,7 @@ def main() -> int:
     (cfg / "collections.json").write_text(json.dumps(colls), encoding="utf-8")
     logged = len(serve.CHANGES_PATH.read_text(encoding="utf-8").splitlines())
     before = len(serve.registered())
-    r = serve.remove_model(victim, victim, "retired by provider on 2026-09-15")
+    r = serve.remove_model(victim, "retired by provider on 2026-09-15")
     d3 = serve.model_directory()
     retired = json.loads((cfg / "retired.json").read_text(encoding="utf-8"))
     yaml = (cfg / "extra-openai-models.yaml").read_text(encoding="utf-8")
@@ -194,16 +191,17 @@ def main() -> int:
           + ("" if ok else f" -> {back} {r['changed']}")); failures += 0 if ok else 1
     # One that was in no collection: collections.json untouched and not reported.
     (cfg / "collections.json").write_text(json.dumps({"without": colls["without"]}), encoding="utf-8")
-    r = serve.remove_model(victim, victim, "retired for the no-collection check")
+    r = serve.remove_model(victim, "")              # no reason given: the popup confirmed it
+    gone = json.loads((cfg / "retired.json").read_text(encoding="utf-8"))[victim]
     ok = (r["ok"] and "config/collections.json" not in r["changed"]
-          and "collections" not in json.loads((cfg / "retired.json").read_text(encoding="utf-8"))[victim])
+          and "collections" not in gone and gone["why"] == "retired by hand")
     r2 = serve.restore_model(victim)
     ok = ok and r2["ok"] and "config/collections.json" not in r2["changed"]
     print(("ok   " if ok else "FAIL ") + "in no collection: collections.json not touched"
           + ("" if ok else f" -> {r} {r2}")); failures += 0 if ok else 1
     ok = not serve.restore_model(victim)["ok"]
     print(("ok   " if ok else "FAIL ") + "restore refused when not retired"); failures += 0 if ok else 1
-    serve.remove_model(victim, victim, "retired again for the onboarding checks")
+    serve.remove_model(victim, "retired again for the onboarding checks")
     # onboarding refusals (nothing is started)
     for label, kw in (("onboard: empty", dict(served="")),
                       ("onboard: spaces", dict(served="vendor/model x")),
@@ -215,6 +213,18 @@ def main() -> int:
         ok = not r["ok"] and "log" not in r
         print(("ok   " if ok else "FAIL ") + label + ("" if ok else f" -> {r}")); failures += 0 if ok else 1
     print(("ok   " if serve.onboard_status("../etc/passwd")["ok"] is False else "FAIL ") + "onboard log name guarded")
+    # How an onboarding stopped: shown for a registered model until it answers.
+    serve.ONBOARD_ISSUES_PATH.parent.mkdir(parents=True, exist_ok=True)
+    serve.ONBOARD_ISSUES_PATH.write_text(json.dumps({
+        other: {"at": "2026-10-22T16:43:34+02:00", "step": "availability probe", "failure": "capacity",
+                "detail": "429 free-models-per-day", "log": ""},
+        "gone-model": {"failure": "structural"}}), encoding="utf-8")
+    shown = serve.onboard_issues({other: ("throttled", "warn", "")})
+    ok = list(shown) == [other] and shown[other]["label"] == "throttled" and shown[other]["css"] == "warn"
+    ok = ok and not serve.onboard_issues({other: ("healthy", "ok", "")})      # answered since: gone
+    print(("ok   " if ok else "FAIL ") + "onboard issues: registered and not answering only"
+          + ("" if ok else f" -> {shown}")); failures += 0 if ok else 1
+    serve.ONBOARD_ISSUES_PATH.unlink()
     # endpoints: refused before any network call or write
     for label, args in (("endpoint: bad name", ("Bad Name", "https://x.example/v1", "")),
                         ("endpoint: bad url", ("good", "ftp://x", "")),

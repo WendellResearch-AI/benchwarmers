@@ -276,7 +276,7 @@ def run(models: dict[str, str], live: set[str], first_missing: dict[str, str],
             lines.append(f"  would retire {alias}: {why}")
             continue
         import serve
-        result = serve.remove_model(alias, alias, f"auto: {why}"[:400], who="auto")
+        result = serve.remove_model(alias, f"auto: {why}"[:400], who="auto")
         lines.append(f"  retired {alias}: {why}" if result["ok"]
                      else f"  could not retire {alias}: {'; '.join(result['errors'])}")
     for alias, item in p["pending"]:

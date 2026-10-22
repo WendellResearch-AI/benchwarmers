@@ -17,6 +17,21 @@
                        body: JSON.stringify(body)}).then(function (r) { return r.json(); });
   }
   function listErrors(node, errors) { node.textContent = errors.map(function (x) { return '• ' + x; }).join('\n'); node.style.whiteSpace = 'pre-line'; }
+  // The page's own confirm, a Promise of true/false: window.confirm is
+  // silently false where a browser blocks dialogs. Opens over any open popup.
+  var askD = $('ask-dialog'), askDone = null;
+  function ask(text, yes, danger) {
+    if (askDone) askDone(false);
+    $('ask-text').textContent = text;
+    $('ask-yes').textContent = yes || 'OK';
+    $('ask-yes').className = 'btn ' + (danger ? 'danger' : 'primary');
+    askD.showModal(); $('ask-no').focus();
+    return new Promise(function (resolve) { askDone = resolve; });
+  }
+  function answer(yes) { var r = askDone; askDone = null; if (askD.open) askD.close(); if (r) r(yes); }
+  $('ask-yes').addEventListener('click', function () { answer(true); });
+  $('ask-no').addEventListener('click', function () { answer(false); });
+  askD.addEventListener('close', function () { answer(false); });   // Escape
 
   // ---- tabs, remembered per browser ----------------------------------
   var tabs = document.querySelectorAll('.tabs button[data-tab]');      // not the sidebar's own toggle
@@ -140,7 +155,7 @@
            alias: $('m-alias'), role: $('m-role'), roleWhy: $('m-role-why'), adhoc: $('m-adhoc'),
            danger: $('m-danger'), errors: $('m-errors'), done: $('m-done'), save: $('m-save'),
            restore: $('m-restore'), close: $('m-close'), removeBox: $('m-remove-box'),
-           reason: $('m-reason'), typed: $('m-typed'), remove: $('m-remove'),
+           reason: $('m-reason'), remove: $('m-remove'), onboard: $('m-onboard'),
            qtypes: $('m-qtypes'), aliasWhy: $('m-alias-why')};
   m.aliasWhy.dataset.chat = m.aliasWhy.textContent;
   var editing = null;
@@ -153,6 +168,7 @@
     m.errors.textContent = ''; m.done.textContent = '';
     m.editor.hidden = !model; m.save.hidden = !model; m.removeBox.hidden = !model;
     m.gone.hidden = !!model; m.restore.hidden = !!model;
+    showOnboardIssue(model ? (D.onboard || {})[alias] : null);
     if (gone) {
       m.served.textContent = 'served as ' + gone.served + (gone.tag ? ' · ' + gone.tag : '');
       m.gone.textContent = '';
@@ -184,9 +200,39 @@
       });
       m.adhoc.checked = !!model.ad_hoc;
       m.save.disabled = false; m.save.textContent = 'Save';
-      m.reason.value = ''; m.typed.value = ''; m.removeBox.open = false; armRemove(); refresh();
+      m.reason.value = ''; m.removeBox.open = false; m.remove.disabled = false; refresh();
     }
     md.showModal();
+  }
+  // How its onboarding stopped (serve.onboard_issues): only while it has not
+  // answered a probe since. The error as the provider gave it, and the log.
+  var ONBOARD_NEXT = {
+    capacity: 'A limit on the provider side, not the model. It stays registered and the daily probe tries again; once it answers, run its suite.',
+    timeout: 'It did not answer within the budget. The daily probe tries again.',
+    empty: 'It answered nothing, usually an output budget spent thinking: raise Max tokens under Call options.',
+    paywalled: 'Its free tier has ended. Retire it below.',
+    structural: 'The provider has no such model now. Retire it below.',
+    entitlement: 'The account may not call it (plan, payment or permission).',
+    signin: 'The key was refused: sign in again on the Endpoints page.'
+  };
+  function showOnboardIssue(x) {
+    m.onboard.hidden = !x; m.onboard.textContent = '';
+    if (!x) return;
+    m.onboard.appendChild(el('strong', {}, 'Onboarding stopped at the ' + (x.step || 'probe') + ' on '
+      + (x.at || '').slice(0, 10) + ': ' + x.label));
+    m.onboard.appendChild(el('p', {style: 'margin:.3rem 0'}, ONBOARD_NEXT[x.failure] || x.reading || ''));
+    if (x.detail) m.onboard.appendChild(el('pre', {class: 'log'}, x.detail));
+    if (x.log) {
+      var d = el('details'), pre = el('pre', {class: 'log'});
+      d.appendChild(el('summary', {class: 'muted'}, 'Onboarding log'));
+      d.appendChild(pre);
+      d.addEventListener('toggle', function () {
+        if (!d.open || pre.textContent) return;
+        fetch('/api/onboard?log=' + encodeURIComponent(x.log)).then(function (r) { return r.json(); })
+          .then(function (s) { pre.textContent = s.ok ? (s.tail || '(empty)') : s.errors.join(' '); });
+      });
+      m.onboard.appendChild(d);
+    }
   }
   // ---- model facts: yours in the boxes, the sources' as placeholders -----
   var FACT_NUM = ['context_window', 'max_output'], FACT_CAP = ['tools', 'vision', 'structured_output', 'reasoning'];
@@ -274,7 +320,6 @@
     m.danger.hidden = !(editing && m.alias.value.trim() !== editing);
     m.roleWhy.textContent = D.roles[m.role.value] || '';
   }
-  function armRemove() { m.remove.disabled = !(editing && m.typed.value === editing && m.reason.value.trim().length >= 5); }
   document.addEventListener('click', function (e) {
     var a = e.target.closest('a.model');
     if (a) { e.preventDefault(); openModel(a.dataset.alias); }
@@ -282,8 +327,6 @@
   m.close.addEventListener('click', function () { md.close(); });
   m.alias.addEventListener('input', refresh);
   m.role.addEventListener('change', refresh);
-  m.reason.addEventListener('input', armRemove);
-  m.typed.addEventListener('input', armRemove);
 
   // A success is said, left up for two seconds, then the popup closes and
   // the page reloads with the change in it.
@@ -304,19 +347,28 @@
       body.new_question_types = Array.prototype.filter.call(m.qtypes.querySelectorAll('input'),
         function (c) { return c.checked; }).map(function (c) { return c.value; });
     }
-    if (body.new_alias !== editing && !confirm('Rename ' + editing + ' to ' + body.new_alias + '? Every record keyed by the old alias follows it.')) return;
-    m.save.disabled = true; m.save.textContent = 'Saving…'; m.errors.textContent = '';
-    post('/api/model', body).then(after(m.errors, m.save, 'Save')).catch(function (err) { m.errors.textContent = String(err); m.save.disabled = false; m.save.textContent = 'Save'; });
+    (body.new_alias === editing ? Promise.resolve(true)
+      : ask('Rename ' + editing + ' to ' + body.new_alias + '? Every record keyed by the old alias follows it.', 'Rename')
+    ).then(function (yes) {
+      if (!yes) return;
+      m.save.disabled = true; m.save.textContent = 'Saving…'; m.errors.textContent = '';
+      post('/api/model', body).then(after(m.errors, m.save, 'Save')).catch(function (err) { m.errors.textContent = String(err); m.save.disabled = false; m.save.textContent = 'Save'; });
+    });
   });
   // The confirm is the last word: the popup closes at once and the page
   // reloads when the retirement is done. A refusal reopens it with the reason.
   m.remove.addEventListener('click', function () {
-    if (!editing || !confirm('Retire ' + editing + '? The registry entry goes; the evidence stays, and Restore brings it back.')) return;
-    m.remove.disabled = true; m.errors.textContent = ''; md.close();
-    function refused(errors) { md.showModal(); listErrors(m.errors, errors); armRemove(); }
-    post('/api/remove', {alias: editing, typed: m.typed.value, reason: m.reason.value}).then(function (res) {
-      if (res.ok) location.reload(); else refused(res.errors);
-    }).catch(function (err) { refused([String(err)]); });
+    if (!editing) return;
+    var alias = editing;
+    ask('Retire ' + alias + '? The registry entry goes; the evidence stays, and Restore brings it back.', 'Retire', true)
+      .then(function (yes) {
+        if (!yes) return;
+        m.remove.disabled = true; m.errors.textContent = ''; md.close();
+        function refused(errors) { md.showModal(); listErrors(m.errors, errors); m.remove.disabled = false; }
+        post('/api/remove', {alias: alias, reason: m.reason.value}).then(function (res) {
+          if (res.ok) location.reload(); else refused(res.errors);
+        }).catch(function (err) { refused([String(err)]); });
+      });
   });
   m.restore.addEventListener('click', function () {
     m.restore.disabled = true; m.restore.textContent = 'Restoring…';
@@ -338,19 +390,22 @@
         return;
       }
       var verb = act === 'restore' ? 'Restore' : 'Retire';
-      if (!confirm(verb + ' ' + aliases.join(', ') + '?' + (act === 'restore' ? '' : ' The evidence stays and Restore brings it back.'))) return;
-      b.disabled = true; b.textContent = verb === 'Restore' ? 'Restoring…' : 'Retiring…';
-      var chain = Promise.resolve([]);
-      aliases.forEach(function (alias) {
-        chain = chain.then(function (errs) {
-          var call = act === 'restore' ? post('/api/restore', {alias: alias})
-            : post('/api/remove', {alias: alias, typed: alias, reason: 'from the dashboard: ' + (b.dataset.why || 'retired by hand')});
-          return call.then(function (res) { return errs.concat(res.ok ? [] : res.errors); });
+      ask(verb + ' ' + aliases.join(', ') + '?' + (act === 'restore' ? '' : ' The evidence stays and Restore brings it back.'),
+          verb, act !== 'restore').then(function (yes) {
+        if (!yes) return;
+        b.disabled = true; b.textContent = verb === 'Restore' ? 'Restoring…' : 'Retiring…';
+        var chain = Promise.resolve([]);
+        aliases.forEach(function (alias) {
+          chain = chain.then(function (errs) {
+            var call = act === 'restore' ? post('/api/restore', {alias: alias})
+              : post('/api/remove', {alias: alias, reason: 'from the dashboard: ' + (b.dataset.why || 'retired by hand')});
+            return call.then(function (res) { return errs.concat(res.ok ? [] : res.errors); });
+          });
         });
-      });
-      chain.then(function (errs) {
-        if (errs.length) { status.textContent = errs.join('; '); status.classList.add('err'); b.disabled = false; b.textContent = verb; return; }
-        status.textContent = 'Done. Reloading…'; setTimeout(function () { location.reload(); }, 700);
+        chain.then(function (errs) {
+          if (errs.length) { status.textContent = errs.join('; '); status.classList.add('err'); b.disabled = false; b.textContent = verb; return; }
+          status.textContent = 'Done. Reloading…'; setTimeout(function () { location.reload(); }, 700);
+        });
       });
     });
   });
@@ -638,13 +693,15 @@
   }
   function addVia(x, b) {
     var direct = x.via === 'direct';
-    if (!confirm('Add ' + x.model + ' via ' + x.label + (x.free ? '' : ' (PAID)') + '?\n\n'
+    ask('Add ' + x.model + ' via ' + x.label + (x.free ? '' : ' (PAID)') + '?\n\n'
       + (direct ? 'The bench only: register it on the ' + x.endpoint + ' endpoint, a 4-call probe, then the suite.'
         // A LiteLLM or CLI Proxy API route says its own steps: only what that hub takes.
         : x.steps ? x.steps.map(function (s, i) { return (i + 1) + '. ' + s; }).join('\n')
         : '1. Open WebUI: add it to the ' + x.connection + ' connection\'s Model IDs (if that connection lists them)\n'
         + '2. Open WebUI: a public model record, tagged and with the logo of the connection\'s other models\n'
-        + '3. The bench: register, a 4-call probe, then the suite'))) return;
+        + '3. The bench: register, a 4-call probe, then the suite'), 'Add').then(function (yes) { if (yes) addNow(x, b, direct); });
+  }
+  function addNow(x, b, direct) {
     b.disabled = true; b.textContent = 'Adding…'; $('d-errors').textContent = '';
     // Either way the onboarding joins the queue (serve.queue_onboard): one at a time.
     var call = direct ? post('/api/onboard-queue', {items: [{served: x.model, endpoint: x.endpoint}]})
@@ -782,10 +839,12 @@
   document.querySelectorAll('[data-revoke-key]').forEach(function (b) {
     b.addEventListener('click', function () {
       var name = b.dataset.revokeKey;
-      if (!confirm('Revoke the gateway key ' + name + '? Anything using it is refused from now on.')) return;
-      post('/api/gateway-key/remove', {name: name}).then(function (r) {
-        if (!r.ok) { listErrors($('k-errors'), r.errors); return; }
-        location.reload();
+      ask('Revoke the gateway key ' + name + '? Anything using it is refused from now on.', 'Revoke', true).then(function (yes) {
+        if (!yes) return;
+        post('/api/gateway-key/remove', {name: name}).then(function (r) {
+          if (!r.ok) { listErrors($('k-errors'), r.errors); return; }
+          location.reload();
+        });
       });
     });
   });
@@ -797,13 +856,16 @@
   $('s-save').addEventListener('click', function () {
     var jobs = {};
     document.querySelectorAll('input[name=s-job]').forEach(function (c) { jobs[c.value] = c.checked; });
-    if (sMode.value === 'run' && sMode.dataset.was !== 'run'
-        && !confirm('Run the jobs for real? They make model calls on their own schedule. If something else'
-                    + ' also runs them (cron, Windows Task Scheduler), turn it off now, or every job runs twice.')) return;
-    $('s-errors').textContent = ''; $('s-done').textContent = '';
-    post('/api/scheduler', {mode: sMode.value, jobs: jobs}).then(function (r) {
-      if (!r.ok) { listErrors($('s-errors'), r.errors); return; }
-      sMode.dataset.was = sMode.value; $('s-done').textContent = 'Saved. It applies within a minute.';
+    (sMode.value === 'run' && sMode.dataset.was !== 'run'
+      ? ask('Run the jobs for real? They make model calls on their own schedule. If something else'
+            + ' also runs them (cron, Windows Task Scheduler), turn it off now, or every job runs twice.', 'Run them')
+      : Promise.resolve(true)).then(function (yes) {
+      if (!yes) return;
+      $('s-errors').textContent = ''; $('s-done').textContent = '';
+      post('/api/scheduler', {mode: sMode.value, jobs: jobs}).then(function (r) {
+        if (!r.ok) { listErrors($('s-errors'), r.errors); return; }
+        sMode.dataset.was = sMode.value; $('s-done').textContent = 'Saved. It applies within a minute.';
+      });
     });
   });
 
@@ -854,24 +916,28 @@
       connectStart({id: x.connect.provider, flow: x.connect.flow, label: x.connect.label}, x.name);
     },
     'default': function (x) {
-      if (!confirm('Make ' + x.name + ' the default endpoint? The default is where a model is taken'
-                   + ' to be when nothing says otherwise, and the one endpoint that cannot be removed.')) return;
-      post('/api/endpoint/default', {name: x.name}).then(function (r) {
-        if (!r.ok) { listErrors(e.listErrors, r.errors); return; }
-        reloadSoon(r.note + '.');
+      ask('Make ' + x.name + ' the default endpoint? The default is where a model is taken'
+          + ' to be when nothing says otherwise, and the one endpoint that cannot be removed.', 'Make default').then(function (yes) {
+        if (!yes) return;
+        post('/api/endpoint/default', {name: x.name}).then(function (r) {
+          if (!r.ok) { listErrors(e.listErrors, r.errors); return; }
+          reloadSoon(r.note + '.');
+        });
       });
     },
     // Its models go with it, after saying how many: each is retired as by
     // hand (evidence kept, restorable once the endpoint is back).
     remove: function (x) {
       var n = x.models, them = n + ' model' + (n === 1 ? '' : 's');
-      if (!confirm(n ? 'Remove the ' + x.name + ' endpoint and the ' + them + ' on the bench through it?\n\n'
-                       + 'The ' + them + ' will be retired too. Their results and history are kept, and'
-                       + ' Restore brings them back if an endpoint named ' + x.name + ' is added again.'
-                     : 'Remove the ' + x.name + ' endpoint?')) return;
-      post('/api/endpoint/remove', {name: x.name, with_models: n > 0}).then(function (r) {
-        if (!r.ok) { listErrors(e.listErrors, r.errors); return; }
-        reloadSoon('Removed ' + x.name + '; ' + r.note + '.');
+      ask(n ? 'Remove the ' + x.name + ' endpoint and the ' + them + ' on the bench through it?\n\n'
+              + 'The ' + them + ' will be retired too. Their results and history are kept, and'
+              + ' Restore brings them back if an endpoint named ' + x.name + ' is added again.'
+            : 'Remove the ' + x.name + ' endpoint?', 'Remove', true).then(function (yes) {
+        if (!yes) return;
+        post('/api/endpoint/remove', {name: x.name, with_models: n > 0}).then(function (r) {
+          if (!r.ok) { listErrors(e.listErrors, r.errors); return; }
+          reloadSoon('Removed ' + x.name + '; ' + r.note + '.');
+        });
       });
     }
   };
@@ -1278,10 +1344,13 @@
   }
   c.del.addEventListener('click', function () {
     var name = open;
-    if (!name || !confirm('Delete bench/' + name + '? Callers asking for it will get an error.')) return;
-    post('/api/collection/remove', {name: name}).then(function (r) {
-      if (!r.ok) { listErrors(c.errors, r.errors); return; }
-      finished('Deleted bench/' + name + '.');
+    if (!name) return;
+    ask('Delete bench/' + name + '? Callers asking for it will get an error.', 'Delete', true).then(function (yes) {
+      if (!yes) return;
+      post('/api/collection/remove', {name: name}).then(function (r) {
+        if (!r.ok) { listErrors(c.errors, r.errors); return; }
+        finished('Deleted bench/' + name + '.');
+      });
     });
   });
   $('c-save').addEventListener('click', function () {
