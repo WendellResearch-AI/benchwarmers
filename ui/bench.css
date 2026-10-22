@@ -286,6 +286,7 @@ dialog h2 { margin: 0 0 .2rem; font-size: 1.375rem; font-weight: 700; }
 :is(dialog, .form-panel) .members { display: grid; grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr)); gap: 0 1rem;
                   max-height: 14rem; overflow: auto; }
 :is(dialog, .form-panel) .members label.check { margin-top: .35rem; font-size: .875rem; }
+:is(dialog, .form-panel) input.member-filter { font-size: .9375rem; padding: .4rem .6rem; margin-bottom: .2rem; }
 :is(dialog, .form-panel) .members input:disabled + span { color: var(--muted); }
 :is(dialog, .form-panel) .limits { display: flex; flex-wrap: wrap; gap: .3rem .8rem; margin-top: .3rem; font-size: .875rem; }
 :is(dialog, .form-panel) .limits input { width: 6.5rem !important; padding: .2rem .4rem !important; }

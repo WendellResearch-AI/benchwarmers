@@ -1138,7 +1138,7 @@
            shape: $('c-shape'), desc: $('c-desc'), tags: $('c-tags'), errors: $('c-errors'), done: $('c-done'),
            head: $('c-form-head'), maxCalls: $('g-max-calls'), maxExp: $('g-max-explorers'),
            gErrors: $('g-errors'), gDone: $('g-done'), form: $('c-form'), status: $('c-status'),
-           del: $('c-delete'), reply: $('c-reply'), merger: $('c-merger')};
+           del: $('c-delete'), reply: $('c-reply'), merger: $('c-merger'), find: $('c-member-filter')};
   var C = null, open = null;         // the collection whose details are showing
   function explorersFor(n) {
     return Math.max(0, Math.min(C.settings.max_explorers, C.settings.max_calls - n));
@@ -1149,10 +1149,28 @@
   }
   function recount() {
     var n = picked().length, ex = explorersFor(n);
+    var rows = c.members.querySelectorAll('label.check'), shown = c.members.querySelectorAll('label.check:not([hidden])');
     c.count.textContent = n + ' member' + (n === 1 ? '' : 's') + ' + ' + ex + ' explorer' + (ex === 1 ? '' : 's') +
-      ' = ' + (n + ex) + ' calls per request' + (n && (n < 2 || n > 4) ? ' · two to four members is recommended' : '');
+      ' = ' + (n + ex) + ' calls per request' + (n && (n < 2 || n > 4) ? ' · two to four members is recommended' : '') +
+      (shown.length < rows.length ? ' · showing ' + shown.length + ' of ' + rows.length + ' models' : '');
     c.members.querySelectorAll('input').forEach(function (x) { x.disabled = !x.checked && n >= C.settings.max_calls; });
   }
+  // The member search: the filter boxes' match (any text, case-insensitive),
+  // over alias and served name. It only hides rows, and never a ticked one, so
+  // what is picked is always in view and every count still includes it.
+  function filterMembers() {
+    var q = c.find.value.trim().toLowerCase();
+    c.members.querySelectorAll('label.check').forEach(function (lab) {
+      var box = lab.querySelector('input');
+      lab.hidden = !!q && !box.checked && (box.value + ' ' + (lab.dataset.served || '')).toLowerCase().indexOf(q) === -1;
+    });
+    recount();
+  }
+  c.find.addEventListener('input', filterMembers);
+  // Escape in a box with text clears it; only an empty box lets Escape close the popup.
+  c.find.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && c.find.value) { e.preventDefault(); e.stopPropagation(); c.find.value = ''; filterMembers(); }
+  });
   // Suggested tags under the field: a click adds or removes one, and the
   // field stays free for any other.
   function tagList() {
@@ -1188,12 +1206,15 @@
     c.name.value = row ? row.name : ''; c.name.readOnly = !!row;
     c.desc.value = row ? row.description : ''; c.tags.value = row ? row.tags.join(', ') : '';
     drawTagPicks();
-    c.members.textContent = '';
+    c.members.textContent = ''; c.find.value = '';
     C.models.forEach(function (alias) {
       var box = el('input', {type: 'checkbox', value: alias});
       box.checked = !!row && row.members.indexOf(alias) !== -1;
       box.addEventListener('change', recount);
-      var lab = el('label', {class: 'check'}); lab.appendChild(box); lab.appendChild(el('span', {class: 'mono'}, alias));
+      var served = (C.served || {})[alias] || '';
+      var lab = el('label', {class: 'check', 'data-served': served});
+      if (served && served !== alias) lab.title = served;
+      lab.appendChild(box); lab.appendChild(el('span', {class: 'mono'}, alias));
       c.members.appendChild(lab);
     });
     c.shape.textContent = '';

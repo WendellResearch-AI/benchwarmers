@@ -168,6 +168,11 @@ def main() -> int:
     print(("ok   " if ok else "FAIL ") + "removed from its collections, recorded and logged"
           + ("" if ok else f" -> {after} {retired[victim]} {r['changed']} {log}")); failures += 0 if ok else 1
     expect_refused("retired name never reused", alias=other, new_alias=victim, new_role=None)
+    # The collection dialog's member search matches the served name too, so the view carries it.
+    view = serve.collections_view()
+    ok = (set(view["served"]) == set(view["models"]) and victim not in view["served"]
+          and view["served"].get(other) == d3[other]["served"])
+    print(("ok   " if ok else "FAIL ") + "collection view: served name for every member choice"); failures += 0 if ok else 1
     # restore: same alias back, out of retired.json, role and ad hoc kept, and
     # back into the collections that still exist (one deleted, one changed since)
     serve.delete_collection("doomed")

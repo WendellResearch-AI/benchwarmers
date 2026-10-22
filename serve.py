@@ -1322,8 +1322,11 @@ def collections_view() -> dict:
     # collection already uses, so the same idea is spelled the same way.
     used = [t for r in rows for t in r.get("tags") or []]
     suggestions = list(dict.fromkeys(shapes + list(TAG_PURPOSES) + used))
+    # The served name beside each alias: the member search matches either.
+    directory = model_directory()
+    served = {a: directory[a].get("served", "") for a in _chat_aliases()}
     return {"ok": True, "errors": [], "collections": rows, "settings": s,
-            "shapes": shapes, "models": _chat_aliases(), "tag_suggestions": suggestions}
+            "shapes": shapes, "models": _chat_aliases(), "served": served, "tag_suggestions": suggestions}
 
 
 TAG_PURPOSES = ("second-opinion", "security", "long-context", "fast", "free")
@@ -2618,7 +2621,12 @@ def collections_tab() -> str:
         " aria-describedby='c-name-rules'></div>"
         "<p class='rules' id='c-name-rules'>Callers ask for <code>bench/&lt;name&gt;</code>. Say what"
         " it is for, not who is in it: members change. Lower-case letters, digits and '-'.</p>"
-        "<label class='field'>Members</label><div id='c-members' class='members'></div>"
+        # Not data-filter: that binds to the whole panel. The same match (any
+        # text, case-insensitive), on the member list only; ticked ones stay shown.
+        "<label class='field' for='c-member-filter'>Members</label>"
+        "<input type='search' id='c-member-filter' class='member-filter' spellcheck='false' autocomplete='off'"
+        " placeholder='Filter by alias or served name' aria-controls='c-members' aria-describedby='c-count'>"
+        "<div id='c-members' class='members' role='group' aria-label='Members'></div>"
         "<p class='rules' id='c-count'></p>"
         "<label class='field' for='c-shape'>Explorer shape</label><select id='c-shape'></select>"
         "<p class='rules'>Which models may fill the explorer seats. Automatic asks a decision"
