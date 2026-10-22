@@ -826,8 +826,10 @@ def ask_once(binary: str, model: str, prompt: str,
         # mid-stream crash `out.stdout` holds real but TRUNCATED text, so
         # `stdout or stderr` prefers it and the failure becomes invisible --
         # it reads as a model that simply stopped early. The exit code is the
-        # only signal that separates those, so it decides, not the text.
-        if out.returncode != 0:
+        # only signal that separates those, so it decides, not the text --
+        # except when it is only llm failing to log an answer it printed in
+        # full, its logs.db locked by another llm (metrics/client.py).
+        if out.returncode != 0 and not client.llm_log_failed_only(out.stdout, out.stderr):
             detail = (out.stderr or body or "").strip().replace("\n", " ")
             body = f"Error: llm exited {out.returncode}: {detail[:300]}"
     except subprocess.TimeoutExpired:
