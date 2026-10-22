@@ -28,6 +28,7 @@ function usage() {
     '  serve        the dashboard, with the gateway at /v1: http://localhost:8122 (the default)',
     '  gateway      the gateway alone: http://127.0.0.1:8123/v1',
     '  init [...]   set up a data folder, optionally with a first endpoint (init --help)',
+    '  mcp          an MCP server on stdio for agents, a client of a running Benchwarmers (BENCHWARMERS_URL)',
     '  --version    the version',
     '',
     'Your data lives in BENCHWARMERS_HOME, else ' + defaultHome() + '.',
@@ -59,7 +60,7 @@ function main(argv) {
     console.log(usage());
     return 0;
   }
-  const scripts = { serve: 'serve.py', gateway: 'gateway.py', init: path.join('scripts', 'init.py') };
+  const scripts = { serve: 'serve.py', gateway: 'gateway.py', mcp: 'mcp_server.py', init: path.join('scripts', 'init.py') };
   if (!scripts[command]) {
     console.error('benchwarmers: no command "' + command + '"\n\n' + usage());
     return 2;
@@ -79,8 +80,9 @@ function main(argv) {
 
   // The first run makes the data folder from examples/ (init.py never writes
   // over a file already there, and with BENCHWARMERS_HOME set it leaves the
-  // package folder alone).
-  if (command !== 'init' && !fs.existsSync(home)) {
+  // package folder alone). Not for mcp: it keeps no data, and its stdout
+  // carries protocol messages only.
+  if (command !== 'init' && command !== 'mcp' && !fs.existsSync(home)) {
     console.log('First run: making your data folder at ' + home);
     const r = spawnSync(python[0], py(scripts.init, [home]), { stdio: 'inherit', env, cwd: ROOT });
     if (r.status !== 0) return r.status || 1;

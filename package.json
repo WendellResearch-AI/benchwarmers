@@ -33,6 +33,7 @@
     "bin/",
     "serve.py",
     "gateway.py",
+    "mcp_server.py",
     "metrics/*.py",
     "scripts/*.py",
     "suite/*.py",
