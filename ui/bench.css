@@ -172,6 +172,7 @@ main { max-width: var(--page, 104rem); margin: 0 auto; padding: 0 var(--gutter) 
 
 /* settings, connections, logs, info */
 .themes { display: flex; flex-wrap: wrap; gap: .75rem; margin-top: .75rem; }
+td.set-by { font-size: .8125rem; color: var(--muted); overflow-wrap: anywhere; }
 .theme-card { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: .35rem .5rem;
               padding: .6rem .8rem; border: 1px solid var(--line); border-radius: var(--radius); cursor: pointer; }
 .theme-card:has(input:checked) { border-color: var(--ink); box-shadow: 3px 3px 0 var(--brand); }
@@ -349,7 +350,7 @@ pre.log.answer { max-height: 40vh; }
 .chart.muted { font-size: .875rem; }
 h3.chart-head { font-size: 1rem; margin: 1rem 0 .2rem; }
 /* the Collections tab: the dialog's form, kept to a readable width */
-.panel.form-panel > :not(#c-list) { max-width: 46rem; }
+.panel.form-panel > :not(#c-list, table) { max-width: 46rem; }
 /* a list of things you open (collections), with its New button above */
 .list-actions { display: flex; align-items: center; gap: 1rem; margin: .75rem 0; flex-wrap: wrap; }
 .list-actions .done { margin: 0; color: var(--ok); font-size: .9375rem; }

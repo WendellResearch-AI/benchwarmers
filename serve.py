@@ -1124,6 +1124,55 @@ def save_model_facts(alias: str, facts: dict, who: str = "ui") -> dict:
     return {"ok": True, "errors": [], "changed": ["config/model-overrides.json"]}
 
 
+def _llm_option(alias: str, name: str, value) -> str:
+    """The llm CLI keeps its own copy of a model's options (sync_config.py
+    sets them from the file), so a change here is made there too; None clears
+    it. The built-in client reads the file itself."""
+    import shutil
+    if not shutil.which("llm"):            # found the way every llm call here finds it
+        return "no llm CLI on this machine's PATH, so only the built-in client uses it"
+    # `--`: whatever follows is an argument, never a flag, whatever the alias.
+    args = ["set", "--", alias, name, str(value)] if value is not None else ["clear", "--", alias, name]
+    try:
+        done = subprocess.run(["llm", "models", "options", *args], capture_output=True, text=True,
+                              timeout=30, encoding="utf-8", errors="replace")
+    except (OSError, subprocess.SubprocessError) as exc:
+        return f"the llm CLI was not told ({exc}): run scripts/sync_config.py"
+    return ("the llm CLI has it too" if done.returncode == 0
+            else f"llm models options exited {done.returncode}: {(done.stderr or done.stdout).strip()[:200]}")
+
+
+def save_model_options(alias: str, max_tokens, who: str = "ui") -> dict:
+    """How the bench calls one model (config/model-options.json): for now
+    max_tokens, the most an answer may use. A reasoning model thinks out of it
+    and answers with an empty string when it runs out. Blank hands the choice
+    back to the endpoint."""
+    if alias not in model_directory() or model_directory()[alias].get("kind") == "decision":
+        return {"ok": False, "errors": [f"{alias!r} is not a chat model on the bench"]}
+    if max_tokens in (None, ""):
+        value = None
+    elif isinstance(max_tokens, bool) or not isinstance(max_tokens, int) or not 1 <= max_tokens <= 1_000_000:
+        return {"ok": False, "errors": ["max tokens: a whole number from 1 to 1,000,000, or blank"]}
+    else:
+        value, ceiling = max_tokens, catalog.info(alias).get("max_output")
+        if isinstance(ceiling, int) and value > ceiling:
+            return {"ok": False, "errors": [f"max tokens: at most this model's max output, {ceiling:,}"]}
+    options = load_json(OPTIONS_PATH)
+    old = dict(options.get(alias) or {})
+    mine = {k: v for k, v in old.items() if k != "max_tokens"} | ({"max_tokens": value} if value else {})
+    if mine == old:
+        return {"ok": True, "errors": [], "note": "no change"}
+    if mine:
+        options[alias] = mine
+    else:
+        options.pop(alias, None)
+    _write_atomic(OPTIONS_PATH, _dump(options))
+    _log_change(datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+                who, alias, "options", old or None, mine or None)
+    return {"ok": True, "errors": [], "changed": ["config/model-options.json"],
+            "note": _llm_option(alias, "max_tokens", value)}
+
+
 def save_connection_limits(connection: str, limits: dict, who: str = "ui") -> dict:
     connection = (connection or "").strip()
     known = {catalog.connection_of(a) for a in _chat_aliases()}
@@ -2509,10 +2558,68 @@ def login_page() -> str:
             "});</script>")
 
 
+def access_card() -> str:
+    """How this install is reached and who may call it, from the environment:
+    shown here, never set here. Each needs a restart, and a page that could
+    change its own login could open itself to anyone. No secret is shown."""
+    import paths
+    bind, client = guard.bind(), os.environ.get("BENCH_CLIENT") or "llm"
+    hosts, origins = sorted(guard._env("BENCH_ALLOWED_HOSTS")), sorted(guard._env("BENCH_ALLOWED_ORIGINS"))
+    from_env = sorted(k[len(endpoints.ENV_KEY):].lower().replace("_", "-")
+                      for k, v in os.environ.items() if k.startswith(endpoints.ENV_KEY) and v)
+    if guard.auth_on():
+        keys = "asked for on every gateway call (an admin token is set)"
+    elif guard.keys_required():
+        keys = "asked for on every gateway call, on this machine too"
+    else:
+        keys = "not asked for: this machine only, no admin token"
+    rows = [("Listening on", f"{bind}:{PORT} (dashboard, gateway at /v1) · {bind}:{gateway.PORT} (gateway.py)",
+             "BENCH_BIND, BENCH_PORT, BENCH_GATEWAY_PORT"),
+            ("Reached from", "this machine only" if guard._loopback(bind)
+             else "other machines too", "BENCH_BIND"),
+            ("Admin login", "on: the dashboard asks for the token" if guard.auth_on()
+             else "off, which only this machine allows", "BENCHWARMERS_ADMIN_TOKEN"),
+            ("Gateway keys", keys, "BENCHWARMERS_REQUIRE_KEYS"),
+            ("Public address", guard.public_url() or "none", "BENCHWARMERS_PUBLIC_URL"),
+            ("Other host names", ", ".join(hosts) or "none", "BENCH_ALLOWED_HOSTS"),
+            ("Browser apps on other sites", ", ".join(origins) or "none: same origin only", "BENCH_ALLOWED_ORIGINS"),
+            ("Data folder", f"{DATA} ({paths.WHY})", "BENCHWARMERS_HOME"),
+            ("Endpoint keys from the environment", ", ".join(from_env) or "none: all in the llm key store",
+             f"{endpoints.ENV_KEY}<NAME>"),
+            ("Model client", client, "BENCH_CLIENT")]
+    body = "".join(f"<tr><th scope='row'>{esc(k)}</th><td>{esc(v)}</td><td class='mono set-by'>{esc(src)}</td></tr>"
+                   for k, v, src in rows)
+    return ("<div class='panel'><h2>Server and access</h2><p class='muted'>How this install is reached and who"
+            " may call it. Set in the environment, read at start: change one and restart. Shown here, never"
+            " set here, since a page that could change its own login could open itself to anyone. No secret"
+            " is shown, only whether one is set.</p>"
+            f"<table class='facts'><thead><tr>{th('Setting')}{th('Now')}{th('Set by')}</tr></thead>"
+            f"<tbody>{body}</tbody></table></div>")
+
+
+def save_scheduler(mode: str, jobs, who: str = "ui") -> dict:
+    """The scheduler's mode and which jobs it runs (config/scheduler.json).
+    The running scheduler reads the file every tick, so this applies within a
+    minute, no restart. Only a job turned off is written: new jobs start on."""
+    import locked
+    import scheduler
+    if mode not in scheduler.MODES:
+        return {"ok": False, "errors": [f"mode: one of {', '.join(scheduler.MODES)}"]}
+    jobs = jobs if isinstance(jobs, dict) else {}
+    unknown = sorted(set(jobs) - set(scheduler.JOBS))
+    if unknown:
+        return {"ok": False, "errors": [f"no job called {', '.join(unknown)}"]}
+    off = {name: False for name, want in jobs.items() if want is False}
+    old = scheduler.settings()
+    locked.update(scheduler.CONFIG, lambda d: d.update(mode=mode, jobs=off))
+    _log_change(datetime.datetime.now().astimezone().isoformat(timespec="seconds"), who, "", "scheduler",
+                old, {"mode": mode, "jobs": off})
+    return {"ok": True, "errors": []}
+
+
 def settings_page() -> str:
-    """Theme (saved), the scheduler and the model client (shown, changed in
-    their config files for now: switching either for real is a deliberate
-    step, see each note)."""
+    """Theme (saved as picked), gateway keys, the scheduler (mode and jobs),
+    and how the install is reached (shown only: the environment sets it)."""
     import scheduler
     current = saved_theme()
     swatch = ("--paper", "--band", "--ink", "--brand", "--primary", "--signal", "--link", "--err")
@@ -2524,20 +2631,16 @@ def settings_page() -> str:
                      f"{' checked' if name == current else ''}><b>{esc(THEME_LABELS.get(name, name.title()))}</b>"
                      f"<span class='swatch'>{dots}</span></label>")
     conf, now = scheduler.settings(), datetime.datetime.now()
-    state = load_json(scheduler.STATE)
+    state, on = load_json(scheduler.STATE), scheduler.enabled(conf)
     rows = "".join(
-        f"<tr><td>{esc(job)}</td><td>{'on' if job in scheduler.enabled(conf) else 'off'}</td>"
+        f"<tr><td title='runs {esc(' '.join(args))}'>{esc(job)}</td><td><input type='checkbox' name='s-job'"
+        f" value='{esc(job)}' aria-label='Run {esc(job)}'{' checked' if job in on else ''}></td>"
         f"<td>{esc(state.get(job, '—')[:16].replace('T', ' '))}</td>"
-        f"<td>{scheduler.next_due(slots, now):%a %d %b %H:%M}</td><td class='mono'>{esc(' '.join(args))}</td>"
+        f"<td>{scheduler.next_due(slots, now):%a %d %b %H:%M}</td>"
         f"<td>{esc(scheduler.ABOUT.get(job, ''))}</td></tr>"
         for job, (args, slots) in scheduler.JOBS.items())
-    mode_note = {"off": "Nothing runs. Set <code>\"mode\"</code> in <code>config/scheduler.json</code> to"
-                        " <code>log-only</code> to watch it, then <code>run</code>.",
-                 "log-only": "It writes what it would run to <code>runs/scheduler.log</code> and runs"
-                             " nothing; the Windows tasks still do the work. After a week of matching times:"
-                             " <code>run</code>, and <code>scripts\\schedule.ps1 -Remove</code> in the same step.",
-                 "run": "It runs the jobs. The Windows tasks should be removed, or every call is made twice."}
-    client = os.environ.get("BENCH_CLIENT") or "llm"
+    modes = "".join(f"<option value='{esc(k)}' data-why='{esc(why)}'{' selected' if k == conf['mode'] else ''}>"
+                    f"{esc(label)}</option>" for k, (label, why) in scheduler.MODES.items())
     return (
         "<div class='panel form-panel'><h2>Theme</h2><p class='muted'>Applied and saved the moment you pick one."
         " Every theme passes the contrast check (<code>scripts/check_themes.py</code>). The \"by Wendell"
@@ -2545,13 +2648,17 @@ def settings_page() -> str:
         f"<div class='themes' id='themes'>{''.join(cards)}</div>"
         "<div class='errors' id='t-errors' role='alert'></div><div class='done' id='t-done'></div></div>"
         + gateway_keys_card() +
-        f"<div class='panel'><h2>Scheduler ·{esc(conf['mode'])}</h2><p class='muted'>{mode_note.get(conf['mode'], '')}</p>"
-        "<table><thead><tr>" + th("Job") + th("On") + th("Counted up to") + th("Next") + th("Runs")
-        + th("What it does") + f"</tr></thead><tbody>{rows}</tbody></table></div>"
-        f"<div class='panel'><h2>Model client · {esc(client)}</h2><p class='muted'>"
-        "The default for calls the dashboard and gateway make (<code>BENCH_CLIENT</code>, <code>llm</code>"
-        " unless set). The perf and availability tasks pass <code>--client builtin</code> for the trial week"
-        " ending 2026-10-26 (RELEASE-PLAN Phase 2a).</p></div>")
+        "<div class='panel form-panel'><h2>Scheduler</h2><p class='muted'>The recurring checks, run by the"
+        " dashboard itself. A change applies within a minute, without a restart.</p>"
+        f"<label class='field' for='s-mode'>Mode</label><select id='s-mode' data-was='{esc(conf['mode'])}'>{modes}</select>"
+        "<p class='rules' id='s-mode-why'></p>"
+        "<table><thead><tr>" + th("Job") + th("On") + th("Counted up to") + th("Next")
+        + th("What it does") + f"</tr></thead><tbody>{rows}</tbody></table>"
+        "<p class='rules'>Run makes model calls on its own schedule. If something else also runs these jobs"
+        " (cron, Windows Task Scheduler), turn it off in the same step, or every job runs twice.</p>"
+        "<div class='errors' id='s-errors' role='alert'></div><div class='done' id='s-done'></div>"
+        "<div class='actions'><button class='btn primary' id='s-save'>Save scheduler</button></div></div>"
+        + access_card())
 
 
 def endpoints_page() -> str:
@@ -2820,7 +2927,8 @@ def info_page() -> str:
 def directory_json() -> str:
     directory = model_directory()
     facts = {a: catalog.info(a) for a, d in directory.items() if d.get("kind") != "decision"}
-    return json.dumps({"models": directory, "facts": facts, "roles": model_roles.load()["roles"],
+    options = {a: o for a, o in load_json(OPTIONS_PATH).items() if a in facts and isinstance(o, dict)}
+    return json.dumps({"models": directory, "facts": facts, "options": options, "roles": model_roles.load()["roles"],
                        "retired": retired(), "stamp": data_stamp()},
                       ensure_ascii=False).replace("</", "<\\/")
 
@@ -2872,6 +2980,17 @@ def editor() -> str:
         + "</div><div class='src' id='s-limits'></div></div>"
         "</div><div class='errors' id='f-errors' role='alert'></div><div class='done' id='f-done'></div>"
         "<div class='actions'><button class='btn' id='f-save' type='button'>Save facts</button></div>"
+        "</details>"
+        # How the bench calls it (serve.save_model_options): every caller, gateway, suite and probes.
+        "<details id='m-opts' class='facts-box'><summary>Call options</summary>"
+        "<label class='field' for='co-max'>Max tokens per answer</label>"
+        "<input id='co-max' type='number' min='1' max='1000000'>"
+        "<p class='rules'>The most one answer may use (<code>max_tokens</code>), on every call the bench"
+        " makes to it. A reasoning model thinks out of the same budget and answers with an empty string"
+        " when it runs out, which looks like a dead model: raise it then. Blank leaves it to the"
+        " endpoint. <span id='co-ceiling'></span></p>"
+        "<div class='errors' id='co-errors' role='alert'></div><div class='done' id='co-done'></div>"
+        "<div class='actions'><button class='btn' id='co-save' type='button'>Save options</button></div>"
         "</details>"
         "<label class='check'><input type='checkbox' id='m-adhoc'> Ad hoc only</label>"
         "<p class='rules'>For expensive or capped models: never seated automatically, never"
@@ -3162,6 +3281,8 @@ class Handler(gateway.Handler):
                                                             str(p.get("merger") or "")),
                "/api/collection/remove": lambda p: delete_collection(str(p.get("name") or "")),
                "/api/model-facts": lambda p: save_model_facts(str(p.get("alias") or ""), p.get("facts")),
+               "/api/model-options": lambda p: save_model_options(str(p.get("alias") or ""), p.get("max_tokens")),
+               "/api/scheduler": lambda p: save_scheduler(str(p.get("mode") or ""), p.get("jobs")),
                "/api/connection-limits": lambda p: save_connection_limits(str(p.get("connection") or ""),
                                                                           p.get("limits")),
                "/api/verdict": lambda p: record_verdict(str(p.get("call") or ""), p.get("useful"),

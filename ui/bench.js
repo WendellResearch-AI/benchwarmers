@@ -172,7 +172,7 @@
       m.qtypes.querySelectorAll('input').forEach(function (c) {
         c.checked = decision && model.question_types.indexOf(c.value) !== -1;
       });
-      fillFacts(alias, decision);
+      fillFacts(alias, decision); fillOptions(alias, decision);
       m.aliasWhy.textContent = decision
         ? 'The name decide.py and the gateway call it by, and every record is keyed by. Letters, digits, dot, dash, underscore; unused, and never a retired name.'
         : m.aliasWhy.dataset.chat;
@@ -246,6 +246,24 @@
     post('/api/model-facts', {alias: editing, facts: facts}).then(function (r) {
       if (!r.ok) { listErrors($('f-errors'), r.errors); return; }
       $('f-done').textContent = 'Saved. Reloading…'; setTimeout(function () { location.reload(); }, 700);
+    });
+  });
+  // ---- call options: how the bench asks this model (serve.save_model_options)
+  function fillOptions(alias, decision) {
+    var o = (D.options || {})[alias] || {}, ceiling = ((D.facts || {})[alias] || {}).max_output;
+    $('m-opts').hidden = decision;
+    $('co-errors').textContent = ''; $('co-done').textContent = '';
+    $('co-max').value = o.max_tokens || ''; $('co-max').placeholder = "the endpoint's default";
+    $('co-ceiling').textContent = ceiling ? 'At most its max output, ' + Number(ceiling).toLocaleString() + '.' : '';
+  }
+  $('co-save').addEventListener('click', function () {
+    if (!editing) return;
+    var v = $('co-max').value.trim();
+    $('co-errors').textContent = ''; $('co-done').textContent = '';
+    post('/api/model-options', {alias: editing, max_tokens: v ? Number(v) : null}).then(function (r) {
+      if (!r.ok) { listErrors($('co-errors'), r.errors); return; }
+      $('co-done').textContent = 'Saved' + (r.note ? '; ' + r.note : '') + '. Reloading…';
+      setTimeout(function () { location.reload(); }, 900);
     });
   });
 
@@ -589,6 +607,23 @@
         if (!r.ok) { listErrors($('k-errors'), r.errors); return; }
         location.reload();
       });
+    });
+  });
+
+  // ---- scheduler: its mode and jobs (serve.save_scheduler) -----------------
+  var sMode = $('s-mode');
+  function modeWhy() { $('s-mode-why').textContent = sMode.selectedOptions[0].dataset.why; }
+  sMode.addEventListener('change', modeWhy); modeWhy();
+  $('s-save').addEventListener('click', function () {
+    var jobs = {};
+    document.querySelectorAll('input[name=s-job]').forEach(function (c) { jobs[c.value] = c.checked; });
+    if (sMode.value === 'run' && sMode.dataset.was !== 'run'
+        && !confirm('Run the jobs for real? They make model calls on their own schedule. If something else'
+                    + ' also runs them (cron, Windows Task Scheduler), turn it off now, or every job runs twice.')) return;
+    $('s-errors').textContent = ''; $('s-done').textContent = '';
+    post('/api/scheduler', {mode: sMode.value, jobs: jobs}).then(function (r) {
+      if (!r.ok) { listErrors($('s-errors'), r.errors); return; }
+      sMode.dataset.was = sMode.value; $('s-done').textContent = 'Saved. It applies within a minute.';
     });
   });
 

@@ -128,7 +128,9 @@ The dashboard then asks for the token once (a session cookie for a week), and
 the gateway routes need a gateway key made on Settings (`Authorization: Bearer
 <key>`). Give each app its own key, limited to the collections it uses and a
 rate; `BENCHWARMERS_REQUIRE_KEYS=1` asks for keys on this machine too. A
-browser app on another origin also needs `BENCH_ALLOWED_ORIGINS`. In Docker: put the token and the `BENCHWARMERS_KEY_<NAME>` variables in
+browser app on another origin also needs `BENCH_ALLOWED_ORIGINS`. Check the
+result on Settings, Server and access, which shows each of these as it stands
+(never a secret's value). In Docker: put the token and the `BENCHWARMERS_KEY_<NAME>` variables in
 a `.env` beside `compose.yaml`, then `docker compose up -d`; the dashboard and
 gateway share one port and the data folder is a volume.
 

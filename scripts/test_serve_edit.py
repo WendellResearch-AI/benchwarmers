@@ -192,6 +192,39 @@ def main() -> int:
           + ("" if ok else f" -> {refused} {r} {back}"))
     failures += 0 if ok else 1
 
+    # Call options: max_tokens set, refused above the model's max output or as
+    # a fraction or for no model, then cleared; the llm CLI's copy is stubbed.
+    told, real_info = [], serve.catalog.info
+    serve._llm_option = lambda alias, name, value: told.append((alias, name, value)) or "stub"
+    serve.catalog.info = lambda a: {**real_info(a), "max_output": 50_000}
+    chat = next(a for a, m in sorted(serve.model_directory().items()) if m.get("kind") != "decision")
+    before = json.loads(serve.OPTIONS_PATH.read_text(encoding="utf-8"))
+    try:
+        put = serve.save_model_options(chat, 31_337)
+        mid = json.loads(serve.OPTIONS_PATH.read_text(encoding="utf-8"))
+        refused = [serve.save_model_options(chat, 60_000), serve.save_model_options(chat, 12.5),
+                   serve.save_model_options("no-such-model", 100), serve.save_model_options(chat, True)]
+        gone = serve.save_model_options(chat, None)
+        after = json.loads(serve.OPTIONS_PATH.read_text(encoding="utf-8"))
+    finally:
+        serve.catalog.info = real_info
+    ok = (put["ok"] and mid[chat]["max_tokens"] == 31_337 and not any(r["ok"] for r in refused)
+          and gone["ok"] and "max_tokens" not in after.get(chat, {}) and after.get("_why") == before.get("_why")
+          and told == [(chat, "max_tokens", 31_337), (chat, "max_tokens", None)])
+    print(("ok   " if ok else "FAIL ") + f"call options for {chat}" + ("" if ok else f" -> {put} {refused} {gone} {told}"))
+    failures += 0 if ok else 1
+
+    # The scheduler: a mode and the jobs turned off, nothing else written.
+    import scheduler
+    scheduler.CONFIG = cfg / "scheduler.json"
+    bad = [serve.save_scheduler("sometimes", {}), serve.save_scheduler("off", {"nope": True})]
+    good = serve.save_scheduler("log-only", {"perf": False, "suite": True})
+    conf = scheduler.settings()
+    ok = (not any(r["ok"] for r in bad) and good["ok"]
+          and conf == {"mode": "log-only", "jobs": {"perf": False}} and "perf" not in scheduler.enabled(conf))
+    print(("ok   " if ok else "FAIL ") + "scheduler mode and jobs" + ("" if ok else f" -> {bad} {good} {conf}"))
+    failures += 0 if ok else 1
+
     # The owner's files are as they were. alerts.json can change under a
     # running suite, so only what this test could do counts: the victim's
     # alerts cleared from the real file.

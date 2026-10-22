@@ -56,6 +56,11 @@ JOBS = {
     "capabilities": (["metrics/probe_caps.py", "--gap", "30"], [(6, "07:00")]),
     "suite": (["suite/run.py", "--next"], [(None, t) for t in ("03:00", "09:00", "15:00", "21:00")]),
 }
+# Each mode as the Settings page names and explains it (the docstring above).
+MODES = {"off": ("Off", "Nothing runs. A fresh install spends no model calls until someone opts in."),
+         "log-only": ("Log only", "At each due time it writes \"would run\" to runs/scheduler.log and runs"
+                                  " nothing: for checking its times against another scheduler first."),
+         "run": ("Run", "Runs each job at its time, one at a time per job, making the calls the job makes.")}
 # What each job is for, in a sentence, for the Settings page.
 ABOUT = {
     "availability": "Is each model still answering? One one-word prompt per model every morning;"

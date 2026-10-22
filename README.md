@@ -168,6 +168,10 @@ Endpoint keys come from `BENCHWARMERS_KEY_<NAME>` (the key name upper-cased,
 `-` as `_`) first, then from the `llm` CLI's key store; they are never written
 to the data folder's JSON or shown back.
 
+Settings, under Server and access, shows how all of this stands right now
+(whether a secret is set, never its value); it is changed only in the
+environment, then a restart.
+
 ## Licence
 
 MIT, Copyright (c) 2026 Wendell Research ([LICENSE](LICENSE)). The starter
