@@ -13,8 +13,9 @@ It writes three kinds of thing, each behind a popup and each logged to
 the bench itself — a role the config defines; an alias in the standing form,
 unused, never a retired name — written atomically, the rename recorded in
 `config/alias-history.json`, the `llm` registry re-synced. A model's REMOVAL
-(same popup, typed back to confirm, reason required): deregistered and
-recorded in `config/retired.json`; no evidence is deleted. And ONBOARDING
+(same popup, typed back to confirm, reason required): deregistered, taken
+out of every collection, and recorded in `config/retired.json`; no evidence
+is deleted. And ONBOARDING
 (header button): `scripts/onboard.py` started in the background with its log
 tailed here. The upstream model id is never editable. Nothing else can write.
 
@@ -480,6 +481,65 @@ def _log_change(stamp: str, who: str, alias: str, field: str, old, new) -> None:
 RETIRED_PATH = DATA / "config" / "retired.json"
 
 
+def _drop_from_collections(alias: str, stamp: str, who: str) -> dict[str, list[str]]:
+    """Take a retired alias out of every collection: off `members`, and off
+    `merger` (empty then, which means chosen by verdicts). Otherwise each call
+    to that collection seats a model that is no longer registered. Returns
+    {collection: [the fields it was in]} for retired.json, so Restore can put
+    it back. An unreadable collections.json is left alone (a save would wipe
+    it); the gateway skips a retired member anyway."""
+    if bench_collections.unreadable(bench_collections.FILE):
+        return {}
+    data = bench_collections.load()
+    was: dict[str, list[str]] = {}
+    for name, c in data.items():
+        if not isinstance(c, dict):
+            continue
+        fields = []
+        if alias in (c.get("members") or []):
+            fields.append("members")
+        if c.get("merger") == alias:
+            fields.append("merger")
+        if not fields:
+            continue
+        old = json.loads(json.dumps(c))
+        if "members" in fields:
+            c["members"] = [m for m in c["members"] if m != alias]
+        if "merger" in fields:
+            c["merger"] = ""
+        was[name] = fields
+        _log_change(stamp, who, alias, f"collection {name}", old, c)
+    if was:
+        _write_atomic(bench_collections.FILE, _dump(data))
+    return was
+
+
+def _return_to_collections(alias: str, was: dict, stamp: str, who: str) -> list[str]:
+    """Undo _drop_from_collections for the collections that still exist; a
+    collection deleted since, or one now full (max_calls), is left as it is.
+    Returns the names it went back into."""
+    if not was or bench_collections.unreadable(bench_collections.FILE):
+        return []
+    data, cap = bench_collections.load(), bench_collections.settings()["max_calls"]
+    back = []
+    for name, fields in was.items():
+        c = data.get(name)
+        if not isinstance(c, dict):
+            continue
+        old = json.loads(json.dumps(c))
+        members = c.get("members") or []
+        if "members" in fields and alias not in members and len(members) < cap:
+            c["members"] = members + [alias]
+        if "merger" in fields and not c.get("merger"):
+            c["merger"] = alias
+        if c != old:
+            back.append(name)
+            _log_change(stamp, who, alias, f"collection {name}", old, c)
+    if back:
+        _write_atomic(bench_collections.FILE, _dump(data))
+    return back
+
+
 def _sync_cli() -> str:
     try:
         result = subprocess.run(
@@ -500,7 +560,8 @@ def remove_model(alias: str, typed: str, reason: str, who: str = "ui") -> dict:
     The daily check (`scripts/check_deprecations.py`, via `auto_retire.py`)
     calls this too, with `who="auto"`, when a model is clearly gone; this is
     also the button for a person who knows sooner. It deregisters the alias from the llm registry (and re-syncs),
-    drops it from the role and direct-endpoint configs, records it in
+    drops it from the role and direct-endpoint configs and from every
+    collection (members and merger), records it in
     `config/retired.json` — so the alias is never reused, and onboarding the
     same served model again is a deliberate act — clears that model's alerts,
     and logs the change. It deletes NO evidence: suite outputs, offloads,
@@ -527,11 +588,14 @@ def remove_model(alias: str, typed: str, reason: str, who: str = "ui") -> dict:
         data = decide.load()
         entry = data.pop(alias)
         _write_atomic(decide.FILE, _dump(data))
+        # A decision model is never saved into a collection; a hand edit may have.
+        was = _drop_from_collections(alias, stamp, who)
         retired = load_json(RETIRED_PATH)
         retired[alias] = {"served": served, "tag": directory[alias]["tag"], "role": "decision",
                           "at": stamp, "by": who, "why": reason.strip(),
                           "endpoint": entry["endpoint"], "decision": entry,
-                          **({"ad_hoc": True} if directory[alias]["ad_hoc"] else {})}
+                          **({"ad_hoc": True} if directory[alias]["ad_hoc"] else {}),
+                          **({"collections": was} if was else {})}
         _write_atomic(RETIRED_PATH, _dump(retired))
         roles = roles_config()
         roles.get("models", {}).pop(alias, None)
@@ -540,7 +604,8 @@ def remove_model(alias: str, typed: str, reason: str, who: str = "ui") -> dict:
         _log_change(stamp, who, alias, "removed", served, reason.strip())
         return {"ok": True, "errors": [], "sync": "",
                 "changed": ["config/decision-models.json", "config/retired.json",
-                            "config/model-roles.json"]}
+                            "config/model-roles.json"]
+                           + (["config/collections.json"] if was else [])}
 
     # 1. the registry block — model_id line plus its indented lines
     text = read(YAML_PATH)
@@ -551,17 +616,23 @@ def remove_model(alias: str, typed: str, reason: str, who: str = "ui") -> dict:
                 "errors": [f"expected one registry block for {alias!r}, found {n}; nothing removed"]}
     _write_atomic(YAML_PATH, text.rstrip("\n") + "\n")
     changed.append("config/extra-openai-models.yaml")
-    # 2. the memory of it -- enough to restore it exactly: endpoint, options too
+    # 2. the collections it sat in, so no call seats a model that is gone
+    was = _drop_from_collections(alias, stamp, who)
+    if was:
+        changed.append("config/collections.json")
+    # 3. the memory of it -- enough to restore it exactly: endpoint, options,
+    # collections too
     retired = load_json(RETIRED_PATH)
     options = load_json(OPTIONS_PATH)
     retired[alias] = {"served": served, "tag": directory[alias]["tag"],
                       "role": directory[alias]["role"], "at": stamp, "by": who,
                       "why": reason.strip(), "endpoint": directory[alias]["endpoint"],
                       **({"ad_hoc": True} if directory[alias]["ad_hoc"] else {}),
-                      **({"options": options[alias]} if alias in options else {})}
+                      **({"options": options[alias]} if alias in options else {}),
+                      **({"collections": was} if was else {})}
     _write_atomic(RETIRED_PATH, _dump(retired))
     changed.append("config/retired.json")
-    # 3. configs keyed by alias
+    # 4. configs keyed by alias
     roles = roles_config()
     if alias in roles.get("models", {}) or alias in roles.get("ad_hoc", []):
         roles.get("models", {}).pop(alias, None)
@@ -573,7 +644,7 @@ def remove_model(alias: str, typed: str, reason: str, who: str = "ui") -> dict:
         options.pop(alias)
         _write_atomic(OPTIONS_PATH, _dump(options))
         changed.append("config/model-options.json")
-    # 4. its alerts — the action they asked for has been taken
+    # 5. its alerts — the action they asked for has been taken
     try:
         import alerts as _alerts
         for key in list(_alerts.active()):
@@ -652,13 +723,15 @@ def restore_model(alias: str, who: str = "ui") -> dict:
         if entry.get("ad_hoc"):
             roles["ad_hoc"] = sorted(set(roles.get("ad_hoc", [])) | {alias})
         _write_atomic(ROLES_PATH, _dump(roles))
+        stamp = datetime.datetime.now().astimezone().isoformat(timespec="seconds")
+        back = _return_to_collections(alias, entry.get("collections") or {}, stamp, who)
         del retired[alias]
         _write_atomic(RETIRED_PATH, _dump(retired))
-        _log_change(datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
-                    who, alias, "restored", None, entry["served"])
+        _log_change(stamp, who, alias, "restored", None, entry["served"])
         return {"ok": True, "errors": [], "sync": "",
                 "changed": ["config/decision-models.json", "config/model-roles.json",
-                            "config/retired.json"]}
+                            "config/retired.json"]
+                           + (["config/collections.json"] if back else [])}
     if entry["served"] in registered():
         return {"ok": False, "changed": [], "sync": "",
                 "errors": [f"{entry['served']} is registered again as"
@@ -682,11 +755,13 @@ def restore_model(alias: str, who: str = "ui") -> dict:
         options[alias] = entry["options"]
         _write_atomic(OPTIONS_PATH, _dump(options))
         changed.append("config/model-options.json")
+    stamp = datetime.datetime.now().astimezone().isoformat(timespec="seconds")
+    if _return_to_collections(alias, entry.get("collections") or {}, stamp, who):
+        changed.append("config/collections.json")
     del retired[alias]
     _write_atomic(RETIRED_PATH, _dump(retired))
     changed.append("config/retired.json")
-    _log_change(datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
-                who, alias, "restored", None, entry["served"])
+    _log_change(stamp, who, alias, "restored", None, entry["served"])
     return {"ok": True, "errors": [], "changed": changed, "sync": _sync_cli()}
 
 
@@ -3254,8 +3329,9 @@ def editor() -> str:
         "<button class='btn primary' id='m-save'>Save</button></div>"
         "<details class='remove' id='m-remove-box'><summary>Retire this model…</summary>"
         "<p class='rules'>Deregisters the alias, records it in <code>retired.json</code> so the"
-        " name is never reused, and clears its problems. Deletes no evidence, and Restore"
-        " brings it back. The daily check also retires models on its own when they are"
+        " name is never reused, takes it out of every collection it is a member or merger of,"
+        " and clears its problems. Deletes no evidence, and Restore brings it back, into the"
+        " collections that still exist. The daily check also retires models on its own when they are"
         " clearly gone.</p>"
         "<label class='field' for='m-reason'>Why</label>"
         "<input id='m-reason' placeholder='e.g. free tier withdrawn 2026-10-15'>"
