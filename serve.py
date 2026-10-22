@@ -2248,11 +2248,13 @@ _DISCOVER: dict = {}
 
 def _discover_rows() -> list[dict]:
     """metrics/discover.py's rows, built once per change to what they read:
-    the daily feeds, and the registry and endpoints (an onboarding moves a
-    model to "on bench" and a new endpoint adds routes)."""
+    the daily feeds, the registry and endpoints (an onboarding moves a model
+    to "on bench" and a new endpoint adds routes), and connections.json
+    (Settings' free-only-in-their-own-app switches)."""
     import discover
     import sources
-    paths = [sources.CACHE / f"{n}.json" for n in sources.FEEDS] + [endpoints.YAML, endpoints.FILE]
+    paths = [sources.CACHE / f"{n}.json" for n in sources.FEEDS] + [endpoints.YAML, endpoints.FILE,
+                                                                     endpoints.CONNECTIONS]
     stamp = tuple(p.stat().st_mtime if p.exists() else 0 for p in paths)
     if _DISCOVER.get("stamp") != stamp:
         _DISCOVER.update(stamp=stamp, rows=discover.build())
@@ -2662,10 +2664,51 @@ def client_card() -> str:
             f"<div class='actions'><button class='btn primary' id='mc-save'{off}>Save client</button></div></div>")
 
 
+def save_own_client_free(providers, who: str = "ui") -> dict:
+    """Which providers' free models work only in their own app, so Discover
+    leaves them out (sources.free_in_own_client_only). Written to
+    config/connections.json `free_in_own_client_only`, only where it differs
+    from the built-in, so a later release's list still reaches this install."""
+    import sources
+    if not isinstance(providers, dict) or not all(isinstance(v, bool) for v in providers.values()):
+        return {"ok": False, "errors": ["providers: a map of models.dev provider id to true or false"]}
+    known = set(sources.cached("modelsdev")) | set(sources.FREE_IN_OWN_CLIENT_ONLY)
+    unknown = sorted(set(providers) - known)
+    if unknown:
+        return {"ok": False, "errors": [f"not a models.dev provider id: {', '.join(unknown)}"]}
+    over = {p: on for p, on in providers.items() if on != sources.FREE_IN_OWN_CLIENT_ONLY.get(p, False)}
+    old = sorted(p for p, on in sources.free_in_own_client_only().items() if on)
+
+    def change(d):
+        d.pop("free_in_own_client_only", None)
+        if over:
+            d["free_in_own_client_only"] = over
+    locked.update(endpoints.CONNECTIONS, change)
+    _log_change(datetime.datetime.now().astimezone().isoformat(timespec="seconds"), who, "",
+                "free in own client only", old, sorted(p for p, on in sources.free_in_own_client_only().items() if on))
+    return {"ok": True, "errors": []}
+
+
+def own_client_card() -> str:
+    import sources
+    rows = "".join(f"<tr><td>{esc(p)}</td><td><input type='checkbox' name='oc-prov' value='{esc(p)}'"
+                   f" aria-label='Leave out the free models of {esc(p)}'{' checked' if on else ''}></td></tr>"
+                   for p, on in sorted(sources.free_in_own_client_only().items()))
+    return ("<div class='panel form-panel'><h2>Free only in their own app</h2><p class='muted'>Some providers'"
+            " free models answer only inside the provider's own app: opencode's say its free tier \"can only be"
+            " used from within opencode\". Discover leaves out the free models of the providers ticked here;"
+            " their paid models stay.</p>"
+            "<table><thead><tr>" + th("Provider") + th("Free models left out") + f"</tr></thead><tbody>{rows}</tbody></table>"
+            "<label class='field' for='oc-add'>Add a provider</label>"
+            "<input id='oc-add' placeholder='its models.dev id' autocomplete='off'>"
+            "<div class='errors' id='oc-errors' role='alert'></div><div class='done' id='oc-done'></div>"
+            "<div class='actions'><button class='btn primary' id='oc-save'>Save</button></div></div>")
+
+
 def settings_page() -> str:
     """Theme (saved as picked), gateway keys, the scheduler (mode and jobs),
-    the model client, and how the install is reached (shown only: the
-    environment sets it)."""
+    the model client, providers whose free tier is theirs alone, and how the
+    install is reached (shown only: the environment sets it)."""
     import scheduler
     current = saved_theme()
     swatch = ("--paper", "--band", "--ink", "--brand", "--primary", "--signal", "--link", "--err")
@@ -2704,7 +2747,7 @@ def settings_page() -> str:
         " (cron, Windows Task Scheduler), turn it off in the same step, or every job runs twice.</p>"
         "<div class='errors' id='s-errors' role='alert'></div><div class='done' id='s-done'></div>"
         "<div class='actions'><button class='btn primary' id='s-save'>Save scheduler</button></div></div>"
-        + client_card() + access_card())
+        + client_card() + own_client_card() + access_card())
 
 
 def endpoints_page() -> str:
@@ -3331,6 +3374,7 @@ class Handler(gateway.Handler):
                "/api/model-options": lambda p: save_model_options(str(p.get("alias") or ""), p.get("max_tokens")),
                "/api/scheduler": lambda p: save_scheduler(str(p.get("mode") or ""), p.get("jobs")),
                "/api/client": lambda p: save_client(str(p.get("client") or "")),
+               "/api/own-client-free": lambda p: save_own_client_free(p.get("providers")),
                "/api/connection-limits": lambda p: save_connection_limits(str(p.get("connection") or ""),
                                                                           p.get("limits")),
                "/api/verdict": lambda p: record_verdict(str(p.get("call") or ""), p.get("useful"),

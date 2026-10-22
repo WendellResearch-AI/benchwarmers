@@ -12,7 +12,9 @@ models.dev lists a price per provider, which is the PAID price even where the
 provider has a free tier (Groq, Mistral, NVIDIA). So a model counts as free if
 models.dev prices it at 0 (or its id ends :free), OR FreeLLMAPI lists it,
 since FreeLLMAPI is a catalog of free tiers. The paid ones are kept, with
-their price, behind the dashboard's toggle.
+their price, behind the dashboard's toggle. A provider whose free models work
+only in its own client (opencode) has those left out; see
+sources.FREE_IN_OWN_CLIENT_ONLY.
 
 REACH
 -----
@@ -218,6 +220,7 @@ def build() -> list[dict]:
     seen = _read_seen()
     today = dt.date.today().isoformat()
     baseline = not seen
+    walled = {p for p, on in sources.free_in_own_client_only().items() if on}
     out = []
     for key, r in rows.items():
         k = "|".join(key)
@@ -225,6 +228,8 @@ def build() -> list[dict]:
             seen[k] = "baseline" if baseline else today
         r["first_seen"] = seen[k]
         r["new"] = seen[k] not in ("baseline",) and seen[k] >= (dt.date.today() - dt.timedelta(days=NEW_DAYS)).isoformat()
+        if r["free"] and r["provider"] in walled:
+            continue                # free only in the provider's own client (sources.FREE_IN_OWN_CLIENT_ONLY)
         conn = r["connection"]
         r["norm"] = key[1]
         r["routes"] = _routes(r, bench, owui_conns, direct, owui)
@@ -283,6 +288,11 @@ def _selftest() -> None:
                    {"openrouter"}, {}, "openwebui") == []            # no connection, no endpoint: no route
     # No Open WebUI hub: no connections behind one, so only the endpoint's own route.
     assert [r["via"] for r in _routes(row, bench, set(), {"openrouter": ["openrouter"]}, None)] == ["direct"]
+    # Free-only-in-own-client: built in, and an install's switch wins either way.
+    assert sources.free_in_own_client_only({})["opencode"] is True
+    over = sources.free_in_own_client_only({"opencode": False, "x": True})
+    assert over["opencode"] is False and over["x"] is True and over["opencode-go"] is True, over
+    assert sources.free_in_own_client_only(True) == sources.free_in_own_client_only({})   # not a map: ignored
     print("discover selftest ok")
 
 

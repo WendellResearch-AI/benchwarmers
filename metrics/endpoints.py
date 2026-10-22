@@ -63,6 +63,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 from paths import DATA  # noqa: E402  -- the install's data folder (metrics/paths.py)
 FILE = DATA / "config" / "endpoints.json"
 YAML = DATA / "config" / "extra-openai-models.yaml"
+CONNECTIONS = DATA / "config" / "connections.json"
 def llm_dir() -> pathlib.Path:
     """The llm CLI's own folder (its keys.json, model registry, options and log),
     as llm finds it: LLM_USER_PATH, else its per-user folder on this OS. Every
@@ -131,10 +132,11 @@ def load() -> dict[str, dict]:
 
 def connections() -> dict:
     """config/connections.json: which connections are paid for, which break
-    ties, names for bare-IP hosts, models.dev ids. {} when absent: a fresh
+    ties, names for bare-IP hosts, models.dev ids, providers whose free tier
+    works only in their own client. {} when absent: a fresh
     install has no such facts, and none are assumed."""
     try:
-        data = json.loads((DATA / "config" / "connections.json").read_text(encoding="utf-8"))
+        data = json.loads(CONNECTIONS.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
     return data if isinstance(data, dict) else {}

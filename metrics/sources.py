@@ -55,6 +55,26 @@ def connection_to_modelsdev() -> dict[str, str]:
     """The built-in map with this install's own names over it."""
     import endpoints
     return {**CONNECTION_TO_MODELSDEV, **(endpoints.connections().get("models_dev") or {})}
+
+
+# models.dev providers whose free models answer only inside the provider's own
+# client, so Discover leaves those out; their paid models stay. opencode, tried
+# 2026-10-21 through Open WebUI: "opencode's free tier can only be used from
+# within opencode". opencode-go serves the same free ids, assumed the same.
+# An install switches a provider either way on Settings, which writes
+# config/connections.json `free_in_own_client_only`, e.g. {"opencode": false}.
+FREE_IN_OWN_CLIENT_ONLY = {"opencode": True, "opencode-go": True}
+
+
+def free_in_own_client_only(over: dict | None = None) -> dict[str, bool]:
+    """Provider -> whether its free models are left out: built-in, with this
+    install's switches over it."""
+    if over is None:
+        import endpoints
+        over = endpoints.connections().get("free_in_own_client_only")
+    if not isinstance(over, dict):
+        over = {}                   # a hand-written list or true: ignored rather than taking Discover down
+    return {**FREE_IN_OWN_CLIENT_ONLY, **over}
 # FreeLLMAPI platform id -> models.dev provider id, where they are the same
 # provider under another name (from the 2026-10-17 comparison).
 FREELLMAPI_TO_MODELSDEV = {

@@ -251,6 +251,28 @@ def main() -> int:
     print(("ok   " if ok else "FAIL ") + "model client choice" + ("" if ok else f" -> {first} {made} {picked} {pinned}"))
     failures += 0 if ok else 1
 
+    # Free only in their own app: only what differs from the built-in is written; bad input refused.
+    import sources
+    real_conn, endpoints_mod = serve.endpoints.CONNECTIONS, serve.endpoints
+    endpoints_mod.CONNECTIONS = cfg / "connections.json"
+    try:
+        endpoints_mod.CONNECTIONS.write_text('{"paid": ["x"]}', encoding="utf-8")
+        off = serve.save_own_client_free({"opencode": False, "opencode-go": True})["ok"]
+        wrote = json.loads(endpoints_mod.CONNECTIONS.read_text(encoding="utf-8"))
+        seen_off = sources.free_in_own_client_only()["opencode"]
+        back = serve.save_own_client_free({"opencode": True, "opencode-go": True})["ok"]
+        cleared = json.loads(endpoints_mod.CONNECTIONS.read_text(encoding="utf-8"))
+        refused = (serve.save_own_client_free({"no-such-provider-x": True})["ok"],
+                   serve.save_own_client_free({"opencode": "no"})["ok"], serve.save_own_client_free(["opencode"])["ok"])
+        card = serve.own_client_card()
+    finally:
+        endpoints_mod.CONNECTIONS = real_conn
+    ok = (off and wrote == {"paid": ["x"], "free_in_own_client_only": {"opencode": False}} and seen_off is False
+          and back and cleared == {"paid": ["x"]} and refused == (False, False, False)
+          and "value='opencode'" in card and "oc-save" in card)
+    print(("ok   " if ok else "FAIL ") + "free only in their own app" + ("" if ok else f" -> {wrote} {cleared} {refused}"))
+    failures += 0 if ok else 1
+
     # The owner's files are as they were. alerts.json can change under a
     # running suite, so only what this test could do counts: the victim's
     # alerts cleared from the real file.

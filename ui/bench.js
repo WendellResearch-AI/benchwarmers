@@ -636,6 +636,19 @@
     });
   });
 
+  // ---- free only in their own app (serve.save_own_client_free) -------------
+  if ($('oc-save')) $('oc-save').addEventListener('click', function () {
+    var providers = {}, add = $('oc-add').value.trim().toLowerCase();
+    document.querySelectorAll('input[name=oc-prov]').forEach(function (c) { providers[c.value] = c.checked; });
+    if (add) providers[add] = true;
+    $('oc-errors').textContent = ''; $('oc-done').textContent = '';
+    post('/api/own-client-free', {providers: providers}).then(function (r) {
+      if (!r.ok) { listErrors($('oc-errors'), r.errors); return; }
+      if (add) { location.reload(); return; }                 // the new provider gets its row
+      $('oc-done').textContent = 'Saved. Discover uses it on its next load.';
+    });
+  });
+
   // ---- endpoints: keys go in, never come back out -------------------------
   // The Endpoints page lists them (serve.endpoints_page, each row's data in
   // data-ep); Add an endpoint and Change key are one dialog. The page is
