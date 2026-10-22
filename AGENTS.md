@@ -27,9 +27,10 @@ Python 3.11 or later; nothing else is required.
     python -m venv .venv
     .venv/bin/pip install llm          # optional; Windows: .venv\Scripts\pip install llm
 
-The `llm` CLI is today's default model client. Without it, set
-`BENCH_CLIENT=builtin` to use the built-in client (`metrics/client.py`), which
-needs nothing installed.
+The `llm` CLI is today's default model client. Without it, choose the
+built-in client (`metrics/client.py`), which needs nothing installed: on
+Settings, Model client, once the dashboard runs, or with
+`BENCH_CLIENT=builtin` (which wins over Settings).
 
 Check: `python scripts/check.py --quick` ends with `all checks pass`.
 

@@ -627,6 +627,15 @@
     });
   });
 
+  // ---- model client (serve.save_client): the next call uses it -------------
+  $('mc-save').addEventListener('click', function () {
+    $('mc-errors').textContent = ''; $('mc-done').textContent = '';
+    post('/api/client', {client: $('mc-client').value}).then(function (r) {
+      if (!r.ok) { listErrors($('mc-errors'), r.errors); return; }
+      $('mc-done').textContent = 'Saved. The next model call uses it.';
+    });
+  });
+
   // ---- endpoints: keys go in, never come back out -------------------------
   // The Endpoints page lists them (serve.endpoints_page, each row's data in
   // data-ep); Add an endpoint and Change key are one dialog. The page is

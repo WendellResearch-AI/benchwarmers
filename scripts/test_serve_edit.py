@@ -13,6 +13,7 @@ would write the endpoint file.
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 import shutil
 import sys
@@ -223,6 +224,31 @@ def main() -> int:
     ok = (not any(r["ok"] for r in bad) and good["ok"]
           and conf == {"mode": "log-only", "jobs": {"perf": False}} and "perf" not in scheduler.enabled(conf))
     print(("ok   " if ok else "FAIL ") + "scheduler mode and jobs" + ("" if ok else f" -> {bad} {good} {conf}"))
+    failures += 0 if ok else 1
+
+    # The model client: chosen here unless BENCH_CLIENT is set; llm only where installed.
+    import client as model_client
+    model_client.CHOICE = cfg / "client.json"
+    env, real_which = os.environ.pop("BENCH_CLIENT", None), shutil.which
+    try:
+        first = model_client.chosen()
+        made = serve.save_client("builtin")
+        picked = (model_client.chosen(), model_client.backend())
+        os.environ["BENCH_CLIENT"] = "llm"
+        pinned = (model_client.chosen(), serve.save_client("builtin")["ok"])
+        del os.environ["BENCH_CLIENT"]
+        shutil.which = lambda name: None
+        no_llm = serve.save_client("llm")["ok"]
+        shutil.which = real_which
+        unknown = serve.save_client("curl")["ok"]
+    finally:
+        shutil.which = real_which
+        os.environ.pop("BENCH_CLIENT", None)
+        if env is not None:
+            os.environ["BENCH_CLIENT"] = env
+    ok = (first == ("llm", "default") and made["ok"] and picked == (("builtin", "settings"), "builtin")
+          and pinned == (("llm", "environment"), False) and not no_llm and not unknown)
+    print(("ok   " if ok else "FAIL ") + "model client choice" + ("" if ok else f" -> {first} {made} {picked} {pinned}"))
     failures += 0 if ok else 1
 
     # The owner's files are as they were. alerts.json can change under a

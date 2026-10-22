@@ -2563,7 +2563,7 @@ def access_card() -> str:
     shown here, never set here. Each needs a restart, and a page that could
     change its own login could open itself to anyone. No secret is shown."""
     import paths
-    bind, client = guard.bind(), os.environ.get("BENCH_CLIENT") or "llm"
+    bind = guard.bind()
     hosts, origins = sorted(guard._env("BENCH_ALLOWED_HOSTS")), sorted(guard._env("BENCH_ALLOWED_ORIGINS"))
     from_env = sorted(k[len(endpoints.ENV_KEY):].lower().replace("_", "-")
                       for k, v in os.environ.items() if k.startswith(endpoints.ENV_KEY) and v)
@@ -2585,9 +2585,9 @@ def access_card() -> str:
             ("Browser apps on other sites", ", ".join(origins) or "none: same origin only", "BENCH_ALLOWED_ORIGINS"),
             ("Data folder", f"{DATA} ({paths.WHY})", "BENCHWARMERS_HOME"),
             ("Endpoint keys from the environment", ", ".join(from_env) or "none: all in the llm key store",
-             f"{endpoints.ENV_KEY}<NAME>"),
-            ("Model client", client, "BENCH_CLIENT")]
-    body = "".join(f"<tr><th scope='row'>{esc(k)}</th><td>{esc(v)}</td><td class='mono set-by'>{esc(src)}</td></tr>"
+             f"{endpoints.ENV_KEY}<NAME>")]
+    body = "".join(f"<tr><th scope='row'>{esc(k)}</th><td>{esc(v)}</td>"
+                   f"<td class='mono set-by'>{'<br>'.join(esc(s) for s in src.split(', '))}</td></tr>"
                    for k, v, src in rows)
     return ("<div class='panel'><h2>Server and access</h2><p class='muted'>How this install is reached and who"
             " may call it. Set in the environment, read at start: change one and restart. Shown here, never"
@@ -2617,9 +2617,55 @@ def save_scheduler(mode: str, jobs, who: str = "ui") -> dict:
     return {"ok": True, "errors": []}
 
 
+def save_client(name: str, who: str = "ui") -> dict:
+    """The model client for every call the bench makes (config/client.json,
+    metrics/client.chosen), read per call, so it applies to the next one.
+    BENCH_CLIENT, when set, wins, so the choice is refused rather than ignored."""
+    import shutil
+    import client as model_client
+    if name not in model_client.CLIENTS:
+        return {"ok": False, "errors": [f"client: one of {', '.join(model_client.CLIENTS)}"]}
+    if (os.environ.get("BENCH_CLIENT") or "").strip():
+        return {"ok": False, "errors": ["BENCH_CLIENT is set in this server's environment and wins:"
+                                        " unset it and restart to choose here"]}
+    if name == "llm" and not shutil.which("llm"):
+        return {"ok": False, "errors": ["the llm CLI is not installed here (not on PATH): install it"
+                                        " (pip install llm) or keep the built-in client"]}
+    old = model_client.chosen()[0]
+    locked.update(model_client.CHOICE, lambda d: d.update(client=name))
+    _log_change(datetime.datetime.now().astimezone().isoformat(timespec="seconds"), who, "",
+                "model client", old, name)
+    return {"ok": True, "errors": []}
+
+
+def client_card() -> str:
+    import shutil
+    import client as model_client
+    now, source = model_client.chosen()
+    has_llm, pinned = bool(shutil.which("llm")), source == "environment"
+    labels = {"builtin": "Built-in: nothing to install", "llm": "The llm CLI: its plugins and its own log"}
+    opts = "".join(f"<option value='{k}'{' selected' if k == now else ''}"
+                   f"{' disabled' if k == 'llm' and not has_llm else ''}>{esc(label)}"
+                   f"{' (not installed)' if k == 'llm' and not has_llm else ''}</option>" for k, label in labels.items())
+    where = {"environment": "Set by <code>BENCH_CLIENT</code> in this server's environment, which wins: unset it"
+                            " and restart to choose here.",
+             "settings": "Chosen here (<code>config/client.json</code>); <code>BENCH_CLIENT</code> would win.",
+             "default": "The default, as nothing has chosen yet; <code>BENCH_CLIENT</code> would win."}[source]
+    off = " disabled" if pinned else ""
+    return ("<div class='panel form-panel'><h2>Model client</h2><p class='muted'>What makes every model call"
+            " the bench makes: gateway seats, the suite, the probes and auto-retire's checks. The next call uses"
+            " it, no restart. Whichever it is, a model on a sign-in that renews or on ChatGPT's plan, and any"
+            " call with images, goes through the built-in client.</p>"
+            f"<label class='field' for='mc-client'>Client</label><select id='mc-client'{off}>{opts}</select>"
+            f"<p class='rules'>{where}</p>"
+            "<div class='errors' id='mc-errors' role='alert'></div><div class='done' id='mc-done'></div>"
+            f"<div class='actions'><button class='btn primary' id='mc-save'{off}>Save client</button></div></div>")
+
+
 def settings_page() -> str:
     """Theme (saved as picked), gateway keys, the scheduler (mode and jobs),
-    and how the install is reached (shown only: the environment sets it)."""
+    the model client, and how the install is reached (shown only: the
+    environment sets it)."""
     import scheduler
     current = saved_theme()
     swatch = ("--paper", "--band", "--ink", "--brand", "--primary", "--signal", "--link", "--err")
@@ -2658,7 +2704,7 @@ def settings_page() -> str:
         " (cron, Windows Task Scheduler), turn it off in the same step, or every job runs twice.</p>"
         "<div class='errors' id='s-errors' role='alert'></div><div class='done' id='s-done'></div>"
         "<div class='actions'><button class='btn primary' id='s-save'>Save scheduler</button></div></div>"
-        + access_card())
+        + client_card() + access_card())
 
 
 def endpoints_page() -> str:
@@ -2911,11 +2957,12 @@ VERSION = f"{RELEASE} {RELEASE_DATE}".strip()           # the X-Benchwarmers-Ver
 
 def info_page() -> str:
     import scheduler
+    import client as model_client
     rows = [("Version", RELEASE), ("Date", RELEASE_DATE or "unknown"), ("Commit", COMMIT or "unknown"),
             ("Python", f"{sys.version.split()[0]} · {sys.executable}"),
             ("Folder", str(ROOT)), ("Data folder", str(DATA)), ("Endpoints", str(len(endpoints.load()))),
             ("Models on the bench", str(len(_chat_aliases()))),
-            ("Scheduler", scheduler.settings()["mode"]), ("Model client", os.environ.get("BENCH_CLIENT") or "llm"),
+            ("Scheduler", scheduler.settings()["mode"]), ("Model client", model_client.chosen()[0]),
             ("Theme", saved_theme())]
     body = "".join(f"<tr><th scope='row'>{esc(k)}</th><td class='mono'>{esc(v)}</td></tr>" for k, v in rows)
     return (f"<div class='panel'><h2>Info</h2><table class='facts'><tbody>{body}</tbody></table>"
@@ -3283,6 +3330,7 @@ class Handler(gateway.Handler):
                "/api/model-facts": lambda p: save_model_facts(str(p.get("alias") or ""), p.get("facts")),
                "/api/model-options": lambda p: save_model_options(str(p.get("alias") or ""), p.get("max_tokens")),
                "/api/scheduler": lambda p: save_scheduler(str(p.get("mode") or ""), p.get("jobs")),
+               "/api/client": lambda p: save_client(str(p.get("client") or "")),
                "/api/connection-limits": lambda p: save_connection_limits(str(p.get("connection") or ""),
                                                                           p.get("limits")),
                "/api/verdict": lambda p: record_verdict(str(p.get("call") or ""), p.get("useful"),

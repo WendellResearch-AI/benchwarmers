@@ -46,8 +46,8 @@ is thin.
        .venv/bin/pip install llm        # Windows: .venv\Scripts\pip install llm
 
    The [`llm`](https://llm.datasette.io/) CLI is the default model client today.
-   The built-in client (`metrics/client.py`) replaces it with
-   `BENCH_CLIENT=builtin` and will become the default.
+   The built-in client (`metrics/client.py`) replaces it, chosen on Settings
+   or with `BENCH_CLIENT=builtin` (which wins), and will become the default.
 
 2. **Make a data folder.** Everything that is yours (endpoints, model
    registrations, collections, verdicts, probe history, task answers) lives

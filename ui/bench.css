@@ -172,7 +172,7 @@ main { max-width: var(--page, 104rem); margin: 0 auto; padding: 0 var(--gutter) 
 
 /* settings, connections, logs, info */
 .themes { display: flex; flex-wrap: wrap; gap: .75rem; margin-top: .75rem; }
-td.set-by { font-size: .8125rem; color: var(--muted); overflow-wrap: anywhere; }
+td.set-by { font-size: .8125rem; color: var(--muted); white-space: nowrap; }
 .theme-card { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: .35rem .5rem;
               padding: .6rem .8rem; border: 1px solid var(--line); border-radius: var(--radius); cursor: pointer; }
 .theme-card:has(input:checked) { border-color: var(--ink); box-shadow: 3px 3px 0 var(--brand); }

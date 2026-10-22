@@ -2,8 +2,9 @@
 
     python metrics/client.py <alias> "prompt"     # one call; prints what ask_once would return
 
-RELEASE-PLAN.md Phase 2a. A drop-in for `llm -m <alias>`, used when
-BENCH_CLIENT=builtin (the default is still `llm`): suite/run.py's ask_once,
+RELEASE-PLAN.md Phase 2a. A drop-in for `llm -m <alias>`, used when chosen
+on Settings or by BENCH_CLIENT=builtin (the default is still `llm`; see
+chosen()): suite/run.py's ask_once,
 and so the perf probe, the suite, retries and auto-retire's confirmation call,
 and the gateway's seats. It reads the same registration (the yaml entry's
 model name, base, key name and headers), the same keys.json and the same
@@ -79,15 +80,33 @@ RETRY_STATUS = {408, 409, 429}
 MAX_REPLY = 32_000_000                             # bytes
 
 
+CLIENTS = ("llm", "builtin")
+CHOICE = DATA / "config" / "client.json"           # the Settings page's choice
+
+
+def chosen() -> tuple[str, str]:
+    """The configured client and what set it: BENCH_CLIENT ("environment"),
+    else the Settings page's choice ("settings"), else `llm` ("default").
+    Read on every call, so a change applies to the next one."""
+    env = (os.environ.get("BENCH_CLIENT") or "").strip().lower()
+    if env:
+        return env, "environment"
+    try:
+        saved = json.loads(CHOICE.read_text(encoding="utf-8")).get("client")
+    except (OSError, ValueError, AttributeError):
+        saved = None
+    return (saved, "settings") if saved in CLIENTS else ("llm", "default")
+
+
 def backend(alias: str = "") -> str:
-    """`llm` (default) or `builtin`, from BENCH_CLIENT. A model on an endpoint
-    connected by sign-in whose token renews, or that speaks only the Responses
-    API (ChatGPT's plan), is always `builtin`: llm can do neither."""
+    """`llm` or `builtin`, as chosen(). A model on an endpoint connected by
+    sign-in whose token renews, or that speaks only the Responses API
+    (ChatGPT's plan), is always `builtin`: llm can do neither."""
     if alias:
         entry = endpoints.entry_of(alias)
         if entry.get("api") == "responses" or (entry.get("connect") or {}).get("refreshes"):
             return "builtin"
-    return (os.environ.get("BENCH_CLIENT") or "llm").strip().lower()
+    return chosen()[0]
 
 
 def _options(alias: str) -> dict:
