@@ -500,14 +500,16 @@ def run_collection(name: str, messages: list[dict], nominated: list[str] | None 
                                "_empty reply — usually a token budget, not incapacity_")
         out.append(f"## {label} — {alias}\n`{call}` · {r['status']} · {r['seconds']}s\n\n{body}\n")
     out.append("---\nRecord a verdict per seat once checked against the code:\n"
-               "`python metrics/offload.py verdict <call id> --useful|--not-useful --note \"...\"`")
+               "`POST /bench/verdict` on this same server (see `bench.verdict`), or"
+               " `python metrics/offload.py verdict <call id> --useful|--not-useful --note \"...\"`")
     content = "\n".join(out)
     # Beyond the OpenAI fields, so a caller reads seats without parsing the
     # markdown. Clients that do not know it ignore it.
     bench = {"panel": panel_id, "collection": model, "shape": shape, "shape_by": how,
              "seats": [{k: s[k] for k in SEAT_KEYS} for s in record["seats"]],
-             "verdict": f"POST http://127.0.0.1:{PORT}/bench/verdict"
-                        ' {"call", "useful": true|false, "note", "real": [...], "false": [...]}',
+             # A path, not a URL: the same server answered, whichever port or
+             # proxy the caller came through (the dashboard serves these routes too).
+             "verdict": 'POST /bench/verdict {"call", "useful": true|false, "note", "real": [...], "false": [...]}',
              **({"skipped": skipped} if skipped else {})}
     if (reply or collection.get("reply") or "all") == "merged":
         try:

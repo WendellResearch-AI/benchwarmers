@@ -60,6 +60,16 @@ import guard  # noqa: E402
 import locked  # noqa: E402
 
 
+def gateway_url() -> str:
+    """Where a caller reaches the gateway: this dashboard's own address (it
+    answers the gateway's routes), or BENCHWARMERS_PUBLIC_URL behind a proxy."""
+    if public := guard.public_url():
+        return public + "/v1"
+    address = guard.bind()
+    host = "127.0.0.1" if address in ("127.0.0.1", "0.0.0.0", "::") else address
+    return f"http://{'[' + host + ']' if ':' in host else host}:{PORT}/v1"
+
+
 UI = ROOT / "ui"
 
 # THE THEME IS A FILE IN THIS REPO. Until 2026-10-19 the colours and faces were
@@ -1683,7 +1693,7 @@ def first_run() -> str:
     elif not bench_collections.load():
         step, head, label = "collection", "Make your first collection", "New collection"
         text = ("The models a panel always asks, and what it is for. Callers then ask for"
-                " bench/&lt;name&gt; through the gateway (python gateway.py).")
+                f" bench/&lt;name&gt; through the gateway at {esc(gateway_url())}.")
     else:
         return ""
     return (f"<section class='problems' id='first-run' data-step='{step}' aria-labelledby='first-head'>"
@@ -2333,8 +2343,8 @@ def gateway_card(limit: int = 30) -> str:
             f"<td>{' '.join(chips)}</td>"
             f"<td class='num{' muted' if not row_owed else ''}'>{row_owed}</td></tr>")
     if not records:
-        body.append("<tr><td colspan='6' class='muted'>No gateway requests yet. Run"
-                    " <code>python gateway.py</code> and call a collection.</td></tr>")
+        body.append("<tr><td colspan='6' class='muted'>No gateway requests yet. Call a collection"
+                    f" at <code>{esc(gateway_url())}</code>.</td></tr>")
     body.append("</tbody></table>")
     key = """<dl>
       <dt>Seats</dt><dd>Every model that answered the request, members first, then
@@ -2525,7 +2535,7 @@ def collections_tab() -> str:
     return (
         "<div class='panel form-panel'><h2 id='c-title'>Collections</h2>"
         "<p class='served'>Named groups of models the bench gateway runs together. A caller"
-        " asks for <code>bench/&lt;name&gt;</code> at <code>http://127.0.0.1:8123/v1</code>;"
+        f" asks for <code>bench/&lt;name&gt;</code> at <code>{esc(gateway_url())}</code>;"
         " every member answers, plus explorer seats the bench fills by staleness. Two to four"
         " members is the sweet spot. Open one to edit or delete it.</p>"
         "<div class='list-actions'><button class='btn primary' id='c-new'>New collection</button>"
