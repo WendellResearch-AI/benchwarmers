@@ -343,8 +343,29 @@ def output(res: dict, timeout: float) -> str:
     return res["error"] or (res["text"] + "\n" if res["text"] else "")
 
 
+LOG_LOCKED = "sqlite3.OperationalError: database is locked"
+
+
+def llm_log_failed_only(stdout: str, stderr: str) -> bool:
+    """True when a non-zero `llm -m` exit is only llm failing to write its own
+    log after printing the answer. Seats called at once each open llm's
+    logs.db, and the loser's crash (2026-10-22, inkling-small-free answered
+    "pong") turned an answer into an error. llm writes the log only once the
+    response is complete, so stdout is the whole answer; the same lock in the
+    migration llm runs before the call leaves stdout empty and stays an error.
+    Not `llm -n`: metrics/cost.py reads that log for token counts."""
+    lines = [ln.strip() for ln in (stderr or "").splitlines() if ln.strip()]
+    return bool((stdout or "").strip()) and bool(lines) and lines[-1] == LOG_LOCKED
+
+
 def _selftest() -> None:
-    """The Responses stream parser: an answer, a mid-stream usage limit, a cut-off stream."""
+    """The Responses stream parser: an answer, a mid-stream usage limit, a
+    cut-off stream; and which `llm` failures are only its log."""
+    tb = "Traceback (most recent call last):\n  File \"llm/cli.py\", in prompt\n" + LOG_LOCKED + "\n"
+    assert llm_log_failed_only("pong\n", tb)
+    assert not llm_log_failed_only("", tb)                                  # locked before the call
+    assert not llm_log_failed_only("half an ans", "openai.APIError: stream cut\n")
+    assert not llm_log_failed_only("pong", tb + "Error: something after\n")
     ok = (b'event: x\ndata: {"type":"response.output_text.delta","delta":"re"}\n\n'
           b'data: {"type":"response.completed","response":{"model":"m","usage":{"total_tokens":3},'
           b'"output":[{"type":"reasoning"},{"type":"message","content":[{"type":"output_text","text":"ready"}]}]}}\n')

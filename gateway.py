@@ -324,8 +324,10 @@ def _ask_llm(cmd: list[str], prompt: str) -> tuple[str, str]:
                               encoding="utf-8", errors="replace", timeout=SEAT_TIMEOUT,
                               env={**os.environ, "PYTHONIOENCODING": "utf-8"})
         answer = done.stdout.strip()
-        # A non-zero exit is an error even when stderr is silent.
-        error = (done.stderr.strip() or f"llm exited {done.returncode}") if done.returncode else ""
+        # A non-zero exit is an error even when stderr is silent, unless it is
+        # only llm failing to log an answer it printed (client.py).
+        failed = done.returncode and not client.llm_log_failed_only(done.stdout, done.stderr)
+        error = (done.stderr.strip() or f"llm exited {done.returncode}") if failed else ""
     except subprocess.TimeoutExpired:
         answer, error = "", f"no answer in {SEAT_TIMEOUT}s"
     except Exception as exc:                           # noqa: BLE001
