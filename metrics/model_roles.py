@@ -35,8 +35,11 @@ shapes:  today's task, `route.py --shape <name>`; general when none is given.
 ad_hoc:  aliases NEVER chosen automatically: not by the router's seats or
          reserve, not by a benchmark sweep or `--next` rotation, not by the
          daily perf run. Orthogonal to role: a role says what a model is FOR,
-         this says what it COSTS. They answer only when named (`--with`,
-         `llm -m`, a benchmark's `--model`).
+         this says what it COSTS. They answer only when named: `--with` or
+         the gateway's `with`, a collection that lists them as a member or
+         merger (every request through it spends their quota), `llm -m`, a
+         benchmark's `--model`. `bench onboard --quick --ad-hoc` (or Quick + ad
+         hoc in the picker) onboards one this way from the start.
 
 A role never lowers a score: rank is decided by evidence when seats are
 picked; a role only decides which shapes a model is eligible for.

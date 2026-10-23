@@ -358,8 +358,11 @@ def main() -> int:
                 hold.wait(10)
             return outcome[self.served][0]
 
-    def fake_spawn(served, endpoint="", who="ui"):
+    modes = {}
+
+    def fake_spawn(served, endpoint="", who="ui", mode="full"):
         order.append(served)
+        modes[served] = mode
         (runs / f"onboard-{served}.log").write_text(f"onboarding {served} from e  ->  alias {served}-x\n"
                                                     + outcome[served][1], encoding="utf-8")
         return {"ok": True, "errors": [], "log": f"onboard-{served}.log"}, Proc(served)
@@ -371,7 +374,7 @@ def main() -> int:
             time.sleep(0.05)
 
     kept = (serve._spawn_onboard, serve._onboard_refusal, serve.DATA)
-    serve._spawn_onboard, serve._onboard_refusal, serve.DATA = fake_spawn, lambda s, e: [], tmp
+    serve._spawn_onboard, serve._onboard_refusal, serve.DATA = fake_spawn, lambda s, e, m="full": [], tmp
     try:
         first = serve.queue_onboard([{"served": "a", "endpoint": "e"}, {"served": "ok", "endpoint": "e"}])
         twice = serve.queue_onboard([{"served": "ok", "endpoint": "e"}])["ok"]
@@ -394,7 +397,8 @@ def main() -> int:
         settle()
         stopped = {i["served"]: i["state"] for i in serve.onboard_queue()["items"]}
         order.remove("quiet")
-        serve.queue_onboard([{"served": s, "endpoint": "e"} for s in ("ok", "quiet", "bad")])
+        serve.queue_onboard([{"served": s, "endpoint": "e", "mode": m} for s, m in
+                             (("ok", "full"), ("quiet", "quick"), ("bad", "quick-adhoc"))])
         settle()
         batch = {i["served"]: (i["state"], i["alias"], bool(i["note"])) for i in serve.onboard_queue()["items"]}
         cleared = serve.clear_onboard_queue()["items"]
@@ -407,8 +411,9 @@ def main() -> int:
           and stopped == {"a": "done", "ok": "skipped", "quiet": "no answer"} and order == ["a", "ok", "quiet", "bad"]
           and batch == {"ok": ("done", "ok-x", False), "quiet": ("no answer", "quiet-x", True),
                         "bad": ("failed", "bad-x", True)}
-          and cleared == [] and bad_input == (False, False, False))
-    print(("ok   " if ok else "FAIL ") + "onboarding queue" + ("" if ok else f" -> {stopped} {order} {batch}"))
+          and cleared == [] and bad_input == (False, False, False)
+          and modes == {"a": "full", "ok": "full", "quiet": "quick", "bad": "quick-adhoc"})
+    print(("ok   " if ok else "FAIL ") + "onboarding queue" + ("" if ok else f" -> {stopped} {order} {batch} {modes}"))
     failures += 0 if ok else 1
 
     # Dismiss: one picker key or many in one write, a change-log line each;

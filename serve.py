@@ -1513,7 +1513,15 @@ def save_gateway_settings(max_calls, max_explorers, who: str = "ui") -> dict:
     return {"ok": True, "errors": [], "changed": ["config/gateway.json"]}
 
 
-def start_onboard(served: str, endpoint: str = "", who: str = "ui") -> dict:
+# How much an onboarding spends. Full: the 4-call probe, then the suite now.
+# Quick: the probe only; the scheduled `suite --next` passes fill the suite in,
+# six tasks a run, so the same calls are spread out, not saved. Quick + ad
+# hoc: the probe only, and the bench never calls it on its own: the only one
+# that saves calls, for a metered, capped or trial key.
+ONBOARD_MODES = {"full": [], "quick": ["--skip-suite"], "quick-adhoc": ["--skip-suite", "--ad-hoc"]}
+
+
+def start_onboard(served: str, endpoint: str = "", who: str = "ui", mode: str = "full") -> dict:
     """Kick off `scripts/onboard.py` for a served model, detached, logging to runs/.
 
     The script does its own checks in the right order (is it served, derive
@@ -1523,12 +1531,12 @@ def start_onboard(served: str, endpoint: str = "", who: str = "ui") -> dict:
     hands the rest to the script. It runs for minutes and spends calls, so it
     runs in the background and the page tails its log.
     """
-    return _spawn_onboard(served, endpoint, who)[0]
+    return _spawn_onboard(served, endpoint, who, mode)[0]
 
 
-def _onboard_refusal(served: str, endpoint: str) -> list[str]:
+def _onboard_refusal(served: str, endpoint: str, mode: str = "full") -> list[str]:
     """What start_onboard refuses without a call (its docstring)."""
-    errors = []
+    errors = [] if mode in ONBOARD_MODES else [f"mode must be one of {', '.join(ONBOARD_MODES)}; got {mode!r}"]
     # It goes into a shell command line below, so only the characters model
     # ids actually use -- not merely "no spaces".
     if not re.fullmatch(r"[\w./:@+-]{1,200}", served):
@@ -1551,18 +1559,20 @@ def _onboard_refusal(served: str, endpoint: str) -> list[str]:
     return errors
 
 
-def _spawn_onboard(served: str, endpoint: str = "", who: str = "ui") -> tuple[dict, subprocess.Popen | None]:
+def _spawn_onboard(served: str, endpoint: str = "", who: str = "ui",
+                   mode: str = "full") -> tuple[dict, subprocess.Popen | None]:
     """start_onboard's result, and the process (None when refused) for a caller that waits on it."""
     served = (served or "").strip()
     endpoint = (endpoint or "").strip() or endpoints.default()
-    errors = _onboard_refusal(served, endpoint)
+    errors = _onboard_refusal(served, endpoint, mode)
     if errors:
         return {"ok": False, "errors": errors}, None
     stamp = datetime.datetime.now().strftime("%Y%m%dT%H%M%S")
     safe = re.sub(r"[^A-Za-z0-9._-]+", "-", served)
     log = DATA / "runs" / f"onboard-{stamp}-{safe}.log"
     from run import bench_python
-    cmd = [bench_python(), str(ROOT / "scripts" / "onboard.py"), served, "--endpoint", endpoint]
+    cmd = [bench_python(), str(ROOT / "scripts" / "onboard.py"), served, "--endpoint", endpoint,
+           *ONBOARD_MODES[mode]]
     # The log handle goes straight to the child, unbuffered, so the page sees
     # each step as it prints. The old `cmd /c ... > log & echo` wrapper with
     # DETACHED_PROCESS sent the output to a console window instead, so every
@@ -1585,7 +1595,7 @@ def _spawn_onboard(served: str, endpoint: str = "", who: str = "ui") -> tuple[di
 
     threading.Thread(target=sentinel, daemon=True).start()
     _log_change(datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
-                who, "", "onboard", None, served)
+                who, "", "onboard" + ("" if mode == "full" else f" ({mode})"), None, served)
     return {"ok": True, "errors": [], "log": log.name}, proc
 
 
@@ -1629,20 +1639,21 @@ def queue_onboard(items, who: str = "ui") -> dict:
         it = it if isinstance(it, dict) else {}
         served = str(it.get("served") or "").strip()
         endpoint = str(it.get("endpoint") or "").strip() or endpoints.default()
-        errors += _onboard_refusal(served, endpoint)
-        picked.append((served, endpoint))
+        mode = str(it.get("mode") or "full")
+        errors += _onboard_refusal(served, endpoint, mode)
+        picked.append((served, endpoint, mode))
     with _OQ_LOCK:
         waiting = {(i["served"], i["endpoint"]) for i in _OQ["items"] if i["state"] in ("queued", "running")}
-        errors += [f"{s} from {e} is already in the queue" for s, e in picked if (s, e) in waiting]
-        if len(set(picked)) < len(picked):
+        errors += [f"{s} from {e} is already in the queue" for s, e, _ in picked if (s, e) in waiting]
+        if len({(s, e) for s, e, _ in picked}) < len(picked):
             errors.append("a model is picked twice")
         if errors:
             return {"ok": False, "errors": errors}
         if _OQ["worker"] is None:
             _OQ["items"] = []
         _OQ["stop"] = False                              # added after a Stop: these run
-        _OQ["items"] += [{"served": s, "endpoint": e, "state": "queued", "alias": None, "log": None,
-                          "exit": None, "note": ""} for s, e in picked]
+        _OQ["items"] += [{"served": s, "endpoint": e, "mode": m, "state": "queued", "alias": None, "log": None,
+                          "exit": None, "note": ""} for s, e, m in picked]
         if _OQ["worker"] is None:
             _OQ["worker"] = threading.Thread(target=_onboard_worker, args=(who,), daemon=True)
             _OQ["worker"].start()
@@ -1694,7 +1705,7 @@ def _onboard_worker(who: str) -> None:
                 return
             nxt["state"] = "running"
         try:
-            res, proc = _spawn_onboard(nxt["served"], nxt["endpoint"], who)
+            res, proc = _spawn_onboard(nxt["served"], nxt["endpoint"], who, nxt.get("mode", "full"))
             if proc is None:                             # refused now: the bench changed since it was queued
                 state, note, code = "failed", "; ".join(res["errors"]), None
             else:
@@ -3524,8 +3535,10 @@ def editor() -> str:
         "<div class='actions'><button class='btn' id='co-save' type='button'>Save options</button></div>"
         "</details>"
         "<label class='check'><input type='checkbox' id='m-adhoc'> Ad hoc only</label>"
-        "<p class='rules'>For expensive or capped models: never seated automatically, never"
-        " swept, never probed daily. Used only when named.</p>"
+        "<p class='rules'>Never chosen by the bench on its own: no explorer seat, no router"
+        " pick, no scheduled suite, perf or availability runs. Still called whenever you choose"
+        " it: as a collection member (or merger), with <code>with</code>, or with"
+        " <code>--model</code>. For metered, capped or trial keys.</p>"
         "</div>"
         "<div class='errors' id='m-errors' role='alert'></div><div class='done' id='m-done'></div>"
         "<div class='actions'><button class='btn' id='m-close'>Close</button>"
@@ -3557,6 +3570,12 @@ def editor() -> str:
         "<input type='search' id='o-find' placeholder='Search models or connections'"
         " aria-label='Search models'>"
         "<div class='picker' id='o-picker' role='group' aria-label='Served models'></div>"
+        # serve.ONBOARD_MODES: how much each onboarding spends.
+        "<label class='check'>Onboard as <select id='o-mode'>"
+        "<option value='full'>Full: probe, then the suite now</option>"
+        "<option value='quick'>Quick: probe now, the suite through the scheduled passes</option>"
+        "<option value='quick-adhoc'>Quick + ad hoc: probe only; the bench never calls it on its own"
+        " (metered, capped or trial keys)</option></select></label>"
         "</div>"
         "<div id='o-run' hidden><p class='served' id='o-result'></p><ol class='steps' id='o-steps'></ol>"
         "<details><summary class='muted'>Full log</summary><pre class='log' id='o-log'></pre></details></div>"
@@ -3803,7 +3822,8 @@ class Handler(gateway.Handler):
                                                            str(p.get("model") or ""),
                                                            endpoint=str(p.get("endpoint") or "")),
                "/api/onboard": lambda p: start_onboard(str(p.get("served", "")),
-                                                       str(p.get("endpoint", ""))),
+                                                       str(p.get("endpoint", "")),
+                                                       mode=str(p.get("mode") or "full")),
                "/api/onboard-queue": lambda p: queue_onboard(p.get("items")),
                "/api/onboard-queue/stop": lambda p: stop_onboard_queue(),
                "/api/onboard-queue/clear": lambda p: clear_onboard_queue(),

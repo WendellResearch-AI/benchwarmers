@@ -258,7 +258,10 @@ def cmd_onboard(args) -> None:
         reply = call("GET", "/api/onboard-queue") if verb == "status" else \
             call("POST", f"/api/onboard-queue/{verb}", {})
     else:
-        items = [{"served": s, "endpoint": args.endpoint or ""} for s in args.served]
+        if args.ad_hoc and not args.quick:
+            sys.exit("--ad-hoc goes with --quick: an ad hoc model gets no suite run of its own")
+        mode = "quick-adhoc" if args.ad_hoc else "quick" if args.quick else "full"
+        items = [{"served": s, "endpoint": args.endpoint or "", "mode": mode} for s in args.served]
         reply = call("POST", "/api/onboard-queue", {"items": items})
         if args.wait:
             while reply.get("running"):
@@ -482,6 +485,7 @@ keeps only the answers. Then judge each seat you checked:
   bench candidates --new
   bench onboard minimax/minimax-m3.1-flash:free --wait
   bench onboard a/one:free b/two:free --endpoint openrouter
+  bench onboard command-a-plus-05-2026 --endpoint cohere --quick --ad-hoc   # a trial key
   bench onboard status | stop | clear""",
     "collection": """examples:
   bench collection save reviewers --members a,b,c --description "adversarial review" --tags review
@@ -590,6 +594,10 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("served", nargs="+", help="served names, as `bench candidates` lists them")
     s.add_argument("--endpoint", help="the endpoint they are on; the default if omitted")
     s.add_argument("--wait", action="store_true", help="stay until the queue finishes")
+    s.add_argument("--quick", action="store_true",
+                   help="probe only; the scheduled suite passes fill the suite in later")
+    s.add_argument("--ad-hoc", action="store_true",
+                   help="with --quick: the bench never calls it on its own (metered, capped or trial keys)")
 
     s = cmd("dismiss", cmd_dismiss, "stop offering served models as candidates")
     s.add_argument("served", nargs="+"), s.add_argument("--endpoint"), s.add_argument("--undo", action="store_true")

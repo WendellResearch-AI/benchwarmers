@@ -76,9 +76,11 @@ task. A poor score never does. A model that did badly once on one task shape
 has earned less confidence, not exile.
 
 Cost, separately. A model listed under `ad_hoc` in config/model-roles.json is
-expensive or tightly capped and is never seated automatically — `--with` is the
-only way onto the panel. Staleness would otherwise pick it first, since it is
-exactly the model nobody uses casually.
+expensive or tightly capped and is never seated automatically: `--with` is the
+only way onto this router's panel. Staleness would otherwise pick it first,
+since it is exactly the model nobody uses casually. A collection that lists it
+as a member (or merger) still calls it on every request; that is a choice made
+by name, like `--with`.
 """
 
 from __future__ import annotations

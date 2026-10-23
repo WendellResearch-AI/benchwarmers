@@ -231,7 +231,10 @@ def main() -> None:
     ap.add_argument("--endpoint", default=None,
                     help="a name from config/endpoints.json; the default endpoint if omitted")
     ap.add_argument("--skip-suite", action="store_true",
-                    help="register and probe only")
+                    help="register and probe only; the scheduled suite passes fill the suite in later")
+    ap.add_argument("--ad-hoc", action="store_true",
+                    help="mark it ad hoc as it is registered: the bench never calls it on its own"
+                         " (for a metered, capped or trial key)")
     args = ap.parse_args()
 
     name = args.served_name
@@ -287,6 +290,12 @@ def main() -> None:
     else:
         register(alias, name, endpoint)
         print(f"  [2/5] registered as {alias}")
+    if args.ad_hoc:
+        # Before the probe, so no scheduled run can pick it up in between.
+        locked.update(DATA / "config" / "model-roles.json",
+                      lambda roles: roles.__setitem__("ad_hoc", sorted({*roles.get("ad_hoc", []), alias})),
+                      ensure_ascii=False)
+        print("        ad hoc: the bench never calls it on its own")
     run("scripts/sync_config.py", timeout=300)
     # Open WebUI's tags name the connection behind the hub; without a hub the
     # endpoint is the connection, and route.connection_of needs no tags.

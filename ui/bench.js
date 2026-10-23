@@ -573,7 +573,8 @@
   // model at a time. The popup closes: the header's chip shows the batch, and
   // its Details the queue. Refused, it stays open with the reasons.
   o.start.addEventListener('click', function () {
-    var items = Object.keys(chosen).map(function (k) { return chosen[k]; });
+    var mode = $('o-mode').value;
+    var items = Object.keys(chosen).map(function (k) { return Object.assign({mode: mode}, chosen[k]); });
     if (!items.length) return;
     o.errors.textContent = ''; o.start.disabled = o.dismiss.disabled = true; o.start.textContent = 'Starting…';
     post('/api/onboard-queue', {items: items}).then(function (res) {
