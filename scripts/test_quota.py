@@ -103,7 +103,9 @@ class Fake(BaseHTTPRequestHandler):
                 return self._send(200, json.dumps({"model": model, "choices": [{"message": {
                     "content": "plain answer"}, "finish_reason": "stop"}],
                     "usage": {"prompt_tokens": 2, "completion_tokens": 2}}).encode())
-            if model == "budget" and (req.get("max_tokens") or 0) < 100:
+            if model == "overcap" and (req.get("max_tokens") or 0) >= 100:
+                return self._send(400, b'{"error": {"message": "max_tokens is too large: 128"}}')
+            if model in ("budget", "overcap") and (req.get("max_tokens") or 0) < 100:
                 return self._stream(model, [{"reasoning_content": "thinking and thinking"}], finish="length",
                                     usage={"prompt_tokens": 5, "completion_tokens": req.get("max_tokens")})
             if model == "ratelimited" and n <= 3:
@@ -143,12 +145,13 @@ def setup(port: int) -> None:
          for n, b in eps.items()}), encoding="utf-8")
     where = {"paced": "pacedprov", "proc": "procprov", "month": "monthprov"}
     yaml = []
-    for m in ("ok", "plain", "nooptions", "swapped", "budget", "ratelimited", "gemini", "dribble", "breakoff",
+    for m in ("ok", "plain", "nooptions", "swapped", "budget", "overcap", "ratelimited", "gemini", "dribble", "breakoff",
               "paced", "proc", "month", "paid"):
         yaml += [f"- model_id: t-{m}", f"  model_name: {'paced' if m in ('proc', 'month') else m}",
                  f'  api_base: "{eps[where.get(m, "fakeprov")]}"', "  api_key_name: fake"]
     (TMP / "config" / "extra-openai-models.yaml").write_text("\n".join(yaml) + "\n", encoding="utf-8")
-    (TMP / "config" / "model-options.json").write_text('{"t-budget": {"max_tokens": 64}}', encoding="utf-8")
+    (TMP / "config" / "model-options.json").write_text('{"t-budget": {"max_tokens": 64}, "t-overcap": {"max_tokens": 64}}',
+                                                       encoding="utf-8")
     (TMP / "config" / "connection-limits.json").write_text(json.dumps(
         {"pacedprov": {"rpm": 3}, "procprov": {"rpm": 4}, "monthprov": {"rpmo": 3}}), encoding="utf-8")
     (TMP / "llm" / "keys.json").write_text('{"fake": "sk-test-not-a-key"}', encoding="utf-8")
@@ -216,6 +219,10 @@ def main() -> int:
           and r.get("budget_retry") == {"max_tokens": [64, 128], "answered": True}
           and last("t-budget")["attempts"] == 2, "an empty reply cut by its budget is retried once, larger",
           (tried, r))
+    r = client.chat("t-overcap", "hi")
+    check(r["text"] == "" and not r["error"] and r["budget_retry"]["answered"] is False
+          and "too large" in r["budget_retry"]["failed"] and run.failure_class(client.output(r, 30)) == "empty",
+          "a budget retry that fails leaves the empty answer, not an error", r)
 
     # A stream that breaks off, and STOP between chunks.
     r = client.chat("t-breakoff", "hi", timeout=10)

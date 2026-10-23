@@ -319,14 +319,17 @@ def _chat_stream(events, relay: _Relay) -> dict:
             break
         if not isinstance(ev, dict):
             continue
-        # An error sent mid-stream, as some relays and OpenRouter do.
-        if ev.get("error") and not ev.get("choices"):
-            code = (ev["error"].get("code") if isinstance(ev["error"], dict) else None) or "stream"
+        # An error sent mid-stream, as some relays do, or as OpenRouter does:
+        # with a choice whose finish_reason is "error", after part of an answer.
+        choices = ev.get("choices")
+        if ev.get("error") or (isinstance(choices, list) and choices and isinstance(choices[0], dict)
+                               and choices[0].get("finish_reason") == "error"):
+            err = ev.get("error") or {}
+            code = (err.get("code") if isinstance(err, dict) else None) or "stream"
             return {"error": f"Error: Error code: {code} - {ev}"}
         model = ev.get("model") or model
         if isinstance(ev.get("usage"), dict) and ev["usage"]:
             usage = ev["usage"]
-        choices = ev.get("choices")
         if not (isinstance(choices, list) and choices and isinstance(choices[0], dict)):
             continue
         seen = True
@@ -602,6 +605,9 @@ def _call(alias, prompt, system, messages, deadline, on_delta, res, ctx, started
     if why:
         res["error"], ctx["refused"] = why, True
         return
+    # The ledger's `t`: when the call went out, after any wait for room, since
+    # that is the moment a provider's window (and pacing's) counts it from.
+    ctx["sent"] = time.time()
 
     def observe(status, hdrs, body) -> None:
         try:
@@ -615,11 +621,18 @@ def _call(alias, prompt, system, messages, deadline, on_delta, res, ctx, started
     if (not responses and not got.get("error") and not got.get("timed_out") and got.get("text") == ""
             and got.get("finish") == "length" and (grow := _budget(payload, got.get("usage") or {}, alias))):
         key, used, bigger = grow
-        first_attempts = got.get("attempts", 0)
         again = _exchange(url, {**payload, key: bigger}, headers, deadline, responses, relay, observe)
-        again["attempts"] = first_attempts + again.get("attempts", 0)
-        again["budget_retry"] = {key: [used, bigger], "answered": bool(again.get("text"))}
-        got = again
+        attempts = got.get("attempts", 0) + again.get("attempts", 0)
+        if again.get("error") or again.get("timed_out"):
+            # The empty answer stands: the retry's failure (a 400 for a budget
+            # over the model's cap, a 429) is not the model's, and an error
+            # here would count toward auto-retirement where "empty" does not.
+            got["budget_retry"] = {key: [used, bigger], "answered": False,
+                                   "failed": (again.get("error") or "timed out")[:200]}
+        else:
+            got = again
+            got["budget_retry"] = {key: [used, bigger], "answered": bool(again.get("text"))}
+        got["attempts"] = attempts
     res.update(got)
     res["first_token_s"] = relay.first
 
@@ -639,7 +652,8 @@ def _record(alias: str, res: dict, ctx: dict, t0: float, purpose: str) -> None:
         status = ("refused" if ctx["refused"] else "timeout" if res["timed_out"] else
                   "error" if res["error"] else "ok" if res["text"] else "empty")
         import ledger
-        row = {"t": round(t0, 3), "at": dt.datetime.fromtimestamp(t0).astimezone().isoformat(timespec="seconds"),
+        t = ctx.get("sent") or t0
+        row = {"t": round(t, 3), "at": dt.datetime.fromtimestamp(t).astimezone().isoformat(timespec="seconds"),
                "alias": alias, "connection": ctx["connection"], "endpoint": ctx["endpoint"],
                "served": res["model"], "status": status, "attempts": res.get("attempts", 0),
                **ledger.tokens(res["usage"]), "seconds": res["seconds"],
@@ -755,6 +769,12 @@ def _selftest() -> None:
     err = _chat_stream(_events(_lines(chunks({"error": {"code": 429, "message": "Rate limit exceeded"}}))),
                        _Relay(None, 0))
     assert err["error"].startswith("Error: Error code: 429 - "), err
+    # OpenRouter's mid-stream error: part of an answer, then a choice finishing "error".
+    err = _chat_stream(_events(_lines(chunks(
+        {"choices": [{"delta": {"content": "half"}}]},
+        {"error": {"code": "server_error", "message": "upstream died"},
+         "choices": [{"delta": {"content": ""}, "finish_reason": "error"}]}, "[DONE]"))), _Relay(None, 0))
+    assert err["error"].startswith("Error: Error code: server_error - "), err
     assert "no choices" in _chat_stream(_events(_lines(chunks("[DONE]"))), _Relay(None, 0))["error"]
     bad = _Relay(lambda k, t: 1 / 0, 0)                 # a callback that raises is dropped, the call goes on
     bad("text", "x")
