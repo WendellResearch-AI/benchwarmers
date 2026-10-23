@@ -202,20 +202,29 @@ def translators() -> None:
                                      "/v1/models", "/v1/responses", "/v1/completions")] == \
         ["anthropic", "ollama_chat", "gemini", "gemini", "chat", "responses", "completion"]
 
-    # Refused, not dropped: tools, tool turns, a stored response, what no seat could read.
+    # Tools and tool turns are read (route mode passes them on) and marked
+    # agentic, which a panel refuses; scripts/test_route.py checks the
+    # translations. Tools only their own vendor runs are refused here.
     tool = [{"name": "f", "input_schema": {}}]
     user = [{"role": "user", "content": "hi"}]
-    for fn, body in ((F.chat_ask, {"messages": user, "tools": [{"type": "function"}]}),
-                     (F.chat_ask, {"messages": user + [{"role": "tool", "content": "x"}]}),
+    for fn, body in ((F.chat_ask, {"messages": user, "tools": [{"type": "function", "function": {"name": "f"}}]}),
+                     (F.chat_ask, {"messages": user + [{"role": "tool", "tool_call_id": "c", "content": "x"}]}),
                      (F.anthropic_ask, {"messages": user, "tools": tool}),
                      (F.anthropic_ask, {"messages": [{"role": "user", "content": [{"type": "tool_result"}]}]}),
-                     (F.responses_ask, {"input": "hi", "tools": [{"type": "web_search"}]}),
                      (F.responses_ask, {"input": [{"type": "function_call_output", "output": "x"}]}),
-                     (F.ollama_chat_ask, {"messages": user, "tools": [{}]}),
                      (F.ollama_chat_ask, {"messages": [{"role": "assistant", "tool_calls": [{}]}]})):
-        refused(fn, body, said="route mode")
-    refused(F.gemini_ask, {"contents": [], "tools": [{"functionDeclarations": []}]}, "m", said="route mode")
-    refused(F.gemini_ask, {"contents": [{"parts": [{"functionCall": {}}]}]}, "m", said="route mode")
+        assert fn(body)["agentic"], (fn, body)
+    assert F.gemini_ask({"contents": [{"role": "model", "parts": [{"functionCall": {"name": "f"}}]}]}, "m")["agentic"]
+    refused(F.gemini_ask, {"contents": [{"parts": [{"functionCall": {"name": "f"}}]}]}, "m", said="model turn")
+    assert not F.chat_ask({"messages": user})["agentic"]
+    refused(F.responses_ask, {"input": "hi", "tools": [{"type": "web_search"}]}, said="OpenAI runs itself")
+    refused(F.anthropic_ask, {"messages": user, "tools": [{"type": "web_search_20250305", "name": "web_search"}]},
+            said="Anthropic runs")
+    refused(F.anthropic_ask, {"messages": [{"role": "assistant", "content": [{"type": "server_tool_use"}]}]},
+            said="Anthropic runs")
+    refused(F.gemini_ask, {"contents": [], "tools": [{"googleSearch": {}}]}, "m", said="Gemini runs")
+    refused(F.ollama_chat_ask, {"messages": user, "tools": [{}]}, said='"tools"')
+    refused(F.chat_ask, {"messages": user, "functions": [{}]}, said="legacy")
     refused(F.responses_ask, {"input": "hi", "previous_response_id": "resp_1"}, said="never stored")
     refused(F.gemini_ask, {"contents": [{"parts": [{"inlineData": {"mimeType": "application/pdf", "data": "x"}}]}]},
             "m", said="only images")
@@ -451,12 +460,12 @@ def gateway_routes() -> None:
                  lambda e: e["error"]["message"]),
                 ("/v1/messages", {"model": "bench/core", "max_tokens": 8, "tools": [{"name": "f"}],
                                   "messages": [{"role": "user", "content": user}]}, lambda e: e["error"]["message"]),
-                ("/v1/responses", {"model": "bench/core", "input": user, "tools": [{"type": "function"}]},
+                ("/v1/responses", {"model": "bench/core", "input": user, "tools": [{"type": "function", "name": "f"}]},
                  lambda e: e["error"]["message"]),
-                ("/api/chat", {"model": "bench/core", "tools": [{}], "messages": [{"role": "user", "content": user}]},
-                 lambda e: e["error"]),
+                ("/api/chat", {"model": "bench/core", "tools": [{"type": "function", "function": {"name": "f"}}],
+                               "messages": [{"role": "user", "content": user}]}, lambda e: e["error"]),
                 ("/v1beta/models/bench/core:generateContent", {"contents": [{"parts": [{"text": user}]}],
-                                                               "tools": [{"functionDeclarations": [{}]}]},
+                                                               "tools": [{"functionDeclarations": [{"name": "f"}]}]},
                  lambda e: e["error"]["message"])):
             status, _, text, _ = call(path, body)
             assert status == 400 and "route mode" in msg(json.loads(text)), (path, status, text)

@@ -84,6 +84,21 @@ just before the call, and ChatGPT's plan is reached through the Responses API
 (streamed, unstored) rather than chat completions. `llm -m` cannot do either,
 so for those models use `python metrics/client.py <alias> "prompt"`.
 
+NATIVE ANTHROPIC AND GEMINI: an endpoint whose `api` is `anthropic` or
+`gemini` (the Add endpoint form) is called in that API, through here
+whatever BENCH_CLIENT says: metrics/formats.py builds the request (system
+text apart, the model's options it knows, images as the API's own parts),
+the key goes as x-api-key or x-goog-api-key, and the stream is read into
+the same result, usage and finish included. Anthropic's error events read
+as the status that carries them (overloaded_error is 529), so the text
+contract holds. Tool calls are not sent to them (route mode proxies chat
+completions only).
+
+FOR A PROXY (the gateway's route mode): `body`, `on_chunk`, `first_token`
+and `retries` (see chat()) pass a request's own fields, relay each chunk
+exactly, give up early on a member that sends nothing, and leave failover
+to the caller.
+
 RETRIES MATCH THE SDK UNDER llm: two more tries on a connection error, 408,
 409, 429 or 5xx, waiting the Retry-After when it is 60 s or less, else about
 0.5 then 1 s. Without them this client would surface 429s llm absorbed, and
@@ -108,6 +123,7 @@ import sys
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -115,6 +131,7 @@ from paths import DATA  # noqa: E402  -- the install's data folder (metrics/path
 sys.path.insert(0, str(ROOT / "metrics"))
 import connect  # noqa: E402
 import endpoints  # noqa: E402
+import formats  # noqa: E402
 
 OPTIONS = DATA / "config" / "model-options.json"
 MAX_RETRIES = 2
@@ -145,11 +162,12 @@ def chosen() -> tuple[str, str]:
 
 def backend(alias: str = "") -> str:
     """`llm` or `builtin`, as chosen(). A model on an endpoint connected by
-    sign-in whose token renews, or that speaks only the Responses API
-    (ChatGPT's plan), is always `builtin`: llm can do neither."""
+    sign-in whose token renews, or that speaks another API than chat
+    completions (ChatGPT's plan, native Anthropic or Gemini), is always
+    `builtin`: llm can do neither."""
     if alias:
         entry = endpoints.entry_of(alias)
-        if entry.get("api") == "responses" or (entry.get("connect") or {}).get("refreshes"):
+        if (entry.get("api") or "chat") != "chat" or (entry.get("connect") or {}).get("refreshes"):
             return "builtin"
     return chosen()[0]
 
@@ -225,15 +243,17 @@ def _wait_at_most(response, deadline: float) -> None:
             pass
 
 
-def _chunks(response, deadline: float):
+def _chunks(response, deadline: float, relay: _Relay | None = None):
     """The body in pieces as they arrive. Raises _Late past the deadline (or
-    when STOP is set), ValueError past MAX_REPLY, since the gateway is a
-    long-lived process, and _Broken if the connection drops part way."""
+    the relay's first-piece cutoff, or when STOP is set), ValueError past
+    MAX_REPLY, since the gateway is a long-lived process, and _Broken if the
+    connection drops part way."""
     size = 0
     while True:
-        if STOP.is_set() or time.monotonic() > deadline:
+        limit = relay.cutoff(deadline) if relay else deadline
+        if STOP.is_set() or time.monotonic() > limit:
             raise _Late
-        _wait_at_most(response, deadline)
+        _wait_at_most(response, limit)
         try:
             chunk = response.read1(65536)
         except TimeoutError:
@@ -293,26 +313,46 @@ def _events(lines):
 
 
 class _Relay:
-    """on_delta, kept from breaking the call: one that raises is dropped."""
+    """on_delta and on_chunk, kept from breaking the call: one that raises is
+    dropped. `first_by`: when the first piece must have come by (monotonic),
+    for a caller that would rather try another model than wait (route mode)."""
 
-    def __init__(self, on_delta, started: float):
+    def __init__(self, on_delta, started: float, on_chunk=None, first_by: float | None = None):
         self.fn, self.started, self.first = on_delta, started, None
+        self.chunk_fn, self.first_by = on_chunk, first_by
+
+    def mark(self) -> None:
+        """The first piece (text, reasoning or a tool call) has arrived."""
+        if self.first is None:
+            self.first = round(time.monotonic() - self.started, 2)
+
+    def cutoff(self, deadline: float) -> float:
+        """What a wait may last until: the deadline, or sooner while the first piece is still awaited."""
+        return min(deadline, self.first_by) if self.first is None and self.first_by is not None else deadline
 
     def __call__(self, kind: str, piece: str) -> None:
         if not piece:
             return
-        if self.first is None:
-            self.first = round(time.monotonic() - self.started, 2)
+        self.mark()
         if self.fn is not None:
             try:
                 self.fn(kind, piece)
             except Exception:                          # noqa: BLE001
                 self.fn = None
 
+    def chunk(self, chunk: dict) -> None:
+        if self.chunk_fn is not None:
+            try:
+                self.chunk_fn(chunk)
+            except Exception:                          # noqa: BLE001
+                self.chunk_fn = None
+
 
 def _chat_stream(events, relay: _Relay) -> dict:
-    """A streamed chat completion as chat()'s fields."""
+    """A streamed chat completion as chat()'s fields. Each chunk that is not
+    an error goes to relay.chunk as it came, for a proxy (route mode)."""
     text, reasoning, model, usage, finish, seen, done = [], [], "", {}, "", False, False
+    calls: set = set()
     for ev in events:
         if ev == "[DONE]":
             done = True
@@ -331,6 +371,7 @@ def _chat_stream(events, relay: _Relay) -> dict:
         if isinstance(ev.get("usage"), dict) and ev["usage"]:
             usage = ev["usage"]
         if not (isinstance(choices, list) and choices and isinstance(choices[0], dict)):
+            relay.chunk(ev)
             continue
         seen = True
         delta = choices[0].get("delta") or choices[0].get("message") or {}
@@ -341,6 +382,11 @@ def _chat_stream(events, relay: _Relay) -> dict:
             if piece := _text(delta.get("content")):
                 text.append(piece)
                 relay("text", piece)
+            for tc in delta.get("tool_calls") or ():
+                if isinstance(tc, dict):
+                    calls.add(tc["index"] if tc.get("index") is not None else tc.get("id"))
+                    relay.mark()
+        relay.chunk(ev)
         finish = choices[0].get("finish_reason") or finish
     if not seen:
         return {"error": "Error: client failed: the reply had no choices: the stream sent none"}
@@ -348,11 +394,12 @@ def _chat_stream(events, relay: _Relay) -> dict:
         return {"error": f"Error: client failed: the stream broke off before it finished"
                          f" ({len(''.join(text))} characters in)"}
     return {"text": "".join(text), "reasoning": "".join(reasoning), "model": model, "usage": usage,
-            "finish": finish}
+            "finish": finish, "tool_calls": len(calls)}
 
 
-def _chat_json(raw: bytes) -> dict:
-    """A plain JSON chat completion (an upstream that does not stream) as chat()'s fields."""
+def _chat_json(raw: bytes, relay: _Relay | None = None) -> dict:
+    """A plain JSON chat completion (an upstream that does not stream) as
+    chat()'s fields; to relay.chunk as the one chunk it would have streamed."""
     try:
         data = json.loads(raw or b"{}")
     except ValueError:
@@ -369,36 +416,132 @@ def _chat_json(raw: bytes) -> dict:
     if not (isinstance(choices, list) and choices and isinstance(choices[0], dict)):
         return {"error": f"Error: client failed: the reply had no choices: {str(data)[:1000]}"}
     message = choices[0].get("message") or {}
-    return {"text": _text(message.get("content")),
-            "reasoning": _text(message.get("reasoning_content") or message.get("reasoning")),
-            "model": data.get("model") or "", "usage": data.get("usage") or {},
-            "finish": choices[0].get("finish_reason") or ""}
+    calls = [tc for tc in message.get("tool_calls") or () if isinstance(tc, dict)]
+    out = {"text": _text(message.get("content")),
+           "reasoning": _text(message.get("reasoning_content") or message.get("reasoning")),
+           "model": data.get("model") or "", "usage": data.get("usage") or {},
+           "finish": choices[0].get("finish_reason") or "", "tool_calls": len(calls)}
+    if relay is not None:
+        if out["text"] or out["reasoning"] or calls:
+            relay.mark()
+        delta = {"role": "assistant", **{k: message[k] for k in ("content", "reasoning_content", "reasoning")
+                                         if message.get(k)}}
+        if calls:
+            delta["tool_calls"] = [{"index": i, **tc} for i, tc in enumerate(calls)]
+        relay.chunk({"id": data.get("id") or "", "object": "chat.completion.chunk", "created": data.get("created"),
+                     "model": out["model"], "usage": out["usage"] or None,
+                     "choices": [{"index": 0, "delta": delta, "finish_reason": out["finish"] or "stop"}]})
+    return out
 
 
-def _reply(response, deadline: float, responses: bool, relay: _Relay) -> dict:
-    """The reply's fields, read as it arrives. Raises _Late past the deadline."""
+def _reply(response, deadline: float, api: str, relay: _Relay) -> dict:
+    """The reply's fields, read as it arrives, in the endpoint's API (`api`:
+    chat, responses, anthropic or gemini). Raises _Late past the deadline."""
     ctype = (response.headers.get("content-type") or "").lower()
+    stream = {"responses": _responses_events, "anthropic": _anthropic_events, "gemini": _gemini_events}
     try:
-        if responses:
-            return _responses_events(_events(_lines(_chunks(response, deadline))), relay)
+        if api == "responses" or (api in stream and "event-stream" in ctype):
+            return stream[api](_events(_lines(_chunks(response, deadline, relay))), relay)
         if "event-stream" in ctype:
-            return _chat_stream(_events(_lines(_chunks(response, deadline))), relay)
-        raw = b"".join(_chunks(response, deadline))
+            return _chat_stream(_events(_lines(_chunks(response, deadline, relay))), relay)
+        raw = b"".join(_chunks(response, deadline, relay))
     except _Broken as e:
         # Not retried: what arrived may already have been relayed.
         return {"error": f"Error: client failed: the reply broke off part way ({e})"}
+    if api in stream:                                  # a native API answering with one JSON body
+        try:
+            return stream[api]([json.loads(raw or b"{}")], relay)
+        except ValueError:
+            return {"error": "Error: client failed: the reply was not JSON: " + raw[:1000].decode("utf-8", "replace")}
     if raw.lstrip().startswith(b"data:"):              # a stream sent without its content type
         return _chat_stream(_events(_lines([raw])), relay)
-    return _chat_json(raw)
+    return _chat_json(raw, relay)
 
 
-def _exchange(url: str, payload: dict, headers: dict, deadline: float, responses: bool,
-              relay: _Relay, observe) -> dict:
-    """Send the call with the SDK's retries; chat()'s fields plus `attempts`.
-    `observe(status, headers, body)` sees every response, for quota records."""
+# Anthropic's error types as the HTTP statuses that carry them, so an error
+# sent mid-stream reads with the same markers (429, 529) as one sent as a status.
+ANTHROPIC_STATUS = {"invalid_request_error": 400, "authentication_error": 401, "permission_error": 403,
+                    "not_found_error": 404, "request_too_large": 413, "rate_limit_error": 429,
+                    "api_error": 500, "overloaded_error": 529}
+ANTHROPIC_FINISH = {"end_turn": "stop", "stop_sequence": "stop", "max_tokens": "length", "tool_use": "tool_calls"}
+
+
+def _anthropic_events(events, relay: _Relay) -> dict:
+    """A native Anthropic Messages stream (or one whole reply) as chat()'s
+    fields. Finished only once message_stop (or a whole message) arrives."""
+    text, reasoning, model, usage, finish, done = [], [], "", {}, "", False
+    for ev in events:
+        if not isinstance(ev, dict):
+            continue
+        kind = ev.get("type")
+        if kind == "error":
+            err = ev.get("error") if isinstance(ev.get("error"), dict) else {}
+            return {"error": f"Error: Error code: {ANTHROPIC_STATUS.get(err.get('type'), err.get('type') or 'stream')} - {ev}"}
+        if kind == "message":                          # a whole reply, not a stream
+            text.append(formats.anthropic_text(ev))
+            relay("text", text[-1])
+            model, usage, finish, done = ev.get("model") or "", ev.get("usage") or {}, ev.get("stop_reason") or "", True
+        elif kind == "message_start":
+            message = ev.get("message") or {}
+            model, usage = message.get("model") or "", dict(message.get("usage") or {})
+        elif kind == "content_block_delta":
+            delta = ev.get("delta") or {}
+            if delta.get("type") == "text_delta":
+                text.append(delta.get("text") or "")
+                relay("text", delta.get("text") or "")
+            elif delta.get("type") == "thinking_delta":
+                reasoning.append(delta.get("thinking") or "")
+                relay("reasoning", delta.get("thinking") or "")
+        elif kind == "message_delta":
+            finish = (ev.get("delta") or {}).get("stop_reason") or finish
+            usage.update({k: v for k, v in (ev.get("usage") or {}).items() if v is not None})
+        elif kind == "message_stop":
+            done = True
+    if not done:
+        return {"error": f"Error: client failed: the stream broke off before it finished ({len(''.join(text))} characters in)"}
+    return {"text": "".join(text), "reasoning": "".join(reasoning), "model": model, "usage": usage,
+            "finish": ANTHROPIC_FINISH.get(finish, finish)}
+
+
+def _gemini_events(events, relay: _Relay) -> dict:
+    """A native Gemini generateContent stream (or one whole reply) as chat()'s
+    fields. A stream has no end marker: it is finished once a candidate says
+    why it stopped."""
+    text, reasoning, model, usage, finish = [], [], "", {}, ""
+    for ev in events:
+        if not isinstance(ev, dict):
+            continue
+        if ev.get("error"):
+            err = ev["error"] if isinstance(ev["error"], dict) else {}
+            return {"error": f"Error: Error code: {err.get('code') or 'stream'} - {ev}"}
+        if (blocked := (ev.get("promptFeedback") or {}).get("blockReason")):
+            return {"error": f"Error: client failed: the prompt was blocked ({blocked}): {ev}"}
+        model = ev.get("modelVersion") or model
+        if (meta := ev.get("usageMetadata")):
+            usage = {"prompt_tokens": meta.get("promptTokenCount"), "completion_tokens": meta.get("candidatesTokenCount"),
+                     **({"completion_tokens_details": {"reasoning_tokens": meta["thoughtsTokenCount"]}}
+                        if meta.get("thoughtsTokenCount") else {})}
+        candidate = (ev.get("candidates") or [{}])[0]
+        for part in (candidate.get("content") or {}).get("parts") or ():
+            if part.get("text"):
+                (reasoning if part.get("thought") else text).append(part["text"])
+                relay("reasoning" if part.get("thought") else "text", part["text"])
+        finish = candidate.get("finishReason") or finish
+    if not finish:
+        return {"error": f"Error: client failed: the stream broke off before it finished ({len(''.join(text))} characters in)"}
+    return {"text": "".join(text), "reasoning": "".join(reasoning), "model": model,
+            "usage": {k: v for k, v in usage.items() if v is not None},
+            "finish": {"STOP": "stop", "MAX_TOKENS": "length"}.get(finish, finish.lower())}
+
+
+def _exchange(url: str, payload: dict, headers: dict, deadline: float, api: str,
+              relay: _Relay, observe, retries: int = MAX_RETRIES) -> dict:
+    """Send the call with the SDK's retries (`retries` more tries); chat()'s
+    fields plus `attempts`. `observe(status, headers, body)` sees every
+    response, for quota records."""
     attempts, attempt, fell_back = 0, 0, False
     while True:
-        left = deadline - time.monotonic()
+        left = relay.cutoff(deadline) - time.monotonic()
         if left <= 0:
             return {"timed_out": True, "attempts": attempts}
         request = urllib.request.Request(url, json.dumps(payload).encode(), headers)
@@ -408,7 +551,7 @@ def _exchange(url: str, payload: dict, headers: dict, deadline: float, responses
             with _OPENER.open(request, timeout=left) as r:
                 status = r.status
                 observe(status, r.headers, None)
-                got = _reply(r, deadline, responses, relay)
+                got = _reply(r, deadline, api, relay)
             return {"status": status, "attempts": attempts, **got}
         except _Late:
             return {"status": status, "timed_out": True, "attempts": attempts}
@@ -424,7 +567,7 @@ def _exchange(url: str, payload: dict, headers: dict, deadline: float, responses
             observe(e.code, e.headers, shown)
             # An upstream that does not know stream_options, or will not stream:
             # the same call once more without them, not counted as a retry.
-            if (not responses and not fell_back and e.code in (400, 422) and payload.get("stream")
+            if (api == "chat" and not fell_back and e.code in (400, 422) and payload.get("stream")
                     and "stream" in text.lower()):
                 drop = ("stream_options",) if "stream_options" in text.lower() else ("stream", "stream_options")
                 payload = {k: v for k, v in payload.items() if k not in drop}
@@ -434,10 +577,10 @@ def _exchange(url: str, payload: dict, headers: dict, deadline: float, responses
             err = f"Error: Error code: {e.code}" + (f" - {shown}" if text else "") \
                 + (f" Retry-After: {e.headers.get('retry-after')}" if e.headers.get("retry-after") else "") \
                 + (f" (redirect to {e.headers.get('location')} not followed)" if 300 <= e.code < 400 else "")
-            if not (e.code in RETRY_STATUS or e.code >= 500) or attempt == MAX_RETRIES:
+            if not (e.code in RETRY_STATUS or e.code >= 500) or attempt >= retries:
                 return {"status": e.code, "error": err, "attempts": attempts}
             wait = wait or _backoff(attempt)
-            if time.monotonic() + wait >= deadline:
+            if time.monotonic() + wait >= relay.cutoff(deadline):
                 return {"status": e.code, "error": err, "attempts": attempts}
             time.sleep(wait)
             attempt += 1
@@ -445,11 +588,11 @@ def _exchange(url: str, payload: dict, headers: dict, deadline: float, responses
             reason = getattr(e, "reason", e)
             # The deadline itself, or the OS giving up on a connection early
             # (a dropped SYN), which is a connection error and is retried.
-            if isinstance(reason, TimeoutError) and time.monotonic() >= deadline - 0.5:
+            if isinstance(reason, TimeoutError) and time.monotonic() >= relay.cutoff(deadline) - 0.5:
                 return {"timed_out": True, "attempts": attempts}
             err = f"Error: client failed: Connection error. ({reason})"
             wait = _backoff(attempt)
-            if attempt == MAX_RETRIES or time.monotonic() + wait >= deadline:
+            if attempt >= retries or time.monotonic() + wait >= relay.cutoff(deadline):
                 return {"error": err, "attempts": attempts}
             time.sleep(wait)
             attempt += 1
@@ -520,29 +663,81 @@ def _caller() -> str:
 
 
 def chat(alias: str, prompt: str, system: str = "", timeout: float = 420,
-         messages: list[dict] | None = None, on_delta=None, purpose: str = "") -> dict:
+         messages: list[dict] | None = None, on_delta=None, purpose: str = "",
+         body: dict | None = None, on_chunk=None, first_token: float | None = None,
+         retries: int | None = None) -> dict:
     """One chat completion. Returns {text, reasoning, error, timed_out, status,
-    model (as served), usage, finish, first_token_s, attempts, seconds}, and
-    `budget_retry` when an empty answer was tried again; `error` is "" on
-    success, else the contract text. `messages`, when given, are sent as they
-    are instead of system + prompt: the gateway's requests that carry images,
-    which `llm -m` cannot send. `on_delta(kind, text)` hears the answer
-    ("text") and the reasoning ("reasoning") as they arrive. `purpose` goes
-    into the ledger line beside the calling script's name."""
+    model (as served), usage, finish, tool_calls (how many), first_token_s,
+    attempts, seconds}, and `budget_retry` when an empty answer was tried
+    again; `error` is "" on success, else the contract text. `messages`, when
+    given, are sent as they are instead of system + prompt: the gateway's
+    requests that carry images, which `llm -m` cannot send. `on_delta(kind,
+    text)` hears the answer ("text") and the reasoning ("reasoning") as they
+    arrive. `purpose` goes into the ledger line beside the calling script's name.
+
+    For a proxy (the gateway's route mode), chat completions only: `body`,
+    the request's other fields (tools, tool_choice, response_format,
+    temperature, ...), which win over the model's own options; `on_chunk`,
+    which hears each stream chunk exactly as it came (or the one a whole
+    reply would have been); `first_token`, seconds to wait for the first
+    piece (text, reasoning or a tool call) before giving up as timed out;
+    `retries`, how many more tries a 429, 5xx or connection error gets (the
+    SDK's two by default). An empty answer is not tried again: it is relayed."""
     started, t0 = time.monotonic(), time.time()
     deadline = started + timeout
     res = {"text": "", "reasoning": "", "error": "", "timed_out": False, "status": 0,
-           "model": "", "usage": {}, "finish": "", "first_token_s": None, "attempts": 0}
+           "model": "", "usage": {}, "finish": "", "tool_calls": 0, "first_token_s": None, "attempts": 0}
     ctx = {"connection": "", "endpoint": "", "ticket": None, "requested": "", "refused": False}
+    relay = _Relay(on_delta, started, on_chunk, started + first_token if first_token else None)
     try:
-        _call(alias, prompt, system, messages, deadline, on_delta, res, ctx, started)
+        _call(alias, prompt, system, messages, deadline, relay, res, ctx, body,
+              MAX_RETRIES if retries is None else retries)
     finally:
         res["seconds"] = round(time.monotonic() - started, 1)
         _record(alias, res, ctx, t0, purpose)
     return res
 
 
-def _call(alias, prompt, system, messages, deadline, on_delta, res, ctx, started) -> None:
+# Anthropic's API version header: required on every call, and the one its
+# Messages API has been served under since it launched.
+ANTHROPIC_VERSION = "2023-06-01"
+
+
+def _request(api: str, base: str, model: str, alias: str, prompt: str, system: str,
+             messages: list[dict] | None, body: dict | None) -> tuple[str, dict]:
+    """(url, payload) for one call in the endpoint's API. Raises ValueError
+    for what that API cannot be sent from here."""
+    if body is not None and api != "chat":
+        raise ValueError(f"a request's own fields (tools and the rest) go to chat completions only, not the {api} API")
+    if api == "responses":
+        # ChatGPT's plan (metrics/connect.py): streamed, unstored, no system
+        # message items, no sampling or length options.
+        if messages is not None:
+            # ponytail: chat parts are not Responses input items; converting
+            # them (input_text, input_image) waits for a caller that needs it.
+            raise ValueError("given messages are sent to chat completions only, not the Responses API")
+        return base + "/responses", {"model": model, "input": [{"role": "user", "content": prompt}],
+                                     "stream": True, "store": False, **({"instructions": system} if system else {})}
+    if messages is None:
+        messages = ([{"role": "system", "content": system}] if system else []) + [{"role": "user", "content": prompt}]
+    opts = _options(alias)
+    if api == "anthropic":
+        # formats.py builds the native request; the model's options that it
+        # knows (max_tokens, temperature, top_p, stop) go with it.
+        return base + "/messages", formats.anthropic_request(messages, model, opts, stream=True)
+    if api == "gemini":
+        # The base is the API's version root (.../v1beta), as its model list is under it.
+        return (f"{base}/models/{urllib.parse.quote(model.removeprefix('models/'), safe='-._~')}"
+                ":streamGenerateContent?alt=sse", formats.gemini_request(messages, opts))
+    payload = {"model": model, "messages": messages, **opts}
+    if body:
+        if "max_completion_tokens" in body:
+            payload.pop("max_tokens", None)        # both at once are refused by some APIs
+        payload.update({k: v for k, v in body.items() if k not in ("model", "messages", "stream", "stream_options")})
+    return base + "/chat/completions", {**payload, "stream": True, "stream_options": {"include_usage": True}}
+
+
+def _call(alias, prompt, system, messages, deadline, relay, res, ctx, body, retries) -> None:
     reg = endpoints.registrations().get(alias)
     if reg is None:
         res["error"] = f"Error: client failed: no model is registered as {alias!r}"
@@ -553,27 +748,16 @@ def _call(alias, prompt, system, messages, deadline, on_delta, res, ctx, started
         res["error"] = f"Error: client failed: endpoint base must be http(s), not {base!r}"
         return
     model = ctx["requested"] = reg.get("model_name") or alias
-    if responses := endpoints.entry_of(alias).get("api") == "responses":
-        # ChatGPT's plan (metrics/connect.py): streamed, unstored, no system
-        # message items, no sampling or length options.
-        if messages is not None:
-            # ponytail: chat parts are not Responses input items; converting
-            # them (input_text, input_image) waits for a caller that needs it.
-            res["error"] = ("Error: client failed: given messages are sent to chat completions only,"
-                            " not the Responses API")
-            return
-        url = base + "/responses"
-        payload = {"model": model, "input": [{"role": "user", "content": prompt}],
-                   "stream": True, "store": False, **({"instructions": system} if system else {})}
-    else:
-        url = base + "/chat/completions"
-        if messages is None:
-            messages = ([{"role": "system", "content": system}] if system else []) \
-                + [{"role": "user", "content": prompt}]
-        payload = {"model": model, "messages": messages, **_options(alias),
-                   "stream": True, "stream_options": {"include_usage": True}}
+    api = endpoints.entry_of(alias).get("api") or "chat"
+    try:
+        url, payload = _request(api, base, model, alias, prompt, system, messages, body)
+    except ValueError as e:                            # formats.Unsupported is one too
+        res["error"] = f"Error: client failed: {e}"
+        return
     headers = {"Content-Type": "application/json", "User-Agent": "benchwarmers",
                **reg.get("headers", {})}
+    if api == "anthropic":
+        headers["anthropic-version"] = ANTHROPIC_VERSION
     if name := reg.get("api_key_name", ""):
         if why := connect.fresh(name):               # a signed-in token past renewal
             res["error"] = f"Error: client failed: {why}"
@@ -583,7 +767,7 @@ def _call(alias, prompt, system, messages, deadline, on_delta, res, ctx, started
         if not (key := endpoints.keys().get(name, "")):
             res["error"] = f"Error: client failed: no key named {name!r} is set (llm keys set {name})"
             return
-        headers["Authorization"] = f"Bearer {key}"
+        headers.update(endpoints.auth_headers(api, key))
 
     try:
         if str(ROOT / "suite") not in sys.path:      # route reads the registry through suite/run.py
@@ -598,8 +782,12 @@ def _call(alias, prompt, system, messages, deadline, on_delta, res, ctx, started
         return
     try:
         import pacing
-        ctx["ticket"], why = pacing.admit(alias, ctx["connection"], _estimate(prompt, system, messages),
-                                          deadline - time.monotonic())
+        # A proxy that would rather try another model waits for room no
+        # longer than for a first piece. ponytail: the in-flight slot then
+        # expires that much sooner too; per-call expiry if it ever matters.
+        ctx["ticket"], why = pacing.admit(alias, ctx["connection"],
+                                          _estimate(prompt, system, messages) + len(json.dumps(body or "")) // 4,
+                                          relay.cutoff(deadline) - time.monotonic())
     except Exception:                                  # noqa: BLE001  -- a broken limit file is not a refusal
         why = ""
     if why:
@@ -616,12 +804,13 @@ def _call(alias, prompt, system, messages, deadline, on_delta, res, ctx, started
         except Exception:                              # noqa: BLE001
             pass
 
-    relay = _Relay(on_delta, started)
-    got = _exchange(url, payload, headers, deadline, responses, relay, observe)
-    if (not responses and not got.get("error") and not got.get("timed_out") and got.get("text") == ""
+    got = _exchange(url, payload, headers, deadline, api, relay, observe, retries)
+    # Not for a proxy: what it relayed already went to its caller.
+    if (api in ("chat", "anthropic") and relay.chunk_fn is None and not got.get("error")
+            and not got.get("timed_out") and got.get("text") == "" and not got.get("tool_calls")
             and got.get("finish") == "length" and (grow := _budget(payload, got.get("usage") or {}, alias))):
         key, used, bigger = grow
-        again = _exchange(url, {**payload, key: bigger}, headers, deadline, responses, relay, observe)
+        again = _exchange(url, {**payload, key: bigger}, headers, deadline, api, relay, observe, retries)
         attempts = got.get("attempts", 0) + again.get("attempts", 0)
         if again.get("error") or again.get("timed_out"):
             # The empty answer stands: the retry's failure (a 400 for a budget
@@ -650,7 +839,7 @@ def _record(alias: str, res: dict, ctx: dict, t0: float, purpose: str) -> None:
                 print(f"note: {alias} asked for {ctx['requested']} and was served {res['model']}"
                       " (a silent swap?)", file=sys.stderr)
         status = ("refused" if ctx["refused"] else "timeout" if res["timed_out"] else
-                  "error" if res["error"] else "ok" if res["text"] else "empty")
+                  "error" if res["error"] else "ok" if res["text"] or res.get("tool_calls") else "empty")
         import ledger
         t = ctx.get("sent") or t0
         row = {"t": round(t, 3), "at": dt.datetime.fromtimestamp(t).astimezone().isoformat(timespec="seconds"),
@@ -762,7 +951,7 @@ def _selftest() -> None:
         {"choices": [{"delta": {"content": "rea"}}]},
         {"choices": [{"delta": {"content": [{"type": "text", "text": "dy"}]}, "finish_reason": "stop"}]},
         {"choices": [], "usage": {"prompt_tokens": 3, "completion_tokens": 5}}, "[DONE]"))), relay)
-    assert got == {"text": "ready", "reasoning": "hmm so", "model": "m-2", "finish": "stop",
+    assert got == {"text": "ready", "reasoning": "hmm so", "model": "m-2", "finish": "stop", "tool_calls": 0,
                    "usage": {"prompt_tokens": 3, "completion_tokens": 5}}, got
     assert heard == [("reasoning", "hmm "), ("reasoning", "so"), ("text", "rea"), ("text", "dy")], heard
     assert relay.first is not None
@@ -782,7 +971,41 @@ def _selftest() -> None:
     bad("text", "x")
     assert bad.fn is None
     assert _chat_json(b'{"choices":[{"message":{"content":"","reasoning":"r"},"finish_reason":"length"}]}') \
-        == {"text": "", "reasoning": "r", "model": "", "usage": {}, "finish": "length"}
+        == {"text": "", "reasoning": "r", "model": "", "usage": {}, "finish": "length", "tool_calls": 0}
+    # A proxy hears every chunk as it came, and a whole reply as the one chunk it would have streamed.
+    seen: list = []
+    relay = _Relay(None, 0, seen.append, first_by=0)
+    assert relay.cutoff(10) == 0 and _Relay(None, 0).cutoff(10) == 10      # awaiting the first piece
+    call = {"index": 0, "id": "c1", "function": {"name": "f", "arguments": "{}"}}
+    got = _chat_stream(_events(_lines(chunks({"choices": [{"delta": {"tool_calls": [call]}}]},
+                                             {"choices": [{"delta": {}, "finish_reason": "tool_calls"}]}, "[DONE]"))), relay)
+    assert got["tool_calls"] == 1 and len(seen) == 2 and seen[0]["choices"][0]["delta"]["tool_calls"] == [call]
+    assert relay.cutoff(10) == 10                                           # a tool call is a first piece
+    seen.clear()
+    _chat_json(b'{"id":"x","choices":[{"message":{"content":null,"tool_calls":[{"id":"c1","function":{}}]},'
+               b'"finish_reason":"tool_calls"}]}', _Relay(None, 0, seen.append))
+    assert seen[0]["choices"][0]["delta"]["tool_calls"] == [{"index": 0, "id": "c1", "function": {}}], seen
+    # Native streams: Anthropic Messages and Gemini, read into the same fields.
+    got = _anthropic_events(_events(_lines(chunks(
+        {"type": "message_start", "message": {"model": "claude-x", "usage": {"input_tokens": 9}}},
+        {"type": "content_block_delta", "index": 0, "delta": {"type": "thinking_delta", "thinking": "hm"}},
+        {"type": "content_block_delta", "index": 1, "delta": {"type": "text_delta", "text": "ready"}},
+        {"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 4}},
+        {"type": "message_stop"}))), _Relay(None, 0))
+    assert got == {"text": "ready", "reasoning": "hm", "model": "claude-x", "finish": "stop",
+                   "usage": {"input_tokens": 9, "output_tokens": 4}}, got
+    err = _anthropic_events([{"type": "error", "error": {"type": "overloaded_error", "message": "Overloaded"}}], _Relay(None, 0))
+    assert err["error"].startswith("Error: Error code: 529 - "), err
+    assert "broke off" in _anthropic_events([{"type": "message_start", "message": {}}], _Relay(None, 0))["error"]
+    got = _gemini_events([{"candidates": [{"content": {"parts": [{"text": "hm", "thought": True}, {"text": "rea"}]}}]},
+                          {"candidates": [{"content": {"parts": [{"text": "dy"}]}, "finishReason": "STOP"}],
+                           "modelVersion": "gemini-x", "usageMetadata": {"promptTokenCount": 3, "candidatesTokenCount": 2}}],
+                         _Relay(None, 0))
+    assert got == {"text": "ready", "reasoning": "hm", "model": "gemini-x", "finish": "stop",
+                   "usage": {"prompt_tokens": 3, "completion_tokens": 2}}, got
+    assert _gemini_events([{"error": {"code": 429, "message": "quota"}}], _Relay(None, 0))["error"].startswith(
+        "Error: Error code: 429 - ")
+    assert "broke off" in _gemini_events([{"candidates": [{"content": {"parts": [{"text": "x"}]}}]}], _Relay(None, 0))["error"]
     assert not _swapped("openai/gpt-oss-120b:free", "gpt-oss-120b") and _swapped("llama-3.3-70b", "llama-3.1-8b")
     print("ok")
 

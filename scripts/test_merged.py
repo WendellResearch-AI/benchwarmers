@@ -164,10 +164,10 @@ def main() -> int:
         assert texts[0] == "" and texts[1].startswith("answer from merger") and len(chunks) == 3, texts
         assert len(chunks[-1]["bench"]["seats"]) == 2
 
-        # 6. /v1/models: each collection and its other reply mode.
+        # 6. /v1/models: each collection and its other reply modes.
         with urllib.request.urlopen(url + "/v1/models", timeout=10) as resp:
             listed = {m["id"]: m["reply"] for m in json.load(resp)["data"]}
-        assert listed == {"bench/core": "merged", "bench/core:all": "all"}, listed
+        assert listed == {"bench/core": "merged", "bench/core:all": "all", "bench/core:route": "route"}, listed
 
         # 7. An empty merger: the member with the most useful verdicts on the shape,
         # else (no verdicts, and no suite scores for a router's primary) the first member.

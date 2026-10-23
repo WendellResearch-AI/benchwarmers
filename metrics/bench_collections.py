@@ -15,8 +15,11 @@ the same collection is called every day:
 seats; empty means a decision model labels each prompt, or `general` without
 one. `reply` is what the caller reads: `all` (every answer, the default) or
 `merged` (one answer a `merger` model writes from them; empty means chosen by
-verdict record, gateway.py). A request may override it with a `:merged` or
-`:all` suffix on the model name, or `"bench": {"reply": ...}` in the body.
+verdict record, gateway.py) or `route` (no panel: one member, picked by its
+record, gets the request as sent, tools and all, for agent clients;
+GATEWAY.md "Route mode"). A request may override it with a `:merged`,
+`:all` or `:route` suffix on the model name, or `"bench": {"reply": ...}`
+in the body.
 Named `bench_collections` because `collections` would shadow the standard
 library for everything importing from metrics/.
 """
@@ -34,7 +37,7 @@ SETTINGS_FILE = DATA / "config" / "gateway.json"
 DEFAULTS = {"max_calls": 5, "max_explorers": 2}
 NAME = re.compile(r"^[a-z0-9][a-z0-9-]{1,31}$")
 PREFIX = "bench/"
-REPLIES = ("all", "merged")
+REPLIES = ("all", "merged", "route")
 
 
 def _read(path: pathlib.Path) -> dict:
@@ -135,6 +138,7 @@ if __name__ == "__main__":
     assert explorers_for(3, {"max_calls": 4, "max_explorers": 2}) == 1
     assert resolve("bench/") is None and resolve("bench/no-such") is None and resolve("") is None
     assert split_reply("bench/core:merged") == ("bench/core", "merged") and split_reply("core:all") == ("core", "all")
+    assert split_reply("bench/core:route") == ("bench/core", "route")
     assert split_reply("bench/core") == ("bench/core", "") and split_reply("bench/core:x") == ("bench/core:x", "")
     assert not reply_errors("merged", "", []) and not reply_errors("all", "m", ["m"])
     assert len(reply_errors("", "m", [])) == 2

@@ -116,9 +116,24 @@ its base URL and a collection as its model:
 | Older tools on `/v1/completions` | `http://127.0.0.1:8122/v1` | one `prompt` |
 
 Asked to stream, each answers at once and sends each seat's answer as it
-finishes. Agents that need tools (Claude Code, Codex, opencode as callers)
-are not supported yet: a request with tools is refused with a 400 saying so.
-GATEWAY.md, "Other API formats", has a curl for each.
+finishes. GATEWAY.md, "Other API formats", has a curl for each.
+
+**An agent that calls tools** (Claude Code, Codex, opencode, Cline...) uses
+a collection's **route mode**: model `bench/<collection>:route`. No panel:
+one member, picked by its record, gets the request with its tools and
+streams its answer back in the agent's own format; the conversation stays
+on that model, and a member that fails before answering is replaced by the
+next. A panel refuses tools with a 400 saying so. For Claude Code:
+
+```bash
+export ANTHROPIC_BASE_URL=http://127.0.0.1:8122 ANTHROPIC_API_KEY=local
+export ANTHROPIC_MODEL=bench/core:route ANTHROPIC_DEFAULT_HAIKU_MODEL=bench/fast:route
+claude
+```
+
+Each conversation is one offload per model that answered it; a verdict is
+optional, and the Gateway card lists route conversations apart from the
+panels. GATEWAY.md, "Route mode", has the other clients and the limits.
 
 **A coding agent** connects over MCP instead: the Claude Code plugin
 (`/plugin marketplace add WendellResearch-AI/benchwarmers`, then

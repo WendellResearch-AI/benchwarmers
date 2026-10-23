@@ -205,7 +205,7 @@ request becomes OpenAI-style messages, the panel runs exactly as on
 scope, rate caps, CORS, the call log), and the reply goes back in the
 format's own shape. The model field is the collection: `bench/core`, or
 `bench/core:merged` for one merged answer. Clients that pick from a list
-(`/api/tags`, `/v1beta/models`, `/v1/models`) see every collection in both
+(`/api/tags`, `/v1beta/models`, `/v1/models`) see every collection in all three
 reply modes.
 
 | Format | Routes | Streams with | `bench` field | Known clients |
@@ -269,12 +269,15 @@ bytes), Gemini `inlineData` and `fileData` at an http(s) URL.
 **Refused, not dropped** (400, with why), because a client waiting for what
 it asked would hang or loop on a panel's text:
 
-- **Tools and agents are not supported yet.** A request carrying tools, or a
-  conversation holding tool calls or tool results, in any format (chat
-  completions included), is refused with a message saying a route mode is
-  coming: one member proxied with tools and streaming, for agent clients
-  such as Claude Code, Codex or opencode, with background shadow seats as an
-  opt-in after that. An empty `tools` list is no tools.
+- **Tools, in a panel.** A request carrying tools, or a conversation
+  holding tool calls or tool results, in any format, is refused by a panel
+  (`all` or `merged`) with a message pointing at route mode (next section),
+  which takes them. An empty `tools` list is no tools.
+- a tool only its own vendor runs (Anthropic's server tools such as
+  `web_search_20250305` and their result blocks, OpenAI's hosted tools such
+  as `web_search`, Gemini's Google Search, URL context and code execution),
+  in route mode too: no other model can run them;
+- the legacy `functions` / `function_call` fields: send `tools`;
 - a PDF, audio or other non-image part; an image as an uploaded file id
   (Anthropic `file`, Responses `file_id`, Gemini's Files API);
 - `previous_response_id` or a stored `conversation` on Responses: nothing is
@@ -282,12 +285,166 @@ it asked would hang or loop on a panel's text:
 - Ollama's `context` (a model's own token state): use `/api/chat`;
 - more than one prompt on legacy completions.
 
-**Ignored**: sampling options (`max_tokens`, `temperature`, `top_p`, `stop`
-and their native names) are read but each seat keeps its own call options;
-structured-output settings (Ollama `format`, Gemini `responseSchema`,
-Responses `text.format`), since a panel answers in markdown; a model's own
+**Ignored by a panel**: sampling options (`max_tokens`, `temperature`,
+`top_p`, `stop` and their native names) are read but each seat keeps its own
+call options; structured-output settings (Ollama `format`, Gemini
+`responseSchema`, Responses `text.format`), since a panel answers in
+markdown. Route mode passes both on. **Ignored everywhere**: a model's own
 reasoning from an earlier turn (Anthropic thinking blocks, Responses
-reasoning items, Gemini thought parts).
+reasoning items, Gemini thought parts), and native parameters with no
+OpenAI counterpart (Anthropic's `top_k`, `thinking`, `metadata`).
+
+## Route mode (agent clients)
+
+A panel answers with several models' text; an agent needs one model that
+calls its tools. **Route mode** is that: no panel, one member of the
+collection gets the request as sent — messages, tool calls and results,
+`tools`, `tool_choice`, `parallel_tool_calls`, `response_format`,
+temperature and the rest, images — and its answer is relayed in the
+request's own format, streamed or not. Ask for it with `:route` on the
+model (`bench/core:route`), `"bench": {"reply": "route"}`, or set a
+collection's reply to *route* in the Collections dialog. `GET /v1/models`
+(and `/api/tags`, `/v1beta/models`) lists every collection in all three
+modes, so an agent's model picker can choose `bench/core:route`.
+
+**Who answers.** Members only, no explorers: an agent's working session is
+not the place to try an unknown model. Excluded, and named in
+`bench.skipped` with why, as a panel excludes them: retired and ad hoc
+members, members whose endpoint speaks another API than chat completions,
+members the catalog does not know to call tools (when the request has
+tools; the model popup's *Tool calling* is the override, like *Vision /
+OCR*; the catalog's `tools` comes from OpenRouter's listed parameters,
+models.dev, the endpoint's own listing or a capability probe that saw a
+call), that cannot see (when it has images) or whose context window is
+under the request (tools and tool calls counted). No member left: 400
+(413 when size is why). Of those left, the best record goes first: useful
+verdicts counted, then verified suite findings, then a connection already
+paid for; members cooling down after a rate limit go last. One new
+conversation in four goes instead to the member whose record is oldest, so
+the record does not narrow to one model.
+
+**Sticky.** A conversation stays on its model across turns: switching
+mid-task breaks the agent's coherence and the provider's prompt cache. The
+key is a hash of the collection, the gateway key, the system text and the
+first user message, which an agent resends unchanged every turn; it lives
+in memory and lapses after an hour idle (or a restart). A side request with
+its own system prompt (Claude Code's command checks, a subagent, a title) is
+its own conversation. If the conversation's model cannot take a turn (an
+image arrives), the turn is re-ranked; the model that answers becomes the
+conversation's.
+
+**Failover.** If the member fails before the first piece of its answer
+reaches the caller — a 429, a 5xx, a pacing refusal, nothing at all in 90
+seconds, an empty reply (even after reasoning) — the next member in order
+gets the turn, transparently, up to three; the caller sees only the answer,
+and `bench.failed_over` names who failed and why. Reasoning streamed before
+the answer is held back with it. A streamed turn's 200 waits up to 15
+seconds for that first piece, so a turn that fails everywhere quickly keeps
+its status (429 when every member was rate limited, else 502), then
+keep-alives cover the wait. After the first piece, an error goes into the
+stream in the format's error shape: no other model can continue a
+half-written answer.
+
+**Streams.** OpenAI chat completions relays the member's chunks as they
+came, tool-call deltas exactly, under the collection's name, then a closing
+chunk with no choice that carries `bench`. The other formats stream the
+text as it comes and each tool call **whole when the turn ends** (an
+Anthropic `tool_use` block with one `input_json_delta`, a Responses
+`function_call` item, a Gemini `functionCall` part, an Ollama `tool_calls`
+line), so calls whose deltas interleave still arrive intact. Usage is the
+member's own count. An output budget over the model's known maximum is cut
+to it (Claude Code asks every model for 32,000). Headers name the
+conversation (`X-Bench-Conversation`) and, when known before the 200, the
+model (`X-Bench-Model`).
+
+**Translations.** Anthropic `tool_use` / `tool_result` blocks, Responses
+`function_call` / `function_call_output` items, Gemini `functionCall` /
+`functionResponse` parts and Ollama `tool_calls` / `tool` messages become
+OpenAI tool calls and tool messages and back; tool definitions and
+`tool_choice` likewise (Gemini's upper-case schema types lowered). Tool call
+ids pass through both ways; Gemini and Ollama usually send none, so they
+are numbered per request and a result matched to the oldest open call of
+its name. A Responses **custom tool** (Codex's free-form `apply_patch`)
+becomes a function taking one string, `input`, its grammar in the
+description, and the call goes back as a `custom_tool_call`. An image in an
+Anthropic tool result goes in a user message after it (a tool message
+carries text only); `is_error` prefixes the result with `Error: `.
+
+**Recording (the decision).** Every call is in the usage ledger (purpose
+`route`), and every turn a line in `runs/gateway/routes.jsonl`: model,
+status, seconds, tool calls, tokens, who failed over — never the prompt,
+which an agent resends whole every turn. For the router, a conversation is
+**one unjudged offload per model that answered it** (call id
+`<conversation>.1`, `.2` after a failover to another model), not one per
+turn: an agent session is dozens of turns, and a seat per turn would bury
+the panels' verdicts. A verdict on a conversation is optional
+(`POST /bench/verdict` with that call id); the offload alone already counts
+toward rotation. The Gateway card lists route conversations in their own
+table (when, who asked, the first message, who answered with ✓/✗, turns,
+tool calls, failovers) and none of them adds to **Owed**.
+
+**Shadows (later, opt-in).** A shadow seat would answer the same turn in the
+background for evaluation only, after the caller has its answer. The place
+is marked in `route_turn` ("SHADOWS GO HERE"): each would be its own client
+call with purpose `shadow`, recorded on the conversation's call id; nothing
+the caller sees would wait for or change because of them. Not built.
+
+**Limits, honestly.**
+
+- Members reached through native Anthropic, Gemini or Responses endpoints
+  are not routed to: route mode speaks chat completions to the member.
+- The member is a free or flat-rate model, not the model the client was
+  built for. Claude Code and Codex are tuned for their own vendors' models;
+  smaller models make more tool-call mistakes, and some providers reject a
+  tool schema another accepts (that request fails over).
+- Prompt caching is the provider's own: stickiness keeps the prefix on one
+  provider, but `cache_control` marks are not passed on.
+- Thinking is not shown to Anthropic, Responses, Gemini or Ollama clients
+  (a model's reasoning is relayed raw only in chat completions).
+- Tool calls arrive whole, not as deltas, outside chat completions.
+- A caller that hangs up does not stop the member; its answer runs out and
+  is recorded.
+- Stickiness is per gateway process, in memory.
+
+### Pointing agents at a collection
+
+The base URL is the server: `http://127.0.0.1:8122` (the dashboard's port)
+or `:8123` (`gateway.py`). On this machine any key text works; elsewhere,
+or where keys are required, use a gateway key from Settings.
+
+**Claude Code** (Anthropic Messages). It sends the model named by
+`ANTHROPIC_MODEL` (or `--model`) for its main loop and a smaller "haiku"
+model for side tasks (command checks, titles), so set both; a name it does
+not know prints a harmless `unrecognized_model` note:
+
+```bash
+export ANTHROPIC_BASE_URL=http://127.0.0.1:8122
+export ANTHROPIC_API_KEY=<a gateway key, or any text on this machine>
+export ANTHROPIC_MODEL=bench/core:route
+export ANTHROPIC_DEFAULT_HAIKU_MODEL=bench/fast:route
+export ANTHROPIC_DEFAULT_SONNET_MODEL=bench/core:route ANTHROPIC_DEFAULT_OPUS_MODEL=bench/core:route
+export CLAUDE_CODE_SUBAGENT_MODEL=bench/core:route
+claude
+```
+
+Checked end to end (2026-10-23): Claude Code 2.1.299 ran Read, Write and
+Bash tool loops through `bench/core:route` and `bench/fast:route`, failing
+over past a member's 429 on the first turn and staying on one model after.
+
+**Codex and other Responses clients**: a provider with `base_url =
+"http://127.0.0.1:8122/v1"`, `wire_api = "responses"`, the model
+`bench/core:route`, and the gateway key as its API key. Function and custom
+tools work; hosted tools (`web_search`, `local_shell`) are refused, so turn
+them off. Nothing is stored: `previous_response_id` is refused, so the
+client must send the whole conversation every turn.
+Not checked against a real Codex yet.
+
+**opencode, Cline, Continue, Roo, Aider and other OpenAI-compatible agents**:
+an OpenAI-compatible provider at `http://127.0.0.1:8122/v1`, model
+`bench/core:route` (it is in `/v1/models`). Agents that speak Ollama
+(`http://127.0.0.1:8122`, model `bench/core:route`) work the same way. A
+real `curl` with tools streamed a model's tool-call deltas through
+unchanged; these clients themselves were not run.
 
 **Counts and durations.** `usage` and the token-count routes
 (`/v1/messages/count_tokens`, Gemini `:countTokens`) are the size check's

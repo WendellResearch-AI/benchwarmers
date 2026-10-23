@@ -10,9 +10,10 @@ filtering sees them), and the panel's answer back into the format's own
 response and streaming events. Pure functions, stdlib only, no I/O: the
 gateway does the HTTP.
 
-The same shapes run the other way for the built-in client, which will call
-the native Anthropic, Gemini, Ollama and Responses APIs with them (not wired
-yet; metrics/client.py speaks chat completions and Responses itself today):
+The same shapes run the other way for the built-in client, which calls an
+endpoint whose `api` is `anthropic` or `gemini` with them (Ollama's and the
+Responses API's outbound halves are not wired; metrics/client.py speaks
+chat completions and ChatGPT's Responses flow itself):
 
     inbound, the gateway answering a client          outbound, the client calling an API
     <fmt>_ask(body)      native request -> Ask       <fmt>_request(messages, ...)  OpenAI messages -> native request
@@ -22,24 +23,40 @@ yet; metrics/client.py speaks chat completions and Responses itself today):
     <fmt>_error(status, message) -> native error body
 
 An Ask is a dict: `model` (as the client named it), `messages` (OpenAI
-style), `stream`, `options` (max_tokens, temperature, top_p, stop, when
-given) and the bench's own `with` and `reply`, read from any format's body
-(an SDK's extra_body). The gateway reads `options` but does not pass them
-on: each seat uses its own call options (config/model-options.json).
+style, tool calls and results included), `stream`, `options` (max_tokens,
+temperature, top_p, stop, when given), the bench's own `with` and `reply`,
+read from any format's body (an SDK's extra_body), `upstream` (the request
+as OpenAI chat completions fields beyond messages: tools, tool_choice,
+parallel_tool_calls, response_format and the options) and `agentic` (it
+carries tools, tool calls or tool results). A panel reads `options` but does
+not pass them on: each seat uses its own call options
+(config/model-options.json). Route mode passes `upstream` on.
+
+ROUTE MODE (one member, tools and all)
+--------------------------------------
+`Turn` reads the member's OpenAI chunks; each format's route stream
+(ROUTE) writes them in its own shape and route_reply() the whole answer.
+OpenAI chat completions relays the chunks as they came, tool-call deltas
+exactly. The other formats stream the text as it comes and each tool call
+whole once the turn ends, so a call whose deltas interleave with another's
+still arrives intact. Tool call ids pass through both ways; Gemini and
+Ollama carry none, so they are numbered per request (`_Ids`), and a result
+is matched to the oldest open call of its name.
 
 WHAT IS REFUSED, NOT DROPPED
 ----------------------------
-A request carrying tools, or a conversation holding tool calls or results,
-is refused (Unsupported, a 400) rather than answered as if the tools were not
-there: a panel's reply is several models' text, not a tool call, and an agent
-that waits for one would hang or loop. A route mode that proxies one model
-with tools is planned. So is anything else that would be lost on the way: a
-PDF or audio part, an uploaded file id, a stored previous response. A
-model's own reasoning from an earlier turn (Anthropic thinking blocks,
-Responses reasoning items, Gemini thought parts) is dropped: each seat
-reasons for itself. Structured-output settings (Ollama `format`, Gemini's
-responseSchema, Responses `text.format`) are ignored: a panel answers in
-markdown.
+A panel refuses an agentic Ask (the gateway answers 400 with TOOLS): its
+reply is several models' text, not a tool call, and an agent that waits for
+one would hang or loop. Every format refuses what would be lost on the way:
+a PDF or audio part, an uploaded file id, a stored previous response, a
+tool that only its own vendor runs (Anthropic's web search, OpenAI's
+hosted tools, Gemini's Google Search and code execution). A model's own
+reasoning from an earlier turn (Anthropic thinking blocks, Responses
+reasoning items, Gemini thought parts) is dropped: each model reasons for
+itself, and none could read another's signed thinking. Structured-output
+settings (Ollama `format`, Gemini's responseSchema, Responses `text.format`)
+reach route mode as response_format, and are ignored by a panel, which
+answers in markdown.
 
 Token counts in replies are estimates (characters / 4 plus 10%), as the
 gateway's size check makes; durations are real.
@@ -58,10 +75,10 @@ import time
 import urllib.parse
 from typing import Callable, NamedTuple
 
-TOOLS = ("this request carries tools or tool calls, and the bench gateway answers with a panel of models,"
-         " not a tool call, so tool use is not supported yet (a route mode that proxies one model, tools"
-         " and all, is coming). Send it without tools.")
-REPLIES = ("all", "merged")       # bench_collections.REPLIES; not imported, so this file stands alone
+TOOLS = ("this request carries tools, tool calls or tool results, and a panel answers with several models'"
+         " text, not a tool call. Ask for the collection's route mode instead (bench/<collection>:route, or"
+         ' "bench": {"reply": "route"}), which hands the request to one member, tools and all.')
+REPLIES = ("all", "merged", "route")   # bench_collections.REPLIES; not imported, so this file stands alone
 LEAD = ("system", "developer")    # newer OpenAI SDKs send "developer" where older ones send "system"
 # The Ollama API version whose shapes these follow. Clients check it to
 # decide which fields to send; a lower one would have them hold back.
@@ -170,27 +187,73 @@ def _image_url(part: dict) -> str:
     return part["image_url"]["url"]
 
 
-def _no_tools(tools) -> None:
-    if tools:
-        raise Unsupported(TOOLS)
+def _function(name, description, parameters) -> dict:
+    """One OpenAI tool definition."""
+    if not isinstance(name, str) or not name:
+        raise Unsupported("every tool needs a name")
+    return {"type": "function", "function": {"name": name, "description": str(description or ""),
+                                             "parameters": parameters or {"type": "object", "properties": {}}}}
 
 
-def _ask(body: dict, model, messages: list[dict], stream, options: dict) -> dict:
+def _call(cid, name, arguments) -> dict:
+    """One OpenAI tool call in an assistant message; `arguments` a JSON string or an object."""
+    return {"id": str(cid or _new_id("call_")), "type": "function",
+            "function": {"name": str(name or ""),
+                         "arguments": arguments if isinstance(arguments, str) else json.dumps(arguments or {})}}
+
+
+def _assistant(text, calls: list[dict]) -> dict:
+    """An assistant message, with its tool calls when it made any."""
+    if not calls:
+        return {"role": "assistant", "content": text}
+    return {"role": "assistant", "content": text_of(text) or None, "tool_calls": calls}
+
+
+class _Ids:
+    """Tool call ids for formats whose calls carry none (Gemini, Ollama):
+    numbered in order through one request, and a result given to the oldest
+    open call of its name (or the oldest open call, when it names none). The
+    model never sees a past turn's ids from its own reply, so any that match
+    within the request will do."""
+
+    def __init__(self):
+        self.n, self.open = 0, []
+
+    def call(self, name, given=None) -> str:
+        cid = str(given or f"call_{self.n}")
+        self.n += 1
+        self.open.append((name, cid))
+        return cid
+
+    def result(self, name=None, given=None) -> str:
+        for i, (n, cid) in enumerate(self.open):
+            if (given and cid == given) or (not given and (not name or n == name)):
+                del self.open[i]
+                return cid
+        return str(given or f"call_{self.n}")
+
+
+def _ask(body: dict, model, messages: list[dict], stream, options: dict, upstream: dict | None = None,
+         **extra) -> dict:
     """The Ask every format's request becomes, with the bench's own fields
-    checked as POST /v1/chat/completions always checked them."""
+    checked as POST /v1/chat/completions always checked them. `upstream`:
+    the request's OpenAI chat fields beyond messages, for route mode; the
+    options when not given."""
     if not isinstance(model, str):
         raise Unsupported('"model" must be a collection name such as bench/core')
     nominated, opts = body.get("with") or [], body.get("bench") or {}
     if not (isinstance(nominated, list) and all(isinstance(a, str) for a in nominated)):
         raise Unsupported('"with" must be a list of model aliases')
     if not isinstance(opts, dict) or opts.get("reply", "all") not in REPLIES:
-        raise Unsupported('"bench" must be an object whose "reply" is "all" or "merged"')
+        raise Unsupported('"bench" must be an object whose "reply" is "all", "merged" or "route"')
     stop = options.get("stop")
     if isinstance(stop, str):
         options = {**options, "stop": [stop]}
-    return {"model": model, "messages": messages, "stream": bool(stream),
-            "options": {k: v for k, v in options.items() if v is not None},
-            "with": nominated, "reply": opts.get("reply") or ""}
+    options = {k: v for k, v in options.items() if v is not None}
+    upstream = {k: v for k, v in (options if upstream is None else upstream).items() if v is not None}
+    agentic = bool(upstream.get("tools")) or any(m.get("role") == "tool" or m.get("tool_calls") for m in messages)
+    return {"model": model, "messages": messages, "stream": bool(stream), "options": options,
+            "with": nominated, "reply": opts.get("reply") or "", "upstream": upstream, "agentic": agentic, **extra}
 
 
 def _messages(value, what: str = '"messages"') -> list[dict]:
@@ -222,7 +285,7 @@ class Stream:
 
     def __init__(self, model: str, input_tokens: int = 0, **_):
         self.model, self.input_tokens, self.said = model, input_tokens, []
-        self.started = time.monotonic()
+        self.started, self.turn = time.monotonic(), Turn()
 
     def start(self) -> bytes:
         return b""
@@ -239,23 +302,33 @@ class Stream:
     def keepalive(self) -> bytes:
         return b": keep-alive\n\n"                     # an SSE comment: every SSE parser skips it
 
+    def chunk(self, chunk: dict) -> bytes:
+        """Route mode: one of the member's OpenAI chunks, its text sent on as
+        it comes; the rest (tool calls, usage) is kept for end()."""
+        text, _ = self.turn.feed(chunk)
+        return self.text(text) if text else b""
+
     def output_tokens(self) -> int:
         return estimate("".join(self.said))
 
 
 # ---- OpenAI chat completions -----------------------------------------------
 
+CHAT_OWN = ("model", "messages", "stream", "stream_options", "with", "bench")
+
+
 def chat_ask(body: dict) -> dict:
     """POST /v1/chat/completions. The messages are already OpenAI's; the
-    gateway's own image check reads them as they are."""
+    gateway's own image check reads them as they are, and route mode passes
+    every other field on as it came."""
     messages = _messages(body.get("messages"))
-    _no_tools(body.get("tools") or body.get("functions"))
-    if any(m.get("role") in ("tool", "function") or m.get("tool_calls") or m.get("function_call")
-           for m in messages):
-        raise Unsupported(TOOLS)
+    if body.get("functions") or body.get("function_call") or any(
+            m.get("role") == "function" or m.get("function_call") for m in messages):
+        raise Unsupported('the legacy "functions" fields are not supported; send "tools" and "tool_calls"')
     return _ask(body, body.get("model") or "", messages, body.get("stream"),
                 {"max_tokens": body.get("max_completion_tokens") or body.get("max_tokens"),
-                 "temperature": body.get("temperature"), "top_p": body.get("top_p"), "stop": body.get("stop")})
+                 "temperature": body.get("temperature"), "top_p": body.get("top_p"), "stop": body.get("stop")},
+                upstream={k: v for k, v in body.items() if k not in CHAT_OWN})
 
 
 def chat_reply(text: str, model: str, bench: dict | None = None, usage=(0, 0), seconds: float = 0, **_) -> dict:
@@ -351,7 +424,10 @@ def _anthropic_blocks(content, where: str) -> str | list[dict]:
                 raise Unsupported(f"an image source of type {src.get('type')!r} cannot be passed on;"
                                   " send it as base64 or a url")
         elif isinstance(kind, str) and kind.endswith(("tool_use", "tool_result")):
-            raise Unsupported(TOOLS)
+            # server_tool_use, web_search_tool_result, mcp_tool_use...: what
+            # Anthropic's own servers ran, which no other model can continue.
+            raise Unsupported(f"a {kind!r} block comes from a tool Anthropic runs on its own servers, which"
+                              " no other model can take up; send your own tools' tool_use and tool_result")
         elif kind in ("thinking", "redacted_thinking"):
             continue                                   # a model's own reasoning from an earlier turn
         else:
@@ -359,19 +435,73 @@ def _anthropic_blocks(content, where: str) -> str | list[dict]:
     return _content(parts)
 
 
+def _anthropic_message(m: dict) -> list[dict]:
+    """One Anthropic message as OpenAI messages: an assistant's tool_use
+    blocks become its tool_calls; a user's tool_result blocks become tool
+    messages, ahead of whatever else it said (OpenAI wants each result right
+    after the call). An image in a result goes in that user message after
+    them, since a tool message carries text only; is_error marks the result."""
+    role, content = m["role"], m.get("content")
+    tool = [b for b in content if isinstance(b, dict) and b.get("type") in ("tool_use", "tool_result")] \
+        if isinstance(content, list) else []
+    if not tool:
+        return [{"role": role, "content": _anthropic_blocks(content, role)}]
+    rest = [b for b in content if not (isinstance(b, dict) and b.get("type") in ("tool_use", "tool_result"))]
+    said = _anthropic_blocks(rest, role) if rest else ""
+    wrong = "tool_result" if role == "assistant" else "tool_use"
+    if any(b["type"] == wrong for b in tool):
+        raise Unsupported(f"a {wrong} block cannot be in a{'n' * (role == 'assistant')} {role} message")
+    if role == "assistant":
+        return [_assistant(said, [_call(b.get("id"), b.get("name"), b.get("input") or {}) for b in tool])]
+    out, pictures = [], []
+    for b in tool:
+        parts = parts_of(_anthropic_blocks(b.get("content") or "", "a tool_result"))
+        pictures += [p for p in parts if p["type"] == "image_url"]
+        text = "\n\n".join(p["text"] for p in parts if p["type"] == "text")
+        out.append({"role": "tool", "tool_call_id": str(b.get("tool_use_id") or ""),
+                    "content": ("Error: " if b.get("is_error") else "") + text})
+    if (more := parts_of(said) + pictures):
+        out.append({"role": "user", "content": _content(more)})
+    return out
+
+
+def _anthropic_tools(body: dict) -> dict:
+    """Anthropic's tools and tool_choice as OpenAI's."""
+    tools = body.get("tools") or []
+    if not isinstance(tools, list):
+        raise Unsupported('"tools" must be a list')
+    out = []
+    for t in tools:
+        kind = t.get("type") if isinstance(t, dict) else t
+        if not isinstance(t, dict) or kind not in (None, "custom"):
+            raise Unsupported(f"the {kind!r} tool is one Anthropic runs on its own servers, which no other"
+                              " model can; send only your own tools (name, description, input_schema)")
+        out.append(_function(t.get("name"), t.get("description"), t.get("input_schema")))
+    up = {"tools": out} if out else {}
+    choice = body.get("tool_choice")
+    if isinstance(choice, dict) and out:
+        kind = choice.get("type")
+        up["tool_choice"] = ({"type": "function", "function": {"name": choice.get("name")}} if kind == "tool"
+                             else {"any": "required", "none": "none"}.get(kind, "auto"))
+        if choice.get("disable_parallel_tool_use"):
+            up["parallel_tool_calls"] = False
+    return up
+
+
 def anthropic_ask(body: dict) -> dict:
-    """POST /v1/messages."""
-    _no_tools(body.get("tools"))
+    """POST /v1/messages. Parameters with no OpenAI counterpart (top_k,
+    thinking, metadata, service_tier) are not passed on."""
     out = []
     if body.get("system"):
         out.append({"role": "system", "content": text_of(_anthropic_blocks(body["system"], "system"))})
     for m in _messages(body.get("messages")):
         if m.get("role") not in ("user", "assistant"):
             raise Unsupported(f'a message\'s "role" must be "user" or "assistant", not {m.get("role")!r}')
-        out.append({"role": m["role"], "content": _anthropic_blocks(m.get("content"), m["role"])})
-    return _ask(body, body.get("model") or "", out, body.get("stream"),
-                {"max_tokens": body.get("max_tokens"), "temperature": body.get("temperature"),
-                 "top_p": body.get("top_p"), "stop": body.get("stop_sequences")})
+        out += _anthropic_message(m)
+    options = {"max_tokens": body.get("max_tokens"), "temperature": body.get("temperature"),
+               "top_p": body.get("top_p"), "stop": body.get("stop_sequences")}
+    return _ask(body, body.get("model") or "", out, body.get("stream"), options,
+                {**options, **_anthropic_tools(body)})
 
 
 def anthropic_reply(text: str, model: str, bench=None, usage=(0, 0), seconds: float = 0, **_) -> dict:
@@ -388,13 +518,18 @@ class AnthropicStream(Stream):
     """message_start, one text block's deltas, message_delta (the bench
     beside its usage), message_stop; `ping` while waiting, as the API does."""
 
-    def start(self) -> bytes:
+    def _head(self) -> bytes:
         message = {"id": _new_id("msg_"), "type": "message", "role": "assistant", "model": self.model,
                    "content": [], "stop_reason": None, "stop_sequence": None,
                    "usage": {"input_tokens": self.input_tokens, "output_tokens": 0}}
-        return (sse({"type": "message_start", "message": message}, "message_start")
-                + sse({"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}},
-                      "content_block_start"))
+        return sse({"type": "message_start", "message": message}, "message_start")
+
+    @staticmethod
+    def _block(index: int, block: dict) -> bytes:
+        return sse({"type": "content_block_start", "index": index, "content_block": block}, "content_block_start")
+
+    def start(self) -> bytes:
+        return self._head() + self._block(0, {"type": "text", "text": ""})
 
     def text(self, text: str) -> bytes:
         self.said.append(text)
@@ -430,9 +565,11 @@ def _anthropic_content(content) -> str | list[dict]:
 
 def _turns(messages: list[dict]) -> tuple[str, list[dict]]:
     """(system text, the other turns) of OpenAI messages, for APIs that keep
-    the system text apart; refuses tool turns, which have no place there."""
+    the system text apart. ponytail: refuses tool turns; the built-in client
+    sends native APIs a panel seat's text, and route mode proxies chat
+    completions only. Translate them when a native endpoint is routed to."""
     if any(m.get("role") in ("tool", "function") or m.get("tool_calls") for m in messages):
-        raise Unsupported(TOOLS)
+        raise Unsupported("tool calls and results are sent to chat completions only, not a native API")
     system = "\n\n".join(text_of(m.get("content")) for m in messages if m.get("role") in LEAD)
     return system, [m for m in messages if m.get("role") not in LEAD]
 
@@ -491,10 +628,54 @@ def _responses_parts(content, where: str) -> str | list[dict]:
     return _content(parts)
 
 
+def _responses_tools(body: dict) -> tuple[dict, list[str]]:
+    """The Responses API's tools, tool_choice, parallel_tool_calls and
+    text.format as OpenAI chat fields, and the names of its custom tools.
+    A custom tool (free-form input, as Codex's apply_patch) becomes a
+    function taking one string, `input`, its grammar in the description."""
+    tools, custom, out = body.get("tools") or [], [], []
+    if not isinstance(tools, list):
+        raise Unsupported('"tools" must be a list')
+    for t in tools:
+        kind = t.get("type") if isinstance(t, dict) else t
+        if kind == "function":
+            fn = _function(t.get("name"), t.get("description"), t.get("parameters"))
+            if t.get("strict") is not None:
+                fn["function"]["strict"] = t["strict"]
+            out.append(fn)
+        elif kind == "custom":
+            fmt = t.get("format") if isinstance(t.get("format"), dict) else {}
+            grammar = (f"\n\nThe input must follow this {fmt.get('syntax', '')} grammar:\n{fmt.get('definition', '')}"
+                       if fmt.get("type") == "grammar" else "")
+            out.append(_function(t.get("name"), f"{t.get('description') or ''}{grammar}",
+                                 {"type": "object", "required": ["input"], "properties": {
+                                     "input": {"type": "string", "description": "the tool's whole input, as free text"}}}))
+            custom.append(t.get("name"))
+        else:
+            raise Unsupported(f"a {kind!r} tool is one OpenAI runs itself, which no other model can; send"
+                              " function or custom tools")
+    up: dict = {"tools": out} if out else {}
+    choice = body.get("tool_choice")
+    if isinstance(choice, dict):
+        choice = {"type": "function", "function": {"name": choice["name"]}} if choice.get("name") else \
+            choice.get("mode") or "auto"
+    if choice and out:
+        up["tool_choice"] = choice
+    if body.get("parallel_tool_calls") is not None and out:
+        up["parallel_tool_calls"] = body["parallel_tool_calls"]
+    fmt = (body.get("text") or {}).get("format") if isinstance(body.get("text"), dict) else None
+    if isinstance(fmt, dict) and fmt.get("type") == "json_schema":
+        up["response_format"] = {"type": "json_schema", "json_schema": {
+            k: fmt[k] for k in ("name", "schema", "strict", "description") if k in fmt}}
+    elif isinstance(fmt, dict) and fmt.get("type") == "json_object":
+        up["response_format"] = {"type": "json_object"}
+    return up, custom
+
+
 def responses_ask(body: dict) -> dict:
     """POST /v1/responses. Nothing is stored, so a previous_response_id (or
-    a stored conversation) names nothing here."""
-    _no_tools(body.get("tools"))
+    a stored conversation) names nothing here. Function and custom tool calls
+    and their outputs become OpenAI tool calls and tool messages."""
     if body.get("previous_response_id") or body.get("conversation"):
         raise Unsupported("responses are never stored here, so previous_response_id and conversation name"
                           " nothing; send the whole conversation in input")
@@ -511,18 +692,36 @@ def responses_ask(body: dict) -> dict:
             kind = item.get("type") or "message"
             if kind == "reasoning":
                 continue                               # a model's own reasoning from an earlier turn
+            if kind in ("function_call", "custom_tool_call"):
+                call = _call(item.get("call_id") or item.get("id"), item.get("name"),
+                             item.get("arguments") or "{}" if kind == "function_call"
+                             else {"input": item.get("input") or ""})
+                if out and out[-1]["role"] == "assistant":         # the same turn's text, or its other calls
+                    out[-1]["tool_calls"] = out[-1].get("tool_calls", []) + [call]
+                    out[-1]["content"] = text_of(out[-1]["content"]) or None
+                else:
+                    out.append(_assistant("", [call]))
+                continue
+            if kind in ("function_call_output", "custom_tool_call_output"):
+                output = item.get("output")
+                out.append({"role": "tool", "tool_call_id": str(item.get("call_id") or ""),
+                            "content": output if isinstance(output, str) else
+                            text_of(_responses_parts(output or "", "a tool output"))})
+                continue
             if kind != "message":
-                raise Unsupported(TOOLS if "call" in kind or "tool" in kind else
-                                  f"an input item of type {kind!r} is not supported here; send messages")
+                raise Unsupported(f"an input item of type {kind!r} is not supported here; send messages,"
+                                  " function calls and their outputs")
             role = item.get("role")
             if role not in ("user", "assistant", "system", "developer"):
                 raise Unsupported(f"an input message's role must be user, assistant, system or developer, not {role!r}")
             out.append({"role": role, "content": _responses_parts(item.get("content"), role)})
     else:
         raise Unsupported('"input" must be a string or a list of items')
-    return _ask(body, body.get("model") or "", out, body.get("stream"),
-                {"max_tokens": body.get("max_output_tokens"), "temperature": body.get("temperature"),
-                 "top_p": body.get("top_p")})
+    options = {"max_tokens": body.get("max_output_tokens"), "temperature": body.get("temperature"),
+               "top_p": body.get("top_p")}
+    tools, custom = _responses_tools(body)
+    return _ask(body, body.get("model") or "", out, body.get("stream"), options, {**options, **tools},
+                custom=custom)
 
 
 def _response(rid: str, model: str, status: str, output: list, usage=(0, 0), created: int = 0, **extra) -> dict:
@@ -568,28 +767,36 @@ class ResponsesStream(Stream):
     def _where(self) -> dict:
         return {"item_id": self.mid, "output_index": 0, "content_index": 0}
 
-    def start(self) -> bytes:
+    def _head(self) -> bytes:
         pending = _response(self.rid, self.model, "in_progress", [], created=self.created)
-        part = {"type": "output_text", "text": "", "annotations": []}
         return (self._event("response.created", response=pending)
-                + self._event("response.in_progress", response=pending)
-                + self._event("response.output_item.added", output_index=0,
-                              item=_message_item(self.mid, "", "in_progress"))
+                + self._event("response.in_progress", response=pending))
+
+    def _open(self) -> bytes:
+        part = {"type": "output_text", "text": "", "annotations": []}
+        return (self._event("response.output_item.added", output_index=0,
+                            item=_message_item(self.mid, "", "in_progress"))
                 + self._event("response.content_part.added", **self._where(), part=part))
+
+    def _close(self) -> tuple[bytes, dict]:
+        text = "".join(self.said)
+        item = _message_item(self.mid, text)
+        return (self._event("response.output_text.done", **self._where(), text=text, logprobs=[])
+                + self._event("response.content_part.done", **self._where(), part=item["content"][0])
+                + self._event("response.output_item.done", output_index=0, item=item)), item
+
+    def start(self) -> bytes:
+        return self._head() + self._open()
 
     def text(self, text: str) -> bytes:
         self.said.append(text)
         return self._event("response.output_text.delta", **self._where(), delta=text, logprobs=[])
 
     def end(self, bench=None) -> bytes:
-        text = "".join(self.said)
-        item = _message_item(self.mid, text)
+        out, item = self._close()
         done = _response(self.rid, self.model, "completed", [item], (self.input_tokens, self.output_tokens()),
                          self.created, **({"bench": bench} if bench is not None else {}))
-        return (self._event("response.output_text.done", **self._where(), text=text, logprobs=[])
-                + self._event("response.content_part.done", **self._where(), part=item["content"][0])
-                + self._event("response.output_item.done", output_index=0, item=item)
-                + self._event("response.completed", response=done))
+        return out + self._event("response.completed", response=done)
 
     def error(self, status: int, message: str) -> bytes:
         failed = _response(self.rid, self.model, "failed", [], created=self.created)
@@ -656,16 +863,39 @@ def _ollama_options(body: dict) -> dict:
 
 
 def ollama_chat_ask(body: dict) -> dict:
-    """POST /api/chat. Ollama streams unless told not to."""
-    _no_tools(body.get("tools"))
-    out = []
+    """POST /api/chat. Ollama streams unless told not to. Its tools are
+    already OpenAI's shape; its tool calls carry arguments as an object and
+    usually no id (numbered here, _Ids); `format` becomes response_format."""
+    out, ids = [], _Ids()
     for m in _messages(body.get("messages")):
-        if m.get("role") == "tool" or m.get("tool_calls"):
-            raise Unsupported(TOOLS)
-        if m.get("role") not in ("system", "user", "assistant"):
-            raise Unsupported(f'a message\'s "role" must be system, user or assistant, not {m.get("role")!r}')
-        out.append({"role": m["role"], "content": _ollama_parts(m.get("content"), m.get("images"), m["role"])})
-    return _ask(body, ollama_model(body.get("model") or ""), out, body.get("stream", True), _ollama_options(body))
+        role = m.get("role")
+        if role == "tool":
+            out.append({"role": "tool", "tool_call_id": ids.result(m.get("tool_name") or m.get("name"),
+                                                                   m.get("tool_call_id")),
+                        "content": str(m.get("content") or "")})
+            continue
+        if role not in ("system", "user", "assistant"):
+            raise Unsupported(f'a message\'s "role" must be system, user, assistant or tool, not {role!r}')
+        content = _ollama_parts(m.get("content"), m.get("images"), role)
+        calls = m.get("tool_calls") or []
+        if calls and (role != "assistant" or not isinstance(calls, list)):
+            raise Unsupported("tool_calls must be a list, in an assistant message")
+        out.append(_assistant(content, [_call(ids.call(fn.get("name"), tc.get("id")), fn.get("name"), fn.get("arguments"))
+                                        for tc in calls if isinstance(tc, dict)
+                                        for fn in [tc.get("function") or {}]]) if calls else
+                   {"role": role, "content": content})
+    options = _ollama_options(body)
+    up = dict(options)
+    if (tools := body.get("tools")):
+        if not (isinstance(tools, list) and all(isinstance(t, dict) and t.get("type") == "function" for t in tools)):
+            raise Unsupported('"tools" must be a list of {"type": "function", "function": {...}} objects')
+        up["tools"] = tools
+    fmt = body.get("format")
+    if fmt == "json":
+        up["response_format"] = {"type": "json_object"}
+    elif isinstance(fmt, dict):
+        up["response_format"] = {"type": "json_schema", "json_schema": {"name": "response", "schema": fmt}}
+    return _ask(body, ollama_model(body.get("model") or ""), out, body.get("stream", True), options, up)
 
 
 def ollama_generate_ask(body: dict) -> dict:
@@ -766,7 +996,7 @@ def ollama_request(messages: list[dict], model: str, options: dict | None = None
     out = []
     for m in messages:
         if m.get("role") in ("tool", "function") or m.get("tool_calls"):
-            raise Unsupported(TOOLS)
+            raise Unsupported("tool calls and results are sent to chat completions only, not a native API")
         parts = parts_of(m.get("content"))
         pictures = []
         for p in parts:
@@ -823,41 +1053,97 @@ def _gemini_parts(parts, where: str) -> str | list[dict]:
                 raise Unsupported("a fileData part must name an image at an http(s) URL; an upload to"
                                   " Google's Files API cannot be read by other models")
             out.append(image(uri))
-        elif any(k in p for k in ("functionCall", "function_call", "functionResponse", "function_response",
-                                  "executableCode", "executable_code", "codeExecutionResult",
-                                  "code_execution_result")):
-            raise Unsupported(TOOLS)
+        elif any(k in p for k in ("executableCode", "executable_code", "codeExecutionResult", "code_execution_result")):
+            raise Unsupported("a code execution part is Gemini's own tool, which no other model runs")
+        elif any(k in p for k in ("functionCall", "function_call", "functionResponse", "function_response")):
+            raise Unsupported(f"{where}: a function call or response cannot be here")
         else:
             raise Unsupported(f"{where}: a part with {', '.join(sorted(p)) or 'nothing'} is not supported here;"
                               " send text and images")
     return _content(out)
 
 
+def _gemini_schema(schema):
+    """Gemini's OpenAPI-style schema as JSON Schema: its types are upper case
+    (OBJECT, STRING), JSON Schema's lower."""
+    if isinstance(schema, list):
+        return [_gemini_schema(s) for s in schema]
+    if not isinstance(schema, dict):
+        return schema
+    return {k: v.lower() if k == "type" and isinstance(v, str) else _gemini_schema(v) for k, v in schema.items()}
+
+
+def _gemini_tools(body: dict) -> dict:
+    """Gemini's function declarations, toolConfig and JSON output settings as OpenAI chat fields."""
+    out = []
+    for t in body.get("tools") or []:
+        decls = _get(t, "functionDeclarations", "function_declarations") if isinstance(t, dict) else None
+        if decls is None or set(t) - {"functionDeclarations", "function_declarations"}:
+            raise Unsupported(f"a tool with {', '.join(sorted(t)) if isinstance(t, dict) else t} is one Gemini runs"
+                              " itself (Google Search, code execution, URL context), which no other model can;"
+                              " send functionDeclarations")
+        for d in decls if isinstance(decls, list) else ():
+            out.append(_function(d.get("name"), d.get("description"),
+                                 _get(d, "parametersJsonSchema", "parameters_json_schema")
+                                 or _gemini_schema(d.get("parameters"))))
+    up: dict = {"tools": out} if out else {}
+    config = _get(_get(body, "toolConfig", "tool_config") or {}, "functionCallingConfig", "function_calling_config") or {}
+    mode, names = str(config.get("mode") or "").upper(), _get(config, "allowedFunctionNames", "allowed_function_names") or []
+    if out and mode == "NONE":
+        up["tool_choice"] = "none"
+    elif out and mode in ("ANY", "VALIDATED"):
+        up["tool_choice"] = {"type": "function", "function": {"name": names[0]}} if len(names) == 1 else "required"
+    gen = _get(body, "generationConfig", "generation_config") or {}
+    if _get(gen, "responseMimeType", "response_mime_type") == "application/json":
+        schema = _get(gen, "responseJsonSchema", "response_json_schema") or \
+            _gemini_schema(_get(gen, "responseSchema", "response_schema"))
+        up["response_format"] = {"type": "json_schema", "json_schema": {"name": "response", "schema": schema}} \
+            if schema else {"type": "json_object"}
+    return up
+
+
 def gemini_ask(body: dict, model: str, stream: bool = False) -> dict:
     """POST /v1beta/models/{model}:generateContent (or :streamGenerateContent):
-    the model is in the path, and so is whether it streams."""
-    _no_tools(body.get("tools"))
+    the model is in the path, and so is whether it streams. A model turn's
+    functionCall parts become its tool calls, a functionResponse a tool
+    message (ids numbered when absent, _Ids)."""
     contents = body.get("contents")
     if isinstance(contents, dict):
         contents = [contents]
     if not (isinstance(contents, list) and all(isinstance(c, dict) for c in contents)):
         raise Unsupported('"contents" must be a list of content objects')
-    out = []
+    out, ids = [], _Ids()
     if (system := _get(body, "systemInstruction", "system_instruction")):
         out.append({"role": "system", "content": text_of(_gemini_parts(
             system.get("parts") if isinstance(system, dict) else [{"text": str(system)}], "systemInstruction"))})
     for c in contents:
         role = c.get("role") or "user"
-        if role == "function":
-            raise Unsupported(TOOLS)
-        if role not in ("user", "model"):
+        if role not in ("user", "model", "function"):
             raise Unsupported(f'a content\'s "role" must be "user" or "model", not {role!r}')
-        out.append({"role": "assistant" if role == "model" else "user", "content": _gemini_parts(c.get("parts"), role)})
+        parts = c.get("parts")
+        parts = [parts] if isinstance(parts, dict) else parts
+        if not isinstance(parts, list):
+            _gemini_parts(parts, role)                 # says why
+        calls = [fc for p in parts if isinstance(p, dict) and (fc := _get(p, "functionCall", "function_call"))]
+        results = [fr for p in parts if isinstance(p, dict) and (fr := _get(p, "functionResponse", "function_response"))]
+        rest = [p for p in parts if not (isinstance(p, dict) and any(
+            k in p for k in ("functionCall", "function_call", "functionResponse", "function_response")))]
+        if (calls and role != "model") or (results and role == "model"):
+            raise Unsupported("a functionCall belongs in a model turn, a functionResponse in a user turn")
+        if role == "model":
+            said = _gemini_parts(rest, role) if rest or not calls else ""
+            out.append(_assistant(said, [_call(ids.call(fc.get("name"), fc.get("id")), fc.get("name"), fc.get("args") or {})
+                                         for fc in calls]) if calls else {"role": "assistant", "content": said})
+            continue
+        out += [{"role": "tool", "tool_call_id": ids.result(fr.get("name"), fr.get("id")),
+                 "content": json.dumps(fr.get("response") or {}, ensure_ascii=False)} for fr in results]
+        if rest or not results:
+            out.append({"role": "user", "content": _gemini_parts(rest, role)})
     config = _get(body, "generationConfig", "generation_config") or {}
-    return _ask(body, model, out, stream,
-                {"max_tokens": _get(config, "maxOutputTokens", "max_output_tokens"),
-                 "temperature": config.get("temperature"), "top_p": _get(config, "topP", "top_p"),
-                 "stop": _get(config, "stopSequences", "stop_sequences")})
+    options = {"max_tokens": _get(config, "maxOutputTokens", "max_output_tokens"),
+               "temperature": config.get("temperature"), "top_p": _get(config, "topP", "top_p"),
+               "stop": _get(config, "stopSequences", "stop_sequences")}
+    return _ask(body, model, out, stream, options, {**options, **_gemini_tools(body)})
 
 
 def _gemini_chunk(text: str, model: str, rid: str, usage=None, finish: bool = False) -> dict:
@@ -980,6 +1266,278 @@ def gemini_text(reply: dict) -> str:
 gemini_delta = gemini_text                             # each streamed chunk is a reply's shape
 
 
+# ---- route mode: one member's turn, in each format ---------------------------
+
+ANTHROPIC_STOP = {"stop": "end_turn", "length": "max_tokens", "tool_calls": "tool_use"}
+
+
+def _piece(content) -> str:
+    """A delta's text: a string, or the parts some providers stream."""
+    if isinstance(content, list):
+        return "".join(str(p.get("text") or "") for p in content if isinstance(p, dict))
+    return content if isinstance(content, str) else ""
+
+
+class Turn:
+    """One assistant turn read from an OpenAI chat-completions stream, chunk
+    by chunk (or from the one chunk a whole reply makes): the answer, the
+    reasoning, each tool call whole, why it stopped and the usage the
+    upstream counted. A call is keyed by its id when it brings a new one,
+    else its index, else it continues the last: providers differ in which
+    of those they send after the first piece."""
+
+    def __init__(self):
+        self.text, self.reasoning, self.calls = [], [], []
+        self.finish, self.usage, self.model = "", {}, ""
+        self._by_id, self._by_index, self._last, self._unnamed = {}, {}, None, set()
+
+    def feed(self, chunk: dict) -> tuple[str, bool]:
+        """Add one chunk: (the answer text it adds, whether it adds to the
+        answer: text or a tool call). Reasoning alone does not: a model that
+        reasons and then says nothing has not answered."""
+        if not isinstance(chunk, dict):
+            return "", False
+        if isinstance(chunk.get("usage"), dict) and chunk["usage"]:
+            self.usage = chunk["usage"]
+        self.model = chunk.get("model") or self.model
+        choices = chunk.get("choices")
+        if not (isinstance(choices, list) and choices and isinstance(choices[0], dict)):
+            return "", False
+        self.finish = choices[0].get("finish_reason") or self.finish
+        delta = choices[0].get("delta") or choices[0].get("message") or {}
+        if not isinstance(delta, dict):
+            return "", False
+        thought, text = _piece(delta.get("reasoning_content") or delta.get("reasoning")), _piece(delta.get("content"))
+        self.reasoning.append(thought)
+        self.text.append(text)
+        called = False
+        for d in delta.get("tool_calls") or ():
+            if not isinstance(d, dict):
+                continue
+            cid, idx, fn = d.get("id"), d.get("index"), d.get("function") or {}
+            if cid and cid in self._by_id:
+                k = self._by_id[cid]
+            elif cid and idx in self._by_index and self._by_index[idx] in self._unnamed:
+                # The id came after the call's first piece: it is that call's.
+                k = self._by_index[idx]
+                self._unnamed.discard(k)
+                self.calls[k]["id"], self._by_id[cid] = str(cid), k
+            elif cid or not self.calls or (idx is not None and idx not in self._by_index):
+                k = len(self.calls)
+                self.calls.append({"id": str(cid or _new_id("call_")), "name": "", "arguments": ""})
+                if cid:
+                    self._by_id[cid] = k
+                else:
+                    self._unnamed.add(k)               # its id made up, until one comes
+            else:
+                k = self._by_index[idx] if idx is not None else self._last
+            if idx is not None:
+                self._by_index[idx] = k
+            self._last, call, args = k, self.calls[k], fn.get("arguments")
+            call["name"] = call["name"] or str(fn.get("name") or "")
+            call["arguments"] += args if isinstance(args, str) else json.dumps(args) if args is not None else ""
+            called = True
+        return text, bool(text or called)
+
+    def answer(self) -> str:
+        return "".join(self.text)
+
+    def stop(self) -> str:
+        """Why it stopped, in chat completions' words. A turn that called a
+        tool says tool_calls whatever the provider said (some say stop)."""
+        return "tool_calls" if self.calls else self.finish or "stop"
+
+    def tokens(self, input_tokens: int) -> tuple[int, int]:
+        """(in, out): the upstream's counts, else estimates."""
+        u = self.usage
+        return (u.get("prompt_tokens") or u.get("input_tokens") or input_tokens,
+                u.get("completion_tokens") or u.get("output_tokens")
+                or estimate(self.answer() + "".join(c["arguments"] for c in self.calls)))
+
+
+def _arguments(call: dict) -> dict:
+    """A call's arguments as an object, for the formats that send one. Text
+    that is not a JSON object is kept under "arguments" rather than lost."""
+    try:
+        value = json.loads(call["arguments"] or "{}")
+    except ValueError:
+        return {"arguments": call["arguments"]}
+    return value if isinstance(value, dict) else {"arguments": value}
+
+
+def _call_item(call: dict, custom: bool) -> dict:
+    """A tool call as a Responses output item."""
+    if custom:
+        return {"type": "custom_tool_call", "id": _new_id("ctc_"), "call_id": call["id"], "name": call["name"],
+                "input": str(_arguments(call).get("input", call["arguments"])), "status": "completed"}
+    return {"type": "function_call", "id": _new_id("fc_"), "call_id": call["id"], "name": call["name"],
+            "arguments": call["arguments"] or "{}", "status": "completed"}
+
+
+def _gemini_calls(turn: Turn) -> list[dict]:
+    return [{"functionCall": {"id": c["id"], "name": c["name"], "args": _arguments(c)}} for c in turn.calls]
+
+
+def _ollama_calls(turn: Turn) -> list[dict]:
+    return [{"function": {"name": c["name"], "arguments": _arguments(c)}} for c in turn.calls]
+
+
+def _bench(bench) -> dict:
+    return {"bench": bench} if bench is not None else {}
+
+
+class ChatRoute(ChatStream):
+    """The member's own chunks as they came, tool-call deltas exactly as
+    sent, under the name asked for; then a closing chunk with no choice
+    carrying the bench, as include_usage's last chunk has none."""
+
+    def start(self) -> bytes:
+        return b""
+
+    def chunk(self, chunk: dict) -> bytes:
+        self.turn.feed(chunk)
+        self.id = chunk.get("id") or self.id
+        return sse({**chunk, "object": "chat.completion.chunk", "created": chunk.get("created") or self.created,
+                    "model": self.model})
+
+    def end(self, bench=None) -> bytes:
+        return sse({"id": self.id, "object": "chat.completion.chunk", "created": self.created, "model": self.model,
+                    "choices": [], **_bench(bench)}) + b"data: [DONE]\n\n"
+
+
+class AnthropicRoute(AnthropicStream):
+    """message_start; the text as one text block as it comes; each tool call
+    as a tool_use block once the turn is done; the stop reason and the
+    member's own token counts."""
+    opened = False
+
+    def start(self) -> bytes:
+        return self._head()
+
+    def text(self, text: str) -> bytes:
+        out = b"" if self.opened else self._block(0, {"type": "text", "text": ""})
+        self.opened = True
+        return out + super().text(text)
+
+    def end(self, bench=None) -> bytes:
+        out, i = b"", 0
+        if self.opened or not self.turn.calls:         # a turn with nothing to say still has its block
+            out += (b"" if self.opened else self._block(0, {"type": "text", "text": ""})) \
+                + sse({"type": "content_block_stop", "index": 0}, "content_block_stop")
+            i = 1
+        for call in self.turn.calls:
+            out += (self._block(i, {"type": "tool_use", "id": call["id"], "name": call["name"], "input": {}})
+                    + sse({"type": "content_block_delta", "index": i, "delta": {
+                        "type": "input_json_delta", "partial_json": json.dumps(_arguments(call))}}, "content_block_delta")
+                    + sse({"type": "content_block_stop", "index": i}, "content_block_stop"))
+            i += 1
+        used = self.turn.tokens(self.input_tokens)
+        delta = {"type": "message_delta", "delta": {"stop_reason": ANTHROPIC_STOP.get(self.turn.stop(), "end_turn"),
+                                                    "stop_sequence": None},
+                 "usage": {"input_tokens": used[0], "output_tokens": used[1]}, **_bench(bench)}
+        return out + sse(delta, "message_delta") + sse({"type": "message_stop"}, "message_stop")
+
+
+class ResponsesRoute(ResponsesStream):
+    """The text as one message item as it comes, then each tool call as a
+    function_call (or custom_tool_call) item once the turn is done."""
+    opened = False
+
+    def __init__(self, model: str, input_tokens: int = 0, custom=(), **kw):
+        super().__init__(model, input_tokens, **kw)
+        self.custom = set(custom or ())
+
+    def start(self) -> bytes:
+        return self._head()
+
+    def text(self, text: str) -> bytes:
+        out = b"" if self.opened else self._open()
+        self.opened = True
+        return out + super().text(text)
+
+    def end(self, bench=None) -> bytes:
+        out, items = self._close() if self.opened else (b"", None)
+        items = [items] if items else []
+        for call in self.turn.calls:
+            item, n = _call_item(call, call["name"] in self.custom), len(items)
+            pending = {**item, "status": "in_progress", **({"arguments": ""} if item["type"] == "function_call" else {})}
+            out += self._event("response.output_item.added", output_index=n, item=pending)
+            if item["type"] == "function_call":
+                out += (self._event("response.function_call_arguments.delta", item_id=item["id"], output_index=n,
+                                    delta=item["arguments"])
+                        + self._event("response.function_call_arguments.done", item_id=item["id"], output_index=n,
+                                      arguments=item["arguments"]))
+            out += self._event("response.output_item.done", output_index=n, item=item)
+            items.append(item)
+        done = _response(self.rid, self.model, "completed", items, self.turn.tokens(self.input_tokens), self.created,
+                         **_bench(bench))
+        return out + self._event("response.completed", response=done)
+
+
+class GeminiRoute(GeminiStream):
+    """The text as it comes; the tool calls as functionCall parts, whole, in
+    the last chunk (Gemini streams each call whole anyway)."""
+
+    def end(self, bench=None) -> bytes:
+        last = _gemini_chunk("", self.model, self.rid, self.turn.tokens(self.input_tokens), True)
+        if self.turn.calls:
+            last["candidates"][0]["content"]["parts"] = _gemini_calls(self.turn)
+        if self.turn.finish == "length":
+            last["candidates"][0]["finishReason"] = "MAX_TOKENS"
+        return self._send(last, last=True)
+
+
+class OllamaRoute(OllamaStream):
+    """The text as it comes; the tool calls in one line of their own, then
+    the done line (Ollama streams each call whole anyway)."""
+
+    def end(self, bench=None) -> bytes:
+        out = b""
+        if self.turn.calls:
+            out = (json.dumps({"model": self.model, "created_at": _ollama_at(), "message": {
+                "role": "assistant", "content": "", "tool_calls": _ollama_calls(self.turn)}, "done": False},
+                ensure_ascii=False) + "\n").encode()
+        done = _ollama_done(self.turn.tokens(self.input_tokens), time.monotonic() - self.started)
+        if self.turn.finish == "length":
+            done["done_reason"] = "length"
+        return out + self._line("", **done, **_bench(bench))
+
+
+def route_reply(fmt: str, turn: Turn, model: str, bench: dict, input_tokens: int, seconds: float,
+                custom=()) -> dict:
+    """A whole route-mode turn as the format's reply: the text reply, with
+    the tool calls, stop reason and the member's own token counts put in."""
+    used, calls, said = turn.tokens(input_tokens), turn.calls, turn.answer()
+    reply = INBOUND[fmt].reply(said, model, bench, used, seconds)
+    if fmt == "chat":
+        choice = reply["choices"][0]
+        choice["finish_reason"] = turn.stop()
+        if calls:
+            choice["message"].update(content=said or None, tool_calls=[
+                _call(c["id"], c["name"], c["arguments"] or "{}") for c in calls])
+        if (thought := "".join(turn.reasoning)):
+            choice["message"]["reasoning_content"] = thought
+        reply["usage"] = turn.usage or {"prompt_tokens": used[0], "completion_tokens": used[1], "total_tokens": sum(used)}
+    elif fmt == "anthropic":
+        reply["content"] = ([{"type": "text", "text": said}] if said or not calls else []) + [
+            {"type": "tool_use", "id": c["id"], "name": c["name"], "input": _arguments(c)} for c in calls]
+        reply["stop_reason"] = ANTHROPIC_STOP.get(turn.stop(), "end_turn")
+    elif fmt == "responses":
+        reply["output"] = (reply["output"] if said or not calls else []) + [
+            _call_item(c, c["name"] in set(custom or ())) for c in calls]
+    elif fmt == "gemini":
+        candidate = reply["candidates"][0]
+        if calls:
+            candidate["content"]["parts"] = ([{"text": said}] if said else []) + _gemini_calls(turn)
+        if turn.finish == "length":
+            candidate["finishReason"] = "MAX_TOKENS"
+    elif fmt == "ollama_chat" and calls:
+        reply["message"]["tool_calls"] = _ollama_calls(turn)
+    if fmt.startswith("ollama") and turn.finish == "length":
+        reply["done_reason"] = "length"
+    return reply
+
+
 # ---- the gateway's table ---------------------------------------------------
 
 class Format(NamedTuple):
@@ -1001,7 +1559,12 @@ INBOUND = {
     "gemini": Format(gemini_ask, gemini_reply, GeminiStream, gemini_error),
 }
 
-OLLAMA_ROUTES = {"/api/chat": "ollama_chat", "/api/generate": "ollama_generate", "/api/show": "ollama_chat",
+# Each format's stream in route mode; completions and Ollama's generate carry no tools.
+ROUTE = {"chat": ChatRoute, "completion": CompletionStream, "anthropic": AnthropicRoute,
+         "responses": ResponsesRoute, "ollama_chat": OllamaRoute, "ollama_generate": OllamaGenerateStream,
+         "gemini": GeminiRoute}
+
+OLLAMA_ROUTES = {"/api/chat":"ollama_chat", "/api/generate": "ollama_generate", "/api/show": "ollama_chat",
                  "/api/tags": "ollama_chat", "/api/version": "ollama_chat"}
 POST_ROUTES = {"/v1/chat/completions": "chat", "/chat/completions": "chat", "/v1/completions": "completion",
                "/completions": "completion", "/v1/messages": "anthropic", "/v1/messages/count_tokens": "anthropic",

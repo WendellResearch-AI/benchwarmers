@@ -80,8 +80,21 @@ The same panel answers Anthropic Messages (/v1/messages), OpenAI Responses
 /api/generate, /api/tags, /api/version, /api/show) and Gemini
 (/v1beta/models/<collection>:generateContent and :streamGenerateContent):
 metrics/formats.py turns each request into OpenAI messages and the answer
-back into the format's reply. A request carrying tools is refused (400): a
-panel's text is not a tool call.
+back into the format's reply. A panel refuses a request carrying tools,
+tool calls or tool results (400): its text is not a tool call.
+
+ROUTE MODE
+----------
+For agent clients (Claude Code, Codex, opencode, Cline...): `:route` on the
+model, `"bench": {"reply": "route"}`, or a collection's `reply`. No panel:
+one member gets the request as sent, tools, tool_choice, response_format,
+images and all, and its answer is relayed in the request's format, streamed
+or not (route_plan, route_turn, Handler._route). The member is picked by its
+record with some rotation, kept for the whole conversation (fingerprint),
+and replaced by the next if it fails before its first piece. Each turn is
+in the ledger and runs/gateway/routes.jsonl; each conversation is one
+unjudged offload per model that answered it, a verdict optional. GATEWAY.md
+"Route mode" has the decisions and the limits.
 
 Asked to stream, the reply's 200 goes as soon as the panel is seated (a
 refusal before that keeps its status), keep-alives go while the seats
@@ -91,8 +104,9 @@ format's own shape (Handler._stream).
 
 WHAT IT IS NOT
 --------------
-A single-model proxy. Tools such as Roo Code call Open WebUI directly; this
-exists only for the multi-model work. Seats are called with `llm -m`, exactly
+A proxy to a model of the caller's choosing: route mode picks a collection's
+member by its record, and a tool that wants one model by name calls that
+model's endpoint (or Open WebUI) directly. Seats are called with `llm -m`, exactly
 as offloads always were, or the built-in client (BENCH_CLIENT), so endpoints,
 headers and per-model options all come from the same registry. Full prompts
 and answers go to `runs/gateway/`, gitignored, with the name of the gateway
@@ -105,10 +119,12 @@ CORS). The dashboard answers these same routes on its own port.
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import json
 import os
 import pathlib
 import queue
+import random
 import re
 import secrets
 import subprocess
@@ -650,16 +666,18 @@ def models() -> list[str]:
 
 def listed(who: str) -> list[tuple[str, dict]]:
     """(model name, what it is for) for every collection key `who` may call,
-    each twice: as set, and in the other reply mode, so a client that offers
-    only listed models can still pick either. What GET /v1/models, /api/tags
-    and /v1beta/models list, each in its own shape."""
+    each three times: as set, and in each other reply mode, so a client that
+    offers only listed models (an agent's model picker above all, for
+    `:route`) can still pick any. What GET /v1/models, /api/tags and
+    /v1beta/models list, each in its own shape."""
     s, rows = bench_collections.settings(), []
     for n, c in bench_collections.load().items():
         if not guard.may_call(who, n):                 # a key limited to some collections sees those
             continue
         d = bench_collections.described(n, c, s)
-        other = "all" if d["reply"] == "merged" else "merged"
-        rows += [(bench_collections.PREFIX + n, d), (f"{bench_collections.PREFIX}{n}:{other}", {**d, "reply": other})]
+        rows.append((bench_collections.PREFIX + n, d))
+        rows += [(f"{bench_collections.PREFIX}{n}:{other}", {**d, "reply": other})
+                 for other in bench_collections.REPLIES if other != d["reply"]]
     return rows
 
 
@@ -681,6 +699,256 @@ def refusal(exc: Exception) -> tuple[int, str]:
     if isinstance(exc, LookupError):
         return 503, str(exc)
     return 500, f"the panel failed ({type(exc).__name__}: {exc})"
+
+
+# ---- route mode: one member, tools and all (GATEWAY.md "Route mode") --------
+
+# A whole agent turn; a file written as one tool call can stream for minutes.
+ROUTE_TIMEOUT = 600
+# How long a member may take to its first piece (text, reasoning or a tool
+# call) before the next is tried. Reasoning streams count, so only a model
+# that sends nothing at all waits this long.
+FIRST_TOKEN = 90
+ROUTE_TRIES = 3                # members tried for one turn before it fails
+# A streamed turn's 200 waits this long for the first piece, so a turn that
+# fails everywhere quickly keeps its status (a client retries a 429 or 503 it
+# can see, not an error inside a 200); after it, keep-alives.
+ROUTE_GRACE = 15.0
+STICKY_TTL = 3600              # seconds idle before a conversation is picked afresh
+ROTATE = 0.25                  # share of new conversations given to the member with the oldest record
+_STICKY: dict[str, dict] = {}  # ponytail: in memory, so a restart re-picks; a file if that ever matters
+_STICKY_LOCK = threading.Lock()
+
+
+def cannot_call_tools(alias: str) -> str:
+    """Why a request with tools cannot be routed to `alias`, or "" when it
+    can. As cannot_see, the catalog decides (the model's listed parameters,
+    your Tool calling override in its model popup, a probe that saw a call),
+    and a model it knows nothing about is not routed to: one that cannot call
+    tools answers in prose, and the agent waits for a call that never comes."""
+    import catalog
+    rec = catalog.info(alias)
+    if rec.get("tools"):
+        return ""
+    if rec.get("tools") is None:
+        return "the catalog does not say whether it calls tools; tick Tool calling in its model popup if it does"
+    return f"does not call tools (says {rec['sources'].get('tools', 'the catalog')})"
+
+
+def route_tokens(ask: dict) -> int:
+    """The size check's estimate for a routed request: the messages as a
+    panel counts them, plus the tool calls in them and the tool definitions,
+    which an agent's requests are full of."""
+    extra = [[m["tool_calls"] for m in ask["messages"] if m.get("tool_calls")], ask["upstream"].get("tools") or []]
+    return prompt_tokens(ask["messages"]) + (estimate_tokens(json.dumps(extra)) if any(extra) else 0)
+
+
+def fingerprint(name: str, who: str, messages: list[dict]) -> str:
+    """What keeps an agent's conversation on one model from turn to turn:
+    the collection, the gateway key, the system text and the first user
+    message, which every turn sends again unchanged. A side task with its
+    own system prompt (titling the chat, a subagent) is its own conversation."""
+    system = "\n".join(formats.text_of(m.get("content")) for m in messages if m.get("role") in ("system", "developer"))
+    first = next((formats.text_of(m.get("content")) for m in messages if m.get("role") == "user"), "")
+    return hashlib.sha256("\0".join((name, who, system, first)).encode()).hexdigest()[:24]
+
+
+def route_order(aliases: list[str]) -> list[str]:
+    """Best record first: useful verdicts counted, as the merger is chosen
+    (one lucky verdict must not outrank a long good record), then verified
+    suite findings, then a connection already paid for. Members cooling down
+    after a rate limit or failing their probes go last. Now and then
+    (ROTATE) the member whose record is oldest goes first instead, so one
+    that stops being picked still gets turns, and with them a record."""
+    try:
+        used = offload.summary()
+    except Exception:                                  # noqa: BLE001
+        used = {}
+    try:
+        found = route.suite_recall()
+    except Exception:                                  # noqa: BLE001
+        found = {}
+    try:
+        paid = route.preferred_connections()
+        tags = {a: route.full_tag_of(a) for a in aliases}
+    except Exception:                                  # noqa: BLE001
+        paid, tags = set(), {}
+    ranked = sorted(aliases, reverse=True, key=lambda a: (used.get(a, {}).get("useful", 0),
+                                                          found.get(a, (0, 0, 0))[0], tags.get(a) in paid))
+    cooling = retiring()
+    fresh = [a for a in ranked if a not in cooling]
+    if len(fresh) > 1 and random.random() < ROTATE:
+        stalest = min(fresh, key=lambda a: used.get(a, {}).get("last_date") or "")
+        fresh.remove(stalest)
+        fresh.insert(0, stalest)
+    return fresh + [a for a in ranked if a in cooling]
+
+
+def route_plan(name: str, ask: dict, who: str) -> dict:
+    """The members that may take this turn, in the order to try them, and
+    the conversation it belongs to. A conversation under way keeps its model
+    first; a new one is ranked by route_order. Excluded, and named with why,
+    as a panel excludes them: retired and ad hoc members, members reached
+    through another API than chat completions, and those that cannot call
+    tools (when the request has tools), see (when it has images) or read it.
+    Raises as run_collection does: TooLarge, ValueError, LookupError."""
+    import endpoints
+    from run import ad_hoc_models
+    members = list(dict.fromkeys(m for m in bench_collections.load()[name].get("members") or []
+                                 if isinstance(m, str) and m))
+    if not members:
+        raise LookupError(f"collection {name!r} has no members to route to")
+    pictures, tools = images(ask["messages"]), bool(ask["upstream"].get("tools"))
+    needed = route_tokens(ask) + IMAGE_TOKENS * len(pictures)
+    gone, held, small = retired(), ad_hoc_models(), too_small(needed, members)
+    skipped, fit = [], []
+    for a in members:
+        api = endpoints.entry_of(a).get("api") or "chat"
+        why = (retired_why(gone[a]) if a in gone else
+               "ad hoc (expensive or capped), so never routed to automatically" if a in held else
+               f"reached through the {api} API; route mode passes requests on to chat completions only" if api != "chat"
+               else (tools and cannot_call_tools(a)) or (pictures and cannot_see(a)) or
+               (f"its context window ({small[a]:,} tokens) is under this request (about {needed:,})" if a in small else ""))
+        (skipped.append({"alias": a, "why": why}) if why else fit.append(a))
+    if not fit:
+        detail = "; ".join(f"{k['alias']} {k['why']}" for k in skipped)
+        if all(k["alias"] in small for k in skipped):
+            raise TooLarge(f"no member of bench/{name} can read this request: {detail}. Trim it, or choose a"
+                           " collection whose members have larger windows (GET /v1/models lists each one's).")
+        raise ValueError(f"no member of bench/{name} can take this request: {detail}")
+    key, now = fingerprint(name, who, ask["messages"]), time.monotonic()
+    with _STICKY_LOCK:
+        for k in [k for k, c in _STICKY.items() if now - c["at"] > STICKY_TTL]:
+            del _STICKY[k]
+        conv = _STICKY.get(key)
+    if conv is None or conv["alias"] not in fit:      # new, or its model cannot take this turn (an image, say)
+        ranked = route_order(fit)
+        first = next((formats.text_of(m.get("content")) for m in ask["messages"] if m.get("role") == "user"), "")
+        fresh = {"conv": f"r{dt.datetime.now():%Y%m%d-%H%M%S}-{secrets.token_hex(2)}", "turns": 0, "models": [],
+                 "task": " ".join(first.split())[:90], "alias": ranked[0], "order": ranked, "at": now}
+        with _STICKY_LOCK:
+            # Changed in place, or the first of two simultaneous new turns
+            # kept: every turn of one conversation shares one record.
+            if conv is None:
+                conv = _STICKY.setdefault(key, fresh)
+            else:
+                conv.update(alias=ranked[0], order=ranked, at=now)
+    order = [conv["alias"]] + [a for a in conv["order"] if a != conv["alias"] and a in fit]
+    return {"conv": conv, "order": order + [a for a in fit if a not in order], "skipped": skipped,
+            "images": bool(pictures)}
+
+
+def _fit(upstream: dict, alias: str) -> dict:
+    """The request's fields for `alias`: an output budget over the model's
+    known maximum is cut to it rather than refused (Claude Code asks every
+    model for 32,000)."""
+    import catalog
+    cap = catalog.info(alias).get("max_output")
+    return {k: min(v, cap) if k in ("max_tokens", "max_completion_tokens") and isinstance(v, int)
+            and isinstance(cap, int) and cap > 0 else v for k, v in upstream.items()}
+
+
+def route_turn(name: str, plan: dict, ask: dict, who: str, emit) -> None:
+    """One agent turn: the plan's members in order until one answers.
+
+    The answering member's chunks go to emit("chunk", chunk), held back
+    until the first piece of its answer (text or a tool call; reasoning
+    before it is held with it), so a member that fails before then (a 429, a
+    5xx, a pacing refusal, nothing in FIRST_TOKEN seconds, an empty reply
+    even after reasoning) is replaced by the next without the caller seeing
+    a thing; keep-alives cover the wait. emit("live",
+    alias) says who it is. Then emit("done", bench), or emit("error",
+    (status, message)) when every member tried failed, or the one under way
+    failed part way, which no other member can take up.
+
+    Every call reaches the usage ledger (purpose "route"). Every turn is a
+    line in runs/gateway/routes.jsonl, without the prompt (an agent resends
+    its whole conversation each turn). A conversation is one unjudged
+    offload per model that answered it, not one per turn (GATEWAY.md says why)."""
+    conv, order, tried = plan["conv"], plan["order"][:ROUTE_TRIES], []
+    for n, alias in enumerate(order):
+        held, live = [], [False]
+        last = n == len(order) - 1
+
+        def on_chunk(chunk, held=held, live=live, turn=formats.Turn(), alias=alias):
+            _, anything = turn.feed(chunk)
+            if live[0]:
+                return emit("chunk", chunk)
+            held.append(chunk)
+            if anything:
+                live[0] = True
+                emit("live", alias)
+                for c in held:
+                    emit("chunk", c)
+        res = client.chat(alias, "", timeout=ROUTE_TIMEOUT, messages=ask["messages"], body=_fit(ask["upstream"], alias),
+                          on_chunk=on_chunk, first_token=FIRST_TOKEN, retries=None if last else 0, purpose="route")
+        error = res["error"] or ("" if not res["timed_out"] else "timed out part way" if live[0]
+                                 else f"nothing in {FIRST_TOKEN}s")
+        if plan["images"]:
+            error = redact(error)                      # an upstream may echo an image back
+        if error:
+            try:
+                import learn
+                learn.record(alias, error, "gateway")  # a rate limit cools the model for the next pick
+            except Exception:                          # noqa: BLE001
+                pass
+        if not error and not live[0] and not last:
+            error = "an empty reply"                   # nothing was sent: another member may do better
+        if error and not live[0]:
+            tried.append({"alias": alias, "error": error[-300:]})
+            continue
+        if not live[0]:                                # the last member's empty reply is its answer
+            emit("live", alias)
+            for c in held:
+                emit("chunk", c)
+        with _STICKY_LOCK:
+            fresh = alias not in conv["models"]
+            if fresh:
+                conv["models"].append(alias)
+            conv.update(alias=alias, at=time.monotonic(), turns=conv["turns"] + 1)
+            call, turn_no = f"{conv['conv']}.{conv['models'].index(alias) + 1}", conv["turns"]
+        status = "error" if error else "ok" if res["text"] or res["tool_calls"] else "empty"
+        model = bench_collections.PREFIX + name
+        if fresh:
+            offload.add(alias, f"{conv['task']} ({model}:route)", None,
+                        f"route conversation; first turn {status} in {res['seconds']}s", call)
+        _log_route(conv, turn_no, call, model, who, alias, status, res, tried, error)
+        if error:
+            return emit("error", (res["status"] if res["status"] >= 400 else 502,
+                                  f"{alias} failed part way through the turn: {error[:300]}"))
+        # SHADOWS GO HERE, when they come: an opt-in that sends this same turn
+        # (ask, minus the caller's stream) to other members in the background,
+        # for evaluation only, after the caller has its answer. Each would be
+        # its own client.chat (purpose "shadow"), recorded as an unjudged
+        # offload on this conversation's call id with a suffix; nothing the
+        # caller sees waits for them or changes.
+        return emit("done", {"collection": model, "reply": "route", "conversation": conv["conv"], "call": call,
+                             "alias": alias, "turn": turn_no, **({"failed_over": tried} if tried else {}),
+                             **({"skipped": plan["skipped"]} if plan["skipped"] else {}),
+                             "verdict": 'optional, once per conversation: POST /bench/verdict {"call", "useful", "note"}'})
+    _log_route(conv, conv["turns"], "", bench_collections.PREFIX + name, who, "", "error", None, tried,
+               "every member failed")
+    # Every member rate limited (or held back by pacing): 429, so the caller
+    # backs off and tries again, as it would for one provider.
+    limited = all("Error code: 429" in t["error"] or "rate limit" in t["error"].lower() for t in tried)
+    emit("error", (429 if tried and limited else 502,
+                   f"no member of bench/{name} answered: " + "; ".join(f"{t['alias']}: {t['error'][:200]}" for t in tried)))
+
+
+def _log_route(conv: dict, turn: int, call: str, model: str, who: str, alias: str, status: str, res: dict | None,
+               tried: list[dict], error: str) -> None:
+    """One turn's line in runs/gateway/routes.jsonl, which the dashboard's
+    Gateway card reads for its route conversations."""
+    import ledger
+    res = res or {}
+    line = {"conversation": conv["conv"], "call": call, "at": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
+            "model": model, "key": who, "alias": alias, "turn": turn, "task": conv["task"], "status": status,
+            "seconds": res.get("seconds"), "first_token_s": res.get("first_token_s"),
+            "tool_calls": res.get("tool_calls", 0), "finish": res.get("finish", ""), **ledger.tokens(res.get("usage") or {}),
+            **({"tried": tried} if tried else {}), **({"error": error[-300:]} if error else {})}
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    with (LOG_DIR / "routes.jsonl").open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(line, ensure_ascii=False) + "\n")
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -717,7 +985,8 @@ class Handler(BaseHTTPRequestHandler):
         if headers is not None and guard.gateway_route((getattr(self, "path", "") or "").split("?", 1)[0]) \
                 and (origin := guard.cors_origin(headers, self.server.server_port)):
             self.send_header("Access-Control-Allow-Origin", origin)
-            self.send_header("Access-Control-Expose-Headers", "X-Bench-Panel, X-Bench-Seats")
+            self.send_header("Access-Control-Expose-Headers",
+                             "X-Bench-Panel, X-Bench-Seats, X-Bench-Conversation, X-Bench-Model")
             self.send_header("Vary", "Origin")
         super().end_headers()
 
@@ -856,6 +1125,10 @@ class Handler(BaseHTTPRequestHandler):
         # Chat completions have always answered with the collection's name;
         # the other formats echo the name as asked, which their clients match.
         shown = model if fmt == "chat" else ask["model"]
+        if (reply or bench_collections.load()[name].get("reply")) == "route":
+            return self._route(fmt, name, ask, shown, sse)
+        if ask["agentic"]:
+            return self._error(400, formats.TOOLS, fmt=fmt)
         if ask["stream"]:
             out = formats.INBOUND[fmt].stream(shown, prompt_tokens(ask["messages"]), sse=sse)
             return self._stream(fmt, name, ask, reply, out)
@@ -916,6 +1189,71 @@ class Handler(BaseHTTPRequestHandler):
                     return
             except OSError:
                 return                                 # the caller left; the panel still finishes, every seat recorded
+
+    def _route(self, fmt: str, name: str, ask: dict, shown: str, sse: bool = True) -> None:
+        """Route mode: one member's answer, in the request's format. The
+        turn runs in its own thread (route_turn) and this one writes: a
+        whole reply once it is done, or a stream whose 200 waits for the
+        member's first piece, or ROUTE_GRACE, whichever is first, then
+        relays it, with a keep-alive whenever nothing went for KEEPALIVE."""
+        try:
+            plan = route_plan(name, ask, self.who)
+        except (ValueError, LookupError) as exc:       # TooLarge is a ValueError
+            return self._error(*refusal(exc), fmt=fmt)
+        events: queue.Queue = queue.Queue()
+
+        def work():
+            try:
+                route_turn(name, plan, ask, self.who, lambda kind, data=None: events.put((kind, data)))
+            except Exception as exc:                   # noqa: BLE001 -- answered below, as a status or in the stream
+                events.put(("error", (500, f"route mode failed ({type(exc).__name__}: {exc})")))
+        threading.Thread(target=work, daemon=True).start()
+        tokens, began = route_tokens(ask), time.monotonic()
+        headers = {"X-Bench-Conversation": plan["conv"]["conv"]}
+        if not ask["stream"]:
+            turn = formats.Turn()
+            while True:
+                kind, data = events.get()
+                if kind == "chunk":
+                    turn.feed(data)
+                elif kind == "done":
+                    return self._json(200, formats.route_reply(fmt, turn, shown, data, tokens, time.monotonic() - began,
+                                                               ask.get("custom")), {**headers, "X-Bench-Model": data["alias"]})
+                elif kind == "error":
+                    return self._error(*data, fmt=fmt)
+        out = formats.ROUTE[fmt](shown, tokens, sse=sse, custom=ask.get("custom"))
+        started, wrote = False, time.monotonic()
+        while True:
+            try:
+                kind, data = events.get(timeout=KEEPALIVE if started else max(0.0, ROUTE_GRACE - (time.monotonic() - began)))
+            except queue.Empty:
+                kind, data = "idle", None
+            if kind == "error" and not started:
+                return self._error(*data, fmt=fmt)
+            if kind == "live":
+                headers["X-Bench-Model"] = data
+                continue
+            try:
+                if not started:
+                    self.send_response(200)
+                    for k, v in {"Content-Type": out.content_type, "Cache-Control": "no-cache", **headers}.items():
+                        self.send_header(k, v)
+                    self.end_headers()
+                    self.wfile.write(out.start())
+                    started = True
+                piece = (out.chunk(data) if kind == "chunk" else out.end(data) if kind == "done" else
+                         out.error(*data) if kind == "error" else b"")
+                if not piece and time.monotonic() - wrote >= KEEPALIVE:
+                    piece = out.keepalive()
+                if piece:
+                    self.wfile.write(piece)
+                    wrote = time.monotonic()
+                if kind in ("done", "error"):
+                    return
+            except OSError:
+                # The caller left. ponytail: the member's answer still runs to
+                # its end and is recorded; stopping it needs a per-call STOP.
+                return
 
     def log_request(self, code="-", size="-"):         # route, status, who; never a query or a key
         guard.access(self, code)

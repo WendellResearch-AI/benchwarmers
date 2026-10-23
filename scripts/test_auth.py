@@ -179,7 +179,8 @@ def main() -> int:
             assert call(d, "/api/gateway-key", {"name": "other", "collections": ["nope"]}, **jar)[0] == 400
             assert call(d, "/api/gateway-key", {"name": "other", "rpm": "lots"}, **jar)[0] == 400
             status, _, text = call(g, "/v1/models", **estate)
-            assert [m["id"] for m in json.loads(text)["data"]] == ["bench/vision", "bench/vision:merged"], text
+            assert [m["id"] for m in json.loads(text)["data"]] == ["bench/vision", "bench/vision:merged",
+                                                                   "bench/vision:route"], text
             ask = {"messages": [{"role": "user", "content": "hi"}]}
             status, _, text = call(g, "/v1/chat/completions", {"model": "bench/core", **ask}, **estate)
             assert status == 403 and "may call bench/vision" in text, text
