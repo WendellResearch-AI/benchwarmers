@@ -105,6 +105,9 @@ Any OpenAI-compatible client asks for the model `bench/<collection>`:
       -d '{"model": "bench/<collection>", "messages": [{"role": "user", "content": "..."}]}'
 
 Every seat's answer comes back, plus a `bench` field with each seat's call id.
+Clients of the Anthropic, Ollama, Gemini and Responses APIs work too, with
+the server's address as their base URL (GATEWAY.md, "Other API formats");
+requests carrying tools are refused, since a panel answers with text.
 For a chat window that shows one answer, ask for `bench/<collection>:merged`
 (or set the collection's reply to merged): a merger model writes one answer
 saying where the seats agreed and disagreed, and every seat is still in

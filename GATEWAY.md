@@ -2,6 +2,9 @@
 
 Status: **built** (2026-10-16): `python gateway.py`, then point an OpenAI client
 at `http://127.0.0.1:8123/v1` with a collection as the model, e.g. `bench/core`.
+Since 2026-10-23 it also speaks Anthropic Messages, OpenAI Responses, Ollama,
+Gemini and OpenAI's legacy completions, and streams each seat as it finishes
+(Other API formats, Streaming).
 Diagram: `.archify/architecture-bench-gateway-20261016-182500/bench-gateway.html`.
 
 ## The idea in one paragraph
@@ -126,7 +129,7 @@ exactly as sent:
 `choices[0].message.content` is markdown: one section per seat with its call
 id, status and time. Beside it, a `bench` field carries the same seats as data,
 so a caller need not parse the markdown (OpenAI clients ignore unknown fields;
-a streaming client gets it on the first chunk):
+a streaming client gets it on the last chunk, the one with the finish_reason):
 
 ```json
 "bench": {"panel": "p20261017-...", "collection": "bench/core", "shape": "review",
@@ -149,13 +152,145 @@ fits. It gets its own call id (`<panel>.merger`, in `bench.merger`, the
 offload log and the Gateway card) so a verdict can judge the merge; `bench`
 still carries every seat. If no merger has the context window for the
 request plus every answer, or it fails, the reply is every answer with a
-one-line note (`bench.note`). A streaming client gets it as one chunk, like
-any reply.
+one-line note (`bench.note`). A streaming client gets the merged answer in one
+piece once the merge is done (Streaming).
 
 A verdict is `POST /bench/verdict` with `{"call", "useful": true|false, "note",
 "real": [...], "false": [...]}`, `offload.py verdict <call id>`, or the verdict
 dialog in the dashboard's Collections tab, under Gateway (click a seat). Sending the same verdict
 twice writes nothing.
+
+## Streaming
+
+With `"stream": true` (or the format's own way of asking, below):
+
+- **The 200 goes at once**: as soon as the panel is seated, and at the
+  latest after a second (the shape picker can take longer). A refusal raised
+  before then (too large for a member, an image no seat can see, no seat
+  free) keeps its status and the format's error body, as without streaming.
+- **Keep-alives** go every 10 seconds while the seats think, in the format's
+  own form: an SSE comment for the OpenAI formats, Anthropic's `ping`, a
+  chunk with no text for Ollama and Gemini (their readers have no comments).
+  A client or proxy with an idle timeout keeps the connection.
+- **Every answer** (`reply` all): the heading, then each seat's section the
+  moment that seat finishes, then the verdict lines. The pieces are the same
+  as the non-streamed reply's, with the seats in the order they finished
+  rather than seat order.
+- **Merged**: the merged answer in one piece when the merge is done (or
+  every answer with its note, if the merge fails). Token by token waits for
+  the built-in client's streaming.
+- **An error after the 200** goes into the stream in the format's own error
+  shape (the OpenAI SDKs' `{"error": ...}` chunk, Anthropic's `error` event,
+  Responses' `error` and `response.failed`, Ollama's `{"error": ...}` line,
+  Gemini's error object), so a client raises rather than hangs.
+- **The `bench` field** rides on the last event where the format has room
+  (the table below). It is in the JSON on the wire; an SDK that parses into
+  fixed types may drop it (the Anthropic SDK's accumulated final message and
+  the `ollama` library's replies do; read the raw event, or the call ids,
+  which every reply's text carries). A caller that hangs up does not stop
+  the panel: every seat still answers and is recorded.
+
+## Other API formats
+
+Each is a thin adapter around the same panel (`metrics/formats.py`): the
+request becomes OpenAI-style messages, the panel runs exactly as on
+`/v1/chat/completions` (collections, explorers, size check, images, keys,
+scope, rate caps, CORS, the call log), and the reply goes back in the
+format's own shape. The model field is the collection: `bench/core`, or
+`bench/core:merged` for one merged answer. Clients that pick from a list
+(`/api/tags`, `/v1beta/models`, `/v1/models`) see every collection in both
+reply modes.
+
+| Format | Routes | Streams with | `bench` field | Known clients |
+|---|---|---|---|---|
+| OpenAI chat completions | `POST /v1/chat/completions`, `GET /v1/models` | `"stream": true` (SSE) | in the reply; the last chunk | OpenAI SDKs, Open WebUI's OpenAI connection, most chat apps |
+| OpenAI Responses | `POST /v1/responses` | `"stream": true` (typed events) | in the response; `response.completed` | OpenAI SDKs' `responses.create`, Responses-only clients |
+| OpenAI legacy completions | `POST /v1/completions` | `"stream": true` (SSE) | in the reply; the last chunk | older tools that send a `prompt` |
+| Anthropic Messages | `POST /v1/messages`, `POST /v1/messages/count_tokens` | `"stream": true` (SSE events) | in the message; `message_delta` | Anthropic SDKs with `base_url`, tools built on them |
+| Ollama | `POST /api/chat`, `POST /api/generate`, `GET /api/tags`, `GET /api/version`, `POST /api/show` | on unless `"stream": false` (NDJSON) | in the reply; the `done` line | Open WebUI's Ollama connection, the `ollama` libraries, Ollama-only apps |
+| Gemini | `POST /v1beta/models/<collection>:generateContent`, `:streamGenerateContent` (`?alt=sse`, else a JSON array), `:countTokens`, `GET /v1beta/models` | the stream route | **headers**: `X-Bench-Panel`, `X-Bench-Seats` (call, seat, alias, status); none when streamed | Google GenAI SDKs with `base_url`, Gemini REST |
+
+The base URL is the server itself (`http://127.0.0.1:8122` on the dashboard's
+port, `:8123` for `gateway.py`): the Anthropic SDK and Google's add their own
+`/v1/...` and `/v1beta/...`, Ollama clients their `/api/...`; OpenAI clients
+take `.../v1`.
+
+```bash
+curl http://127.0.0.1:8122/v1/messages -H "Content-Type: application/json" \
+  -d '{"model": "bench/core", "max_tokens": 1024, "messages": [{"role": "user", "content": "Where can this return a stale value? ..."}]}'
+curl http://127.0.0.1:8122/v1/responses -H "Content-Type: application/json" \
+  -d '{"model": "bench/core", "input": "Where can this return a stale value? ..."}'
+curl http://127.0.0.1:8122/v1/completions -H "Content-Type: application/json" \
+  -d '{"model": "bench/core", "prompt": "Where can this return a stale value? ..."}'
+curl http://127.0.0.1:8122/api/chat -H "Content-Type: application/json" \
+  -d '{"model": "bench/core", "stream": false, "messages": [{"role": "user", "content": "Where can this return a stale value? ..."}]}'
+curl "http://127.0.0.1:8122/v1beta/models/bench/core:streamGenerateContent?alt=sse" -H "Content-Type: application/json" \
+  -d '{"contents": [{"parts": [{"text": "Where can this return a stale value? ..."}]}]}'
+```
+
+Every POST needs `Content-Type: application/json`, as on chat completions
+(it is what keeps a web page's plain form out).
+
+```python
+import anthropic
+bench = anthropic.Anthropic(base_url="http://127.0.0.1:8122", api_key="local")   # or a gateway key
+with bench.messages.stream(model="bench/core", max_tokens=1024,
+                           messages=[{"role": "user", "content": "..."}]) as s:
+    for text in s.text_stream:
+        print(text, end="")              # each seat's section as that seat finishes
+
+from google import genai
+from google.genai import types
+gem = genai.Client(api_key="local", http_options=types.HttpOptions(base_url="http://127.0.0.1:8122"))
+print(gem.models.generate_content(model="bench/core:merged", contents="...").text)
+```
+
+In **Open WebUI**, add `http://127.0.0.1:8122` as an Ollama connection (or
+`.../v1` as an OpenAI one): the collections appear as models.
+
+**Keys.** Where keys are required, a gateway key goes as `Authorization:
+Bearer`, or as `x-api-key` (the Anthropic SDK's `api_key`), `x-goog-api-key`
+(the Google SDKs' `api_key`), or `?key=` on a Gemini route only (Google's REST
+examples). The first one sent is judged. The access log never records a
+query string or a key; neither does http.server's own error line.
+
+**Images** in each format's shape become `image_url` parts, so only seats that
+can see sit (Images): Anthropic `image` blocks (base64 or url), Responses
+`input_image`, Ollama's `images` (base64, its type read from its first
+bytes), Gemini `inlineData` and `fileData` at an http(s) URL.
+
+**Refused, not dropped** (400, with why), because a client waiting for what
+it asked would hang or loop on a panel's text:
+
+- **Tools and agents are not supported yet.** A request carrying tools, or a
+  conversation holding tool calls or tool results, in any format (chat
+  completions included), is refused with a message saying a route mode is
+  coming: one member proxied with tools and streaming, for agent clients
+  such as Claude Code, Codex or opencode, with background shadow seats as an
+  opt-in after that. An empty `tools` list is no tools.
+- a PDF, audio or other non-image part; an image as an uploaded file id
+  (Anthropic `file`, Responses `file_id`, Gemini's Files API);
+- `previous_response_id` or a stored `conversation` on Responses: nothing is
+  stored (`store` is answered `false`), so send the whole conversation;
+- Ollama's `context` (a model's own token state): use `/api/chat`;
+- more than one prompt on legacy completions.
+
+**Ignored**: sampling options (`max_tokens`, `temperature`, `top_p`, `stop`
+and their native names) are read but each seat keeps its own call options;
+structured-output settings (Ollama `format`, Gemini `responseSchema`,
+Responses `text.format`), since a panel answers in markdown; a model's own
+reasoning from an earlier turn (Anthropic thinking blocks, Responses
+reasoning items, Gemini thought parts).
+
+**Counts and durations.** `usage` and the token-count routes
+(`/v1/messages/count_tokens`, Gemini `:countTokens`) are the size check's
+estimate, characters / 4 plus 10% and 2,500 a picture, with no model called.
+Ollama's durations are real. `/api/version` reports the Ollama API version
+whose shapes these follow (0.12.0), so clients send what it reads.
+
+**On the dashboard's port**, Ollama's five `/api/` routes are the gateway's
+(a gateway key, never the login cookie); the dashboard's own `/api/...`
+routes never use those names.
 
 ## The decision model's job (optional)
 
@@ -201,7 +336,8 @@ key limited to its collection and a rate, or keep the key on the app's server.
 
 | Part | Job |
 |---|---|
-| Gateway | `gateway.py`, stdlib server on 127.0.0.1. `GET /v1/models` lists the collections with description, tags and make-up; `POST /v1/chat/completions` runs one, images included. A streaming client gets the finished answer as one chunk. |
+| Gateway | `gateway.py`, stdlib server on 127.0.0.1. `GET /v1/models` lists the collections with description, tags and make-up; `POST /v1/chat/completions` runs one, images included, streamed seat by seat when asked. |
+| Formats | `metrics/formats.py`: Anthropic Messages, Responses, legacy completions, Ollama and Gemini, each translated to and from OpenAI messages (Other API formats); the outbound half is for the built-in client to call those APIs natively, not wired yet. |
 | Collections | `metrics/bench_collections.py` reads the two config files and computes explorer seats. |
 | Seat router | `route.panel(members=…, explorers=n)` fills explorer seats by staleness for the shape. |
 | Shape picker | Optional decision model (above). |

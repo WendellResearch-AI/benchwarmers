@@ -31,8 +31,10 @@ Decided by ROUTE, never by what a request happens to carry, so an API call
 with a bearer never meets the login cookie and a browser's cookie never opens
 the gateway:
 
-- the gateway's routes (`/v1/...`, `/bench/...`, on either port) take a
-  GATEWAY KEY as `Authorization: Bearer <key>`: named, revocable, kept only
+- the gateway's routes (`/v1/...`, `/v1beta/...`, `/bench/...` and Ollama's
+  five `/api/` names, on either port) take a GATEWAY KEY as `Authorization:
+  Bearer <key>` (or `x-api-key`, `x-goog-api-key`, a Gemini route's `?key=`,
+  as those SDKs send it): named, revocable, kept only
   as a SHA-256 in `config/gateway-keys.json`, shown once when made. A key
   never opens the dashboard, so a chat UI or agent given one cannot change
   settings, read keys or spend through it.
@@ -81,7 +83,15 @@ PREFIX = "bwk_"                    # every gateway key starts so: a secret scann
 COOKIE = "bw_session"
 SESSION_S = 7 * 24 * 3600
 MIN_TOKEN = 16
-GATEWAY_ROUTES = ("/v1/", "/bench/")
+GATEWAY_ROUTES = ("/v1/", "/v1beta/", "/bench/")
+# Ollama's routes, which the gateway answers too (metrics/formats.py). They sit
+# under the dashboard's /api/, so these five names are the gateway's, on either
+# port, and the dashboard must never use them.
+OLLAMA_ROUTES = ("/api/chat", "/api/generate", "/api/tags", "/api/version", "/api/show")
+# Where a client may send its key other than `Authorization: Bearer`: the
+# Anthropic SDK's header, and Google's (its SDKs send the header; REST
+# examples put the key in ?key=, which is taken on Gemini routes only).
+KEY_HEADERS = ("x-api-key", "x-goog-api-key")
 
 
 class Refused(Exception):
@@ -210,7 +220,7 @@ def startup(address: str) -> None:
 
 def gateway_route(path: str) -> bool:
     """A route the gateway answers, on its own port or the dashboard's."""
-    return path.startswith(GATEWAY_ROUTES)
+    return path.startswith(GATEWAY_ROUTES) or path.rstrip("/") in OLLAMA_ROUTES
 
 
 def _sign(expires: int) -> bytes:
@@ -267,17 +277,24 @@ def admin_caller(headers) -> str:
     return "admin"
 
 
-def gateway_caller(headers) -> str:
+def gateway_caller(headers, query_key: str | None = None) -> str:
     """Who is asking for a gateway route: the gateway key's name, or "local"
     when keys are not required (any bearer is ignored then: SDKs send a dummy
     one). Raises Refused(401), saying which of missing, malformed or unknown
-    it was. The cookie is never looked at."""
+    it was. The cookie is never looked at.
+
+    The key is the first of `Authorization: Bearer`, `x-api-key`,
+    `x-goog-api-key` and `query_key` (a Gemini route's ?key=) that is sent:
+    one credential is judged, never a second tried after a bad first."""
     if not keys_required():
         return "local"
     challenge = {"WWW-Authenticate": 'Bearer realm="benchwarmers"'}     # RFC 6750: every 401 says how
     raw = headers.get("Authorization")
+    other = next((headers.get(h) for h in KEY_HEADERS if headers.get(h) is not None), query_key)
+    if raw is None and other is not None:
+        raw = f"Bearer {other}"
     if raw is None:
-        raise Refused(401, "this route needs a gateway key (Authorization: Bearer <key>);"
+        raise Refused(401, "this route needs a gateway key (Authorization: Bearer <key>, or x-api-key);"
                            " make one on the dashboard's Settings page", challenge)
     scheme, _, value = raw.strip().partition(" ")
     value = value.strip()
@@ -540,6 +557,17 @@ def _selftest() -> None:
                 assert key_name("") is None and key_name(key + "x") is None and key_name("bwk_é") is None
                 assert gateway_caller({"Authorization": f"Bearer {key}"}) == "chat-ui"
                 assert gateway_caller({"Authorization": f"bearer  {key} "}) == "chat-ui"
+                # Other APIs' places for a key: Anthropic's header, Google's header and ?key=.
+                assert gateway_caller({"x-api-key": key}) == "chat-ui"
+                assert gateway_caller({"x-goog-api-key": key}) == "chat-ui"
+                assert gateway_caller({}, query_key=key) == "chat-ui"
+                for headers, q in (({"Authorization": "Bearer sk-dummy", "x-api-key": key}, None),   # the first sent is judged
+                                   ({"x-api-key": "nope"}, key), ({"x-api-key": ""}, None), ({}, "")):
+                    try:
+                        gateway_caller(headers, q)
+                        raise AssertionError(f"gateway let in {headers} {q!r}")
+                    except Refused as r:
+                        assert r.status == 401, r
                 entry = gateway_keys()["chat-ui"]
                 assert entry["hint"] == key[-4:] and entry["last_used"] and "rpm" not in entry, entry
                 # Each refusal says which it was, and how to authenticate (RFC 6750).
@@ -605,6 +633,8 @@ def _selftest() -> None:
                 KEYS = real
         assert gateway_route("/v1/models") and gateway_route("/bench/verdict")
         assert not gateway_route("/api/endpoints") and not gateway_route("/v1") and not gateway_route("//v1/x")
+        assert gateway_route("/api/tags") and gateway_route("/api/chat/") and gateway_route("/v1beta/models")
+        assert not gateway_route("/api/tagsx") and not gateway_route("/api/stamp")
     finally:
         for k, v in saved.items():
             os.environ.pop(k, None)

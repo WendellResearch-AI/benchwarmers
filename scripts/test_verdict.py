@@ -88,7 +88,11 @@ def bench_field() -> None:
     assert "prompt" not in b and "system" not in b
     chunks = [json.loads(line[6:]) for line in post({**msg, "stream": True}).splitlines()
               if line.startswith("data: {")]
-    assert "bench" in chunks[0] and "bench" not in chunks[1], chunks
+    # Seat by seat as each finishes; the bench rides on the last chunk, with the finish_reason.
+    assert "bench" in chunks[-1] and chunks[-1]["choices"][0]["finish_reason"] == "stop", chunks
+    assert not any("bench" in c for c in chunks[:-1]), chunks
+    said = "".join(c["choices"][0]["delta"].get("content", "") for c in chunks)
+    assert all(s["call"] in said for s in chunks[-1]["bench"]["seats"]), said
     srv.shutdown()
 
 

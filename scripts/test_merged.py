@@ -157,11 +157,12 @@ def main() -> int:
         assert post({"model": "bench/core", "messages": [{"role": "user", "content": "x"}],
                      "bench": {"reply": "both"}})[0] == 400
         assert post({"model": "bench/core:both", "messages": [{"role": "user", "content": "x"}]})[0] == 404
-        # Streaming: the merged answer as the one chunk, the seats beside it.
+        # Streaming: the merged answer once the merge is done, the seats on the last chunk.
         chunks = [json.loads(line[6:]) for line in post({"model": "bench/core", "stream": True, "messages":
                   [{"role": "user", "content": "x"}]})[1].splitlines() if line.startswith("data: {")]
-        assert chunks[0]["choices"][0]["delta"]["content"].startswith("answer from merger")
-        assert len(chunks[0]["bench"]["seats"]) == 2
+        texts = [c["choices"][0]["delta"].get("content") for c in chunks]
+        assert texts[0] == "" and texts[1].startswith("answer from merger") and len(chunks) == 3, texts
+        assert len(chunks[-1]["bench"]["seats"]) == 2
 
         # 6. /v1/models: each collection and its other reply mode.
         with urllib.request.urlopen(url + "/v1/models", timeout=10) as resp:

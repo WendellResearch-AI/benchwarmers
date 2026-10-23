@@ -190,6 +190,27 @@ seat is still in `bench`. Record a verdict per call once you have checked it:
 or from the dashboard. See [GATEWAY.md](GATEWAY.md) for the full contract:
 images, prompt sizes, who may call, and the reply's shape.
 
+**Other clients.** The same panel answers in other APIs' shapes, so a client
+that speaks one of them works with the server's address as its base URL:
+
+| Format | Route | For |
+|---|---|---|
+| OpenAI chat completions | `POST /v1/chat/completions` | OpenAI SDKs, most chat apps |
+| OpenAI Responses | `POST /v1/responses` | `responses.create` clients (nothing is stored) |
+| OpenAI legacy completions | `POST /v1/completions` | tools that send a `prompt` |
+| Anthropic Messages | `POST /v1/messages` | Anthropic SDKs with `base_url` |
+| Ollama | `POST /api/chat`, `/api/generate`, `GET /api/tags` | Open WebUI's Ollama connection, Ollama apps |
+| Gemini | `POST /v1beta/models/bench/<collection>:generateContent` | Google GenAI SDKs with `base_url` |
+
+    curl http://127.0.0.1:8122/v1/messages -H "Content-Type: application/json" \
+      -d '{"model": "bench/<collection>", "max_tokens": 1024, "messages": [{"role": "user", "content": "..."}]}'
+
+Each streams when asked: the reply starts at once, and each seat's answer
+arrives as that seat finishes. Agent and tool use is not supported yet: a
+request carrying tools is refused with a 400 rather than answered without
+them. GATEWAY.md, "Other API formats", has a curl for each and what is
+refused or ignored.
+
 ## From the command line
 
 `bench` (or `benchwarmers`, the same program) does what the dashboard does,
@@ -333,7 +354,10 @@ detail.
 
 ## Limits
 
-- **Early.** v0.1: no installer yet, no streaming replies, and the LiteLLM and
+- **No tools yet.** A panel answers with text, not a tool call, so agents
+  that need tool use (Claude Code, Codex, opencode as callers) wait for a
+  route mode; requests with tools are refused, not trimmed.
+- **Early.** v0.1: no installer yet, merged replies stream in one piece, and the LiteLLM and
   CLI Proxy API hub adapters are built from those projects' source, not yet
   run against a real hub.
 - **Calls cost.** Probes, onboarding and the suite run on your keys and free
