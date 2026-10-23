@@ -92,13 +92,15 @@ import datetime as dt
 import json
 import os
 import pathlib
+import queue
 import re
 import secrets
 import subprocess
 import sys
+import threading
 import time
 import urllib.parse
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 ROOT = pathlib.Path(__file__).resolve().parent
@@ -114,6 +116,7 @@ sys.path.insert(0, str(ROOT / "suite"))
 import bench_collections  # noqa: E402
 import client  # noqa: E402
 import decide  # noqa: E402
+import formats  # noqa: E402
 import guard  # noqa: E402
 import offload  # noqa: E402
 import route  # noqa: E402
@@ -145,6 +148,13 @@ URLS = re.compile(r"https?://[^\s\"'<>\\]+", re.I)
 BASE64 = re.compile(r"[A-Za-z0-9+/]{100,}={0,2}")
 HEADER_NAMES = re.compile(r"[A-Za-z0-9-]{1,64}(\s*,\s*[A-Za-z0-9-]{1,64}){0,31}")
 SEAT_KEYS = ("call", "seat", "alias", "status", "seconds", "answer", "error")
+QUERY_KEY = re.compile(r"([?&](?:key|api_key|access_token)=)[^&\s'\"]*", re.I)
+# A streaming reply: how long a request may take to be seated before its 200
+# goes anyway (a refusal before then keeps its status), and how often a
+# keep-alive goes while the seats think. Idle timeouts in clients and proxies
+# start around 30 seconds.
+STREAM_GRACE = 1.0
+KEEPALIVE = 10.0
 # A merge that reads as consensus hides the dissent the bench runs on, so the
 # merger is told to keep who said what.
 MERGE_SYSTEM = ("Several models answered the same request. Write one answer to it from theirs: say where"
@@ -370,7 +380,18 @@ def estimate_tokens(text: str) -> int:
     size, which errs high too: OpenAI's, Anthropic's and Gemini's models spend
     up to about 1,600 on one at their usual detail. Qwen and Llama vision
     models can spend more on a very large image; a learned error corrects that."""
-    return int(len(text) / 4 * 1.1)
+    return formats.estimate(text)
+
+
+def prompt_tokens(messages: list[dict]) -> int:
+    """The estimate for a whole request, images counted: what a reply's usage
+    and a count_tokens route say."""
+    system, prompt = flatten(messages)
+    try:
+        pictures = len(images(messages))
+    except ValueError:                                 # refused by run_collection, which says why
+        pictures = 0
+    return estimate_tokens(f"{system}\n\n{prompt}".strip()) + IMAGE_TOKENS * pictures
 
 
 def too_small(needed: int, aliases) -> dict[str, int]:
@@ -440,11 +461,25 @@ def merge(collection: dict, members: list[str], shape: str, whole: str, seats: l
     return seat, ""
 
 
+def section(seat: dict) -> str:
+    """One seat's part of an every-answer reply: its heading, call id, status and answer."""
+    body = seat["answer"] or (f"_error: {seat['error'][:300]}_" if seat["error"] else
+                              "_empty reply — usually a token budget, not incapacity_")
+    return f"## {seat['seat']} — {seat['alias']}\n`{seat['call']}` · {seat['status']} · {seat['seconds']}s\n\n{body}\n"
+
+
 def run_collection(name: str, messages: list[dict], nominated: list[str] | None = None,
-                   reply: str = "", who: str = "local") -> tuple[str, dict]:
+                   reply: str = "", who: str = "local", on_part=None) -> tuple[str, dict]:
     """The panel's reply as markdown, and the same seats as data for the
     response's `bench` field. `reply`: the request's mode, "" for the
-    collection's own. `who`: the gateway key that asked, for the call log."""
+    collection's own. `who`: the gateway key that asked, for the call log.
+
+    `on_part`, for a streaming caller: called with each piece of an
+    every-answer reply as it is ready, the heading once the panel is seated,
+    each seat's section as that seat finishes, then the closing lines. The
+    pieces add up to the content, with the seats in the order they finished
+    rather than seat order. Not called for a merged reply: the merge is the
+    reply, and it comes at the end (or every answer, if it fails)."""
     pictures = images(messages)
     system, prompt = flatten(messages)
     if not prompt.strip():
@@ -522,27 +557,39 @@ def run_collection(name: str, messages: list[dict], nominated: list[str] | None 
                           + "".join(f"; {k['alias']} not asked: {k['why']}" for k in skipped))
     panel_id = f"p{dt.datetime.now():%Y%m%d-%H%M%S}-{secrets.token_hex(2)}"
     model = bench_collections.PREFIX + name
-    with ThreadPoolExecutor(max_workers=len(seats)) as pool:
-        results = list(pool.map(lambda s: ask_seat(s[2], system, prompt, messages if pictures else None), seats))
-
     task = " ".join(prompt.split())[:90] + f" ({model}, {shape})"
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
-    record = {"panel": panel_id, "at": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
-              "model": model, "shape": shape, "shape_by": how, "key": who, "system": system,
-              "prompt": prompt, "seats": [], **({"skipped": skipped} if skipped else {})}
     out = [f"Bench {model} {panel_id} · {len(sitting)} members + {len(seats) - len(sitting)}"
            f" explorers · explorer shape {shape} ({how})\n"]
     if skipped:
         out.append("Not asked: " + "; ".join(f"{k['alias']} ({k['why']})" for k in skipped) + "\n")
-    for (key, label, alias), r in zip(seats, results):
-        call = f"{panel_id}.{key}"
-        record["seats"].append(record_seat(task, call, label, alias, r))
-        body = r["answer"] or (f"_error: {r['error'][:300]}_" if r["error"] else
-                               "_empty reply — usually a token budget, not incapacity_")
-        out.append(f"## {label} — {alias}\n`{call}` · {r['status']} · {r['seconds']}s\n\n{body}\n")
-    out.append("---\nRecord a verdict per seat once checked against the code:\n"
-               "`POST /bench/verdict` on this same server (see `bench.verdict`), or"
-               " `python metrics/offload.py verdict <call id> --useful|--not-useful --note \"...\"`")
+    emit = None if merged else on_part
+    if emit:
+        emit("\n".join(out))
+    done: dict[int, dict] = {}
+    with ThreadPoolExecutor(max_workers=len(seats)) as pool:
+        asked = {pool.submit(ask_seat, alias, system, prompt, messages if pictures else None): i
+                 for i, (_key, _label, alias) in enumerate(seats)}
+        # Each seat is logged the moment it answers, so explorer rotation
+        # counts it even if a slower seat (or the caller) never finishes.
+        for future in as_completed(asked):
+            i = asked[future]
+            key, label, alias = seats[i]
+            done[i] = record_seat(task, f"{panel_id}.{key}", label, alias, future.result())
+            if emit:
+                emit("\n" + section(done[i]))
+
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    record = {"panel": panel_id, "at": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
+              "model": model, "shape": shape, "shape_by": how, "key": who, "system": system,
+              "prompt": prompt, "seats": [done[i] for i in range(len(seats))],
+              **({"skipped": skipped} if skipped else {})}
+    out += [section(s) for s in record["seats"]]
+    footer = ("---\nRecord a verdict per seat once checked against the code:\n"
+              "`POST /bench/verdict` on this same server (see `bench.verdict`), or"
+              " `python metrics/offload.py verdict <call id> --useful|--not-useful --note \"...\"`")
+    out.append(footer)
+    if emit:
+        emit("\n" + footer)
     content = "\n".join(out)
     # Beyond the OpenAI fields, so a caller reads seats without parsing the
     # markdown. Clients that do not know it ignore it.
@@ -577,6 +624,41 @@ def models() -> list[str]:
     return [bench_collections.PREFIX + n for n in bench_collections.load()]
 
 
+def listed(who: str) -> list[tuple[str, dict]]:
+    """(model name, what it is for) for every collection key `who` may call,
+    each twice: as set, and in the other reply mode, so a client that offers
+    only listed models can still pick either. What GET /v1/models, /api/tags
+    and /v1beta/models list, each in its own shape."""
+    s, rows = bench_collections.settings(), []
+    for n, c in bench_collections.load().items():
+        if not guard.may_call(who, n):                 # a key limited to some collections sees those
+            continue
+        d = bench_collections.described(n, c, s)
+        other = "all" if d["reply"] == "merged" else "merged"
+        rows += [(bench_collections.PREFIX + n, d), (f"{bench_collections.PREFIX}{n}:{other}", {**d, "reply": other})]
+    return rows
+
+
+def bench_headers(bench: dict) -> dict:
+    """The panel's call ids as headers, for a format with no room for the
+    bench field in its body (Gemini): X-Bench-Panel, and X-Bench-Seats as
+    JSON, without the answers (they are in the reply)."""
+    seats = bench.get("seats", []) + ([bench["merger"]] if bench.get("merger") else [])
+    return {"X-Bench-Panel": str(bench.get("panel", "")),
+            "X-Bench-Seats": json.dumps([{k: s.get(k) for k in ("call", "seat", "alias", "status")} for s in seats])}
+
+
+def refusal(exc: Exception) -> tuple[int, str]:
+    """The status and message for a panel that could not run."""
+    if isinstance(exc, TooLarge):
+        return 413, str(exc)
+    if isinstance(exc, ValueError):
+        return 400, str(exc)
+    if isinstance(exc, LookupError):
+        return 503, str(exc)
+    return 500, f"the panel failed ({type(exc).__name__}: {exc})"
+
+
 class Handler(BaseHTTPRequestHandler):
     """The gateway's routes. serve.py's Handler subclasses this to answer them
     on the dashboard's port too, so the checks use the port actually served."""
@@ -592,8 +674,16 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _error(self, code: int, message: str, headers: dict | None = None) -> None:
-        self._json(code, {"error": {"message": message, "type": "bench_gateway", "code": code}}, headers=headers)
+    def _error(self, code: int, message: str, headers: dict | None = None, fmt: str = "chat") -> None:
+        """A refusal, in the shape the route's clients read (metrics/formats.py)."""
+        self._json(code, formats.INBOUND[fmt].error(code, message), headers=headers)
+
+    def _query_key(self, fmt: str) -> str | None:
+        """A Gemini route's ?key=, as Google's REST examples send it; no other
+        route takes a key in its URL, where proxies and histories keep it."""
+        if fmt != "gemini":
+            return None
+        return urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("key", [None])[0]
 
     def end_headers(self):
         # CORS for a browser app on an allowed origin, on the gateway's routes
@@ -603,6 +693,7 @@ class Handler(BaseHTTPRequestHandler):
         if headers is not None and guard.gateway_route((getattr(self, "path", "") or "").split("?", 1)[0]) \
                 and (origin := guard.cors_origin(headers, self.server.server_port)):
             self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Access-Control-Expose-Headers", "X-Bench-Panel, X-Bench-Seats")
             self.send_header("Vary", "Origin")
         super().end_headers()
 
@@ -630,45 +721,47 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):                                  # noqa: N802
+        path = self.path.split("?", 1)[0].rstrip("/")
+        fmt = formats.format_of(path)
         try:
             guard.check(self.headers, self.server.server_port, post=False, max_body=0)
-            self.who = guard.gateway_caller(self.headers)
+            self.who = guard.gateway_caller(self.headers, self._query_key(fmt))
         except guard.Refused as r:
-            return self._error(r.status, str(r), r.headers)
-        if self.path.split("?", 1)[0].rstrip("/") in ("/v1/models", "/models"):
+            return self._error(r.status, str(r), r.headers, fmt)
+        if path in ("/v1/models", "/models"):
             # Beyond the OpenAI fields: what each collection is for, so an
             # orchestrator can choose one by task. Clients ignore extra keys.
-            # Each collection twice: as set, and in the other reply mode, so a
-            # client that offers only listed models can still pick either.
-            s, data = bench_collections.settings(), bench_collections.load()
-            rows = []
-            for n, c in data.items():
-                if not guard.may_call(self.who, n):    # a key limited to some collections sees those
-                    continue
-                d = bench_collections.described(n, c, s)
-                other = "all" if d["reply"] == "merged" else "merged"
-                rows += [{"id": bench_collections.PREFIX + n, "object": "model", "owned_by": "benchwarmers", **d},
-                         {"id": f"{bench_collections.PREFIX}{n}:{other}", "object": "model",
-                          "owned_by": "benchwarmers", **d, "reply": other}]
-            self._json(200, {"object": "list", "data": rows})
-        else:
-            self._error(404, "GET /v1/models is the only GET here")
+            return self._json(200, {"object": "list", "data": [
+                {"id": n, "object": "model", "owned_by": "benchwarmers", **d} for n, d in listed(self.who)]})
+        if path == "/api/tags":
+            return self._json(200, formats.ollama_tags(listed(self.who)))
+        if path == "/api/version":
+            return self._json(200, {"version": formats.OLLAMA_VERSION})
+        if path == "/v1beta/models":
+            return self._json(200, formats.gemini_models(listed(self.who)))
+        if path.startswith("/v1beta/models/"):
+            name = urllib.parse.unquote(path[len("/v1beta/models/"):])
+            row = dict(listed(self.who)).get(name)
+            return self._json(200, formats.gemini_model(name, row)) if row else \
+                self._error(404, f"{name!r} is not a collection here; GET /v1beta/models lists them", fmt=fmt)
+        self._error(404, "GET /v1/models, /api/tags, /api/version or /v1beta/models", fmt=fmt)
 
     def do_POST(self):                                 # noqa: N802
         # Without this any web page could spend model calls, seat ad hoc
         # models through `with`, or write verdicts (metrics/guard.py).
+        path = self.path.split("?", 1)[0].rstrip("/")
+        fmt = formats.format_of(path)
         try:
             length = guard.check(self.headers, self.server.server_port, post=True, max_body=MAX_BODY, cors=True)
-            self.who = guard.gateway_caller(self.headers)
+            self.who = guard.gateway_caller(self.headers, self._query_key(fmt))
         except guard.Refused as r:
-            return self._error(r.status, str(r) + (TOO_BIG if r.status == 413 else ""), r.headers)
+            return self._error(r.status, str(r) + (TOO_BIG if r.status == 413 else ""), r.headers, fmt)
         try:
             body = json.loads(self.rfile.read(length) or b"{}")
         except ValueError:
-            return self._error(400, "body is not JSON")
+            return self._error(400, "body is not JSON", fmt=fmt)
         if not isinstance(body, dict):
-            return self._error(400, "body must be a JSON object")
-        path = self.path.split("?", 1)[0].rstrip("/")
+            return self._error(400, "body must be a JSON object", fmt=fmt)
         if path == "/bench/verdict":
             if not isinstance(body.get("useful"), bool):
                 return self._error(400, '"useful" must be true or false')
@@ -681,66 +774,133 @@ class Handler(BaseHTTPRequestHandler):
             except KeyError as exc:
                 return self._error(404, exc.args[0])
             return self._json(200, {"ok": True, "recorded": e})
-        if path not in ("/v1/chat/completions", "/chat/completions"):
-            return self._error(404, "POST /v1/chat/completions or /bench/verdict")
-        model = body.get("model") or ""
-        if not isinstance(model, str):
-            return self._error(400, '"model" must be a collection name such as bench/core')
-        model, suffix = bench_collections.split_reply(model)
+        # Each format's request becomes one Ask (metrics/formats.py); a part
+        # that would be lost on the way, tools above all, is refused with why.
+        gemini = formats.gemini_route(path)
+        try:
+            if gemini and gemini[1] == "countTokens":
+                ask = formats.gemini_ask(body.get("generateContentRequest") or body, gemini[0])
+                return self._json(200, {"totalTokens": prompt_tokens(ask["messages"])})
+            if gemini:
+                if gemini[1] not in ("generateContent", "streamGenerateContent"):
+                    return self._error(404, f"POST models/<collection>:generateContent or :streamGenerateContent,"
+                                            f" not :{gemini[1]}", fmt=fmt)
+                ask = formats.gemini_ask(body, gemini[0], gemini[1] == "streamGenerateContent")
+            elif path == "/v1/messages/count_tokens":
+                # An estimate, as the size check makes, without calling a model.
+                return self._json(200, {"input_tokens": prompt_tokens(formats.anthropic_ask(body)["messages"])})
+            elif path == "/api/show":
+                return self._show(body)
+            elif path in formats.POST_ROUTES:
+                ask = formats.INBOUND[fmt].ask(body)
+            else:
+                return self._error(404, "POST /v1/chat/completions, /v1/messages, /v1/responses, /v1/completions,"
+                                        " /api/chat, /api/generate, /v1beta/models/<collection>:generateContent"
+                                        " or /bench/verdict", fmt=fmt)
+        except formats.Unsupported as exc:
+            return self._error(400, str(exc), fmt=fmt)
+        alt = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("alt", [""])[0]
+        self._panel(fmt, ask, sse=alt == "sse")
+
+    def _show(self, body: dict) -> None:
+        """POST /api/show: Ollama's model card, for a collection the key may call."""
+        name = formats.ollama_model(body.get("model") or body.get("name") or "")
+        rows = dict(listed(self.who))
+        row = rows.get(name) or rows.get(bench_collections.PREFIX + str(name))
+        if not row:
+            return self._error(404, f"model {name!r} not found; GET /api/tags lists the collections",
+                               fmt="ollama_chat")
+        self._json(200, formats.ollama_show(name, row))
+
+    def _panel(self, fmt: str, ask: dict, sse: bool = True) -> None:
+        """One panel, for a request in any format: the collection it names,
+        the key's scope and cap, then the panel, answered in that format."""
+        model, suffix = bench_collections.split_reply(ask["model"])
         name = bench_collections.resolve(model)
         if name is None:
-            return self._error(400 if not model else 404, bench_collections.choose_message(model))
+            return self._error(400 if not model else 404, bench_collections.choose_message(model), fmt=fmt)
         model = bench_collections.PREFIX + name
-        messages, nominated, opts = body.get("messages"), body.get("with") or [], body.get("bench") or {}
-        if not (isinstance(messages, list) and all(isinstance(m, dict) for m in messages)):
-            return self._error(400, '"messages" must be a list of message objects')
-        if not (isinstance(nominated, list) and all(isinstance(a, str) for a in nominated)):
-            return self._error(400, '"with" must be a list of model aliases')
-        if not isinstance(opts, dict) or opts.get("reply", "all") not in bench_collections.REPLIES:
-            return self._error(400, '"bench" must be an object whose "reply" is "all" or "merged"')
         if not guard.may_call(self.who, name):
             allowed = ", ".join(bench_collections.PREFIX + c for c in guard.scope(self.who) or []) or "none"
-            return self._error(403, f"the gateway key {self.who} may not call {model}; it may call {allowed}")
+            return self._error(403, f"the gateway key {self.who} may not call {model}; it may call {allowed}",
+                               fmt=fmt)
         try:
             guard.spend(self.who)                      # counted once it names a collection it may call
         except guard.Refused as r:
-            return self._error(r.status, str(r), r.headers)
+            return self._error(r.status, str(r), r.headers, fmt)
+        reply = ask["reply"] or suffix                 # the body is the most specific, then the suffix, then the collection
+        # Chat completions have always answered with the collection's name;
+        # the other formats echo the name as asked, which their clients match.
+        shown = model if fmt == "chat" else ask["model"]
+        if ask["stream"]:
+            out = formats.INBOUND[fmt].stream(shown, prompt_tokens(ask["messages"]), sse=sse)
+            return self._stream(fmt, name, ask, reply, out)
+        started = time.monotonic()
         try:
-            # The body is the most specific, then the suffix, then the collection.
-            content, bench = run_collection(name, messages, nominated, opts.get("reply") or suffix, self.who)
-        except TooLarge as exc:
-            return self._error(413, str(exc))
-        except ValueError as exc:
-            return self._error(400, str(exc))
-        except LookupError as exc:
-            return self._error(503, str(exc))
-        reply_id, created = f"chatcmpl-{secrets.token_hex(8)}", int(time.time())
-        if not body.get("stream"):
-            return self._json(200, {
-                "id": reply_id, "object": "chat.completion", "created": created, "model": model,
-                "choices": [{"index": 0, "finish_reason": "stop",
-                             "message": {"role": "assistant", "content": content}}], "bench": bench})
-        # A panel finishes all at once, so a streaming client gets it as one
-        # chunk, merged or not. ponytail: nothing is sent until the panel and
-        # the merge are done, so a client or proxy with a shorter idle timeout
-        # drops it. Keep-alives mean sending the 200 before the panel runs, so
-        # the 413/503 refusals move into the stream; streaming the merge as it
-        # is written needs a streaming client.chat (RELEASE-PLAN acceptance 11).
-        self.send_response(200)
-        self.send_header("Content-Type", "text/event-stream")
-        self.end_headers()
-        for delta, finish in (({"role": "assistant", "content": content}, None), ({}, "stop")):
-            chunk = {"id": reply_id, "object": "chat.completion.chunk", "created": created,
-                     "model": model, "choices": [{"index": 0, "delta": delta, "finish_reason": finish}],
-                     **({"bench": bench} if finish is None else {})}
-            self.wfile.write(f"data: {json.dumps(chunk)}\n\n".encode())
-        self.wfile.write(b"data: [DONE]\n\n")
+            content, bench = run_collection(name, ask["messages"], ask["with"], reply, self.who)
+        except (ValueError, LookupError) as exc:       # TooLarge is a ValueError
+            return self._error(*refusal(exc), fmt=fmt)
+        usage = (prompt_tokens(ask["messages"]), estimate_tokens(content))
+        self._json(200, formats.INBOUND[fmt].reply(content, shown, bench, usage, time.monotonic() - started),
+                   bench_headers(bench) if fmt == "gemini" else None)
+
+    def _stream(self, fmt: str, name: str, ask: dict, reply: str, out: formats.Stream) -> None:
+        """The panel as it comes, in the format's stream shape: every answer
+        seat by seat as each finishes, or a merged reply when the merge is
+        done. The panel runs in its own thread and this one writes, so a
+        keep-alive goes out every KEEPALIVE seconds while the seats think. A
+        refusal raised before anything is ready (the size check, an image no
+        seat can see: milliseconds) still gets its status; the 200 goes once
+        the panel is seated or after STREAM_GRACE, whichever is first, and
+        from then on an error goes into the stream in the format's shape."""
+        events: queue.Queue = queue.Queue()
+
+        def work():
+            try:
+                events.put(("done", run_collection(name, ask["messages"], ask["with"], reply, self.who,
+                                                   on_part=lambda text: events.put(("part", text)))))
+            except Exception as exc:                   # noqa: BLE001 -- answered below, as a status or in the stream
+                events.put(("error", exc))
+        threading.Thread(target=work, daemon=True).start()
+        started = streamed = False
+        while True:
+            try:
+                kind, data = events.get(timeout=KEEPALIVE if started else STREAM_GRACE)
+            except queue.Empty:
+                kind, data = "idle", None
+            if kind == "error" and not started:
+                return self._error(*refusal(data), fmt=fmt)
+            try:
+                if not started:
+                    self.send_response(200)
+                    self.send_header("Content-Type", out.content_type)
+                    self.send_header("Cache-Control", "no-cache")
+                    self.end_headers()
+                    self.wfile.write(out.start())
+                    started = True
+                if kind == "idle":
+                    self.wfile.write(out.keepalive())
+                elif kind == "part":
+                    self.wfile.write(out.text(data))
+                    streamed = True
+                elif kind == "done":
+                    content, bench = data
+                    self.wfile.write((b"" if streamed else out.text(content)) + out.end(bench))
+                    return
+                else:
+                    self.wfile.write(out.error(*refusal(data)))
+                    return
+            except OSError:
+                return                                 # the caller left; the panel still finishes, every seat recorded
 
     def log_request(self, code="-", size="-"):         # route, status, who; never a query or a key
         guard.access(self, code)
 
     def log_message(self, fmt, *args):                 # quieter than the default
-        sys.stderr.write(f"{self.log_date_time_string()} {fmt % args}\n")
+        # http.server's own errors quote the request line, ?key= and all
+        # ("Bad request syntax ('GET /v1beta/models?key=...')").
+        line = QUERY_KEY.sub(r"\1...", fmt % args)
+        sys.stderr.write(f"{self.log_date_time_string()} {line}\n")
 
 
 def main() -> None:
