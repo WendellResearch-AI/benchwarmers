@@ -14,7 +14,14 @@ For every scenario both backends go through suite/run.py's ask_once and must
 land in the same place: the same `outcome` and `failure_class`, at the suite's
 length floor and the perf tier's, and the same text when the model answered.
 That is what Phase 2a promises before the client may become the default. The
-requests are compared too: model, messages, options, key and headers.
+requests are compared too: model, messages, options, key and headers, and
+that both ask for a stream (Phase 2b). Then the built-in client's own: the
+usage from the stream's last chunk and its ledger line, and a call refused
+by pacing, which must land where llm's real 429 does.
+
+The data folder is a temp one too (BENCHWARMERS_HOME, set before any module
+reads it): the built-in client now writes a ledger line and quota records
+for every call.
 """
 
 from __future__ import annotations
@@ -29,10 +36,13 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+DATA = pathlib.Path(tempfile.mkdtemp(prefix="bench-client-data-"))
+os.environ["BENCHWARMERS_HOME"] = str(DATA)
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path[:0] = [str(ROOT / "metrics"), str(ROOT / "suite")]
 import client  # noqa: E402
 import endpoints  # noqa: E402
+import ledger  # noqa: E402
 import run  # noqa: E402
 
 ANSWER = "The quick brown fox jumps over the lazy dog, and then does it twice."
@@ -154,7 +164,14 @@ def main() -> int:
     tmp = pathlib.Path(tempfile.mkdtemp(prefix="bench-client-"))
     scenarios = ["ok", "short", "empty", "notfound", "ratelimit", "flaky", "html502", "slow", "notice",
                  "refused", "nokey"]
-    own = ["redirect", "trickle", "cutoff", "nochoices"]      # the built-in client only
+    own = ["redirect", "trickle", "cutoff", "nochoices", "paced"]      # the built-in client only
+    # The endpoint the live scenarios are on, so they share a connection ("fake")
+    # and pacing has one to limit: one call a minute for the paced model.
+    (DATA / "config").mkdir(parents=True, exist_ok=True)
+    (DATA / "config" / "endpoints.json").write_text(json.dumps(
+        {"fake": {"base": live, "key": "fake", "kind": "provider", "default": True}}), encoding="utf-8")
+    (DATA / "config" / "model-overrides.json").write_text('{"t-paced": {"limits": {"rpm": 1}}}',
+                                                          encoding="utf-8")
     yaml = []
     for s in scenarios + own:
         yaml += [f"- model_id: t-{s}", f"  model_name: {'ok' if s in ('refused', 'nokey') else s}",
@@ -171,6 +188,11 @@ def main() -> int:
                                                          tmp / "options.json")
 
     binary, failures, prompt = run.llm_binary(), 0, "Say something."
+
+    def kinds(x):
+        return ((run.outcome(x) or ("answered",))[0], (run.outcome(x, 1) or ("answered",))[0],
+                run.failure_class(x), run.failure_class(x, 1))
+    bodies_429 = {}
     for s in scenarios:
         bodies = {}
         for backend in ("llm", "builtin"):
@@ -179,10 +201,8 @@ def main() -> int:
             # llm needed 19-41 s for "refused" there, past a 30 s deadline.
             bodies[backend], _ = run.ask_once(binary, f"t-{s}", prompt, {"slow": 4, "refused": 90}.get(s, 30))
         a, b = bodies["llm"], bodies["builtin"]
-
-        def kinds(x):
-            return ((run.outcome(x) or ("answered",))[0], (run.outcome(x, 1) or ("answered",))[0],
-                    run.failure_class(x), run.failure_class(x, 1))
+        if s == "ratelimit":
+            bodies_429 = bodies
         same = kinds(a) == kinds(b) and (a == b or kinds(a)[1] != "answered")
         print(("ok   " if same else "FAIL ") + f"{s:<10} {kinds(b)}")
         if not same:
@@ -199,10 +219,34 @@ def main() -> int:
     print(("ok   " if ok else "FAIL ") + f"request matches: {got}, {hdr[1]}"
           + ("" if ok else f"\n       llm sent: {want}, {hdr[0]}"))
     failures += not ok
+    # Both stream (2b), as llm always has; the built-in client asks for usage in the stream.
+    streams = [sent[w]["body"].get("stream") for w in ("llm", "builtin")]
+    ok = streams == [True, True] and sent["builtin"]["body"].get("stream_options") == {"include_usage": True}
+    print(("ok   " if ok else "FAIL ") + f"both ask for a stream (llm {streams[0]}, built-in {streams[1]},"
+          f" usage {sent['builtin']['body'].get('stream_options')})")
+    failures += not ok
     # Retries as the SDK does them: three tries at a 429 that never clears.
     tries = [len(seen.get((w, "ratelimit"), [])) for w in ("llm", "builtin")]
     ok = tries == [3, 3]
     print(("ok   " if ok else "FAIL ") + f"429 tried {tries[1]} times (llm {tries[0]})")
+    failures += not ok
+
+    # Usage from the stream's last chunk, in the result and in the ledger.
+    r = client.chat("t-ok", prompt, timeout=30)
+    line = [x for x in ledger.rows() if x["alias"] == "t-ok"][-1]
+    ok = (r["usage"].get("completion_tokens") == 5 and line["tokens_in"] == 3 and line["tokens_out"] == 5
+          and line["status"] == "ok" and line["connection"] == "fake")
+    print(("ok   " if ok else "FAIL ") + f"usage from the stream and its ledger line: {r['usage']}, {line}")
+    failures += not ok
+    # Pacing: the model's own rpm 1; the second call in the minute is not sent, and
+    # lands where llm's real 429 lands ("ratelimit" above), at both length floors.
+    first = client.chat("t-paced", prompt, timeout=30)
+    body = run.ask_once(binary, "t-paced", prompt, 30)[0]
+    want = kinds(bodies_429["llm"])
+    ok = not first["error"] and "not sent" in body and kinds(body) == want \
+        and len(seen.get(("builtin", "paced"), [])) == 1
+    print(("ok   " if ok else "FAIL ") + f"a paced refusal lands where a real 429 does: {kinds(body)}"
+          + ("" if ok else f"\n       llm's 429: {want}; refusal: {body[:150]!r}"))
     failures += not ok
 
     # Where the built-in client is stricter than urllib's defaults would be.

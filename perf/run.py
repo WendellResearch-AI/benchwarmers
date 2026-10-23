@@ -20,10 +20,14 @@ WHAT IS RECORDED, AND WHY EACH
   queueing, cold start. A large prompt measures THROUGHPUT. A model can be
   fine on one and hopeless on the other, and `nemotron-lightning` (134 s on a
   one-word prompt) is why the distinction earns its place.
-- **Characters per second, not tokens.** The `llm` CLI does not report token
-  counts for these endpoints. Chars/s is a proxy, it is affected by how
-  verbose a model is, and calling it a proxy is more useful than quietly
-  publishing a number that looks like tokens/s and is not.
+- **Characters per second, and tokens per second where they are real.** The
+  `llm` CLI does not report token counts for these endpoints, so chars/s is
+  kept as the proxy every row has; it is affected by how verbose a model is.
+  The built-in client reads the provider's own usage from the stream (Phase
+  2b), and with it `tokens_per_s` is the real thing: output tokens (reasoning
+  included, which is generated like any other) over the time from the first
+  token to the last, so queueing and connection time are not in it. Blank
+  where the provider gave no usage, never estimated.
 - **Outcome counts, split four ways.** answered / refused / error / timeout.
   Collapsing these is the mistake this repo was built around: a safety filter,
   an overloaded service and a slow model are three different facts.
@@ -76,7 +80,9 @@ FIELDS = ["timestamp", "model", "prompt", "n", "p50_s", "p95_s", "min_s",
           # The provider's own words for the worst failure, first 300 chars.
           # Without them `glm-5-3` sat as an unexplained `other` for a month
           # when the message was a plain "404 page not found".
-          "detail"]
+          "detail",
+          # Real output tokens/s from the provider's usage (built-in client only).
+          "tokens_per_s"]
 
 
 def percentile(values: list[float], pct: float) -> float:
@@ -92,14 +98,28 @@ def percentile(values: list[float], pct: float) -> float:
     return ordered[k]
 
 
+def _ask(binary: str, model: str, prompt: str, timeout: int) -> tuple[str, float, float | None]:
+    """ask_once's (text, seconds), plus output tokens/s when the built-in
+    client made the call and the provider reported usage."""
+    import client
+    if client.backend(model) != "builtin":
+        return (*ask_once(binary, model, prompt, timeout), None)
+    res = client.chat(model, prompt, timeout=timeout, purpose="perf")
+    out = (res["usage"] or {}).get("completion_tokens") or (res["usage"] or {}).get("output_tokens")
+    # From the first token on, so connection and queueing time are left out.
+    span = res["seconds"] - (res.get("first_token_s") or 0)
+    rate = out / span if isinstance(out, int) and out > 0 and span > 0 and not res["error"] else None
+    return client.output(res, timeout), res["seconds"], rate
+
+
 def measure(binary: str, model: str, label: str, prompt: str, n: int,
             timeout: int) -> dict:
-    latencies, rates = [], []
+    latencies, rates, token_rates = [], [], []
     counts = {"answered": 0, "refused": 0, "error": 0, "timeout": 0}
     failures: list[str] = []
     details: dict[str, str] = {}
     for i in range(1, n + 1):
-        body, seconds = ask_once(binary, model, prompt, timeout)
+        body, seconds, tokens_per_s = _ask(binary, model, prompt, timeout)
         # A one-word reply is the CORRECT answer to the tiny prompt, so
         # only a genuinely empty one counts as a failure here.
         kind = (outcome(body, min_length=1) or ("answered", ""))[0]
@@ -123,6 +143,8 @@ def measure(binary: str, model: str, label: str, prompt: str, n: int,
             # worse than no number.
             if seconds > 0 and label == "large":
                 rates.append(len(body) / seconds)
+                if tokens_per_s:
+                    token_rates.append(tokens_per_s)
         print(f"    {model} {label} [{i}/{n}] {kind} {seconds:.1f}s", flush=True)
     worst = next((c for c in FAILURE_CLASSES if c in failures), "")
     return {
@@ -139,6 +161,7 @@ def measure(binary: str, model: str, label: str, prompt: str, n: int,
         # is what silently dropped `paywalled` and wrote a blank failure.
         "failure": worst,
         "detail": details.get(worst, ""),
+        "tokens_per_s": round(statistics.median(token_rates), 1) if token_rates else "",
         **counts,
     }
 
