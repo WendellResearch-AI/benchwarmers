@@ -816,11 +816,15 @@ def route_plan(name: str, ask: dict, who: str) -> dict:
     if conv is None or conv["alias"] not in fit:      # new, or its model cannot take this turn (an image, say)
         ranked = route_order(fit)
         first = next((formats.text_of(m.get("content")) for m in ask["messages"] if m.get("role") == "user"), "")
-        conv = {**(conv or {"conv": f"r{dt.datetime.now():%Y%m%d-%H%M%S}-{secrets.token_hex(2)}", "turns": 0,
-                            "models": [], "task": " ".join(first.split())[:90]}),
-                "alias": ranked[0], "order": ranked, "at": now}
+        fresh = {"conv": f"r{dt.datetime.now():%Y%m%d-%H%M%S}-{secrets.token_hex(2)}", "turns": 0, "models": [],
+                 "task": " ".join(first.split())[:90], "alias": ranked[0], "order": ranked, "at": now}
         with _STICKY_LOCK:
-            _STICKY[key] = conv
+            # Changed in place, or the first of two simultaneous new turns
+            # kept: every turn of one conversation shares one record.
+            if conv is None:
+                conv = _STICKY.setdefault(key, fresh)
+            else:
+                conv.update(alias=ranked[0], order=ranked, at=now)
     order = [conv["alias"]] + [a for a in conv["order"] if a != conv["alias"] and a in fit]
     return {"conv": conv, "order": order + [a for a in fit if a not in order], "skipped": skipped,
             "images": bool(pictures)}
@@ -900,7 +904,7 @@ def route_turn(name: str, plan: dict, ask: dict, who: str, emit) -> None:
         if fresh:
             offload.add(alias, f"{conv['task']} ({model}:route)", None,
                         f"route conversation; first turn {status} in {res['seconds']}s", call)
-        _log_route(conv, call, model, who, alias, status, res, tried, error)
+        _log_route(conv, turn_no, call, model, who, alias, status, res, tried, error)
         if error:
             return emit("error", (res["status"] if res["status"] >= 400 else 502,
                                   f"{alias} failed part way through the turn: {error[:300]}"))
@@ -914,7 +918,8 @@ def route_turn(name: str, plan: dict, ask: dict, who: str, emit) -> None:
                              "alias": alias, "turn": turn_no, **({"failed_over": tried} if tried else {}),
                              **({"skipped": plan["skipped"]} if plan["skipped"] else {}),
                              "verdict": 'optional, once per conversation: POST /bench/verdict {"call", "useful", "note"}'})
-    _log_route(conv, "", bench_collections.PREFIX + name, who, "", "error", None, tried, "every member failed")
+    _log_route(conv, conv["turns"], "", bench_collections.PREFIX + name, who, "", "error", None, tried,
+               "every member failed")
     # Every member rate limited (or held back by pacing): 429, so the caller
     # backs off and tries again, as it would for one provider.
     limited = all("Error code: 429" in t["error"] or "rate limit" in t["error"].lower() for t in tried)
@@ -922,14 +927,14 @@ def route_turn(name: str, plan: dict, ask: dict, who: str, emit) -> None:
                    f"no member of bench/{name} answered: " + "; ".join(f"{t['alias']}: {t['error'][:200]}" for t in tried)))
 
 
-def _log_route(conv: dict, call: str, model: str, who: str, alias: str, status: str, res: dict | None,
+def _log_route(conv: dict, turn: int, call: str, model: str, who: str, alias: str, status: str, res: dict | None,
                tried: list[dict], error: str) -> None:
     """One turn's line in runs/gateway/routes.jsonl, which the dashboard's
     Gateway card reads for its route conversations."""
     import ledger
     res = res or {}
     line = {"conversation": conv["conv"], "call": call, "at": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
-            "model": model, "key": who, "alias": alias, "turn": conv["turns"], "task": conv["task"], "status": status,
+            "model": model, "key": who, "alias": alias, "turn": turn, "task": conv["task"], "status": status,
             "seconds": res.get("seconds"), "first_token_s": res.get("first_token_s"),
             "tool_calls": res.get("tool_calls", 0), "finish": res.get("finish", ""), **ledger.tokens(res.get("usage") or {}),
             **({"tried": tried} if tried else {}), **({"error": error[-300:]} if error else {})}

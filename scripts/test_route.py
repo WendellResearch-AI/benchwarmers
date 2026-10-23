@@ -311,6 +311,14 @@ def main() -> int:
         turn.feed(chunk({"tool_calls": [call_delta(0, "c9", "apply_patch", "{\"input\": \"*** y\"}")]}))
         item = F.route_reply("responses", turn, "m", {}, 1, 0.1, custom=["apply_patch"])["output"][0]
         assert item["type"] == "custom_tool_call" and item["input"] == "*** y" and item["call_id"] == "c9", item
+        # Turn's keying: an id that comes after the call's first piece is that call's; a new id on
+        # a reused index (as some compatibility layers send parallel calls) is a new call.
+        turn = F.Turn()
+        for d in ([call_delta(0, None, "get_weather", "")], [call_delta(0, "call_late", None, "{\"city\": ")],
+                  [call_delta(0, None, None, "\"Oslo\"}")], [call_delta(0, "call_2", "get_weather", "{}")]):
+            turn.feed(chunk({"tool_calls": d}))
+        assert [(c["id"], c["name"], c["arguments"]) for c in turn.calls] == [
+            ("call_late", "get_weather", "{\"city\": \"Oslo\"}"), ("call_2", "get_weather", "{}")], turn.calls
 
         # 7. GEMINI: a functionCall part out (whole, in the last chunk), its functionResponse back.
         gem = {"contents": [{"role": "user", "parts": [{"text": q[0]["content"]}]}],

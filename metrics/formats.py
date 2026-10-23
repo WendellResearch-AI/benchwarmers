@@ -1289,7 +1289,7 @@ class Turn:
     def __init__(self):
         self.text, self.reasoning, self.calls = [], [], []
         self.finish, self.usage, self.model = "", {}, ""
-        self._by_id, self._by_index, self._last = {}, {}, None
+        self._by_id, self._by_index, self._last, self._unnamed = {}, {}, None, set()
 
     def feed(self, chunk: dict) -> tuple[str, bool]:
         """Add one chunk: (the answer text it adds, whether it adds to the
@@ -1317,11 +1317,18 @@ class Turn:
             cid, idx, fn = d.get("id"), d.get("index"), d.get("function") or {}
             if cid and cid in self._by_id:
                 k = self._by_id[cid]
+            elif cid and idx in self._by_index and self._by_index[idx] in self._unnamed:
+                # The id came after the call's first piece: it is that call's.
+                k = self._by_index[idx]
+                self._unnamed.discard(k)
+                self.calls[k]["id"], self._by_id[cid] = str(cid), k
             elif cid or not self.calls or (idx is not None and idx not in self._by_index):
                 k = len(self.calls)
                 self.calls.append({"id": str(cid or _new_id("call_")), "name": "", "arguments": ""})
                 if cid:
                     self._by_id[cid] = k
+                else:
+                    self._unnamed.add(k)               # its id made up, until one comes
             else:
                 k = self._by_index[idx] if idx is not None else self._last
             if idx is not None:
