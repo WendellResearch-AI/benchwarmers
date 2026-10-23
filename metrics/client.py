@@ -664,13 +664,15 @@ def _record(alias: str, res: dict, ctx: dict, t0: float, purpose: str) -> None:
             row["budget_retry"] = res["budget_retry"]
         ledger.append(row)
     except Exception as e:                             # noqa: BLE001
+        # The slot stays taken until it expires (the call's deadline and a
+        # minute): released now, this call would count nowhere at all.
         print(f"note: the usage ledger was not written: {e}", file=sys.stderr)
-    finally:
-        try:
-            import pacing
-            pacing.release(ctx["ticket"])
-        except Exception:                              # noqa: BLE001
-            pass
+        return
+    try:
+        import pacing
+        pacing.release(ctx["ticket"])
+    except Exception:                                  # noqa: BLE001  -- the lock timed out: it expires instead
+        pass
 
 
 def _responses_events(events, relay: _Relay) -> dict:

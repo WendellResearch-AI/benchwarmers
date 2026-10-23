@@ -109,9 +109,9 @@ def reset_time(value, now: float) -> float | None:
             return email.utils.parsedate_to_datetime(raw).timestamp()
         except (TypeError, ValueError):
             return None
-    if n > 1e12:                                       # epoch milliseconds
+    if n >= 1e12:                                      # epoch milliseconds
         return n / 1000
-    if n > 1e9:                                        # epoch seconds
+    if n >= 1e9:                                       # epoch seconds
         return n
     return now + n                                     # seconds from now
 

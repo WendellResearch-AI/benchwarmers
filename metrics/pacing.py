@@ -183,7 +183,8 @@ def admit(alias: str, connection: str, est_tokens: int, left: float, sleep=time.
     applies, so there is nothing to release), or the refusal text."""
     import quota
     rs = rules(alias, connection)
-    end = time.time() + left
+    end = time.time() + left                           # wall clock: the in-flight entry's expiry, read by other processes
+    stop = time.monotonic() + left                     # the caller's deadline, which a clock change cannot move
     while True:
         records = quota.live(connection, alias)
         if not rs and not records:
@@ -204,7 +205,7 @@ def admit(alias: str, connection: str, est_tokens: int, left: float, sleep=time.
                 return ticket, ""
         frees, why = block
         wait = max(frees - time.time(), 0.05)
-        if time.time() + wait > end - MARGIN_S:
+        if time.monotonic() + wait > stop - MARGIN_S:
             return None, (f"Error: client failed: rate limit (not sent; paced by the bench): {why};"
                           f" try again in {_wait_text(wait)}")
         sleep(min(wait, POLL_S))
