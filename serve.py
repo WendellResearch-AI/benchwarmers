@@ -883,6 +883,47 @@ def endpoint_list() -> dict:
     return {"ok": True, "errors": [], "endpoints": rows}
 
 
+# ---- read-only JSON for the bench CLI (cli.py) -----------------------------
+# What the dashboard shows as HTML, as data, so everything it does can be done
+# headless. Each says no more than the page does: no key, no key hash.
+
+def models_view() -> dict:
+    """Every model on the bench, and every retired one, with its status."""
+    directory, gone, status = model_directory(), retired(), model_status()
+    rows = []
+    for alias in sorted(set(directory) | set(gone)):
+        d = directory.get(alias) or gone.get(alias) or {}
+        label, _css, why = status.get(alias, ("", "", ""))
+        rows.append({"alias": alias, "served": d.get("served", ""), "role": d.get("role", ""),
+                     "kind": d.get("kind") or "chat", "endpoint": d.get("endpoint", ""),
+                     "connection": catalog.connection_of(alias) if alias in directory else "",
+                     "status": label, "why": why, "retired": alias not in directory,
+                     **({"retired_why": gone[alias].get("why", "")} if alias in gone else {})})
+    return {"ok": True, "errors": [], "models": rows}
+
+
+def gateway_keys_view() -> dict:
+    keep = ("hint", "collections", "rpm", "created", "last_used")
+    return {"ok": True, "errors": [], "required": guard.keys_required(),
+            "keys": [{"name": n, **{k: e.get(k) for k in keep}}
+                     for n, e in sorted(guard.gateway_keys().items()) if isinstance(e, dict)]}
+
+
+def status_view() -> dict:
+    import client as model_client
+    import scheduler
+    queue, sched = onboard_queue(), scheduler.settings()
+    return {"ok": True, "errors": [], "version": RELEASE, "gateway": gateway_url(), "data": str(DATA),
+            "models": len(_chat_aliases()), "decision_models": len(decide.load()),
+            "retired": len(retired()), "collections": len(bench_collections.load()),
+            "endpoints": len(endpoints.load()), "default_endpoint": endpoints.default(),
+            "client": model_client.chosen()[0], "scheduler": sched["mode"],
+            # Every job and whether it runs: save_scheduler turns on any job it is not told is off.
+            "scheduler_jobs": {n: sched["jobs"].get(n, True) for n in scheduler.JOBS},
+            "auth": guard.auth_on(), "keys_required": guard.keys_required(),
+            "onboarding": {"running": bool(queue.get("running")), "items": len(queue.get("items") or [])}}
+
+
 def free_name(stem: str) -> str:
     """The first of stem, stem-2, stem-3... that is neither an endpoint nor a key
     already in the store: one provider can be several endpoints (a pasted key
@@ -3569,6 +3610,11 @@ class Handler(gateway.Handler):
             return
         if self.path == "/api/collections":
             self._json(200, collections_view())
+            return
+        read_only = {"/api/status": status_view, "/api/models": models_view,
+                     "/api/gateway-keys": gateway_keys_view}
+        if path in read_only:
+            self._json(200, read_only[path]())
             return
         if self.path == "/api/connections":
             self._json(200, connections_view())

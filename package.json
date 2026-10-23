@@ -27,13 +27,15 @@
     "litellm"
   ],
   "bin": {
-    "benchwarmers": "bin/benchwarmers.js"
+    "benchwarmers": "bin/benchwarmers.js",
+    "bench": "bin/benchwarmers.js"
   },
   "files": [
     "bin/",
     "serve.py",
     "gateway.py",
     "mcp_server.py",
+    "cli.py",
     "metrics/*.py",
     "scripts/*.py",
     "suite/*.py",

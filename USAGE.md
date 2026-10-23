@@ -112,6 +112,13 @@ client, with `BENCHWARMERS_URL` and, where keys are required, a gateway key in
 `verdict` tool records the verdicts; README, "From Claude Code and other
 agents", has the set-up.
 
+**From a terminal or a script**, `bench ask <collection> "..."` (a pipe or
+`-f FILE` adds the text to review) prints every seat's answer and a table of
+call ids, and `bench verdict <call id> --useful|--not-useful` judges one. The
+rest of this guide's pages have commands too (`bench models`, `bench onboard`,
+`bench collection save`, `bench endpoint add`, `bench key create`, `bench
+settings`); README, "From the command line", lists them.
+
 ## Recording verdicts
 
 A panel's answers are worth something only once someone has checked them

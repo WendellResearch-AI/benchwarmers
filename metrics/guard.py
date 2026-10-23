@@ -247,12 +247,23 @@ def _session_ok(headers) -> bool:
 
 
 def admin_caller(headers) -> str:
-    """Who is asking for a dashboard route: "admin" with a good login cookie,
-    "local" when no admin token is set. Raises Refused(401)."""
+    """Who is asking for a dashboard route: "admin" with a good login cookie
+    or the admin token itself as `Authorization: Bearer` (the `bench` CLI),
+    "local" when no admin token is set. Raises Refused(401).
+
+    The bearer is safe beside the cookie: a page cannot make a browser send an
+    Authorization header cross-site without a preflight, which the dashboard
+    never answers. A gateway key is not the admin token, so it still never
+    opens a dashboard route."""
     if not auth_on():
         return "local"
+    scheme, _, given = (headers.get("Authorization") or "").strip().partition(" ")
+    if scheme.lower() == "bearer" and given.strip():
+        if login(given.strip()):
+            return "admin"
+        raise Refused(401, "that bearer is not the admin token (a gateway key opens /v1 only)")
     if not _session_ok(headers):
-        raise Refused(401, "sign in first: /login")
+        raise Refused(401, "sign in first: /login, or send the admin token as Authorization: Bearer")
     return "admin"
 
 
@@ -490,6 +501,20 @@ def _selftest() -> None:
                 raise AssertionError(f"accepted cookie {bad!r}")
             except Refused as r:
                 assert r.status == 401
+        # The admin token as a bearer (the bench CLI): it, and only it.
+        assert admin_caller({"Authorization": f"Bearer {token}"}) == "admin"
+        assert admin_caller({"Authorization": f"bearer  {token} "}) == "admin"
+        for bad in (f"Bearer {token}x", "Bearer " + "t" * 23, f"Basic {token}"):
+            try:
+                admin_caller({"Authorization": bad})
+                raise AssertionError(f"accepted {bad!r}")
+            except Refused as r:
+                assert r.status == 401
+        try:                                                    # a wrong bearer is refused, not saved by a cookie
+            admin_caller({"Authorization": f"Bearer {token}x", "Cookie": value})
+            raise AssertionError("a wrong bearer fell back to the cookie")
+        except Refused:
+            pass
         os.environ["BENCHWARMERS_ADMIN_TOKEN"] = "u" * 24                  # a new token signs everyone out
         try:
             admin_caller({"Cookie": value})

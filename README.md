@@ -64,6 +64,7 @@ verdicts decide who sits on the next panel.
 - [Try it](#try-it)
 - [How it works](#how-it-works)
 - [Asking a panel](#asking-a-panel)
+- [From the command line](#from-the-command-line)
 - [From Claude Code and other agents](#from-claude-code-and-other-agents)
 - [The suite](#the-suite)
 - [Docker](#docker)
@@ -179,6 +180,44 @@ seat is still in `bench`. Record a verdict per call once you have checked it:
 
 or from the dashboard. See [GATEWAY.md](GATEWAY.md) for the full contract:
 images, prompt sizes, who may call, and the reply's shape.
+
+## From the command line
+
+`bench` (or `benchwarmers`, the same program) does what the dashboard does,
+without it: ask and judge, and run the bench itself. It is a client of a
+running server, so the same commands work against one on another machine.
+
+    bench status                                   what is running, and where
+    bench collections                              what you can ask
+    bench ask core "Where can this return a stale value?" -f cache.py
+    git diff | bench ask core "Review this diff"   a pipe is the prompt
+    bench verdict <call id> --useful --real "the race in refresh()" --false "the SQL injection"
+
+    bench models --find mercury                    the roster, with each model's status
+    bench candidates --new                         what your endpoints serve that is not on the bench
+    bench onboard <served name> --wait             onboard it (registered, probed, scored)
+    bench model retire <alias> --reason "..."      and back: bench model restore <alias>
+    bench collection save reviewers --members a,b,c --description "adversarial review"
+    bench collection save reviewers --add d --remove a
+    bench endpoint add openrouter --base https://openrouter.ai/api/v1   (asks for the key, hidden)
+    bench key create my-app --collections core --rpm 30
+    bench settings scheduler run --off perf
+
+`--help` on any command lists its options, and `--json` on any prints what the
+server answered, for scripts. `ask` prints every seat's answer and a table of
+call ids to judge them by. A key is never an argument (others on the machine
+can read those): `endpoint add` prompts for it, or reads it from stdin with
+`--key-stdin`.
+
+| Variable | Meaning |
+| --- | --- |
+| `BENCHWARMERS_URL` | the server, default `http://127.0.0.1:8122` |
+| `BENCHWARMERS_ADMIN_TOKEN` | the server's admin token, where it has one; sent as `Authorization: Bearer` for every command but `ask`, `collections` and `verdict` |
+| `BENCHWARMERS_KEY` | a gateway key, for `ask`, `collections` and `verdict`, where keys are required |
+| `BENCHWARMERS_TIMEOUT` | seconds to wait for a panel, default 900 |
+
+Exit codes: 0 done, 1 refused or failed (the reason on stderr), 2 bad usage, 3
+no server at `BENCHWARMERS_URL`.
 
 ## From Claude Code and other agents
 
