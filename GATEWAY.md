@@ -184,8 +184,11 @@ With `"stream": true` (or the format's own way of asking, below):
   Responses' `error` and `response.failed`, Ollama's `{"error": ...}` line,
   Gemini's error object), so a client raises rather than hangs.
 - **The `bench` field** rides on the last event where the format has room
-  (the table below). A caller that hangs up does not stop the panel: every
-  seat still answers and is recorded.
+  (the table below). It is in the JSON on the wire; an SDK that parses into
+  fixed types may drop it (the Anthropic SDK's accumulated final message and
+  the `ollama` library's replies do; read the raw event, or the call ids,
+  which every reply's text carries). A caller that hangs up does not stop
+  the panel: every seat still answers and is recorded.
 
 ## Other API formats
 
