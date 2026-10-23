@@ -40,3 +40,9 @@ runs/scheduler-state.json
 runs/scheduler.lock
 .archify/**/*.json
 !.archify/**/candidate.json
+# deploy/vps/backup.sh's archives: the data folder, and any pasted keys
+deploy/vps/backups/
+# deploy/railway: what npm install railway adds there (the IaC file's types)
+deploy/railway/node_modules/
+deploy/railway/package.json
+deploy/railway/package-lock.json

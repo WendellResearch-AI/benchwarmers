@@ -133,7 +133,9 @@ browser app on another origin also needs `BENCH_ALLOWED_ORIGINS`. Check the
 result on Settings, Server and access, which shows each of these as it stands
 (never a secret's value). In Docker: put the token and the `BENCHWARMERS_KEY_<NAME>` variables in
 a `.env` beside `compose.yaml`, then `docker compose up -d`; the dashboard and
-gateway share one port and the data folder is a volume.
+gateway share one port and the data folder is a volume. For a hosting platform
+(Fly.io, Railway, Render) or a VPS with Caddy, follow [HOSTING.md](HOSTING.md)
+and its templates under `deploy/`.
 
 ## When something looks wrong
 

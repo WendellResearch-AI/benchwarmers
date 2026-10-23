@@ -1,2 +1,5 @@
 # The npm launcher runs on macOS and Linux through its #! line, which a CRLF breaks.
 bin/benchwarmers.js text eol=lf
+# A Caddyfile and shell scripts run inside Linux containers and servers, where a CRLF breaks them.
+*.sh text eol=lf
+Caddyfile text eol=lf

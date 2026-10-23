@@ -1,0 +1,46 @@
+# Benchwarmers on a VPS, with Caddy in front for HTTPS. HOSTING.md has the
+# steps (DNS, firewall, backups); in short, on the server, in a checkout:
+#
+#   cd deploy/vps
+#   cp env.example .env            # then fill it in: the domain, the token, keys
+#   docker compose up -d --build
+#
+# Then open https://<your domain> and sign in with the token. Caddy gets and
+# renews the certificate itself (Let's Encrypt), once the domain's DNS points
+# at this server and ports 80 and 443 are open.
+#
+# Only Caddy publishes ports. Benchwarmers is reachable from Caddy alone, over
+# the compose network, so no rule of Docker's can expose it unencrypted.
+name: benchwarmers-vps
+
+services:
+  benchwarmers:
+    build: ../..
+    image: benchwarmers
+    env_file: .env
+    environment:
+      BENCHWARMERS_PUBLIC_URL: https://${BENCH_DOMAIN:?set BENCH_DOMAIN in .env}
+    volumes:
+      - benchwarmers-data:/data
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2
+    ports:
+      - "80:80"            # Let's Encrypt's HTTP challenge, and the redirect to https
+      - "443:443"
+      - "443:443/udp"      # HTTP/3
+    environment:
+      BENCH_DOMAIN: ${BENCH_DOMAIN:?set BENCH_DOMAIN in .env}
+    volumes:
+      - ./caddy:/etc/caddy:ro   # a folder, not the file: an editor's save replaces the file
+      - caddy-data:/data   # the certificates and the ACME account: keep it, or hit rate limits
+      - caddy-config:/config
+    depends_on:
+      - benchwarmers
+    restart: unless-stopped
+
+volumes:
+  benchwarmers-data:
+  caddy-data:
+  caddy-config:
