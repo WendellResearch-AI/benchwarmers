@@ -288,6 +288,10 @@ dialog h2 { margin: 0 0 .2rem; font-size: 1.375rem; font-weight: 700; }
 :is(dialog, .form-panel) .members label.check { margin-top: .35rem; font-size: .875rem; }
 :is(dialog, .form-panel) input.member-filter { font-size: .9375rem; padding: .4rem .6rem; margin-bottom: .2rem; }
 :is(dialog, .form-panel) .members input:disabled + span { color: var(--muted); }
+/* Ruled out by the collection's tags (bench.js applyTags): greyed; a ticked
+   one stays tickable and is marked, so it can be taken off. */
+:is(dialog, .form-panel) .members label.check.blocked:not(.clash) { cursor: not-allowed; }
+:is(dialog, .form-panel) .members label.check.clash span { color: var(--warn); }
 :is(dialog, .form-panel) .limits { display: flex; flex-wrap: wrap; gap: .3rem .8rem; margin-top: .3rem; font-size: .875rem; }
 :is(dialog, .form-panel) .limits input { width: 6.5rem !important; padding: .2rem .4rem !important; }
 :is(dialog, .form-panel) .facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 1rem; }

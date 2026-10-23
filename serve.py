@@ -1375,11 +1375,23 @@ def collections_view() -> dict:
     # The served name beside each alias: the member search matches either.
     directory = model_directory()
     served = {a: directory[a].get("served", "") for a in _chat_aliases()}
+    # What the tags check members against (bench.js tagBlocks): capabilities
+    # (None: the catalog does not say), context, price and role. A shape's
+    # tag admits the roles that shape admits, as route.py does for seats.
+    roles = model_roles.load()
+    facts = {}
+    for a in _chat_aliases():
+        f = catalog.info(a)
+        facts[a] = {"caps": {c: f.get(c) for c in catalog.CAPS}, "context": f.get("context_window"),
+                    "price": price_of(a, served[a], f), "role": (roles.get("models") or {}).get(a, "general")}
     return {"ok": True, "errors": [], "collections": rows, "settings": s,
-            "shapes": shapes, "models": _chat_aliases(), "served": served, "tag_suggestions": suggestions}
+            "shapes": shapes, "models": _chat_aliases(), "served": served, "tag_suggestions": suggestions,
+            "facts": facts, "shape_roles": {k: v for k, v in roles["shapes"].items() if k in shapes},
+            "long_context": LONG_CONTEXT}
 
 
-TAG_PURPOSES = ("second-opinion", "security", "long-context", "fast", "free")
+TAG_PURPOSES = ("second-opinion", "security", "long-context", "fast", "free", "tools", "json")
+LONG_CONTEXT = 128_000          # the long-context tag: members known to hold at least this many tokens
 
 
 def save_collection(name: str, members, shape: str, description: str, tags=None,
@@ -2700,6 +2712,17 @@ def collections_tab() -> str:
         " aria-describedby='c-name-rules'></div>"
         "<p class='rules' id='c-name-rules'>Callers ask for <code>bench/&lt;name&gt;</code>. Say what"
         " it is for, not who is in it: members change. Lower-case letters, digits and '-'.</p>"
+        # Before the members: some tags say what every member must be able to
+        # do, and the list greys out the models that cannot (bench.js tagBlocks).
+        "<label class='field' for='c-tags'>Tags</label>"
+        "<input id='c-tags' spellcheck='false' autocomplete='off' placeholder='e.g. review, code, security'>"
+        "<div class='tag-picks' id='c-tag-picks' aria-label='Suggested tags'></div>"
+        "<p class='rules'>Callers read these: an agent asking <code>GET /v1/models</code> sees"
+        " each collection's description and tags and picks one for its task. Some also narrow the"
+        " members: <code>vision</code>, <code>tools</code> and <code>json</code> grey out the models the"
+        " catalog does not say can; <code>long-context</code> those under 128k tokens; a task shape such"
+        " as <code>code</code> or <code>prose</code> the roles it does not admit; <code>free</code> hides"
+        " the paid ones. Click a suggestion or type your own: comma-separated lower-case words, up to 8.</p>"
         # Not data-filter: that binds to the whole panel. The same match (any
         # text, case-insensitive), on the member list only; ticked ones stay shown.
         "<label class='field' for='c-member-filter'>Members</label>"
@@ -2712,20 +2735,17 @@ def collections_tab() -> str:
         " model to label each prompt when one is onboarded, else general.</p>"
         "<label class='field' for='c-reply'>Reply</label><select id='c-reply'>"
         "<option value='all'>every answer</option><option value='merged'>merged</option></select>"
-        "<label class='field' for='c-merger'>Merger</label><select id='c-merger'></select>"
         "<p class='rules'>Merged: after the panel, one model writes a single answer saying where the"
         " seats agreed and who said what, for a chat UI that shows one answer; every seat is still"
-        " called and recorded. Automatic picks the member with the best verdicts on the task's shape."
-        " A caller can ask for either with <code>bench/&lt;name&gt;:merged</code> or <code>:all</code>.</p>"
+        " called and recorded. A caller can ask for either with <code>bench/&lt;name&gt;:merged</code>"
+        " or <code>:all</code>.</p>"
+        # Only a merged reply has a merger; the choice is kept while hidden.
+        "<div id='c-merger-row' hidden><label class='field' for='c-merger'>Merger</label>"
+        "<select id='c-merger'></select>"
+        "<p class='rules'>Automatic picks the member with the best verdicts on the task's shape.</p></div>"
         "<label class='field' for='c-desc'>Description</label>"
         "<textarea id='c-desc' rows='2' maxlength='300'"
         " placeholder='e.g. Adversarial code review: finding bugs and broken guarantees in a diff'></textarea>"
-        "<label class='field' for='c-tags'>Tags</label>"
-        "<input id='c-tags' spellcheck='false' autocomplete='off' placeholder='e.g. review, code, security'>"
-        "<div class='tag-picks' id='c-tag-picks' aria-label='Suggested tags'></div>"
-        "<p class='rules'>Only callers read these: an agent asking <code>GET /v1/models</code> sees"
-        " each collection's description and tags and picks one for its task. Click a suggestion"
-        " or type your own: comma-separated lower-case words, up to 8.</p>"
         "<div class='errors' id='c-errors' role='alert'></div><div class='done' id='c-done'></div>"
         "<div class='actions'><button class='btn danger' id='c-delete' hidden>Delete collection</button>"
         "<span class='spacer'></span><button class='btn' id='c-close'>Close</button>"
