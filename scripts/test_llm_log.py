@@ -47,13 +47,17 @@ sys.stdout.write("pong\\n")
 
 def fake_llm() -> str:
     """A path that runs like an `llm` executable on Windows, macOS and Linux."""
-    script = TMP / "fake_llm.py"
+    # Its own folder: TMP/llm is llm's user folder (LLM_USER_PATH), so a shim
+    # named llm beside it would be that folder on macOS and Linux.
+    bin_dir = TMP / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    script = bin_dir / "fake_llm.py"
     script.write_text(FAKE, encoding="utf-8")
     if os.name == "nt":
-        shim = TMP / "llm.cmd"
+        shim = bin_dir / "llm.cmd"
         shim.write_text(f'@"{sys.executable}" "{script}" %*\r\n@exit /b %ERRORLEVEL%\r\n', encoding="utf-8")
     else:
-        shim = TMP / "llm"
+        shim = bin_dir / "llm"
         shim.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{script}" "$@"\n', encoding="utf-8")
         shim.chmod(0o755)
     return str(shim)
