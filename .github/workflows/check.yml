@@ -13,7 +13,7 @@
 name: check
 
 # main and dev only, and by hand: feature branches are merged into dev, which
-# runs this anyway, and a private repo pays for every minute.
+# runs this anyway.
 on:
   push:
     branches: [main, dev]
@@ -34,12 +34,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
         python: ["3.11", "3.12", "3.13"]
-        # While the repo is private, macOS minutes bill at ten times Linux's, so
-        # macOS runs one Python; the other two run all three. Drop this when the
-        # repo is public, where minutes are free.
-        exclude:
-          - {os: macos-latest, python: "3.11"}
-          - {os: macos-latest, python: "3.13"}
+        # Every OS runs every Python: a public repo's minutes are free.
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     env:

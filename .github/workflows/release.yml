@@ -1,0 +1,91 @@
+# Publishing a GitHub release publishes the packages: npm now, PyPI once it is
+# switched on. No token is stored anywhere: both registries trust this
+# workflow by name (Trusted Publishing, OIDC), set up once on each site.
+#
+#   npm   npmjs.com > @wendellresearch-ai/benchwarmers > Settings > Trusted
+#         publisher: GitHub Actions, WendellResearch-AI / benchwarmers,
+#         workflow release.yml, environment release.
+#   PyPI  pypi.org > Your projects (or, before the first upload, Publishing >
+#         Add a pending publisher): project benchwarmers, the same owner,
+#         repository, workflow and environment. Then set the repository
+#         variable PUBLISH_PYPI to true (Settings > Secrets and variables >
+#         Actions > Variables).
+#
+# The release's tag must be v<VERSION> on a commit in main, with package.json
+# and the plugin at the same version; anything else stops before publishing.
+name: release
+
+on:
+  release:
+    types: [published]        # a publish that failed: "Re-run failed jobs" on that run
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: The tag, VERSION, package.json and the plugin agree; the commit is in main
+        run: |
+          version="$(tr -d '[:space:]' < VERSION)"
+          tag="${GITHUB_REF_NAME}"
+          test "$tag" = "v$version" || { echo "tag $tag is not v$version (VERSION)"; exit 1; }
+          python - "$version" <<'PY'
+          import json, sys
+          want = sys.argv[1]
+          for f in ("package.json", "plugin/.claude-plugin/plugin.json"):
+              got = json.load(open(f, encoding="utf-8"))["version"]
+              assert got == want, f"{f} says {got}, VERSION says {want}"
+          PY
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo "$GITHUB_SHA is not in main"; exit 1; }
+      - run: python -m pip install llm==0.34 openai==3.7.0
+      - run: python scripts/check.py --quick --fixtures
+
+  npm:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: release
+    permissions:
+      contents: read
+      id-token: write       # the OIDC token npm trusts in place of a stored one
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+      - run: npm install -g npm@^11.5.1   # trusted publishing needs 11.5.1 or later
+      - run: npm publish                  # provenance is attached automatically
+
+  pypi:
+    needs: verify
+    if: vars.PUBLISH_PYPI == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+      - run: python -m pip install build==1.6.1
+      - run: python -m build
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086  # v1.14.3
