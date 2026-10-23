@@ -516,6 +516,7 @@
     }).catch(function (err) { o.find.readOnly = false; o.errors.textContent = String(err); });
   }
   $('onboard-open').addEventListener('click', function () {
+    preStep = null;
     o.errors.textContent = ''; o.find.value = ''; o.choose.hidden = false; o.run.hidden = true;
     $('o-queue').hidden = true; chosen = {}; waitToken++;
     o.start.hidden = o.dismiss.hidden = false; armStart(); o.title.textContent = 'Onboard a model';
@@ -525,12 +526,24 @@
   o.close.addEventListener('click', function () { od.close(); });
   od.addEventListener('close', function () { if (timer) { clearInterval(timer); timer = null; } });
 
+  // Discover's Add through a hub: the hub's own steps come before onboard.py's
+  // five, as one more step at the top, {label, state: now|done|fail, note}.
+  var preStep = null;
   function renderSteps(text, finished, exit) {
     var reached = 0;
     for (var i = 1; i <= 5; i++) if (text.indexOf('[' + i + '/5]') !== -1) reached = i;
     var stopped = /STOPPING|is not served|cannot reach/.test(text) || (finished && exit !== 0);
     var lines = text.split('\n');
     o.steps.textContent = '';
+    if (preStep) {
+      var li0 = el('li', {class: preStep.state}, preStep.label);
+      if (preStep.note) li0.appendChild(el('small', {}, preStep.note));
+      o.steps.appendChild(li0);
+      if (preStep.state !== 'done') {             // onboard.py has not started: its steps wait
+        STEPS.forEach(function (label) { o.steps.appendChild(el('li', {}, label)); });
+        return;
+      }
+    }
     STEPS.forEach(function (label, i) {
       var n = i + 1, li = el('li', {}, label);
       var line = lines.filter(function (l) { return l.indexOf('[' + n + '/5]') !== -1; })[0];
@@ -607,11 +620,12 @@
     var now = q.items.filter(function (i) { return i.state === 'running'; })[0];
     var finished = n - oqCount(q, 'queued') - (now ? 1 : 0);
     // The chip fills as models finish, and by fifths of the running one as its
-    // log reaches each of onboard.py's five steps (serve.onboard_queue `step`).
-    // At the end it is green when every one is on the bench, red (with one
-    // shake) when any failed or did not answer.
+    // log reaches each of onboard.py's five steps (serve.onboard_queue `step`):
+    // a step is half a fifth while it runs, so step 5/5 is 90%, and full
+    // means finished. At the end it is green when every one is on the bench,
+    // red (with one shake) when any failed or did not answer.
     var step = now && now.step ? now.step : 0;
-    oq.chip.style.setProperty('--fill', (n ? Math.round(100 * (finished + step / 5) / n) : 0) + '%');
+    oq.chip.style.setProperty('--fill', (n ? Math.round(100 * (finished + (step ? step - 0.5 : 0) / 5) / n) : 0) + '%');
     var bad = oqCount(q, 'failed') + oqCount(q, 'no answer');
     oq.chip.classList.toggle('done', !q.running && n > 0 && oqCount(q, 'done') === n);
     oq.chip.classList.toggle('fail', !q.running && bad > 0);
@@ -627,7 +641,9 @@
     oq.text.title = oq.text.textContent;                 // cut short beside the button; whole on hover
     oq.stop.hidden = !q.running || q.stopping; oq.clear.hidden = q.running;
     var sig = JSON.stringify(q);
-    if (sig !== oqLast) { oqLast = sig; if (!oq.view.hidden) oqList(q); }
+    if (sig !== oqLast) { oqLast = sig; oqLive = null; if (!oq.view.hidden) oqList(q); }
+    // The log grows between steps, which the queue's state does not show.
+    if (oqLive && !oq.view.hidden && od.open && oqLive.d.open) oqTail(oqLive.log, oqLive.pre);
   }
   function oqList(q) {
     oq.sum.textContent = q.running
@@ -646,13 +662,23 @@
         d.appendChild(el('summary', {class: 'muted'}, 'Log'));
         d.appendChild(pre);
         d.addEventListener('toggle', function () {
-          if (!d.open) return;
-          fetch('/api/onboard?log=' + encodeURIComponent(i.log)).then(function (r) { return r.json(); })
-            .then(function (s) { pre.textContent = s.ok ? (s.tail || '(no output yet)') : s.errors.join(' '); });
+          if (i.state === 'running') { if (d.open) delete oqFolded[i.log]; else oqFolded[i.log] = 1; }
+          if (d.open) oqTail(i.log, pre);
         });
+        // The running one's log is open and follows along (oqRender), unless
+        // you folded it; queued ones have none yet, finished ones stay folded.
+        if (i.state === 'running') { oqLive = {log: i.log, pre: pre, d: d}; d.open = !oqFolded[i.log]; }
         li.appendChild(d);
       }
       oq.list.appendChild(li);
+    });
+  }
+  var oqLive = null, oqFolded = {};
+  function oqTail(log, pre) {
+    fetch('/api/onboard?log=' + encodeURIComponent(log)).then(function (r) { return r.json(); }).then(function (s) {
+      var end = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 24;   // at the bottom: stay there
+      pre.textContent = s.ok ? (s.tail || '(no output yet)') : s.errors.join(' ');
+      if (end) pre.scrollTop = pre.scrollHeight;
     });
   }
   function showQueue(q) {
@@ -702,20 +728,48 @@
         + '3. The bench: register, a 4-call probe, then the suite'), 'Add').then(function (yes) { if (yes) addNow(x, b, direct); });
   }
   function addNow(x, b, direct) {
-    b.disabled = true; b.textContent = 'Adding…'; $('d-errors').textContent = '';
-    // Either way the onboarding joins the queue (serve.queue_onboard): one at a time.
-    var call = direct ? post('/api/onboard-queue', {items: [{served: x.model, endpoint: x.endpoint}]})
-      : post('/api/discover/add', {connection: x.connection, model: x.model, endpoint: x.endpoint});
-    call.then(function (res) {
+    var title = 'Adding ' + x.model + ' via ' + x.label;
+    $('d-errors').textContent = '';
+    if (direct) {
+      b.disabled = true; b.textContent = 'Adding…';
+      post('/api/onboard-queue', {items: [{served: x.model, endpoint: x.endpoint}]}).then(function (res) {
+        if (!res.ok) { listErrors($('d-errors'), res.errors); b.disabled = false; b.textContent = 'Add via this'; return; }
+        dd.close(); preStep = null; o.errors.textContent = ''; od.showModal();
+        afterQueued(res, {served: x.model, endpoint: x.endpoint}, title, '');
+      }).catch(function (err) { $('d-errors').textContent = String(err); b.disabled = false; b.textContent = 'Add via this'; });
+      return;
+    }
+    // A hub's own steps take a while before the onboarding is even queued, so
+    // the progress starts now: the onboarding popup with the hub as its first
+    // step, and the header chip. The queue's own poll takes the chip over.
+    dd.close(); waitToken++;
+    preStep = {label: 'Added to ' + x.label, state: 'now', note: ''};
+    runView(title, 'Adding it to ' + x.label + '…');
+    oq.box.hidden = false; oq.chip.classList.remove('done', 'fail'); oq.chip.style.setProperty('--fill', '3%');
+    oq.text.textContent = oq.text.title = title; oq.stop.hidden = oq.clear.hidden = true;
+    post('/api/discover/add', {connection: x.connection, model: x.model, endpoint: x.endpoint}).then(function (res) {
+      var hubDone = !!(res.served && res.steps && res.steps.length);   // in the hub, even if queueing it was refused
+      preStep.state = hubDone ? 'done' : 'fail';
+      preStep.note = (res.steps || []).join('. ') + (hubDone ? '' : (res.steps && res.steps.length ? '. ' : '') + res.errors.join(' '));
+      renderSteps('', false, null);
       if (!res.ok) {
-        listErrors($('d-errors'), (res.steps || []).concat(res.errors));
-        b.disabled = false; b.textContent = 'Add via this'; return;
+        o.result.textContent = hubDone ? res.errors.join(' ') : 'Not added. Nothing was queued.';
+        o.result.className = 'errors';
+        oqPoll();                                   // the chip back to what the queue holds
+        return;
       }
-      dd.close(); o.errors.textContent = ''; od.showModal();
-      afterQueued(res, {served: res.served || x.model, endpoint: res.endpoint || x.endpoint},
-                  'Adding ' + (res.served || x.model) + ' via ' + x.label,
-                  res.steps && res.steps.length ? res.steps.join('. ') + '. ' : '');
-    }).catch(function (err) { $('d-errors').textContent = String(err); b.disabled = false; b.textContent = 'Add via this'; });
+      afterQueued(res, {served: res.served || x.model, endpoint: res.endpoint || x.endpoint}, title, '');
+    }).catch(function (err) {
+      preStep.state = 'fail'; preStep.note = String(err); renderSteps('', false, null); oqPoll();
+    });
+  }
+  // The onboarding popup in its step-by-step view, before there is a log.
+  function runView(title, message) {
+    o.choose.hidden = true; o.run.hidden = false; o.start.hidden = o.dismiss.hidden = true; $('o-queue').hidden = true;
+    o.title.textContent = title; o.result.className = 'served'; o.result.textContent = message; o.errors.textContent = '';
+    o.log.textContent = ''; delete o.log.dataset.opened; o.log.parentNode.open = false;
+    renderSteps('', false, null);
+    if (!od.open) od.showModal();
   }
   function openDiscover(provider, model) {
     $('d-errors').textContent = '';
@@ -778,11 +832,7 @@
   });
   $('d-close').addEventListener('click', function () { dd.close(); });
   function follow(log, title, before) {
-    o.choose.hidden = true; o.run.hidden = false; o.start.hidden = o.dismiss.hidden = true; $('o-queue').hidden = true;
-    o.title.textContent = title; o.result.className = 'served';
-    o.result.textContent = before + 'Running in the background; closing this does not stop it. Log: runs/' + log;
-    renderSteps('', false, null);
-    o.log.textContent = ''; delete o.log.dataset.opened; o.log.parentNode.open = false;
+    runView(title, before + 'Running in the background; closing this does not stop it. Log: runs/' + log);
     timer = setInterval(function () {
       fetch('/api/onboard?log=' + encodeURIComponent(log)).then(function (r) { return r.json(); }).then(function (s) {
         if (!s.ok) return;
@@ -1216,10 +1266,59 @@
   function recount() {
     var n = picked().length, ex = explorersFor(n);
     var rows = c.members.querySelectorAll('label.check'), shown = c.members.querySelectorAll('label.check:not([hidden])');
+    var greyed = c.members.querySelectorAll('label.check.blocked:not(.clash):not([hidden])').length;
+    var clash = c.members.querySelectorAll('label.check.clash').length;
+    var paid = c.members.querySelectorAll('label.check[data-paid="1"][hidden]').length;
     c.count.textContent = n + ' member' + (n === 1 ? '' : 's') + ' + ' + ex + ' explorer' + (ex === 1 ? '' : 's') +
       ' = ' + (n + ex) + ' calls per request' + (n && (n < 2 || n > 4) ? ' · two to four members is recommended' : '') +
-      (shown.length < rows.length ? ' · showing ' + shown.length + ' of ' + rows.length + ' models' : '');
-    c.members.querySelectorAll('input').forEach(function (x) { x.disabled = !x.checked && n >= C.settings.max_calls; });
+      (shown.length < rows.length ? ' · showing ' + shown.length + ' of ' + rows.length + ' models' : '') +
+      (paid ? ' (' + paid + ' paid hidden by the free tag)' : '') +
+      (greyed ? ' · ' + greyed + ' greyed out by the tags (hover one for why)' : '') +
+      (clash ? ' · ' + clash + ' ticked member' + (clash === 1 ? ' does' : 's do') + ' not fit the tags' : '');
+    c.members.querySelectorAll('input').forEach(function (x) {
+      x.disabled = !x.checked && (n >= C.settings.max_calls || !!x.dataset.blocked);
+    });
+  }
+  // Tags that say what every member must do: why a model does not fit them
+  // (none: it fits). From collections_view's facts; an unknown context is
+  // let through, an unknown capability is not, as the gateway's vision seats.
+  var CAP_TAGS = {vision: ['vision', 'take images'], tools: ['tools', 'call tools'], json: ['structured_output', 'give structured output']};
+  function tagBlocks(alias) {
+    var f = (C.facts || {})[alias], why = [];
+    if (!f) return why;
+    if (f.role === 'image') why.push('an image generator: it never answers a panel');
+    tagList().forEach(function (t) {
+      var cap = CAP_TAGS[t], roles = (C.shape_roles || {})[t];
+      if (cap && !f.caps[cap[0]]) {
+        why.push(f.caps[cap[0]] === false ? 'does not ' + cap[1]
+          : 'the catalog does not say it can ' + cap[1] + '; tick it in its model popup if it does');
+      }
+      else if (t === 'long-context' && f.context && f.context < C.long_context) {
+        why.push('holds ' + Math.round(f.context / 1000) + 'k tokens, under ' + Math.round(C.long_context / 1000) + 'k');
+      }
+      // general admits only the general role, but as a tag it means "for anything".
+      else if (roles && t !== 'general' && roles.indexOf(f.role) === -1) {
+        why.push('role ' + f.role + ': not for ' + t + ' tasks');
+      }
+    });
+    return why;
+  }
+  // Greyed out, not hidden, so you see what the tags rule out; a ticked one
+  // stays tickable (marked) so it can be taken off. `free` hides the paid ones.
+  function applyTags() {
+    var free = tagList().indexOf('free') !== -1;
+    c.members.querySelectorAll('label.check').forEach(function (lab) {
+      var box = lab.querySelector('input'), why = tagBlocks(box.value);
+      var paid = free && ((C.facts || {})[box.value] || {}).price === 'paid';
+      if (paid) why.push('paid, and the collection is tagged free');
+      lab.classList.toggle('blocked', why.length > 0);
+      lab.classList.toggle('clash', why.length > 0 && box.checked);
+      lab.dataset.paid = paid ? '1' : '';
+      if (why.length) box.dataset.blocked = '1'; else delete box.dataset.blocked;
+      var served = lab.dataset.served;
+      lab.title = (served && served !== box.value ? served : '') + (why.length ? (served && served !== box.value ? '\n' : '') + why.join('\n') : '');
+    });
+    filterMembers();
   }
   // The member search: the filter boxes' match (any text, case-insensitive),
   // over alias and served name. It only hides rows, and never a ticked one, so
@@ -1228,7 +1327,8 @@
     var q = c.find.value.trim().toLowerCase();
     c.members.querySelectorAll('label.check').forEach(function (lab) {
       var box = lab.querySelector('input');
-      lab.hidden = !!q && !box.checked && (box.value + ' ' + (lab.dataset.served || '')).toLowerCase().indexOf(q) === -1;
+      lab.hidden = !box.checked && (!!lab.dataset.paid ||
+        !!q && (box.value + ' ' + (lab.dataset.served || '')).toLowerCase().indexOf(q) === -1);
     });
     recount();
   }
@@ -1251,12 +1351,14 @@
       b.addEventListener('click', function () {
         var now = tagList(), i = now.indexOf(t);
         if (i === -1) now.push(t); else now.splice(i, 1);
-        c.tags.value = now.join(', '); drawTagPicks();
+        c.tags.value = now.join(', '); drawTagPicks(); applyTags();
       });
       box.appendChild(b);
     });
   }
-  c.tags.addEventListener('input', drawTagPicks);
+  c.tags.addEventListener('input', function () { drawTagPicks(); applyTags(); });
+  function showMerger() { $('c-merger-row').hidden = c.reply.value !== 'merged'; }
+  c.reply.addEventListener('change', showMerger);
   // A collection opens in a popup, as every other edit on the dashboard does:
   // the one clicked, or a new one from New collection.
   function closeForm() {
@@ -1276,10 +1378,9 @@
     C.models.forEach(function (alias) {
       var box = el('input', {type: 'checkbox', value: alias});
       box.checked = !!row && row.members.indexOf(alias) !== -1;
-      box.addEventListener('change', recount);
+      box.addEventListener('change', applyTags);        // ticked or not changes what a misfit shows as
       var served = (C.served || {})[alias] || '';
       var lab = el('label', {class: 'check', 'data-served': served});
-      if (served && served !== alias) lab.title = served;
       lab.appendChild(box); lab.appendChild(el('span', {class: 'mono'}, alias));
       c.members.appendChild(lab);
     });
@@ -1294,7 +1395,7 @@
     C.models.forEach(function (alias) {
       var o = el('option', {value: alias}, alias); if (row && row.merger === alias) o.selected = true; c.merger.appendChild(o);
     });
-    recount();
+    showMerger(); applyTags();
   }
   function loadCollections(keep) {
     fetch('/api/collections').then(function (r) { return r.json(); }).then(function (res) {

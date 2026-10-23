@@ -172,6 +172,19 @@ def record_issue(alias: str, issue: dict | None) -> None:
                   ensure_ascii=False)
 
 
+IMAGE_NAMES = re.compile(r"(^|[/._-])(gpt-image|dall-e|imagen|flux|stable-diffusion|sdxl|sd3)", re.I)
+
+
+def makes_images(alias: str, served_name: str) -> bool:
+    """An image generator: the catalog lists image among its outputs
+    (gpt-image-1.5 lists text too, a revised prompt), else, when the catalog
+    does not say, its name is an image family's. Such a model answers a chat
+    prompt with a picture or an error, so it must never fill a seat."""
+    import catalog
+    out = catalog.info(alias).get("output_modalities")
+    return "image" in out if out else bool(IMAGE_NAMES.search(served_name))
+
+
 def run(*args: str, timeout: int = 3600) -> subprocess.CompletedProcess:
     return subprocess.run([str(PY), *args], cwd=str(ROOT), timeout=timeout,
                           capture_output=True, text=True, encoding="utf-8",
@@ -290,6 +303,26 @@ def main() -> None:
                else f"catalog refresh failed (exit {catalog.returncode}); details at its next run")
     print(f"  [3/5] synced; connection is {connection}; {details}")
 
+    # An image generator: role image, which no chat shape admits, so it never
+    # fills a seat or a collection; a chat probe and the suite would only
+    # record failures (and spend its price). A chat role set by hand wins:
+    # then it is onboarded as a chat model.
+    roles_file = DATA / "config" / "model-roles.json"
+    had = (locked.read_json(roles_file).get("models") or {}).get(alias)
+    if had in (None, "image") and makes_images(alias, name):
+        locked.update(roles_file, lambda roles: roles.setdefault("models", {}).__setitem__(alias, "image"),
+                      ensure_ascii=False)
+        print("  [4/5] an image generator: role image, so it is never a seat;"
+              " change the role in its model popup if it also answers chat")
+        print("  [5/5] no chat probe or suite: they test text answers")
+        record_issue(alias, None)
+        stamp = dt.date.today().isoformat()
+        with (DATA / "runs" / f"onboard-{stamp}.md").open("a", encoding="utf-8") as fh:
+            fh.write(f"\n## Onboarded `{alias}` ({name}) — {stamp}\n\n"
+                     f"Connection: {connection}. Image generator, role image:"
+                     " never a seat, not probed, no suite.\n")
+        return
+
     # 4. availability
     print("  [4/5] probing availability (4 calls)...")
     since = dt.datetime.now().isoformat(timespec="seconds")
@@ -358,6 +391,9 @@ def _selftest() -> None:
     assert not probe_answered("Traceback (most recent call last):\n  ...", "m1")   # crashed
     assert probe_answered(row.format(10, 0), "m1")                 # "10a/" holds "0a/"
     assert not probe_answered(row.format(2, 0), "m")               # another model's row
+    # The name fallback, for a model the catalog says nothing about.
+    assert all(IMAGE_NAMES.search(s) for s in ("gpt-image-2.5-flare", "openai/dall-e-3", "black-forest-labs/flux.2-pro"))
+    assert not any(IMAGE_NAMES.search(s) for s in ("gpt-5.2", "reflux-7b", "gemini-3-pro"))
     print("ok")
 
 
