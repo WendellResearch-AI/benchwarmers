@@ -331,6 +331,14 @@ publishes on this machine only; see its comments for a proxy.
 Render and a VPS with Caddy (cost, sleep, disks, HTTPS), with a template for
 each under [deploy/](deploy/).
 
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/WendellResearch-AI/benchwarmers)
+
+Render is one click: a paid instance with a 1 GB disk and a generated admin
+token. Fly.io is four commands from a checkout (`cp deploy/fly.toml .`,
+`fly launch --copy-config --no-deploy`, `fly secrets set
+BENCHWARMERS_ADMIN_TOKEN=...`, `fly deploy`). Railway is a few steps in its CLI
+or browser, in [HOSTING.md](HOSTING.md#railway).
+
 ## What leaves your machine
 
 Benchwarmers has no account, no telemetry and no server of its own; nothing
