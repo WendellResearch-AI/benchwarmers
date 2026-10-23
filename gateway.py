@@ -788,7 +788,8 @@ def route_plan(name: str, ask: dict, who: str) -> dict:
     """The members that may take this turn, in the order to try them, and
     the conversation it belongs to. A conversation under way keeps its model
     first; a new one is ranked by route_order. Excluded, and named with why,
-    as a panel excludes them: retired and ad hoc members, members reached
+    as a panel excludes them: retired and ad hoc members, vision specialists
+    on a request without images, members reached
     through another API than chat completions, and those that cannot call
     tools (when the request has tools), see (when it has images) or read it.
     Raises as run_collection does: TooLarge, ValueError, LookupError."""
@@ -801,11 +802,14 @@ def route_plan(name: str, ask: dict, who: str) -> dict:
     pictures, tools = images(ask["messages"]), bool(ask["upstream"].get("tools"))
     needed = route_tokens(ask) + IMAGE_TOKENS * len(pictures)
     gone, held, small = retired(), ad_hoc_models(), too_small(needed, members)
+    roles = model_roles.load()["models"]
     skipped, fit = [], []
     for a in members:
         api = endpoints.entry_of(a).get("api") or "chat"
         why = (retired_why(gone[a]) if a in gone else
                "ad hoc (expensive or capped), so never routed to automatically" if a in held else
+               "a vision specialist: routed to only when the request carries images"
+               if roles.get(a) == "vision" and not pictures else
                f"reached through the {api} API; route mode passes requests on to chat completions only" if api != "chat"
                else (tools and cannot_call_tools(a)) or (pictures and cannot_see(a)) or
                (f"its context window ({small[a]:,} tokens) is under this request (about {needed:,})" if a in small else ""))
