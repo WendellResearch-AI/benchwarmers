@@ -1,0 +1,38 @@
+# Benchwarmers on Render: a Blueprint. HOSTING.md has the steps and the cost.
+#
+# At the top of the repository, not under deploy/ with the other templates,
+# because the Deploy to Render button reads render.yaml from there.
+#
+# A persistent disk needs a paid instance type: on the free type the
+# filesystem is wiped on every deploy and restart, and the service sleeps when
+# idle, which would lose the record and stop the scheduler. Hence "starter".
+# A service with a disk runs one instance, and a deploy stops the old one
+# before starting the new, so expect a short gap on each deploy.
+#
+# Render passes PORT (set to 8122 here) and the service's address
+# (RENDER_EXTERNAL_URL); deploy/container.py turns them into BENCH_PORT and
+# BENCHWARMERS_PUBLIC_URL. With a custom domain, set BENCHWARMERS_PUBLIC_URL.
+services:
+  - type: web
+    name: benchwarmers
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: 0.5c-512mb          # "starter" before Render renamed its plans
+    region: oregon            # or ohio, virginia, frankfurt, singapore; fixed once made
+    healthCheckPath: /health
+    numInstances: 1
+    # A button deploy follows this repository's main branch; deploy a new
+    # version when you choose to, not on every commit here.
+    autoDeployTrigger: "off"
+    disk:
+      name: benchwarmers-data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: PORT
+        value: "8122"
+      # Made by Render, long and random; read it on the service's Environment
+      # page to sign in. Provider keys go there too, one
+      # BENCHWARMERS_KEY_<NAME> per endpoint key (upper-cased, '-' as '_').
+      - key: BENCHWARMERS_ADMIN_TOKEN
+        generateValue: true

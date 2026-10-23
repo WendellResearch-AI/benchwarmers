@@ -1,6 +1,10 @@
 # Code only: never an install's data, keys or local settings.
 .git
-.env
+# Any .env, not only the top one: deploy/vps/ keeps its secrets beside its
+# compose file, which builds from the top of the checkout.
+**/.env
+deploy/vps/backups/
+deploy/railway/node_modules/
 .benchwarmers-home
 CLAUDE.local.md
 .venv

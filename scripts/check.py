@@ -42,6 +42,7 @@ CHECKS = [
     ("metrics/test_decide.py", [], False),
     ("metrics/wrong.py", [], False),
     ("metrics/scheduler.py", ["--selftest"], False),
+    ("deploy/container.py", ["--selftest"], False),
     ("scripts/auto_retire.py", [], False),
     ("scripts/onboard.py", ["--selftest"], False),
     ("scripts/export_check.py", ["--selftest"], False),

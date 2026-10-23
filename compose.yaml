@@ -10,7 +10,9 @@
 #
 # Published on this machine only. To reach it from elsewhere, put a proxy
 # with TLS in front and set BENCHWARMERS_PUBLIC_URL (e.g.
-# https://bench.example.com) so its Host and Origin are accepted. Keep the
+# https://bench.example.com) so its Host and Origin are accepted
+# (deploy/vps/ does this with Caddy; HOSTING.md has it and the hosted
+# platforms). Keep the
 # host port equal to BENCH_PORT, or sign-ins that return to this machine
 # (OpenRouter, ChatGPT) land on the wrong port.
 services:

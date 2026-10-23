@@ -1,0 +1,10 @@
+# Caddy in front of Benchwarmers: HTTPS for BENCH_DOMAIN (from .env), with
+# the certificate fetched and renewed automatically, and plain http
+# redirected to https.
+#
+# reverse_proxy passes the browser's Host header through unchanged, which is
+# the host Benchwarmers checks against BENCHWARMERS_PUBLIC_URL. It sets no
+# response timeout of its own, so a panel that takes minutes still answers.
+{$BENCH_DOMAIN} {
+	reverse_proxy benchwarmers:8122
+}
