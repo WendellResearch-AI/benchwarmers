@@ -1,6 +1,7 @@
 # Publishing a GitHub release publishes the packages: npm now, PyPI once it is
-# switched on. No token is stored anywhere: both registries trust this
-# workflow by name (Trusted Publishing, OIDC), set up once on each site.
+# switched on, then server.json to the MCP Registry. No token is stored
+# anywhere: both package registries trust this workflow by name (Trusted
+# Publishing, OIDC), set up once on each site.
 #
 #   npm   npmjs.com > @wendellresearch-ai/benchwarmers > Settings > Trusted
 #         publisher: GitHub Actions, WendellResearch-AI / benchwarmers,
@@ -10,9 +11,16 @@
 #         repository, workflow and environment. Then set the repository
 #         variable PUBLISH_PYPI to true (Settings > Secrets and variables >
 #         Actions > Variables).
+#   MCP   nothing to set up: the registry takes the same OIDC token as proof
+#         of the io.github.WendellResearch-AI namespace (case-sensitive, so
+#         server.json spells the owner as GitHub does). It checks that the
+#         version is on npm with package.json's mcpName, and on PyPI with
+#         `mcp-name:` in the README, so the first entry is the first release
+#         after 0.2.1. While PUBLISH_PYPI is off, the entry goes without PyPI.
 #
-# The release's tag must be v<VERSION> on a commit in main, with package.json
-# and the plugin at the same version; anything else stops before publishing.
+# The release's tag must be v<VERSION> on a commit in main, with package.json,
+# the plugin and server.json at the same version; anything else stops before
+# publishing.
 name: release
 
 on:
@@ -39,7 +47,7 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
           python-version: "3.12"
-      - name: The tag, VERSION, package.json and the plugin agree; the commit is in main
+      - name: The tag, VERSION, package.json, the plugin and server.json agree; the commit is in main
         run: |
           version="$(tr -d '[:space:]' < VERSION)"
           tag="${GITHUB_REF_NAME}"
@@ -47,13 +55,21 @@ jobs:
           python - "$version" <<'PY'
           import json, sys
           want = sys.argv[1]
-          for f in ("package.json", "plugin/.claude-plugin/plugin.json"):
+          for f in ("package.json", "plugin/.claude-plugin/plugin.json", "server.json"):
               got = json.load(open(f, encoding="utf-8"))["version"]
               assert got == want, f"{f} says {got}, VERSION says {want}"
+          for p in json.load(open("server.json", encoding="utf-8"))["packages"]:
+              assert p["version"] == want, f"server.json's {p['registryType']} package says {p['version']}"
           PY
           git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo "$GITHUB_SHA is not in main"; exit 1; }
       - run: python -m pip install llm==0.34 openai==3.7.0
       - run: python scripts/check.py --quick --fixtures
+      - name: Install mcp-publisher 1.8.1
+        run: |
+          curl -fsSL -o mcp-publisher.tar.gz https://github.com/modelcontextprotocol/registry/releases/download/v1.8.1/mcp-publisher_linux_amd64.tar.gz
+          echo "a06c9096dcb9727c13555b6be26c7effa707b01f06a4c561ba7a3635443cf2cc  mcp-publisher.tar.gz" | sha256sum -c
+          tar xzf mcp-publisher.tar.gz mcp-publisher
+      - run: ./mcp-publisher validate    # server.json against the registry's schema, before anything is published
 
   npm:
     needs: verify
@@ -89,3 +105,39 @@ jobs:
       - run: python -m pip install build==1.6.1
       - run: python -m build
       - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086  # v1.14.3
+
+  registry:
+    needs: [npm, pypi]      # the registry checks each version is on npm and PyPI first
+    # After npm, and after PyPI unless PUBLISH_PYPI has it skipped.
+    if: >-
+      !cancelled() && needs.npm.result == 'success'
+      && (needs.pypi.result == 'success' || needs.pypi.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: release
+    permissions:
+      contents: read
+      id-token: write       # mcp-publisher signs in to the registry with it
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Install mcp-publisher 1.8.1
+        run: |
+          curl -fsSL -o mcp-publisher.tar.gz https://github.com/modelcontextprotocol/registry/releases/download/v1.8.1/mcp-publisher_linux_amd64.tar.gz
+          echo "a06c9096dcb9727c13555b6be26c7effa707b01f06a4c561ba7a3635443cf2cc  mcp-publisher.tar.gz" | sha256sum -c
+          tar xzf mcp-publisher.tar.gz mcp-publisher
+      - name: Without the PyPI package, which this release did not publish
+        if: needs.pypi.result == 'skipped'
+        run: |
+          python3 - <<'PY'
+          import json
+          server = json.load(open("server.json", encoding="utf-8"))
+          server["packages"] = [p for p in server["packages"] if p["registryType"] != "pypi"]
+          json.dump(server, open("server.json", "w", encoding="utf-8"), indent=2)
+          PY
+      - name: Publish server.json, waiting for a new version to show on npm and PyPI
+        run: |
+          for wait in 30 60 120 0; do      # a fresh sign-in each try: the registry's token is short-lived
+            ./mcp-publisher login github-oidc && ./mcp-publisher publish && exit 0
+            test "$wait" = 0 || { echo "retrying in ${wait}s"; sleep "$wait"; }
+          done
+          exit 1

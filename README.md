@@ -272,6 +272,9 @@ On native Windows, a client that cannot start `npx` itself needs
 | `BENCHWARMERS_KEY` | a gateway key from Settings, sent as `Authorization: Bearer`; needed for a server on another machine, or where keys are required |
 | `BENCHWARMERS_TIMEOUT` | seconds to wait for a panel, default 900 |
 
+<!-- The MCP Registry's proof that the PyPI package is this server (server.json):
+mcp-name: io.github.WendellResearch-AI/benchwarmers -->
+
 ## The suite
 
 Models are scored on review work: find the faulty line, or say whether a

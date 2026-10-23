@@ -61,6 +61,7 @@ CHECKS = [
     ("scripts/test_mcp.py", [], False),
     ("scripts/test_cli.py", [], False),
     ("scripts/test_launcher.py", [], False),
+    ("scripts/test_server_json.py", [], False),
     ("suite/test_score.py", [], False),
     ("suite/test_mine.py", [], False),
     ("suite/test_seed.py", [], False),
