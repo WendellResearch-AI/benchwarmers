@@ -16,6 +16,11 @@ roles:   general  reasoning / do-it-all: eligible for every shape
                   bounded tasks (classify, extract, summarise, enumerate over a
                   small file); not review or design over a large packet
          image    image generation; never a reviewer
+         vision   a specialist at reading images (OCR, documents, screenshots,
+                  charts), weak at text-only work: admitted by the vision shape
+                  alone, and a collection member with this role sits only when
+                  the request carries images (gateway.py). A model that reads
+                  images AND does everything else stays general.
          decision typed answers with probabilities through a Decisions API, not
                   chat; no shape admits them (config/decision-models.json)
 
@@ -51,6 +56,8 @@ ROLES = {
     "light": "small, fast instruct model — eligible for quick and enumeration;"
              " not for review or design over a large packet",
     "image": "image generation — never a reviewer",
+    "vision": "reads images (OCR, documents, screenshots) — sits only for requests that carry"
+              " images; never a text reviewer",
     "decision": "typed choice / score / yes-no with probabilities, through a Decisions API"
                 " — no chat, never a seat; see config/decision-models.json",
 }
@@ -62,7 +69,7 @@ SHAPES = {
     "code": ["general", "code"],
     "enumeration": ["general", "code", "light"],
     "quick": ["general", "light"],
-    "vision": ["general", "light"],
+    "vision": ["general", "light", "vision"],
     "image": ["image"],
 }
 

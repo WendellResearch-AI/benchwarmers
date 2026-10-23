@@ -134,6 +134,7 @@ import client  # noqa: E402
 import decide  # noqa: E402
 import formats  # noqa: E402
 import guard  # noqa: E402
+import model_roles  # noqa: E402
 import offload  # noqa: E402
 import route  # noqa: E402
 
@@ -528,6 +529,13 @@ def run_collection(name: str, messages: list[dict], nominated: list[str] | None 
     # answer anyway, about a picture it never got. Skipped, and named.
     skipped += [{"seat": seat, "alias": a, "why": why} for seat, group in (("member", members), ("with", nominated))
                 for a in group if pictures and (why := cannot_see(a))]
+    # A VISION SPECIALIST SITS ONLY FOR PICTURES: its role says it reads
+    # images, not that it answers text, so on a text request its seat goes to
+    # the next member or an explorer. Named in `with`, it sits anyway.
+    if not pictures:
+        roles = model_roles.load()["models"]
+        skipped += [{"seat": "member", "alias": a, "why": "a vision specialist: sits only when the request"
+                     " carries images"} for a in members if roles.get(a) == "vision"]
     unseen = {k["alias"] for k in skipped}
     sitting = [a for a in members if a not in unseen]
     nominated = [a for a in nominated if a not in unseen]

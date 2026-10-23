@@ -104,8 +104,15 @@ exactly as sent:
   plan) gets no images yet.
 - **A vision collection** is members that take images; `GET /v1/models` lists
   `vision` in its `together.capabilities` when every member does. An image
-  request on a collection with no shape takes the shape `vision` (general and
-  light models), so verdicts on image work are counted apart.
+  request on a collection with no shape takes the shape `vision` (general,
+  light and vision models), so verdicts on image work are counted apart.
+- **Vision specialists.** A model whose role is `vision` (set in its popup) is
+  good at reading images and weak at text-only work, such as an OCR or
+  document model. Only the `vision` shape admits it, and as a collection
+  member it sits only when the request carries images; on a text request it
+  is listed in `bench.skipped` and its seat goes to the next member or an
+  explorer. Named in `with`, it sits anyway. A model that reads images and
+  does everything else well stays `general`.
 - **Size.** The body cap is 20 MB: a photo as a data URL is 4/3 of its file,
   and 20 MB is the tightest whole-request limit among the big providers
   (Gemini's for inline data). Above it the gateway answers 413 and says to

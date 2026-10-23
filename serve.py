@@ -2555,8 +2555,9 @@ def gateway_card(limit: int = 30) -> str:
         explorers, then the merger if the reply was merged. Green answered, amber came back empty, red failed. ✓ judged
         useful, ✗ judged not useful; no mark means the verdict is still owed.
         Hover a chip for its seat, timing and call id; click it to read the answer
-        and record a verdict. A grey chip with a dash is a member not asked because the
-        request carried images it cannot take; hover it for why.</dd>
+        and record a verdict. A grey chip with a dash is a member not asked: the request
+        carried images it cannot take, or it is a vision specialist and the request
+        carried none. Hover it for why.</dd>
       <dt>Asked by</dt><dd>The gateway key that made the request, or <code>local</code>
         when no key is asked for.</dd>
       <dt>Owed</dt><dd>Seats without a verdict. Each is recorded as an unjudged

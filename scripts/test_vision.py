@@ -97,13 +97,14 @@ def main() -> int:
     write("model-overrides.json", {"eye": {"vision": True}, "eye2": {"vision": True}, "echo": {"vision": True},
                                    "blind": {"vision": False}, "planned": {"vision": True},
                                    "tiny": {"vision": True, "context_window": 3000}})
+    write("model-roles.json", {"models": {"eye2": "vision"}})     # a specialist: sits only for pictures
     write("gateway.json", {"max_calls": 5, "max_explorers": 2})
     write("collections.json", {
         "vision": {"members": ["eye", "blind", "unknown", "echo"], "description": "photos"},
         "merged": {"members": ["eye", "eye2"], "reply": "merged", "merger": "mg", "description": "x"},
         "blindonly": {"members": ["blind", "unknown", "planned"], "description": "x"},
         "small": {"members": ["tiny"], "description": "x"},
-        "text": {"members": ["eye"], "description": "x"}})
+        "text": {"members": ["eye", "eye2"], "description": "x"}})
 
     import client
     import gateway
@@ -164,12 +165,14 @@ def main() -> int:
             where = [text[max(0, text.find(secret) - 300):text.find(secret) + 50] for text in shown if secret in text]
             assert not where, f"{secret!r} was written down: {where}"
 
-        # 2. A text request takes the llm path, as before, with the same bench keys.
+        # 2. A text request takes the llm path, as before, with the same bench keys;
+        # the vision specialist among the members is not asked, and is named.
         write("gateway.json", {"max_calls": 5, "max_explorers": 0})          # members only from here
         ASKED.clear()
         status, r = post({"model": "bench/text", "messages": [{"role": "user", "content": "say hi"}]})
         assert status == 200 and LLM_CALLS == [("eye", "say hi")] and not ASKED, (status, LLM_CALLS, ASKED)
-        assert set(r["bench"]) == {"panel", "collection", "shape", "shape_by", "seats", "verdict"}, r["bench"]
+        assert set(r["bench"]) == {"panel", "collection", "shape", "shape_by", "seats", "verdict", "skipped"}, r["bench"]
+        assert [(k["alias"], "vision specialist" in k["why"]) for k in r["bench"]["skipped"]] == [("eye2", True)]
 
         # 3. Merged: the seats see the images; the merger gets text, placeholders and answers.
         LLM_CALLS.clear()
