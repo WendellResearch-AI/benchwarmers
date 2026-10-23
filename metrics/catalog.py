@@ -11,7 +11,11 @@ THREE FILES, ONE RECORD
     config/model-overrides.json    WRITTEN BY YOU (the model popup). Per alias,
                                    any field, including its own rate limits.
     config/connection-limits.json  WRITTEN BY YOU (the Endpoints dialog). Per
-                                   connection: rpm, rpd, tpm, tpd.
+                                   connection: rpm, rpd, tpm, tpd, and rpmo
+                                   (calls a calendar month).
+
+Since Phase 2b the built-in client enforces these, a model's own limits and
+the learned ones (metrics/pacing.py); before, they were only shown.
 
 `info(alias)` merges them: an override beats the refresh, a model's own limits
 beat its connection's. Rate limits are kept per CONNECTION (nvidia-api, groq,
@@ -52,6 +56,11 @@ FIELDS = ("context_window", "max_output", "vision", "tools", "structured_output"
           "release_date", "open_weights", "description")
 CAPS = ("tools", "vision", "structured_output", "reasoning")
 LIMIT_KEYS = ("rpm", "rpd", "tpm", "tpd")
+# A connection's limits add a monthly cap: calls a calendar month (UTC), as a
+# trial key has (Cohere's: 1,000). Per key, so not among a model's own limits.
+CONNECTION_LIMIT_KEYS = LIMIT_KEYS + ("rpmo",)
+LIMIT_LABELS = {"rpm": "requests per minute", "rpd": "requests per day", "tpm": "tokens per minute",
+                "tpd": "tokens per day", "rpmo": "requests per calendar month (UTC)"}
 
 
 def _read(path: pathlib.Path) -> dict:

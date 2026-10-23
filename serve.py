@@ -683,7 +683,7 @@ def retry_model(alias: str, who: str = "ui") -> dict:
     with (DATA / "perf" / "history.csv").open("a", encoding="utf-8", newline="") as fh:
         csv.writer(fh).writerow([datetime.datetime.now().isoformat(timespec="seconds"), alias, "retry", 1,
                                  f"{seconds:.2f}", f"{seconds:.2f}", f"{seconds:.2f}", f"{seconds:.2f}",
-                                 0.0, 1, 0, 0, 0, "", "retry from the dashboard"])
+                                 0.0, 1, 0, 0, 0, "", "retry from the dashboard", ""])
     import alerts as _alerts
     served = {a: s for s, a in names.items()}.get(alias, "")
     # Exactly this model's: auto_retire.py raises model:pending:<served> with its alias.
@@ -1244,10 +1244,11 @@ def connect_page(out: dict) -> str:
             f"<p><a href='{html.escape(home)}'>Back to Benchwarmers</a>. You can close this tab.</p>")
 
 
-def _clean_limits(raw) -> tuple[dict, list[str]]:
-    """rpm/rpd/tpm/tpd as positive whole numbers; blank clears one."""
+def _clean_limits(raw, keys=catalog.LIMIT_KEYS) -> tuple[dict, list[str]]:
+    """rpm/rpd/tpm/tpd (and a connection's rpmo) as positive whole numbers;
+    blank clears one."""
     out, errors = {}, []
-    for k in catalog.LIMIT_KEYS:
+    for k in keys:
         v = (raw or {}).get(k)
         if v in (None, ""):
             continue
@@ -1355,7 +1356,7 @@ def save_connection_limits(connection: str, limits: dict, who: str = "ui") -> di
     if connection not in known:
         return {"ok": False, "errors": [f"{connection!r} is not a connection any model uses;"
                                         f" known: {', '.join(sorted(known))}"]}
-    clean, errors = _clean_limits(limits)
+    clean, errors = _clean_limits(limits, catalog.CONNECTION_LIMIT_KEYS)
     if errors:
         return {"ok": False, "errors": errors}
     data = catalog._read(catalog.LIMITS)
@@ -1376,7 +1377,8 @@ def connections_view() -> dict:
     for a in _chat_aliases():
         by.setdefault(catalog.connection_of(a), []).append(a)
     lim = catalog.connection_limits()
-    return {"ok": True, "errors": [], "keys": list(catalog.LIMIT_KEYS),
+    return {"ok": True, "errors": [], "keys": list(catalog.CONNECTION_LIMIT_KEYS),
+            "labels": {k: catalog.LIMIT_LABELS[k] for k in catalog.CONNECTION_LIMIT_KEYS},
             "connections": [{"name": c, "models": sorted(m), "limits": lim.get(c, {})}
                             for c, m in sorted(by.items())]}
 
@@ -2398,7 +2400,7 @@ def perf_card() -> str:
                   if r["model"] in live}
         widest = max((float(r["p50_s"]) for r in latest.values()), default=1) or 1
         body = ["<table><thead><tr>" + th("Model") + th("Prompt") + th("p50", True)
-                + th("p95", True) + th("ch/s", True) + th("Outcomes")
+                + th("p95", True) + th("ch/s", True) + th("tok/s", True) + th("Outcomes")
                 + "<th>p50, relative</th></tr></thead><tbody>"]
         for (model, prompt), row in sorted(latest.items()):
             p50 = float(row["p50_s"])
@@ -2411,6 +2413,7 @@ def perf_card() -> str:
                 f"<td class='num'>{p50:.1f}s</td>"
                 f"<td class='num'>{float(row['p95_s']):.1f}s</td>"
                 f"<td class='num'>{esc(row['chars_per_s'])}</td>"
+                f"<td class='num'>{esc(row.get('tokens_per_s') or '—')}</td>"
                 f"<td class='{'err' if bad else ''}'>{esc(oc)}</td>"
                 f"<td><span class='meter' style='width:{width}px' "
                 f"title='p50 {p50:.1f}s'><span style='width:100%'></span></span></td></tr>")
@@ -2428,6 +2431,9 @@ def perf_card() -> str:
         questions.</dd>
       <dt>ch/s</dt><dd>Characters per second, from the large prompt only. A
         proxy for tokens/s, affected by how verbose a model is.</dd>
+      <dt>tok/s</dt><dd>Output tokens per second from the provider's own count, first token to
+        last, large prompt only. Only where the built-in client made the call and the provider
+        reported usage; blank otherwise, never estimated.</dd>
       <dt>Outcomes</dt><dd>answered / refused / error / timeout.</dd>
       <dt>Weight it LEAST</dt><dd>Seconds are a wash. Speed only vetoes a model
         when it is slow enough to change how you work.</dd>
@@ -3219,7 +3225,9 @@ def endpoints_page() -> str:
         "<div class='panel form-panel'><h2>Rate limits per connection</h2>"
         "<p class='sub'>What a key behind each connection allows, from the provider's docs or"
         " freellmapi.co/models. Models on that connection share it; a model's own limits (its"
-        " popup) win, and limits the bench learns from errors only ever lower these.</p>"
+        " popup) win, and limits the bench learns from errors only ever lower these. rpmo is calls"
+        " a calendar month (UTC), for a trial key's monthly cap. The built-in client keeps to them:"
+        " when one is used up it waits if the call can still finish in time, else it does not send.</p>"
         "<div id='l-list'></div><div class='errors' id='l-errors' role='alert'></div>"
         "<div class='done' id='l-done'></div></div>")
 
@@ -3270,11 +3278,37 @@ def models_page() -> str:
 
 
 def quotas_page() -> str:
-    """What limits each connection, and who is resting after one. The live
-    numbers (what is left, when it resets) come with the built-in client's
-    quota records, RELEASE-PLAN Phase 2b."""
+    """What limits each connection, who is resting after one, what providers
+    last said was left (the built-in client's quota records, metrics/quota.py)
+    and what the bench itself sent (its usage ledger, metrics/ledger.py)."""
     import learn
+    import ledger
+    import quota
     now = datetime.datetime.now().astimezone()
+    rec_rows = []
+    for r in sorted(quota.live(), key=lambda r: (r.get("connection", ""), r.get("alias", ""), r.get("metric", ""))):
+        try:
+            age = int((now - datetime.datetime.fromisoformat(r["observed_at"])).total_seconds() // 60)
+            reset = datetime.datetime.fromisoformat(r["reset_at"]).astimezone().strftime("%Y-%m-%d %H:%M")
+        except (KeyError, TypeError, ValueError):
+            continue
+        num = lambda v: f"{v:,}" if isinstance(v, int) else "—"          # noqa: E731
+        rec_rows.append(f"<tr><td>{esc(r.get('connection', ''))}</td><td>{named(r.get('alias', ''))}</td>"
+                        f"<td>{esc(r.get('metric', ''))} / {esc(r.get('window', ''))}</td>"
+                        f"<td class='num'>{num(r.get('remaining'))}</td><td class='num'>{num(r.get('limit'))}</td>"
+                        f"<td class='mono'>{esc(reset)}</td>"
+                        f"<td>{esc(r.get('source', ''))}, {age} min ago</td></tr>")
+    t = now.timestamp()
+    sent: dict = {}
+    for row in ledger.rows(min(t - 86400, ledger.month_start(t))):
+        s = sent.setdefault(row.get("connection") or "?", [0, 0, 0, 0])
+        n, tok = row.get("attempts") or 0, (row.get("tokens_in") or 0) + (row.get("tokens_out") or 0)
+        if row["t"] >= t - 86400:
+            s[0], s[1] = s[0] + n, s[1] + tok
+        if row["t"] >= ledger.month_start(t):
+            s[2], s[3] = s[2] + n, s[3] + tok
+    sent_rows = [f"<tr><td>{esc(c)}</td>" + "".join(f"<td class='num'>{v:,}</td>" for v in s) + "</tr>"
+                 for c, s in sorted(sent.items())]
     cool_rows = []
     for alias, c in sorted(learn.cooldowns().items(), key=lambda kv: kv[1].get("until", "")):
         try:
@@ -3285,7 +3319,7 @@ def quotas_page() -> str:
                          f"<td class='num' data-sort='{left}'>{left} min</td>"
                          f"<td>{'stated by the provider' if c.get('stated') else 'default wait'}</td></tr>")
     entered = catalog.connection_limits()
-    keys = catalog.LIMIT_KEYS
+    keys = catalog.CONNECTION_LIMIT_KEYS
     lim_rows = [f"<tr><td>{esc(conn)}</td>" + "".join(
                     f"<td class='num'>{lim[k]:,}</td>" if lim.get(k) else "<td class='num muted'>—</td>" for k in keys)
                 + "<td>you</td></tr>" for conn, lim in sorted(entered.items()) if any(lim.get(k) for k in keys)]
@@ -3300,10 +3334,23 @@ def quotas_page() -> str:
                                 + f"<td>learned {esc(ev.get('at', '')[:10])} ({esc(ev.get('where', ''))})</td></tr>")
     return (
         "<div class='panel'><h2>Quota management</h2><p class='sub'>What is left on each connection and"
-        " when it resets, read from provider endpoints, rate-limit headers and the bench's own call"
-        " ledger, arrives with the built-in client's quota records (RELEASE-PLAN Phase 2b). Until then:"
-        " who is resting after a rate limit, and every limit known. Quotas of OAuth credentials stay"
-        " in CLI Proxy API's own console.</p></div>"
+        " when it resets, from the rate-limit headers and 429 replies the built-in client sees, and what"
+        " the bench sent itself, from its usage ledger; who is resting after a rate limit, and every"
+        " limit known. The built-in client keeps to all of these. Calls through the llm CLI are in"
+        " neither record. Quotas of OAuth credentials stay in CLI Proxy API's own console.</p></div>"
+        "<div class='panel'><h3 class='chart-head'>What providers said is left · " + str(len(rec_rows)) + "</h3>"
+        + ("<table><thead><tr>" + th("Connection") + th("Model") + th("Counts") + th("Left", True)
+           + th("Of", True) + th("Resets") + th("From") + f"</tr></thead><tbody>{''.join(rec_rows)}</tbody></table>"
+           if rec_rows else "<p class='muted'>Nothing in force: no provider has stated a limit whose reset"
+                            " is still ahead.</p>")
+        + "</div>"
+        "<div class='panel'><h3 class='chart-head'>What the bench sent</h3><p class='sub'>Requests"
+        " (retries included) and tokens per connection, from the usage ledger.</p>"
+        + ("<table><thead><tr>" + th("Connection") + th("Requests, 24 h", True) + th("Tokens, 24 h", True)
+           + th("Requests, this month", True) + th("Tokens, this month", True)
+           + f"</tr></thead><tbody>{''.join(sent_rows)}</tbody></table>"
+           if sent_rows else "<p class='muted'>No call in the ledger this month.</p>")
+        + "</div>"
         "<div class='panel'><h3 class='chart-head'>Resting after a rate limit · " + str(len(cool_rows)) + "</h3>"
         + ("<table><thead><tr>" + th("Model") + th("Connection") + th("Back in", True) + th("Wait")
            + f"</tr></thead><tbody>{''.join(cool_rows)}</tbody></table>" if cool_rows

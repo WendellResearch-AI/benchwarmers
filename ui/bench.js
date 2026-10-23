@@ -1016,7 +1016,7 @@
         left.appendChild(el('div', {class: 'base'}, c.models.join(', ')));
         var inputs = el('div', {class: 'limits'});
         res.keys.forEach(function (k) {
-          var lab = el('label', {}, k + ' ');
+          var lab = el('label', {title: (res.labels || {})[k] || k}, k + ' ');
           var box = el('input', {type: 'number', min: '1', 'data-k': k, placeholder: '—'});
           if (c.limits[k]) box.value = c.limits[k];
           lab.appendChild(box); inputs.appendChild(lab);

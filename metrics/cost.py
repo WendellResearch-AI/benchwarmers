@@ -1,10 +1,13 @@
-"""What each model actually costs us, from the `llm` CLI's own log.
+"""What each model actually costs us, from the bench's usage ledger and the `llm` CLI's log.
 
     python metrics/cost.py
 
-**No new instrumentation.** The `llm` CLI has been logging every call all
-along — 382 turns with token counts were already on disk before this file
-existed. This reads them.
+TWO SOURCES, NO CALL IN BOTH. The built-in client writes a line for every
+call to the usage ledger (metrics/ledger.py, RELEASE-PLAN Phase 2b); calls
+made through the `llm` backend, and every call before the switch, are in
+llm's own logs.db, which it has kept all along (382 turns with token counts
+were on disk before this file existed). The built-in client never writes
+logs.db and `llm` never writes the ledger, so the two are added up.
 
 WHY REASONING TOKENS MATTER SEPARATELY
 --------------------------------------
@@ -77,33 +80,49 @@ def benchmark_calls() -> dict[str, int]:
         return {}
 
 
-def collect() -> dict:
-    """Per-model totals, with old aliases folded into their current name."""
+def _llm_turns():
+    """(model, input, output, reasoning or None, duration_ms) per turn in llm's log."""
     if not LOGS.exists():
-        return {}
-    rename = alias_history()
+        return
     db = sqlite3.connect(f"file:{LOGS}?mode=ro", uri=True)
     db.row_factory = sqlite3.Row
-
-    agg: dict[str, dict] = collections.defaultdict(
-        lambda: {"calls": 0, "input": 0, "output": 0, "reasoning": 0,
-                 "duration_ms": 0, "with_reasoning_data": 0})
     for row in db.execute(
             "SELECT model, input_tokens, output_tokens, token_details,"
             " duration_ms FROM turns"):
-        # Turns predating the versioned rename carry the old alias.
-        model = rename.get(row["model"], row["model"])
-        a = agg[model]
-        a["calls"] += 1
-        a["input"] += row["input_tokens"] or 0
-        a["output"] += row["output_tokens"] or 0
-        a["duration_ms"] += row["duration_ms"] or 0
         try:
             details = json.loads(row["token_details"] or "{}") or {}
         except ValueError:
             details = {}
         reasoning = ((details.get("completion_tokens_details") or {})
                      .get("reasoning_tokens"))
+        yield (row["model"], row["input_tokens"], row["output_tokens"], reasoning,
+               row["duration_ms"])
+
+
+def _ledger_calls():
+    """The same, per answered call in the usage ledger. Refused and failed
+    calls spent nothing, as llm's log (which keeps only answers) counts."""
+    import ledger
+    for row in ledger.rows():
+        if row.get("status") in ("ok", "empty"):
+            yield (row.get("alias") or "?", row.get("tokens_in"), row.get("tokens_out"),
+                   row.get("reasoning"), round((row.get("seconds") or 0) * 1000))
+
+
+def collect() -> dict:
+    """Per-model totals, with old aliases folded into their current name."""
+    rename = alias_history()
+    agg: dict[str, dict] = collections.defaultdict(
+        lambda: {"calls": 0, "input": 0, "output": 0, "reasoning": 0,
+                 "duration_ms": 0, "with_reasoning_data": 0})
+    for name, tokens_in, tokens_out, reasoning, ms in (*_llm_turns(), *_ledger_calls()):
+        # Turns predating the versioned rename carry the old alias.
+        model = rename.get(name, name)
+        a = agg[model]
+        a["calls"] += 1
+        a["input"] += tokens_in or 0
+        a["output"] += tokens_out or 0
+        a["duration_ms"] += ms or 0
         if reasoning is not None:
             a["reasoning"] += reasoning
             a["with_reasoning_data"] += 1

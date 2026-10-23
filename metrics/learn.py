@@ -114,12 +114,8 @@ def _known(alias: str, field: str, axis: str | None = None):
     return min(vals) if vals else None
 
 
-def record(alias: str, text: str, where: str) -> dict:
-    """Learn from one failed call. Returns what was stored or set, for logging."""
-    found = parse(text)
-    now = dt.datetime.now().astimezone()
-    stamp = now.isoformat(timespec="seconds")
-    evidence = " ".join((text or "").split())[:200]
+def _tighten(alias: str, found: dict, where: str, evidence: str, stamp: str) -> dict:
+    """Store a context window or limits that are lower than what is known."""
     stored: dict = {}
 
     def tighten(data: dict) -> None:
@@ -140,6 +136,23 @@ def record(alias: str, text: str, where: str) -> dict:
 
     if alias and (found.get("context_window") or found.get("limits")):
         locked.update(LEARNED, tighten, ensure_ascii=False)
+    return stored
+
+
+def note_limits(alias: str, limits: dict, where: str, evidence: str) -> dict:
+    """Limits a provider stated outside its message text: a 429 body's quota
+    (metrics/quota.py, Gemini's "50 a day"). Kept the same way, only tighter."""
+    stamp = dt.datetime.now().astimezone().isoformat(timespec="seconds")
+    return _tighten(alias, {"limits": {k: v for k, v in limits.items() if k in AXES}}, where, evidence, stamp)
+
+
+def record(alias: str, text: str, where: str) -> dict:
+    """Learn from one failed call. Returns what was stored or set, for logging."""
+    found = parse(text)
+    now = dt.datetime.now().astimezone()
+    stamp = now.isoformat(timespec="seconds")
+    evidence = " ".join((text or "").split())[:200]
+    stored = _tighten(alias, found, where, evidence, stamp)
     if alias and found.get("rate_limited"):
         wait = found.get("retry_after_s") or DEFAULT_COOLDOWN_S
         cool = {"until": (now + dt.timedelta(seconds=wait)).isoformat(timespec="seconds"),

@@ -1,0 +1,57 @@
+# Benchwarmers on Fly.io. HOSTING.md has the steps; in short, from the top of
+# a checkout:
+#
+#   cp deploy/fly.toml fly.toml               # fly reads it from the build's folder
+#   fly launch --copy-config --no-deploy      # picks an app name; say no to databases
+#   fly secrets set BENCHWARMERS_ADMIN_TOKEN=<16+ characters>
+#   fly secrets set BENCHWARMERS_KEY_OPENROUTER=sk-or-...   # one per endpoint key
+#   fly deploy
+#
+# Then open https://<app>.fly.dev and sign in with the token. The image takes
+# its public address from FLY_APP_NAME (deploy/container.py); with a custom
+# domain, set BENCHWARMERS_PUBLIC_URL to it under [env].
+#
+# Secrets are never in this file: `fly secrets set` keeps them encrypted and
+# hands them to the machine as environment variables.
+
+app = "benchwarmers"          # fly launch replaces this with the name you choose
+primary_region = "iad"        # any region; the volume is made in this one
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  # Already the image's defaults; listed so the port below is not a mystery.
+  BENCH_PORT = "8122"
+  # BENCHWARMERS_PUBLIC_URL = "https://bench.example.com"   # a custom domain
+
+[http_service]
+  internal_port = 8122
+  force_https = true
+  # ALWAYS ON. The scheduler (daily probes, weekly speed runs, retiring
+  # models that stopped answering) runs inside the server. A stopped machine
+  # runs none of it, and Fly only starts one again when a request arrives, so
+  # with auto-stop the record has gaps wherever nobody was looking. Set these
+  # to "stop" and 0 only for an install that is never scheduled.
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    grace_period = "20s"
+    interval = "30s"
+    method = "GET"
+    path = "/health"
+    timeout = "5s"
+
+# The data folder: endpoints, collections, verdicts, probe history. It is the
+# product, so it lives on a volume, which outlives deploys and restarts. A
+# volume belongs to one machine: run exactly one (`fly scale count 1`).
+[mounts]
+  source = "benchwarmers_data"
+  destination = "/data"
+  initial_size = "1gb"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

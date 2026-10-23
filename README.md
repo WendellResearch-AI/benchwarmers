@@ -76,7 +76,8 @@ verdicts decide who sits on the next panel.
 - [Licence](#licence)
 
 Day-to-day use (the dashboard's pages, connecting apps, onboarding in bulk) is
-in [USAGE.md](USAGE.md). A coding agent setting it up for someone should start
+in [USAGE.md](USAGE.md). Running it on a server or a hosting platform is in
+[HOSTING.md](HOSTING.md). A coding agent setting it up for someone should start
 with [AGENTS.md](AGENTS.md).
 
 ## Try it
@@ -293,6 +294,9 @@ On native Windows, a client that cannot start `npx` itself needs
 | `BENCHWARMERS_KEY` | a gateway key from Settings, sent as `Authorization: Bearer`; needed for a server on another machine, or where keys are required |
 | `BENCHWARMERS_TIMEOUT` | seconds to wait for a panel, default 900 |
 
+<!-- The MCP Registry's proof that the PyPI package is this server (server.json):
+mcp-name: io.github.WendellResearch-AI/benchwarmers -->
+
 ## The suite
 
 Models are scored on review work: find the faulty line, or say whether a
@@ -322,6 +326,10 @@ built-in client makes every call). Put the secrets in a `.env` file beside
 
 then `docker compose up -d` and open http://127.0.0.1:8122. The compose file
 publishes on this machine only; see its comments for a proxy.
+
+**Hosted, always on:** [HOSTING.md](HOSTING.md) compares Fly.io, Railway,
+Render and a VPS with Caddy (cost, sleep, disks, HTTPS), with a template for
+each under [deploy/](deploy/).
 
 ## What leaves your machine
 
