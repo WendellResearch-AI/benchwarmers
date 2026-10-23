@@ -1,0 +1,37 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.WendellResearch-AI/benchwarmers",
+  "title": "Benchwarmers",
+  "description": "Ask a collection of LLMs at once through your Benchwarmers server; verdicts pick the next panel.",
+  "repository": { "url": "https://github.com/WendellResearch-AI/benchwarmers", "source": "github" },
+  "websiteUrl": "https://github.com/WendellResearch-AI/benchwarmers#readme",
+  "version": "0.2.1",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@wendellresearch-ai/benchwarmers",
+      "version": "0.2.1",
+      "runtimeHint": "npx",
+      "transport": { "type": "stdio" },
+      "packageArguments": [{ "type": "positional", "value": "mcp" }],
+      "environmentVariables": [
+        { "name": "BENCHWARMERS_URL", "description": "Your Benchwarmers server (default http://127.0.0.1:8122). Needs Python 3.11 or later on PATH", "isRequired": false },
+        { "name": "BENCHWARMERS_KEY", "description": "A gateway key, needed beyond this machine or where the server requires keys", "isRequired": false, "isSecret": true },
+        { "name": "BENCHWARMERS_TIMEOUT", "description": "Seconds to wait for a panel (default 900)", "isRequired": false }
+      ]
+    },
+    {
+      "registryType": "pypi",
+      "identifier": "benchwarmers",
+      "version": "0.2.1",
+      "runtimeHint": "uvx",
+      "transport": { "type": "stdio" },
+      "packageArguments": [{ "type": "positional", "value": "mcp" }],
+      "environmentVariables": [
+        { "name": "BENCHWARMERS_URL", "description": "Your Benchwarmers server (default http://127.0.0.1:8122)", "isRequired": false },
+        { "name": "BENCHWARMERS_KEY", "description": "A gateway key, needed beyond this machine or where the server requires keys", "isRequired": false, "isSecret": true },
+        { "name": "BENCHWARMERS_TIMEOUT", "description": "Seconds to wait for a panel (default 900)", "isRequired": false }
+      ]
+    }
+  ]
+}
