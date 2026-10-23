@@ -332,6 +332,7 @@ dialog h2 { margin: 0 0 .2rem; font-size: 1.375rem; font-weight: 700; }
 .pick:hover { background: var(--step-1); }
 .pick:has(input:checked) { background: var(--warn-ground); }
 .pick .alias { overflow-wrap: anywhere; font-size: .9375rem; }
+.pick .chip.mod { margin-left: .4rem; font-size: .75rem; vertical-align: .1em; }
 .picker .empty { color: var(--muted); padding: 1rem 0; }
 .picker details { margin: .5rem 0; color: var(--muted); }
 .picker details summary { cursor: pointer; font-size: .875rem; }

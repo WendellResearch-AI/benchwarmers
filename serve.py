@@ -773,6 +773,30 @@ def restore_model(alias: str, who: str = "ui") -> dict:
 DISMISSED_PATH = DATA / "config" / "dismissed.json"
 
 
+def _modelsdev_modalities() -> dict[str, dict]:
+    """models.dev's cached modalities by comparable model name
+    (sources.norm_model), read once per picker opening, not once per row."""
+    import sources
+    out = {}
+    for p in sources.cached("modelsdev").values():
+        for k, m in ((p or {}).get("models") or {}).items():
+            if (m.get("modalities") or {}).get("input"):
+                out.setdefault(sources.norm_model(k), m["modalities"])
+    return out
+
+
+def _modalities(entry: dict, served: str, index: dict) -> dict:
+    """{inputs, outputs} for a picker row: the endpoint's own listing when it
+    says (OpenRouter's architecture), else models.dev's same model; empty
+    lists when neither knows."""
+    import sources
+    arch = entry.get("architecture") or {}
+    if arch.get("input_modalities"):
+        return {"inputs": arch["input_modalities"], "outputs": arch.get("output_modalities") or []}
+    m = index.get(sources.norm_model(served)) or {}
+    return {"inputs": m.get("input") or [], "outputs": m.get("output") or []}
+
+
 def onboard_candidates() -> dict:
     """What every endpoint serves that the bench could onboard, for the picker.
 
@@ -817,6 +841,7 @@ def onboard_candidates() -> dict:
         return live, conns
     with ThreadPoolExecutor(max_workers=len(names)) as pool:   # all at once, not in turn
         answers = dict(zip(names, pool.map(ask, names)))
+    mods = _modelsdev_modalities()
     for name, (live, conns) in answers.items():
         if isinstance(live, Exception):
             errors.append(f"cannot reach {name}: {live}")
@@ -840,7 +865,7 @@ def onboard_candidates() -> dict:
             # New since the daily check, where it records the whole list; on an
             # aggregator that records only registered models, everything would be.
             row = {"served": served, "endpoint": name, "key": key, "group": group,
-                   "new": whole and served not in first_seen}
+                   "new": whole and served not in first_seen, **_modalities(entry, served, mods)}
             (gone if key in dismissed else open_).append(row)
     if not open_ and not gone and errors:
         return {"ok": False, "errors": errors}
@@ -2421,12 +2446,26 @@ def perf_card() -> str:
                             "<h3 class='chart-head'>Speed vs quality on our own tasks</h3>")
 
 
+def favicon(theme: str) -> str:
+    """The tab icon: the header's bench, its seat in the theme's brand colour
+    (read from the theme's css; a tab cannot read the page's variables)."""
+    m = re.search(r"--brand:\s*(#[0-9a-fA-F]{3,8})\b", read(UI / "themes" / f"{theme}.css"))
+    seat = m.group(1) if m else "#990000"
+    svg = ("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'>"
+           "<rect x='6' y='15' width='3.5' height='14' rx='.8' fill='#3a3530'/>"
+           "<rect x='22.5' y='15' width='3.5' height='14' rx='.8' fill='#3a3530'/>"
+           "<rect x='6' y='23' width='20' height='2.4' fill='#3a3530'/>"
+           f"<rect x='1.5' y='9' width='29' height='7.5' rx='1.6' fill='{seat}'/></svg>")
+    from urllib.parse import quote
+    return f"<link rel='icon' type='image/svg+xml' href='data:image/svg+xml,{quote(svg)}'>"
+
+
 def render(theme: str | None = None) -> str:
     theme = theme if theme in themes() else saved_theme()      # a ?theme preview, else the saved one
     return (
         f"<!doctype html><html lang='en' data-theme='{esc(theme)}'><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width, initial-scale=1'>"
-        "<title>Benchwarmers</title>"
+        "<title>Benchwarmers</title>" + favicon(theme) +
         f"<style>{brand_css()}{read(UI / 'bench.css')}</style>"
         # One line: the name on its bench, the credit beside it, the actions at
         # the far end. (The next scheduled runs were listed under it; Settings'
@@ -2889,6 +2928,7 @@ def login_page() -> str:
     cookie back, so a browser already signed in is sent on to the dashboard."""
     return ("<!doctype html><html lang='en'><meta charset='utf-8'>"
             "<meta name='viewport' content='width=device-width, initial-scale=1'><title>Benchwarmers</title>"
+            + favicon(saved_theme()) +
             "<body style='font:16px system-ui;max-width:24rem;margin:4rem auto;padding:0 1rem'>"
             "<h1>Benchwarmers</h1><form id='f'><label for='t'>Admin token</label>"
             "<input id='t' type='password' autocomplete='current-password' required"

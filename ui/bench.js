@@ -442,6 +442,16 @@
     box.checked = !dismissed && !!chosen[c.key];
     row.appendChild(box);
     var name = el('span', {class: 'alias'}, c.served);
+    // What it takes besides text (every model takes text, so that says
+    // nothing), and whether it makes images: an image generator is no seat.
+    // One order on every row, so the rows scan alike.
+    var ORDER = ['image', 'pdf', 'file', 'audio', 'video'];
+    (c.inputs || []).filter(function (m) { return m !== 'text'; }).sort(function (a, b) {
+      return (ORDER.indexOf(a) + 1 || 99) - (ORDER.indexOf(b) + 1 || 99);
+    }).forEach(function (m) { name.appendChild(el('span', {class: 'chip mod', title: 'takes ' + m}, m)); });
+    if ((c.outputs || []).indexOf('image') !== -1) {
+      name.appendChild(el('span', {class: 'chip mod warn', title: 'an image generator: never a panel seat'}, 'makes images'));
+    }
     row.appendChild(name);
     var side = el('span');
     if (c.new && !dismissed) side.appendChild(el('span', {class: 'muted'}, c.group));   // under New: where it comes from
