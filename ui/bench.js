@@ -1092,7 +1092,9 @@
   function keyBody() {
     var body = {name: e.name.value, base: e.base.value, key: e.key.value, new: e.adding,
                 admin: $('e-admin-row').hidden ? '' : e.admin.value};
-    if (e.adding) { body.kind = e.kind.value; body.hub = e.kind.value === 'hub' ? e.hub.value : ''; }   // Change key keeps its kind
+    if (e.adding) {                     // Change key keeps its kind and API
+      body.kind = e.kind.value; body.hub = e.kind.value === 'hub' ? e.hub.value : ''; body.api = $('e-api').value;
+    }
     return body;
   }
   $('e-add').addEventListener('click', function () { openEndpoint('add'); });

@@ -963,7 +963,7 @@ def free_name(stem: str) -> str:
 
 def save_endpoint(name: str, base: str, secret: str, who: str = "ui", extra: dict | None = None,
                   new: bool = False, kind: str = "", hub: str = "", admin: str = "",
-                  test_only: bool = False) -> dict:
+                  test_only: bool = False, api: str = "") -> dict:
     """Add an endpoint, or change one's key. Tested before anything is saved;
     `test_only` (the form's Test button) stops there and saves nothing.
 
@@ -980,11 +980,16 @@ def save_endpoint(name: str, base: str, secret: str, who: str = "ui", extra: dic
     key where it is not the API key (LiteLLM's master key, CLI Proxy API's
     management key), is kept beside it under endpoints.admin_name; nothing
     tests it here, since a refused CLI Proxy API key counts toward a ban.
+    `api` (endpoints.APIS), on a new endpoint: what it speaks, when not chat
+    completions; Anthropic's and Gemini's native APIs take their own key
+    header, which the test sends too.
     """
     name, base, secret = (name or "").strip().lower(), (base or "").strip().rstrip("/"), (secret or "").strip()
-    kind, hub, admin = (kind or "").strip(), (hub or "").strip(), (admin or "").strip()
+    kind, hub, admin, api = (kind or "").strip(), (hub or "").strip(), (admin or "").strip(), (api or "").strip()
     data = endpoints.load()
     errors = []
+    if api and (api not in endpoints.APIS or api == "responses"):    # responses: Connect sets it, with its sign-in
+        errors.append(f"api: one of {', '.join(a for a in endpoints.APIS if a != 'responses')}")
     if kind and kind not in endpoints.KINDS:
         errors.append(f"kind: one of {', '.join(endpoints.KINDS)}")
     elif kind == "hub" and hub not in endpoints.HUBS:
@@ -1011,6 +1016,8 @@ def save_endpoint(name: str, base: str, secret: str, who: str = "ui", extra: dic
         # with its stale refresh token and overwrite the typed key.
         entry.pop("connect", None)
     entry.update(extra, base=base)
+    if api and new:
+        entry.pop("api", None) if api == "chat" else entry.update(api=api)
     if kind:
         entry.pop("hub", None)
         entry.update(kind=kind, **({"hub": hub} if kind == "hub" else {}))
@@ -2568,7 +2575,49 @@ def gateway_card(limit: int = 30) -> str:
     </dl>"""
     return card("Gateway", f"The last {len(records)} bench-gateway requests:"
                 f" {seats_total} seats, {owed} verdict{'s' * (owed != 1)} owed.",
-                "".join(body), key)
+                "".join(body) + route_table(judged), key)
+
+
+def route_table(judged: dict, limit: int = 30) -> str:
+    """Route-mode conversations (runs/gateway/routes.jsonl, a line a turn),
+    one row each, apart from the panels: an agent turn is not a seat, and a
+    conversation's verdict is optional, so none of this counts as Owed.
+    ponytail: reads the whole log; read its tail once it grows large."""
+    convs: dict[str, dict] = {}
+    for line in read(DATA / "runs" / "gateway" / "routes.jsonl").splitlines():
+        try:
+            t = json.loads(line)
+        except ValueError:
+            continue
+        c = convs.setdefault(str(t.get("conversation", "")), {
+            "at": t.get("at", ""), "model": t.get("model", ""), "key": t.get("key", ""), "task": t.get("task", ""),
+            "turns": 0, "tools": 0, "failovers": 0, "models": {}})
+        c["turns"] += 1
+        c["tools"] += t.get("tool_calls") or 0
+        c["failovers"] += len(t.get("tried") or [])
+        c.update(last=t.get("at", ""), status=t.get("status", ""), error=t.get("error", ""))
+        if t.get("alias"):
+            c["models"].setdefault(t["alias"], t.get("call", ""))
+    if not convs:
+        return ""
+    rows = ["<h3>Route conversations</h3><table><thead><tr>", th("When"), th("Collection"), th("Asked by"),
+            th("First message"), th("Answered by"), th("Turns", True), th("Tool calls", True),
+            th("Failovers", True), th("Last turn"), "</tr></thead><tbody>"]
+    for conv, c in sorted(convs.items(), key=lambda kv: kv[1]["last"], reverse=True)[:limit]:
+        chips = " ".join(f"<span class='chip' title='{esc(call + ' · ' + {True: 'useful', False: 'not useful', None: 'no verdict (optional)'}[judged.get(call)])}'>"
+                         f"{esc(alias)}{ {True: ' ✓', False: ' ✗', None: ''}[judged.get(call)]}</span>"
+                         for alias, call in c["models"].items())
+        css = {"ok": "ok", "empty": "warn", "error": "err"}.get(c["status"], "")
+        rows.append(
+            f"<tr><td class='mono' data-sort='{esc(c['at'])}' title='{esc(conv)}'>{esc(c['at'][:16].replace('T', ' '))}</td>"
+            f"<td class='mono'>{esc(c['model'])}</td><td class='mono'>{esc(c['key'] or '—')}</td>"
+            f"<td>{esc(c['task'][:60])}</td><td>{chips or '—'}</td><td class='num'>{c['turns']}</td>"
+            f"<td class='num'>{c['tools']}</td><td class='num{' muted' if not c['failovers'] else ''}'>{c['failovers']}</td>"
+            f"<td><span class='chip {css}' title='{esc(c['error'])}'>{esc(c['status'])}</span></td></tr>")
+    rows.append("</tbody></table><p class='muted'>Each conversation is one unjudged offload per model that"
+                " answered it, under the call id on its chip; a verdict is optional:"
+                " <code>python metrics/offload.py verdict &lt;call id&gt; --useful</code>.</p>")
+    return "".join(rows)
 
 
 def gateway_seat(call: str) -> dict:
@@ -2779,11 +2828,13 @@ def collections_tab() -> str:
         "<p class='rules'>Which models may fill the explorer seats. Automatic asks a decision"
         " model to label each prompt when one is onboarded, else general.</p>"
         "<label class='field' for='c-reply'>Reply</label><select id='c-reply'>"
-        "<option value='all'>every answer</option><option value='merged'>merged</option></select>"
+        "<option value='all'>every answer</option><option value='merged'>merged</option>"
+        "<option value='route'>route (one member, for agents)</option></select>"
         "<p class='rules'>Merged: after the panel, one model writes a single answer saying where the"
         " seats agreed and who said what, for a chat UI that shows one answer; every seat is still"
-        " called and recorded. A caller can ask for either with <code>bench/&lt;name&gt;:merged</code>"
-        " or <code>:all</code>.</p>"
+        " called and recorded. Route: no panel; one member, picked by its record, gets the request"
+        " with its tools, for an agent such as Claude Code or Codex. A caller can ask for any with"
+        " <code>bench/&lt;name&gt;:merged</code>, <code>:all</code> or <code>:route</code>.</p>"
         # Only a merged reply has a merger; the choice is kept while hidden.
         "<div id='c-merger-row' hidden><label class='field' for='c-merger'>Merger</label>"
         "<select id='c-merger'></select>"
@@ -3595,7 +3646,14 @@ def editor() -> str:
         + "</select><p class='rules'>Open WebUI's base is its <code>/api</code>, e.g."
         " <code>http://localhost:3000/api</code>, with an admin's API key. LiteLLM's and CLI Proxy"
         " API's are their <code>/v1</code>, e.g. <code>http://localhost:4000/v1</code> and"
-        " <code>http://localhost:8317/v1</code>.</p></div></div>"
+        " <code>http://localhost:8317/v1</code>.</p></div>"
+        # What it speaks (endpoints.APIS): the built-in client builds the native requests.
+        "<label class='field' for='e-api'>API</label><select id='e-api'>"
+        + "".join(f"<option value='{k}'>{esc(label)}</option>" for k, label in endpoints.APIS.items() if k != "responses")
+        + "</select><p class='rules'>Chat completions unless the provider has none for your key. Native"
+        " Anthropic's base is <code>https://api.anthropic.com/v1</code>, Gemini's"
+        " <code>https://generativelanguage.googleapis.com/v1beta</code>; their models are called by the"
+        " built-in client, and route mode does not pick them.</p></div>"
         "<label class='field' for='e-key'>API key</label>"
         "<input id='e-key' type='password' autocomplete='off' placeholder='leave blank to keep the current one'>"
         "<p class='rules'>Stored where <code>llm keys set</code> stores it, never in the"
@@ -3812,7 +3870,7 @@ class Handler(gateway.Handler):
                                                         str(p.get("key", "")), new=bool(p.get("new")),
                                                         kind=str(p.get("kind") or ""), hub=str(p.get("hub") or ""),
                                                         admin=str(p.get("admin") or ""),
-                                                        test_only=bool(p.get("test"))),
+                                                        test_only=bool(p.get("test")), api=str(p.get("api") or "")),
                "/api/endpoint/remove": lambda p: remove_endpoint(str(p.get("name", "")),
                                                                  with_models=bool(p.get("with_models"))),
                "/api/connect/start": lambda p: connect_start(str(p.get("provider") or ""),

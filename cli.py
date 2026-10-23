@@ -607,7 +607,7 @@ def parser() -> argparse.ArgumentParser:
     c.add_argument("--shape", help="the task shape explorers are picked for; empty for automatic")
     c.add_argument("--description", help="what it is for: callers read it to choose")
     c.add_argument("--tags", help="comma-separated")
-    c.add_argument("--reply", choices=["all", "merged"])
+    c.add_argument("--reply", choices=["all", "merged", "route"])
     c.add_argument("--merger", help="the alias that merges, for --reply merged")
 
     cmd("endpoints", cmd_endpoints, "where models are served from")

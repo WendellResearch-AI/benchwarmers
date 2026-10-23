@@ -55,6 +55,8 @@ CHECKS = [
     ("scripts/test_merged.py", [], False),
     ("scripts/test_vision.py", [], False),
     ("scripts/test_formats.py", [], False),
+    ("scripts/test_route.py", [], False),
+    ("scripts/test_native.py", [], False),
     ("scripts/test_serve_edit.py", [], False),
     ("scripts/test_connect.py", [], False),
     ("scripts/test_auth.py", [], False),

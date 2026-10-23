@@ -48,7 +48,7 @@ verdicts decide who sits on the next panel.
 
 | Related tools | Examples | What they do | What Benchwarmers does differently |
 |---|---|---|---|
-| Gateways and routers | LiteLLM, OpenRouter, Portkey | One request to one model, with fallback | Fans one prompt out to a panel and returns every answer |
+| Gateways and routers | LiteLLM, OpenRouter, Portkey | One request to one model, with fallback | Fans one prompt out to a panel and returns every answer; for agents, routes to one member by its record |
 | Councils and ensembles | LLM Council, Mixture-of-Agents | Several models merged into one answer | Keeps every answer, because who said what is the evidence; one merged summary only if you ask |
 | Side-by-side chat | Open WebUI, LMArena | Several answers shown together | Records a verdict per answer and uses them to pick the next panel |
 | Evaluation harnesses | promptfoo, Inspect, SWE-bench | Score models offline on fixed test sets | Scores them on your real work and your own code, and keeps rotating new models in |
@@ -293,6 +293,16 @@ On native Windows, a client that cannot start `npx` itself needs
 | `BENCHWARMERS_URL` | the server, default `http://127.0.0.1:8122` (a `/v1` on the end is fine) |
 | `BENCHWARMERS_KEY` | a gateway key from Settings, sent as `Authorization: Bearer`; needed for a server on another machine, or where keys are required |
 | `BENCHWARMERS_TIMEOUT` | seconds to wait for a panel, default 900 |
+
+**An agent running on a collection.** The MCP tools ask a panel for a
+second opinion; an agent can also *be driven by* a collection, in **route
+mode** (`bench/<collection>:route`): one member, picked by its record, gets
+each turn with its tools, stays on for the whole conversation, and is
+replaced by the next member if it fails before answering. Claude Code
+points at it with `ANTHROPIC_BASE_URL=http://127.0.0.1:8122` and
+`ANTHROPIC_MODEL=bench/core:route`; Codex, opencode, Cline and other
+OpenAI-, Responses- or Ollama-speaking agents with the same base URL.
+[GATEWAY.md](GATEWAY.md), "Route mode", has the set-up and the limits.
 
 <!-- The MCP Registry's proof that the PyPI package is this server (server.json):
 mcp-name: io.github.WendellResearch-AI/benchwarmers -->

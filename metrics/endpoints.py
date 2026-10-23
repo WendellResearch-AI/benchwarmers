@@ -88,6 +88,18 @@ HUBS = {"openwebui": "Open WebUI", "litellm": "LiteLLM", "cliproxy": "CLI Proxy 
 # endpoint(), plan(connection, model) and add(connection, model), and the two
 # whose connections only the hub knows also upstreams(), for Discover.
 ADAPTERS = {"openwebui": "owui", "litellm": "litellm_hub", "cliproxy": "cliproxy"}
+# `api`: what an endpoint speaks, chat completions unless it says otherwise.
+# The built-in client builds the others' native requests (metrics/formats.py);
+# `responses` is set by Connect for ChatGPT's plan, the native two on the Add
+# form, for an API key whose provider has no chat completions route.
+APIS = {"chat": "OpenAI chat completions", "responses": "OpenAI Responses",
+        "anthropic": "Anthropic Messages (native)", "gemini": "Gemini generateContent (native)"}
+
+
+def auth_headers(api: str, secret: str) -> dict:
+    """How a key is sent: Bearer, except to Anthropic's and Gemini's native APIs."""
+    return {"anthropic": {"x-api-key": secret}, "gemini": {"x-goog-api-key": secret}}.get(
+        api, {"Authorization": f"Bearer {secret}"})
 
 
 def adapter(which: str):
@@ -271,13 +283,24 @@ def list_models(entry: dict, secret: str = "", timeout: int = 30) -> dict[str, d
     before saving it). `models_url` when the list lives elsewhere (GitHub
     Models: its catalog, a bare JSON list); entries marked `visibility` other
     than "list" are left out (ChatGPT's plan lists ones it will not serve)."""
+    api = entry.get("api") or "chat"
     headers = dict(entry.get("headers") or {})
     if secret:
-        headers["Authorization"] = f"Bearer {secret}"
+        headers.update(auth_headers(api, secret))
+    if api == "anthropic":
+        headers["anthropic-version"] = "2023-06-01"
     url = entry.get("models_url") or entry["base"].rstrip("/") + "/models"
+    if api == "gemini" and not entry.get("models_url"):
+        url += "?pageSize=1000"                        # 50 a page otherwise
     with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=timeout) as response:
         data = json.load(response)
-    rows = data.get("data", []) if isinstance(data, dict) else data
+    if api == "gemini" and isinstance(data, dict):
+        # Gemini's list: {"models": [{"name": "models/gemini-x", ...}]}; only
+        # what generateContent serves, by its bare name.
+        rows = [{**m, "id": str(m.get("name", "")).removeprefix("models/")} for m in data.get("models", [])
+                if isinstance(m, dict) and "generateContent" in (m.get("supportedGenerationMethods") or ())]
+    else:
+        rows = data.get("data", []) if isinstance(data, dict) else data
     return {e["id"]: e for e in rows
             if isinstance(e, dict) and e.get("id") and e.get("visibility", "list") == "list"}
 
