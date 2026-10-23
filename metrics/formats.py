@@ -88,8 +88,9 @@ class UpstreamError(RuntimeError):
 
 def estimate(text: str) -> int:
     """Tokens in `text`: characters / 4 plus 10%, which errs high
-    (gateway.estimate_tokens says why)."""
-    return int(len(text) / 4 * 1.1)
+    (gateway.estimate_tokens says why). At least 1 for any text: a count
+    of 0 for "hi" reads as nothing sent."""
+    return max(1, int(len(text) / 4 * 1.1)) if text else 0
 
 
 # ---- the parts every format shares ---------------------------------------

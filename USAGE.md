@@ -104,6 +104,22 @@ Images go in as OpenAI `image_url` parts; only models that take images sit,
 and the rest are listed in `bench.skipped`. [GATEWAY.md](GATEWAY.md) has the
 limits and the reply's full shape.
 
+**A client that speaks another API** works too, with the server's address as
+its base URL and a collection as its model:
+
+| Client | Base URL | Notes |
+| --- | --- | --- |
+| Open WebUI, as an **Ollama** connection | `http://127.0.0.1:8122` | collections listed from `/api/tags`; `bench/<collection>:merged` reads best in a chat window |
+| **Anthropic** SDK (`anthropic.Anthropic(base_url=...)`) | `http://127.0.0.1:8122` | `/v1/messages`; a gateway key goes in `api_key` |
+| **Google GenAI** SDK (`http_options=HttpOptions(base_url=...)`) | `http://127.0.0.1:8122` | `generate_content(model="bench/<collection>")`; a key in `api_key` |
+| OpenAI **Responses** clients | `http://127.0.0.1:8122/v1` | `responses.create`; nothing is stored, so send the whole conversation |
+| Older tools on `/v1/completions` | `http://127.0.0.1:8122/v1` | one `prompt` |
+
+Asked to stream, each answers at once and sends each seat's answer as it
+finishes. Agents that need tools (Claude Code, Codex, opencode as callers)
+are not supported yet: a request with tools is refused with a 400 saying so.
+GATEWAY.md, "Other API formats", has a curl for each.
+
 **A coding agent** connects over MCP instead: the Claude Code plugin
 (`/plugin marketplace add WendellResearch-AI/benchwarmers`, then
 `/plugin install benchwarmers@benchwarmers`), or `benchwarmers mcp` in any MCP

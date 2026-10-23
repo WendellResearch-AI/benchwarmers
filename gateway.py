@@ -73,6 +73,22 @@ the seats' answers: its job is to reconcile what the seats said, not to look
 again, so any model can merge and a disagreement about the picture is
 reported rather than settled.
 
+OTHER FORMATS, AND STREAMING
+----------------------------
+The same panel answers Anthropic Messages (/v1/messages), OpenAI Responses
+(/v1/responses) and legacy completions (/v1/completions), Ollama (/api/chat,
+/api/generate, /api/tags, /api/version, /api/show) and Gemini
+(/v1beta/models/<collection>:generateContent and :streamGenerateContent):
+metrics/formats.py turns each request into OpenAI messages and the answer
+back into the format's reply. A request carrying tools is refused (400): a
+panel's text is not a tool call.
+
+Asked to stream, the reply's 200 goes as soon as the panel is seated (a
+refusal before that keeps its status), keep-alives go while the seats
+think, each seat's section goes as that seat finishes (a merged reply when
+the merge is done), and an error after the 200 goes into the stream in the
+format's own shape (Handler._stream).
+
 WHAT IT IS NOT
 --------------
 A single-model proxy. Tools such as Roo Code call Open WebUI directly; this
