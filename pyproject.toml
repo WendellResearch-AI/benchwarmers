@@ -1,0 +1,62 @@
+# Benchwarmers on PyPI: `pipx install benchwarmers` (or `uv tool install benchwarmers`,
+# or `uvx benchwarmers`). The same files as the npm package (package.json "files"),
+# under one folder in site-packages; launcher.py runs them as a checkout does.
+# Standard library only: no dependencies.
+
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "benchwarmers"
+dynamic = ["version"]
+description = "Self-hosted panel gateway for LLMs: ask a collection of models at once, keep every answer side by side, rotate explorer models in, and let your verdicts pick the next panel."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE", "NOTICE"]
+authors = [{ name = "Wendell Research" }]
+keywords = ["llm", "llm-gateway", "openai-compatible", "multi-model", "code-review", "llm-evaluation",
+            "benchmark", "model-routing", "self-hosted", "open-webui", "openrouter", "mcp"]
+classifiers = [
+    "Environment :: Console",
+    "Environment :: Web Environment",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Quality Assurance",
+]
+
+[project.urls]
+Homepage = "https://github.com/WendellResearch-AI/benchwarmers"
+Documentation = "https://github.com/WendellResearch-AI/benchwarmers#readme"
+Issues = "https://github.com/WendellResearch-AI/benchwarmers/issues"
+
+[project.scripts]
+benchwarmers = "benchwarmers.launcher:main"
+bench = "benchwarmers.launcher:main"
+
+[tool.hatch.version]
+path = "VERSION"
+pattern = "(?P<version>[^\\s]+)"
+
+# The repository's root becomes site-packages/benchwarmers/ (a namespace
+# package: nothing imports it but the entry point above).
+[tool.hatch.build.targets.wheel]
+only-include = ["launcher.py", "serve.py", "gateway.py", "mcp_server.py", "cli.py", "metrics", "scripts",
+                "suite", "perf", "repoqa", "ui", "examples", "VERSION", "NOTICE", "AGENTS.md",
+                "BENCHMARKS.md", "GATEWAY.md", "PRIVACY.md", "SECURITY.md", "TERMS.md", "USAGE.md"]
+exclude = ["metrics/*.json", "metrics/*.jsonl", "perf/*.csv", "perf/*.json", "repoqa/*.json*",
+           "**/__pycache__"]
+
+[tool.hatch.build.targets.wheel.sources]
+"" = "benchwarmers"
+
+[tool.hatch.build.targets.sdist]
+only-include = ["launcher.py", "serve.py", "gateway.py", "mcp_server.py", "cli.py", "metrics", "scripts",
+                "suite", "perf", "repoqa", "ui", "examples", "VERSION", "NOTICE", "LICENSE", "README.md",
+                "AGENTS.md", "BENCHMARKS.md", "GATEWAY.md", "PRIVACY.md", "SECURITY.md", "TERMS.md",
+                "USAGE.md", "pyproject.toml"]
+exclude = ["metrics/*.json", "metrics/*.jsonl", "perf/*.csv", "perf/*.json", "repoqa/*.json*",
+           "**/__pycache__"]

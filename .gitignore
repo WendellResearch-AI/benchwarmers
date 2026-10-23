@@ -19,6 +19,10 @@ keys.json
 # compose.yaml's secrets (the admin token, BENCHWARMERS_KEY_*)
 .env
 __pycache__/
+# pip wheel . / python -m build (pyproject.toml)
+/dist/
+/build/
+*.egg-info/
 suite/tasks/*/output/
 .venv/
 floor/results/

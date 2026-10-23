@@ -1,6 +1,6 @@
 {
   "name": "benchwarmers",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Ask a Benchwarmers collection of models from Claude Code: every seat's answer side by side, explorer seats rotated in, and your verdicts fed back into routing.",
   "author": { "name": "Wendell Research" },
   "homepage": "https://github.com/WendellResearch-AI/benchwarmers#readme",

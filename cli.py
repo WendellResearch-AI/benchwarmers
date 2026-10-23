@@ -190,7 +190,8 @@ def cmd_status(args) -> None:
         print(f"  data         {r['data']}")
         print(f"  models       {r['models']} chat, {r['decision_models']} decision, {r['retired']} retired")
         print(f"  collections  {r['collections']}")
-        print(f"  endpoints    {r['endpoints']} (default {r['default_endpoint']})")
+        print(f"  endpoints    {r['endpoints']} (default {r['default_endpoint']})" if r["default_endpoint"]
+              else "  endpoints    none yet: add one with `bench endpoint add` or on the dashboard")
         print(f"  client       {r['client']}    scheduler {r['scheduler']}")
         print(f"  auth         {'admin token set' if r['auth'] else 'none (this machine only)'}"
               f"{', gateway keys required' if r['keys_required'] else ''}")

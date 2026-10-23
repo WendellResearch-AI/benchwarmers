@@ -913,10 +913,14 @@ def status_view() -> dict:
     import client as model_client
     import scheduler
     queue, sched = onboard_queue(), scheduler.settings()
+    try:
+        default = endpoints.default()
+    except RuntimeError:                               # a fresh install: no endpoint yet
+        default = None
     return {"ok": True, "errors": [], "version": RELEASE, "gateway": gateway_url(), "data": str(DATA),
             "models": len(_chat_aliases()), "decision_models": len(decide.load()),
             "retired": len(retired()), "collections": len(bench_collections.load()),
-            "endpoints": len(endpoints.load()), "default_endpoint": endpoints.default(),
+            "endpoints": len(endpoints.load()), "default_endpoint": default,
             "client": model_client.chosen()[0], "scheduler": sched["mode"],
             # Every job and whether it runs: save_scheduler turns on any job it is not told is off.
             "scheduler_jobs": {n: sched["jobs"].get(n, True) for n in scheduler.JOBS},
@@ -3614,7 +3618,10 @@ class Handler(gateway.Handler):
         read_only = {"/api/status": status_view, "/api/models": models_view,
                      "/api/gateway-keys": gateway_keys_view}
         if path in read_only:
-            self._json(200, read_only[path]())
+            try:
+                self._json(200, read_only[path]())
+            except RuntimeError as exc:                # endpoints: none yet, or a file it cannot read
+                self._json(400, {"ok": False, "errors": [str(exc)]})
             return
         if self.path == "/api/connections":
             self._json(200, connections_view())

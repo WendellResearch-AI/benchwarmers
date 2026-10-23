@@ -1,59 +1,14 @@
 #!/usr/bin/env node
-// Benchwarmers from npm: a launcher for the Python app this package carries.
-// It finds Python 3.11 or later, keeps your data in your user profile (the
-// folder scripts/init.py picks, or BENCHWARMERS_HOME), sets that folder up on
-// the first run, then starts the dashboard. The app itself is the Python
-// standard library only; nothing is installed beside it.
+// Benchwarmers from npm: finds Python 3.11 or later and hands over to
+// launcher.py, the same launcher a pip install runs, which knows the commands,
+// the help and the first run. The app itself is the Python standard library
+// only; nothing is installed beside it.
 'use strict';
 
 const { spawn, spawnSync } = require('child_process');
-const fs = require('fs');
-const os = require('os');
 const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
-
-// The same folder as scripts/init.py's default_folder(), so a checkout and an
-// npm install on one machine find the same data.
-function defaultHome() {
-  if (process.platform === 'win32') return path.join(process.env.LOCALAPPDATA || os.homedir(), 'benchwarmers');
-  if (process.platform === 'darwin') return path.join(os.homedir(), 'Library', 'Application Support', 'benchwarmers');
-  return path.join(process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share'), 'benchwarmers');
-}
-
-// `bench` and `benchwarmers` are the same program; usage names the one typed.
-const NAME = path.basename(process.argv[1] || 'benchwarmers').replace(/\.js$/, '');
-
-// Everything but running a server is cli.py, a client of a running server.
-const CLIENT = ['status', 'ask', 'verdict', 'models', 'model', 'candidates', 'onboard', 'dismiss',
-  'collections', 'collection', 'endpoints', 'endpoint', 'keys', 'key', 'settings'];
-
-function usage() {
-  return [
-    'Usage: ' + NAME + ' [command]',
-    '',
-    'Running it:',
-    '  serve        the dashboard, with the gateway at /v1: http://localhost:8122 (the default)',
-    '  gateway      the gateway alone: http://127.0.0.1:8123/v1',
-    '  init [...]   set up a data folder, optionally with a first endpoint (init --help)',
-    '  mcp          an MCP server on stdio for agents',
-    '',
-    'Using it (a client of a running server, BENCHWARMERS_URL; --help on any):',
-    '  status                          what is running, and where',
-    '  ask <collection> [prompt]       ask a collection; -f FILE adds a file, a pipe reads stdin',
-    '  verdict <call> --useful|--not-useful [--real ...] [--false ...]',
-    '  models | model <action>         list, rename, role, retire, restore, max-tokens, ...',
-    '  candidates | onboard | dismiss  what could be onboarded, and onboarding it',
-    '  collections | collection <action>   list, show, save, rm',
-    '  endpoints | endpoint <action>   list, add, test, key, rm, default',
-    '  keys | key <action>             gateway keys: list, create, revoke',
-    '  settings <gateway|client|scheduler>',
-    '  --version    the version',
-    '',
-    'Your data lives in BENCHWARMERS_HOME, else ' + defaultHome() + '.',
-    'BENCH_PORT changes the port. Docs: https://github.com/WendellResearch-AI/benchwarmers',
-  ].join('\n');
-}
 
 // The first Python that is 3.11 or later: `py -3` on Windows, then python3, python.
 function findPython() {
@@ -69,53 +24,16 @@ function findPython() {
   return null;
 }
 
-function main(argv) {
-  const command = argv[0] && !argv[0].startsWith('-') ? argv[0] : 'serve';
-  const client = CLIENT.includes(command);
-  if (argv[0] === '--version' || argv[0] === '-v') {
-    console.log(fs.readFileSync(path.join(ROOT, 'VERSION'), 'utf8').trim());
-    return 0;
-  }
-  // A client command's own --help is cli.py's, which knows its options.
-  if (command !== 'init' && !client && (argv.includes('--help') || argv.includes('-h'))) {
-    console.log(usage());
-    return 0;
-  }
-  const scripts = { serve: 'serve.py', gateway: 'gateway.py', mcp: 'mcp_server.py', init: path.join('scripts', 'init.py') };
-  for (const c of CLIENT) scripts[c] = 'cli.py';
-  if (!scripts[command]) {
-    console.error(NAME + ': no command "' + command + '"\n\n' + usage());
-    return 2;
-  }
-  const python = findPython();
-  if (!python) {
-    console.error('benchwarmers needs Python 3.11 or later on PATH (https://www.python.org/downloads/).');
-    return 1;
-  }
-  const home = (process.env.BENCHWARMERS_HOME || '').trim() || defaultHome();
-  // No bytecode beside the code: an npm folder may not be writable, and an
-  // upgrade replaces it anyway.
-  const env = Object.assign({}, process.env, {
-    BENCHWARMERS_HOME: home, BENCHWARMERS_LAUNCHER: 'npm', PYTHONDONTWRITEBYTECODE: '1', PYTHONUTF8: '1' });
-  // cli.py takes the command itself; the others take what follows it.
-  const rest = client ? argv : command === argv[0] ? argv.slice(1) : argv;
-  const py = (script, args) => python[1].concat([path.join(ROOT, script)], args);
-
-  // The first run makes the data folder from examples/ (init.py never writes
-  // over a file already there, and with BENCHWARMERS_HOME set it leaves the
-  // package folder alone). Not for mcp or a client command: they keep no data
-  // (the server does), and mcp's stdout carries protocol messages only.
-  if (command !== 'init' && command !== 'mcp' && !client && !fs.existsSync(home)) {
-    console.log('First run: making your data folder at ' + home);
-    const r = spawnSync(python[0], py(scripts.init, [home]), { stdio: 'inherit', env, cwd: ROOT });
-    if (r.status !== 0) return r.status || 1;
-  }
-  // A client runs where it was typed, so `-f diff.txt` is the caller's file.
-  const child = spawn(python[0], py(scripts[command], rest), { stdio: 'inherit', env, cwd: client ? process.cwd() : ROOT });
-  for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => child.kill(sig));
-  child.on('exit', (code, signal) => process.exit(code === null ? (signal ? 1 : 0) : code));
-  return null;
+const python = findPython();
+if (!python) {
+  console.error('benchwarmers needs Python 3.11 or later on PATH (https://www.python.org/downloads/).');
+  process.exit(1);
 }
-
-const code = main(process.argv.slice(2));
-if (code !== null) process.exit(code);
+// `bench` and `benchwarmers` are the same program; usage names the one typed.
+const env = Object.assign({}, process.env, {
+  BENCHWARMERS_LAUNCHER: 'npm', BENCHWARMERS_PROG: path.basename(process.argv[1] || 'benchwarmers').replace(/\.js$/, ''),
+  PYTHONDONTWRITEBYTECODE: '1', PYTHONUTF8: '1' });
+const child = spawn(python[0], python[1].concat([path.join(ROOT, 'launcher.py')], process.argv.slice(2)),
+  { stdio: 'inherit', env });
+for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => child.kill(sig));
+child.on('exit', (code, signal) => process.exit(code === null ? (signal ? 1 : 0) : code));

@@ -8,6 +8,7 @@
 <p align="center">
   <a href="https://github.com/WendellResearch-AI/benchwarmers/releases"><img src="https://img.shields.io/github/v/release/WendellResearch-AI/benchwarmers?color=990000" alt="Latest release"></a>
   <a href="https://www.npmjs.com/package/@wendellresearch-ai/benchwarmers"><img src="https://img.shields.io/npm/v/@wendellresearch-ai/benchwarmers?color=cb3837&logo=npm" alt="npm"></a>
+  <a href="https://pypi.org/project/benchwarmers/"><img src="https://img.shields.io/pypi/v/benchwarmers?color=3775a9&logo=pypi&logoColor=white" alt="PyPI"></a>
   <a href="https://github.com/WendellResearch-AI/benchwarmers/actions/workflows/check.yml"><img src="https://github.com/WendellResearch-AI/benchwarmers/actions/workflows/check.yml/badge.svg" alt="Checks"></a>
   <a href="#docker"><img src="https://img.shields.io/badge/Docker-compose-2496ED?logo=docker&logoColor=white" alt="Runs in Docker"></a>
   <a href="GATEWAY.md"><img src="https://img.shields.io/badge/OpenAI--compatible-gateway-111111" alt="OpenAI-compatible gateway"></a>
@@ -80,18 +81,25 @@ with [AGENTS.md](AGENTS.md).
 
 ## Try it
 
-**v0.1, early.** It runs with Python 3.11 or later on Windows, macOS and
-Linux, from npm, a checkout or Docker. Expect rough edges, and read the code
-where these pages are thin.
+**v0.2, early.** It runs with Python 3.11 or later on Windows, macOS and
+Linux, from PyPI, npm, a checkout or Docker. Expect rough edges, and read the
+code where these pages are thin.
 
-**Quickest**, with Node 18+ and Python 3.11+ installed:
+**Quickest**, with Python 3.11+ installed, from PyPI:
+
+    pipx install benchwarmers        # or: uv tool install benchwarmers
+    benchwarmers                     # or try it first, without installing: uvx benchwarmers
+
+or from npm, with Node 18+ as well:
 
     npx @wendellresearch-ai/benchwarmers
 
-It keeps your data in your user profile (`BENCHWARMERS_HOME` to choose
-another folder), sets it up on the first run, and opens the dashboard on
-http://localhost:8122, where steps 3 to 5 below continue. The built-in model
-client makes every call, so nothing else needs installing.
+Either way you get the same two commands, `benchwarmers` and its short name
+`bench`. It keeps your data in your user profile (`BENCHWARMERS_HOME` to
+choose another folder), sets it up on the first run, and opens the dashboard
+on http://localhost:8122, where steps 3 to 5 below continue. The built-in
+model client makes every call, so nothing else needs installing. No
+dependencies either way: the app is the Python standard library.
 
 **From source:**
 
@@ -246,7 +254,8 @@ how to judge it:
 It needs Node 18 or later and Python 3.11 or later on PATH.
 
 **Any other MCP client** (or Claude Code without the plugin): run
-`npx -y @wendellresearch-ai/benchwarmers mcp`, or `python mcp_server.py` from a
+`benchwarmers mcp` once installed, `uvx benchwarmers mcp` or
+`npx -y @wendellresearch-ai/benchwarmers mcp` without installing, or `python mcp_server.py` from a
 checkout. For example:
 
 ```json
