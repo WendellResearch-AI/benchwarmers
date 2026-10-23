@@ -96,7 +96,11 @@ def main() -> int:
             ok("collection", "save", "pair", "--add", c, "--remove", a)
             data = json.loads(serve.bench_collections.FILE.read_text(encoding="utf-8"))
             assert data["pair"]["members"] == [b, c] and data["pair"]["description"] == "two", data
-            ok("collection", "rm", "pair")
+            # Deleting asks; with no terminal to ask in, only --yes does it.
+            code, _, err = bench("collection", "rm", "pair")
+            assert code == 2 and "--yes" in err, (code, err)
+            assert "pair" in json.loads(serve.bench_collections.FILE.read_text(encoding="utf-8"))
+            ok("collection", "rm", "pair", "--yes")
             assert "pair" not in json.loads(serve.bench_collections.FILE.read_text(encoding="utf-8"))
             code, _, err = bench("collection", "show", "pair")
             assert code == 1 and "no collection" in err, (code, err)
@@ -107,7 +111,25 @@ def main() -> int:
             assert code == 0 and key.startswith(guard.PREFIX) and "shown this once" in err, (code, out, err)
             listed = ok("keys", "--json")
             assert "cli-test" in listed and key not in listed and "sha256" not in listed, listed
-            ok("key", "revoke", "cli-test")
+            assert bench("key", "revoke", "cli-test")[0] == 2                 # asks first
+            ok("key", "revoke", "cli-test", "-y")
+
+            # --json and --url before the command or after it; --url over BENCHWARMERS_URL.
+            assert json.loads(ok("--json", "status"))["ok"] and json.loads(ok("status", "--json"))["ok"]
+            url = os.environ["BENCHWARMERS_URL"]
+            os.environ["BENCHWARMERS_URL"] = "http://127.0.0.1:9"               # nothing there
+            assert bench("status")[0] == 3
+            for argv in (("--url", url, "status", "--json"), ("status", "--url", url, "--json")):
+                assert json.loads(ok(*argv))["gateway"].endswith(f":{port}/v1"), argv
+            os.environ["BENCHWARMERS_URL"] = url
+
+            # A route this server lacks (an older server): said so, GET (the page) or POST (a 404).
+            for method in ("GET", "POST"):
+                try:
+                    cli.call(method, "/api/not-yet", {} if method == "POST" else None)
+                    raise AssertionError(f"{method} of a missing route passed")
+                except cli.Failed as e:
+                    assert "older than this bench" in str(e), (method, str(e))
 
             # Asking: the prompt from words, a file and stdin; the options on the wire.
             f = t / "diff.txt"

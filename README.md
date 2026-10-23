@@ -203,11 +203,17 @@ running server, so the same commands work against one on another machine.
     bench key create my-app --collections core --rpm 30
     bench settings scheduler run --off perf
 
-`--help` on any command lists its options, and `--json` on any prints what the
-server answered, for scripts. `ask` prints every seat's answer and a table of
-call ids to judge them by. A key is never an argument (others on the machine
-can read those): `endpoint add` prompts for it, or reads it from stdin with
-`--key-stdin`.
+`--help` on any command lists its options with examples, and `--json` prints
+what the server answered, for scripts. `--url` points one command at another
+server. `ask` prints every seat's answer on stdout and the table of call ids to
+judge them by on stderr, so `bench ask core "..." > review.md` keeps only the
+answers. Retiring a model, deleting a collection or an endpoint and revoking a
+key ask first; `--yes` answers for a script. A key is never an argument (others
+on the machine can read those): `endpoint add` prompts for it, or reads it
+from stdin with `--key-stdin`.
+
+Another program called `bench` (the Frappe framework's) may come first on your
+PATH; type `benchwarmers` instead, which takes the same commands.
 
 | Variable | Meaning |
 | --- | --- |

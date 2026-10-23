@@ -23,6 +23,7 @@ library only; nothing from metrics/, the data folder being the server's.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import getpass
 import json
 import os
@@ -35,6 +36,8 @@ from pathlib import Path
 
 PREFIX = "bench/"
 GATEWAY = ("/v1/", "/bench/")
+VERSION = (Path(__file__).resolve().parent / "VERSION").read_text(encoding="utf-8").strip()
+OVERRIDES: dict[str, str] = {}                         # from flags (--url), over the environment
 
 
 class Failed(Exception):
@@ -48,9 +51,15 @@ class Failed(Exception):
 # ---- talking to the server --------------------------------------------------
 
 def env(name: str) -> str:
-    """This client's settings (one place, so a test can give the client
-    different ones from the server it runs in the same process)."""
-    return (os.environ.get(name) or "").strip()
+    """This client's settings: a flag, else the environment (one place, so a
+    test can give the client different ones from the server in its process)."""
+    return (OVERRIDES.get(name) or os.environ.get(name) or "").strip()
+
+
+def too_old(path: str) -> Failed:
+    """A route this CLI knows and the server does not: an older server."""
+    return Failed(f"the server at {base_url()} has no {path}: it is older than this bench ({VERSION})."
+                  " Upgrade it, or use its dashboard for this.")
 
 
 def base_url() -> str:
@@ -71,13 +80,19 @@ def http(method: str, path: str, body: dict | None = None) -> dict:
     req = urllib.request.Request(base_url() + path, data=data, headers=headers, method=method)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
-            return json.load(r)
+            raw = r.read()
+            # An unknown GET is answered with the dashboard's page, not a 404.
+            if path.startswith("/api/") and "text/html" in (r.headers.get("Content-Type") or ""):
+                raise too_old(path)
+            return json.loads(raw)
     except urllib.error.HTTPError as e:
         raw = e.read().decode("utf-8", "replace")
         try:
             reply = json.loads(raw)
         except ValueError:
             reply = None
+        if e.code == 404 and isinstance(reply, dict) and reply.get("errors") == ["unknown endpoint"]:
+            raise too_old(path) from None
         if isinstance(reply, dict) and reply.get("ok") is False and e.code != 401:
             return reply                       # the dashboard's own refusal: errors[] say why
         message = None
@@ -142,6 +157,18 @@ def csv(value: str | None) -> list[str]:
     return [v.strip() for v in (value or "").split(",") if v.strip()]
 
 
+def confirm(args, what: str) -> None:
+    """Ask before something that cannot be taken back in one step: y in a
+    terminal, --yes anywhere; never silently in a script."""
+    if getattr(args, "yes", False):
+        return
+    if not sys.stdin.isatty():
+        raise Failed(f"{what}: add --yes to do this without a terminal to ask in", 2)
+    print(f"{what}? [y/N] ", end="", file=sys.stderr, flush=True)
+    if sys.stdin.readline().strip().lower() not in ("y", "yes"):
+        raise Failed("left as it was")
+
+
 def secret_from(args, what: str) -> str:
     """A key from stdin (--key-stdin) or a hidden prompt: never an argument,
     which every other user of the machine can read in the process list."""
@@ -197,6 +224,7 @@ def cmd_model(args) -> None:
         n = None if args.tokens in ("none", "") else int(args.tokens)
         reply = call("POST", "/api/model-options", {"alias": args.alias, "max_tokens": n})
     elif a == "retire":
+        confirm(args, f"retire {args.alias} (it leaves every collection it is in; restore brings it back)")
         reply = call("POST", "/api/remove", {"alias": args.alias, "reason": args.reason or ""})
     elif a == "restore":
         reply = call("POST", "/api/restore", {"alias": args.alias})
@@ -281,6 +309,7 @@ def cmd_collection(args) -> None:
             raise Failed(f"no collection {name!r}; have: {', '.join(sorted(have)) or 'none'}")
         return out(args, have[name], lambda c: print(json.dumps(c, indent=2, ensure_ascii=False)))
     if args.action == "rm":
+        confirm(args, f"delete collection {name} (callers of bench/{name} start failing)")
         reply = call("POST", "/api/collection/remove", {"name": name})
         return out(args, reply, lambda r: done(r, f"deleted collection {name}"))
     # save: what is given replaces; what is not keeps the collection's own (a
@@ -334,10 +363,12 @@ def cmd_ask(args) -> None:
 
     def human(r):
         print(r["choices"][0]["message"]["content"])
+        # The seats to stderr: `bench ask ... > review.md` keeps the answers only.
         seats = (r.get("bench") or {}).get("seats") or []
         if seats:
-            print("\nSeats (verdict each one you check: bench verdict <call> --useful|--not-useful):")
-            table(seats, ["call", "seat", "alias", "status", "seconds"])
+            with contextlib.redirect_stdout(sys.stderr):
+                print("\nSeats (verdict each one you check: bench verdict <call> --useful|--not-useful):")
+                table(seats, ["call", "seat", "alias", "status", "seconds"])
     out(args, reply, human)
 
 
@@ -366,6 +397,7 @@ def cmd_endpoint(args) -> None:
                 "new": a == "add", "kind": args.kind or "", "hub": args.hub or "", "test": a == "test"}
         reply = call("POST", "/api/endpoint", body)
     elif a == "rm":
+        confirm(args, f"remove endpoint {args.name}" + (" and retire every model on it" if args.with_models else ""))
         reply = call("POST", "/api/endpoint/remove", {"name": args.name, "with_models": args.with_models})
     else:                                              # default
         reply = call("POST", "/api/endpoint/default", {"name": args.name})
@@ -383,6 +415,7 @@ def cmd_keys(args) -> None:
 
 def cmd_key(args) -> None:
     if args.action == "revoke":
+        confirm(args, f"revoke gateway key {args.name} (whatever uses it stops working)")
         reply = call("POST", "/api/gateway-key/remove", {"name": args.name})
         return out(args, reply, lambda r: done(r, f"revoked {args.name}"))
     reply = call("POST", "/api/gateway-key", {"name": args.name, "collections": csv(args.collections),
@@ -414,20 +447,98 @@ def cmd_settings(args) -> None:
 
 # ---- the parser -------------------------------------------------------------
 
+EXAMPLES = {
+    "": """examples:
+  bench status
+  bench ask core "Where can this return a stale value?" -f cache.py
+  git diff | bench ask core "Review this diff"
+  bench verdict p20261022-101500-ab12.member1 --useful --real "the race in refresh()"
+  bench models --find mercury
+  bench --url http://bench.lan:8122 collections
+
+Starting the server: bench serve | gateway | init | mcp (benchwarmers --help).
+Where another program is called bench (the Frappe framework's), type benchwarmers.""",
+    "ask": """examples:
+  bench ask core "Is this regex safe on untrusted input?" -f validate.py
+  git diff main | bench ask reviewers "Where does this change break callers?"
+  bench ask core --merged "Summarise the disagreements" < notes.md
+  bench ask core --with mercury-3 "..."      seat a model you want to try
+
+The answers go to stdout and the seats' table to stderr, so
+  bench ask core "..." > review.md
+keeps only the answers. Then judge each seat you checked:
+  bench verdict <call> --useful|--not-useful""",
+    "verdict": """examples:
+  bench verdict p20261022-101500-ab12.member1 --useful --note "found the real bug" \\
+      --real "refresh() races with evict()" --false "the query is injectable\"""",
+    "model": """examples:
+  bench model role mercury-3 code
+  bench model rename deepseek-v4.1-flash deepseek-flash
+  bench model max-tokens inkling-free 8000        (none: the endpoint's own)
+  bench model retire old-model --reason "deprecated by its provider"
+  bench model restore old-model""",
+    "onboard": """examples:
+  bench candidates --new
+  bench onboard minimax/minimax-m3.1-flash:free --wait
+  bench onboard a/one:free b/two:free --endpoint openrouter
+  bench onboard status | stop | clear""",
+    "collection": """examples:
+  bench collection save reviewers --members a,b,c --description "adversarial review" --tags review
+  bench collection save reviewers --add d --remove a      (the rest stays as it was)
+  bench collection save reviewers --reply merged --merger a
+  bench collection show reviewers
+  bench collection rm reviewers --yes""",
+    "endpoint": """examples:
+  bench endpoint add openrouter --base https://openrouter.ai/api/v1      (asks for the key, hidden)
+  printf %s "$KEY" | bench endpoint key openrouter --key-stdin
+  bench endpoint test groq --base https://api.groq.com/openai/v1
+  bench endpoint default openwebui
+  bench endpoint rm old --with-models --yes""",
+    "key": """examples:
+  bench key create open-webui --collections core,fast --rpm 30      (printed once: keep it)
+  bench key revoke open-webui --yes""",
+    "settings": """examples:
+  bench settings gateway --max-calls 6 --max-explorers 2
+  bench settings client builtin
+  bench settings scheduler run --off perf,suite""",
+}
+
+
 def parser() -> argparse.ArgumentParser:
+    # On every command as well as before it (bench --json status, bench status --json).
+    # SUPPRESS on the copies: a sub-command's default must not overwrite one given first.
     common = argparse.ArgumentParser(add_help=False)
-    common.add_argument("--json", action="store_true", help="print the server's reply as JSON")
-    p = argparse.ArgumentParser(prog="bench", description="Benchwarmers from the command line: a client of a"
-                                " running server (BENCHWARMERS_URL, default http://127.0.0.1:8122).",
-                                epilog="Starting things: bench serve | gateway | init | mcp.")
+    common.add_argument("--json", action="store_true", default=argparse.SUPPRESS,
+                        help="print the server's reply as JSON")
+    common.add_argument("--url", default=argparse.SUPPRESS, metavar="URL",
+                        help="the server (default: BENCHWARMERS_URL, else http://127.0.0.1:8122)")
+    fmt = argparse.RawDescriptionHelpFormatter
+    p = argparse.ArgumentParser(prog="bench", formatter_class=fmt, epilog=EXAMPLES[""],
+                                description="Benchwarmers from the command line: a client of a running server."
+                                " Tokens come from BENCHWARMERS_ADMIN_TOKEN and BENCHWARMERS_KEY, never"
+                                " an argument.")
+    p.add_argument("--json", action="store_true", default=False, help="print the server's reply as JSON")
+    p.add_argument("--url", default=None, metavar="URL",
+                   help="the server (default: BENCHWARMERS_URL, else http://127.0.0.1:8122)")
+    p.add_argument("--version", action="version", version=f"bench {VERSION}")
     sub = p.add_subparsers(dest="command", required=True, metavar="command")
 
-    def cmd(name, fn, help_, group=False):
-        # A group (model, collection, ...) takes --json on its actions, not on itself,
-        # or an action's default would silently overwrite it.
-        s = sub.add_parser(name, help=help_, description=help_, parents=[] if group else [common])
+    def cmd(name, fn, help_):
+        s = sub.add_parser(name, help=help_, description=help_, parents=[common], formatter_class=fmt,
+                           epilog=EXAMPLES.get(name))
         s.set_defaults(fn=fn)
         return s
+
+    def actions(s, fn):
+        a = s.add_subparsers(dest="action", required=True, metavar="action")
+
+        def act(name, help_, destructive=False):
+            x = a.add_parser(name, help=help_, description=help_, parents=[common])
+            x.set_defaults(fn=fn)
+            if destructive:
+                x.add_argument("-y", "--yes", action="store_true", help="do it without asking")
+            return x
+        return act
 
     cmd("status", cmd_status, "what is running, and where")
 
@@ -455,24 +566,19 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--find", help="alias or served name contains this")
     s.add_argument("--role", help="only this role")
 
-    s = cmd("model", cmd_model, "change one model", group=True)
-    msub = s.add_subparsers(dest="action", required=True, metavar="action")
-    m = msub.add_parser("rename", parents=[common], help="give it a new alias")
+    act = actions(cmd("model", cmd_model, "change one model"), cmd_model)
+    m = act("rename", "give it a new alias")
     m.add_argument("alias"), m.add_argument("new")
-    m = msub.add_parser("role", parents=[common], help="what it is for (general, code, review, ...)")
+    m = act("role", "what it is for (general, code, review, ...)")
     m.add_argument("alias"), m.add_argument("role")
-    m = msub.add_parser("ad-hoc", parents=[common], help="only when asked for by name")
+    m = act("ad-hoc", "only when asked for by name")
     m.add_argument("alias"), m.add_argument("state", choices=["on", "off"])
-    m = msub.add_parser("max-tokens", parents=[common], help="the most an answer may use; none for the endpoint's")
+    m = act("max-tokens", "the most an answer may use; none for the endpoint's")
     m.add_argument("alias"), m.add_argument("tokens")
-    m = msub.add_parser("retire", parents=[common], help="take it off the bench (and out of its collections)")
+    m = act("retire", "take it off the bench and out of its collections (restore undoes it)", destructive=True)
     m.add_argument("alias"), m.add_argument("--reason")
-    m = msub.add_parser("restore", parents=[common], help="undo a retire")
-    m.add_argument("alias")
-    m = msub.add_parser("retry", parents=[common], help="one fresh call to a model on a retiring alert")
-    m.add_argument("alias")
-    for m in msub.choices.values():
-        m.set_defaults(fn=cmd_model)
+    act("restore", "undo a retire").add_argument("alias")
+    act("retry", "one fresh call to a model on a retiring alert").add_argument("alias")
 
     s = cmd("candidates", cmd_candidates, "what the endpoints serve that could be onboarded")
     s.add_argument("--endpoint"), s.add_argument("--find")
@@ -489,13 +595,10 @@ def parser() -> argparse.ArgumentParser:
 
     cmd("collections", cmd_collections, "the collections a caller can ask")
 
-    s = cmd("collection", cmd_collection, "show, save or delete one collection", group=True)
-    csub = s.add_subparsers(dest="action", required=True, metavar="action")
-    c = csub.add_parser("show", parents=[common], help="everything about one")
-    c.add_argument("name")
-    c = csub.add_parser("rm", parents=[common], help="delete one")
-    c.add_argument("name")
-    c = csub.add_parser("save", parents=[common], help="create one, or change what is given")
+    act = actions(cmd("collection", cmd_collection, "show, save or delete one collection"), cmd_collection)
+    act("show", "everything about one").add_argument("name")
+    act("rm", "delete one", destructive=True).add_argument("name")
+    c = act("save", "create one, or change what is given")
     c.add_argument("name")
     c.add_argument("--members", help="comma-separated aliases: the whole list")
     c.add_argument("--add", help="comma-separated aliases to add")
@@ -505,49 +608,36 @@ def parser() -> argparse.ArgumentParser:
     c.add_argument("--tags", help="comma-separated")
     c.add_argument("--reply", choices=["all", "merged"])
     c.add_argument("--merger", help="the alias that merges, for --reply merged")
-    for c in csub.choices.values():
-        c.set_defaults(fn=cmd_collection)
 
     cmd("endpoints", cmd_endpoints, "where models are served from")
 
-    s = cmd("endpoint", cmd_endpoint, "add, test, re-key, remove or make default an endpoint", group=True)
-    esub = s.add_subparsers(dest="action", required=True, metavar="action")
+    act = actions(cmd("endpoint", cmd_endpoint, "add, test, re-key, remove or make default an endpoint"),
+                  cmd_endpoint)
     for name, help_ in (("add", "add one (tested first)"), ("test", "test without saving"),
                         ("key", "change one's key")):
-        e = esub.add_parser(name, parents=[common], help=help_)
+        e = act(name, help_)
         e.add_argument("name"), e.add_argument("--base", help="its base URL, e.g. https://openrouter.ai/api/v1")
         e.add_argument("--kind"), e.add_argument("--hub")
         e.add_argument("--key-stdin", action="store_true", help="read the key from stdin; else a hidden prompt")
-    e = esub.add_parser("rm", parents=[common], help="remove one")
+    e = act("rm", "remove one", destructive=True)
     e.add_argument("name"), e.add_argument("--with-models", action="store_true", help="retire its models too")
-    e = esub.add_parser("default", parents=[common], help="make one the default")
-    e.add_argument("name")
-    for e in esub.choices.values():
-        e.set_defaults(fn=cmd_endpoint)
+    act("default", "make one the default").add_argument("name")
 
     cmd("keys", cmd_keys, "the gateway keys (names and hints, never a key)")
 
-    s = cmd("key", cmd_key, "make or revoke a gateway key", group=True)
-    ksub = s.add_subparsers(dest="action", required=True, metavar="action")
-    k = ksub.add_parser("create", parents=[common], help="a new key, printed once")
+    act = actions(cmd("key", cmd_key, "make or revoke a gateway key"), cmd_key)
+    k = act("create", "a new key, printed once")
     k.add_argument("name"), k.add_argument("--collections", help="comma-separated; all if omitted")
     k.add_argument("--rpm", type=int, help="chat completions a minute; no cap if omitted")
-    k = ksub.add_parser("revoke", parents=[common], help="revoke one by name")
-    k.add_argument("name")
-    for k in ksub.choices.values():
-        k.set_defaults(fn=cmd_key)
+    act("revoke", "revoke one by name: whatever uses it stops working", destructive=True).add_argument("name")
 
-    s = cmd("settings", cmd_settings, "gateway limits, the model client, the scheduler", group=True)
-    ssub = s.add_subparsers(dest="action", required=True, metavar="action")
-    t = ssub.add_parser("gateway", parents=[common], help="how many calls a panel may make")
+    act = actions(cmd("settings", cmd_settings, "gateway limits, the model client, the scheduler"), cmd_settings)
+    t = act("gateway", "how many calls a panel may make")
     t.add_argument("--max-calls", type=int, required=True), t.add_argument("--max-explorers", type=int, required=True)
-    t = ssub.add_parser("client", parents=[common], help="llm or builtin")
-    t.add_argument("client")
-    t = ssub.add_parser("scheduler", parents=[common], help="its mode, and jobs on or off")
+    act("client", "llm or builtin").add_argument("client")
+    t = act("scheduler", "its mode, and jobs on or off")
     t.add_argument("mode", nargs="?", choices=["off", "log-only", "run"])
     t.add_argument("--on", help="comma-separated jobs to run"), t.add_argument("--off", help="comma-separated jobs to skip")
-    for t in ssub.choices.values():
-        t.set_defaults(fn=cmd_settings)
     return p
 
 
@@ -558,6 +648,9 @@ def main(argv: list[str] | None = None) -> int:
         except (AttributeError, ValueError):
             pass
     args = parser().parse_args(argv)
+    OVERRIDES.clear()
+    if args.url:
+        OVERRIDES["BENCHWARMERS_URL"] = args.url
     try:
         args.fn(args)
     except Failed as e:
