@@ -11,7 +11,13 @@
   <a href="https://pypi.org/project/benchwarmers/"><img src="https://img.shields.io/pypi/v/benchwarmers?color=3775a9&logo=pypi&logoColor=white" alt="PyPI"></a>
   <a href="https://github.com/WendellResearch-AI/benchwarmers/actions/workflows/check.yml"><img src="https://github.com/WendellResearch-AI/benchwarmers/actions/workflows/check.yml/badge.svg" alt="Checks"></a>
   <a href="#docker"><img src="https://img.shields.io/badge/Docker-compose-2496ED?logo=docker&logoColor=white" alt="Runs in Docker"></a>
-  <a href="GATEWAY.md"><img src="https://img.shields.io/badge/OpenAI--compatible-gateway-111111" alt="OpenAI-compatible gateway"></a>
+  <br>
+  <a href="GATEWAY.md#other-api-formats"><img src="https://img.shields.io/badge/API-OpenAI_%7C_Responses-111111" alt="OpenAI chat completions and Responses API"></a>
+  <a href="GATEWAY.md#other-api-formats"><img src="https://img.shields.io/badge/API-Anthropic_Messages-111111" alt="Anthropic Messages API"></a>
+  <a href="GATEWAY.md#other-api-formats"><img src="https://img.shields.io/badge/API-Gemini-111111" alt="Gemini API"></a>
+  <a href="GATEWAY.md#other-api-formats"><img src="https://img.shields.io/badge/API-Ollama-111111" alt="Ollama API"></a>
+  <a href="GATEWAY.md#route-mode-agent-clients"><img src="https://img.shields.io/badge/agents-tool_calling-111111" alt="Agent clients with tool calling, through route mode"></a>
+  <a href="https://registry.modelcontextprotocol.io/v0/servers?search=io.github.WendellResearch-AI/benchwarmers"><img src="https://img.shields.io/badge/MCP-Registry-111111" alt="MCP server in the official MCP Registry"></a>
   <br>
   <a href="#try-it"><img src="https://img.shields.io/badge/Python-3.11_%7C_3.12_%7C_3.13-3776AB?logo=python&logoColor=white" alt="Python 3.11 to 3.13"></a>
   <a href="#try-it"><img src="https://img.shields.io/badge/core-stdlib_only-2ea44f" alt="The core needs only the Python standard library"></a>
@@ -30,8 +36,12 @@ verdicts decide who sits on the next panel.
 
 **What it is best at:**
 
-- **Asking several models at once.** One OpenAI-compatible request, a panel of
-  answers. Where they disagree is where to look.
+- **Asking several models at once.** One request, in the OpenAI, Anthropic,
+  Gemini or Ollama format, a panel of answers. Where they disagree is where
+  to look.
+- **Agents too.** Claude Code and other tool-calling clients use a collection
+  through route mode: one member per turn, kept for the conversation, with
+  failover, and every call on the record.
 - **Reviewing.** Code review, claims about code, designs: different models
   catch different things, and two models agreeing is not proof.
 - **Playing to each model's strengths.** A collection per kind of work
