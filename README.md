@@ -10,7 +10,7 @@
   <a href="https://www.npmjs.com/package/@wendellresearch-ai/benchwarmers"><img src="https://img.shields.io/npm/v/@wendellresearch-ai/benchwarmers?color=cb3837&logo=npm" alt="npm"></a>
   <a href="https://pypi.org/project/benchwarmers/"><img src="https://img.shields.io/pypi/v/benchwarmers?color=3775a9&logo=pypi&logoColor=white" alt="PyPI"></a>
   <a href="https://github.com/WendellResearch-AI/benchwarmers/actions/workflows/check.yml"><img src="https://github.com/WendellResearch-AI/benchwarmers/actions/workflows/check.yml/badge.svg" alt="Checks"></a>
-  <a href="#docker"><img src="https://img.shields.io/badge/Docker-compose-2496ED?logo=docker&logoColor=white" alt="Runs in Docker"></a>
+  <a href="#docker-and-hosting"><img src="https://img.shields.io/badge/Docker-compose-2496ED?logo=docker&logoColor=white" alt="Runs in Docker"></a>
   <br>
   <a href="GATEWAY.md#other-api-formats"><img src="https://img.shields.io/badge/API-OpenAI_%7C_Responses-111111" alt="OpenAI chat completions and Responses API"></a>
   <a href="GATEWAY.md#other-api-formats"><img src="https://img.shields.io/badge/API-Anthropic_Messages-111111" alt="Anthropic Messages API"></a>
@@ -53,8 +53,9 @@ verdicts decide who sits on the next panel.
   repositories, plus your verdicts on real work, instead of public leaderboards.
 - **Knowing who to bench.** Who is confidently wrong, who has stopped
   answering (retired automatically), and who is resting after a rate limit.
-- **Keeping free and cheap models useful.** Health probes, learned rate limits
-  and one endpoint for every app, over any OpenAI-compatible provider or hub.
+- **Keeping free and cheap models useful.** Health probes, rate limits taken
+  from what providers say and enforced, and one endpoint for every app, over
+  any OpenAI-compatible provider or hub, or Anthropic's and Gemini's own APIs.
 
 | Related tools | Examples | What they do | What Benchwarmers does differently |
 |---|---|---|---|
@@ -78,7 +79,7 @@ verdicts decide who sits on the next panel.
 - [From the command line](#from-the-command-line)
 - [From Claude Code and other agents](#from-claude-code-and-other-agents)
 - [The suite](#the-suite)
-- [Docker](#docker)
+- [Docker and hosting](#docker-and-hosting)
 - [What leaves your machine](#what-leaves-your-machine)
 - [Limits](#limits)
 - [Security](#security)
@@ -92,7 +93,7 @@ with [AGENTS.md](AGENTS.md).
 
 ## Try it
 
-**v0.2, early.** It runs with Python 3.11 or later on Windows, macOS and
+**v0.3, early.** It runs with Python 3.11 or later on Windows, macOS and
 Linux, from PyPI, npm, a checkout or Docker. Expect rough edges, and read the
 code where these pages are thin.
 
@@ -118,12 +119,12 @@ dependencies either way: the app is the Python standard library.
 
        git clone https://github.com/WendellResearch-AI/benchwarmers
        cd benchwarmers
-       python -m venv .venv
-       .venv/bin/pip install llm        # Windows: .venv\Scripts\pip install llm
+       python -m venv .venv             # nothing to pip install: the standard library is enough
 
-   The [`llm`](https://llm.datasette.io/) CLI is the default model client today.
-   The built-in client (`metrics/client.py`) replaces it, chosen on Settings
-   or with `BENCH_CLIENT=builtin` (which wins), and will become the default.
+   The built-in model client (`metrics/client.py`) makes every call. The
+   [`llm`](https://llm.datasette.io/) CLI is an alternative for its plugins:
+   install it in the venv and choose it on Settings (or `BENCH_CLIENT=llm`,
+   which wins).
 
 2. **Make a data folder.** Everything that is yours (endpoints, model
    registrations, collections, verdicts, probe history, task answers) lives
@@ -135,14 +136,16 @@ dependencies either way: the app is the Python standard library.
    unless you name one) and points the checkout at it with a
    `.benchwarmers-home` file; `BENCHWARMERS_HOME` overrides that. With
    `--endpoint NAME BASE_URL --key` it also adds a first endpoint and asks for
-   its key, which goes to the `llm` CLI's key store (`llm keys set NAME` does
-   the same), never into the data folder.
+   its key, which goes to the key file in llm's user folder (`keys.json`,
+   shared with the `llm` CLI if you have it, not needed otherwise), never into
+   the data folder. `BENCHWARMERS_KEY_<NAME>` in the environment works too.
 
 3. **Start the dashboard.** With no endpoint yet it opens on adding one: sign
    in with a provider on its own page (OpenRouter, NanoGPT, Hugging Face,
    Pollinations, your ChatGPT plan, GitHub Models, or a local Ollama), or paste
    an API key for any OpenAI-compatible API, a hub such as Open WebUI or
-   LiteLLM included. Only providers that publish a sign-in for other apps are
+   LiteLLM included. Anthropic and Gemini keys can also be called through
+   those providers' own APIs (the API choice in the same dialog). Only providers that publish a sign-in for other apps are
    offered; adding one is an entry in `metrics/connect.py` (its docstring says
    how).
 
@@ -150,7 +153,9 @@ dependencies either way: the app is the Python standard library.
 
 4. **Onboard a few models** from it ("Onboard a model"): tick one or several;
    each is registered, probed and run through the suite, one at a time, with
-   the progress beside the button.
+   the progress beside the button. **Quick** probes now and leaves the suite
+   to the scheduled passes; **Quick + ad hoc** also keeps the bench from ever
+   calling the model on its own, for a metered or trial key.
 
 5. **Make a collection** on the Collections page (the models a panel always
    includes, and what it is for). The dashboard answers the gateway's routes on
@@ -173,10 +178,16 @@ dependencies either way: the app is the Python standard library.
 - **Health.** Every morning each model gets a one-word prompt; once a week, a
   short and a long one for speed. A model that stops answering, or that its
   endpoint no longer serves, is retired automatically after one confirming
-  call, with the evidence kept, and can be restored in one click. Rate limits
-  are learned from providers' own error messages and kept per connection,
-  since models behind one key share them. The built-in scheduler runs all of
-  this once Settings switches it on; a fresh install spends no calls until then.
+  call, with the evidence kept, and can be restored in one click. The
+  built-in scheduler runs all of this once Settings switches it on; a fresh
+  install spends no calls until then.
+- **Rate limits and usage.** Limits come from providers' rate-limit headers
+  and error messages, and from what you set per connection or model
+  (requests a minute, day or month; tokens a minute or day). They are kept per
+  connection, since models behind one key share them, and enforced: a call
+  waits when the wait fits, or is refused before it goes out. Every call lands
+  in a monthly usage ledger with its tokens, and the Quotas page shows what is
+  left and when it resets.
 - **Discover.** models.dev and FreeLLMAPI, merged into one list of models
   worth adding, each with the routes this install has to it.
 
@@ -216,10 +227,11 @@ that speaks one of them works with the server's address as its base URL:
       -d '{"model": "bench/<collection>", "max_tokens": 1024, "messages": [{"role": "user", "content": "..."}]}'
 
 Each streams when asked: the reply starts at once, and each seat's answer
-arrives as that seat finishes. Agent and tool use is not supported yet: a
-request carrying tools is refused with a 400 rather than answered without
-them. GATEWAY.md, "Other API formats", has a curl for each and what is
-refused or ignored.
+arrives as that seat finishes. A panel answers with text, so a request
+carrying tools is refused with a 400 that points to **route mode**
+(`bench/<collection>:route`, one member with its tools; see
+[below](#from-claude-code-and-other-agents)). GATEWAY.md, "Other API formats",
+has a curl for each and what is refused or ignored.
 
 ## From the command line
 
@@ -334,7 +346,7 @@ code makes the best tasks, because no model has trained on it. See
 [suite/README.md](suite/README.md), [suite/REBENCH.md](suite/REBENCH.md) and
 [BENCHMARKS.md](BENCHMARKS.md).
 
-## Docker
+## Docker and hosting
 
 One container runs the dashboard, the gateway (on the same port, at `/v1`)
 and the scheduler, with the data folder as a volume and no `llm` CLI (the
@@ -376,21 +388,33 @@ reaches Wendell Research. What it sends, and where:
 - **Seeding real-bug tasks**, only when you run `suite/rebench.py`: the
   SWE-rebench-V2 rows from Hugging Face and the files from GitHub.
 
-Keys stay in the environment or the `llm` CLI's key store, never in the data
-folder. [PRIVACY.md](PRIVACY.md) and [SECURITY.md](SECURITY.md) have the
+Keys stay in the environment or llm's key file (`keys.json` in its user
+folder), never in the data folder. [PRIVACY.md](PRIVACY.md) and [SECURITY.md](SECURITY.md) have the
 detail.
 
 ## Limits
 
-- **No tools yet.** A panel answers with text, not a tool call, so agents
-  that need tool use (Claude Code, Codex, opencode as callers) wait for a
-  route mode; requests with tools are refused, not trimmed.
-- **Early.** v0.1: no installer yet, merged replies stream in one piece, and the LiteLLM and
-  CLI Proxy API hub adapters are built from those projects' source, not yet
-  run against a real hub.
+- **Tools go through route mode only.** A panel answers with text; a request
+  with tools is refused there, not trimmed. Route mode passes turns only to
+  members on chat-completions endpoints, keeps its sticky conversations in
+  memory (a restart starts each on a fresh pick), and has been run end to end
+  with Claude Code; the Codex, opencode and Cline set-ups are written from
+  their docs. Shadow seats (other members answering an agent's turn for
+  evaluation) are planned, not built.
+- **Some parts are checked against fakes only.** The native Anthropic and
+  Gemini endpoints, and the LiteLLM and CLI Proxy API hub adapters, are built
+  from those APIs' documentation and source and tested against fake servers,
+  not yet against the real services.
+- **A merged reply arrives in one piece** once the merger has finished; the
+  seats before it stream as they finish.
+- **Pacing and the ledger cover the built-in client.** Calls made through the
+  `llm` CLI, when you choose it, are neither paced nor counted.
 - **Calls cost.** Probes, onboarding and the suite run on your keys and free
-  tiers. Onboarding runs one model at a time for that reason; a suite pass is
-  paced, not burst.
+  tiers. Onboarding runs one model at a time for that reason (Quick spreads
+  the suite over the scheduled passes); a suite pass is paced, not burst.
+- **The scheduler lives in the server.** Its jobs run while the dashboard (or
+  the container, or the service) is up; a missed run is made up once, within
+  seven days, when it comes back.
 - **One install, one person** at heart. Logins and gateway keys exist for a
   LAN or a server, but there are no per-user views or roles.
 - **The onboarding queue lives in the dashboard's memory.** Restarting it

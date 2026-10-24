@@ -25,12 +25,11 @@ Python 3.11 or later; nothing else is required.
     git clone https://github.com/WendellResearch-AI/benchwarmers
     cd benchwarmers
     python -m venv .venv
-    .venv/bin/pip install llm          # optional; Windows: .venv\Scripts\pip install llm
 
-The `llm` CLI is today's default model client. Without it, choose the
-built-in client (`metrics/client.py`), which needs nothing installed: on
-Settings, Model client, once the dashboard runs, or with
-`BENCH_CLIENT=builtin` (which wins over Settings).
+The built-in model client (`metrics/client.py`) makes every call and needs
+nothing installed. The `llm` CLI is an optional alternative, for its plugins:
+`pip install llm` in the venv, then choose it on Settings, Model client, or
+with `BENCH_CLIENT=llm` (which wins over Settings).
 
 Check: `python scripts/check.py --quick` ends with `all checks pass`.
 
@@ -67,8 +66,9 @@ API) or a local runtime (Ollama). Three ways, best first:
   | `openrouter-2` | `BENCHWARMERS_KEY_OPENROUTER_2` |
   | `my-hub` | `BENCHWARMERS_KEY_MY_HUB` |
 
-  Without the variable, keys come from the `llm` CLI's key store
-  (`llm keys set <name>` writes there). The variable wins when both exist.
+  Without the variable, keys come from llm's key file (`keys.json` in llm's
+  user folder, which the dashboard and `init --key` write; the `llm` CLI need
+  not be installed). The variable wins when both exist.
 
 One provider can be several endpoints (a pasted key and a sign-in, or two
 accounts); each needs its own name, and Benchwarmers suggests a free one.
@@ -107,7 +107,10 @@ Any OpenAI-compatible client asks for the model `bench/<collection>`:
 Every seat's answer comes back, plus a `bench` field with each seat's call id.
 Clients of the Anthropic, Ollama, Gemini and Responses APIs work too, with
 the server's address as their base URL (GATEWAY.md, "Other API formats");
-requests carrying tools are refused, since a panel answers with text.
+a panel answers with text, so requests carrying tools are refused there.
+An agent that needs tools (Claude Code, Codex, opencode) runs on a collection
+in route mode instead, `bench/<collection>:route`: one member per turn, with
+its tools, kept for the conversation (GATEWAY.md, "Route mode").
 For a chat window that shows one answer, ask for `bench/<collection>:merged`
 (or set the collection's reply to merged): a merger model writes one answer
 saying where the seats agreed and disagreed, and every seat is still in

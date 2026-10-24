@@ -1,6 +1,6 @@
 # Privacy policy
 
-*Effective 22 October 2026.*
+*Effective 23 October 2026.*
 
 Benchwarmers runs on your own machine or server. It has no account, no
 telemetry and no server of its own, and nothing you do with it reaches
@@ -22,13 +22,15 @@ Wendell Research.
 - **Real-bug task seeding**, only when you run `suite/rebench.py`: dataset rows
   from Hugging Face and source files from GitHub.
 
-Keys and sign-in tokens stay in your environment or the `llm` CLI's key
-store. [SECURITY.md](SECURITY.md) has the full detail.
+Keys and sign-in tokens stay in your environment or llm's key file
+(`keys.json` in llm's user folder, used whether or not the `llm` CLI is
+installed). [SECURITY.md](SECURITY.md) has the full detail.
 
 ## What stays on your machine
 
-Everything else: your endpoints, collections, verdicts, call logs, probe
-history and task answers live in your data folder, which is yours to back up,
+Everything else: your endpoints, collections, verdicts, call logs, the usage
+ledger (tokens per call, never the prompt), probe history and task answers
+live in your data folder, which is yours to back up,
 move or delete.
 
 ## Third parties

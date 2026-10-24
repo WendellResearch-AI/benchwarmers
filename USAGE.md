@@ -47,8 +47,19 @@ Dismiss hides one you never want offered (an image model, say); the dismissed
 list brings it back.
 
 Each model is registered, probed with four short calls, and, if it answers,
-run through the suite. That takes minutes and spends calls, so they run **one
-at a time**, in a queue the dashboard keeps:
+run through the suite. **Onboard as**, under the list, chooses how much that
+spends:
+
+- **Full**: the probe, then the suite now.
+- **Quick**: the probe now; the scheduled suite passes fill the suite in, six
+  tasks a run. The same calls, spread out.
+- **Quick + ad hoc**: the probe only, and the bench never calls the model on
+  its own (no explorer seat, no scheduled runs). The one that saves calls, for
+  a metered, capped or trial key. A collection that lists it still calls it.
+
+`bench onboard <served> --quick [--ad-hoc]` does the same from a terminal.
+Onboarding takes minutes and spends calls, so models run **one at a time**,
+in a queue the dashboard keeps:
 
 - One model with nothing ahead of it is followed step by step in the popup.
 - Otherwise the popup shows the queue, and a chip beside the button shows the
@@ -61,6 +72,12 @@ at a time**, in a queue the dashboard keeps:
 
 A model that registered but did not answer stays on the bench as
 unavailable, so the daily probe keeps watching it.
+
+**Roles.** A model's popup sets what it is for: `general` (the default),
+`code`, `light` (small and fast), `vision` (reads images well, weak at text:
+OCR and document models; seated only when a request carries images) or
+`image` (makes images; never seated). A model that reads images and does
+everything else well stays `general`.
 
 ## Collections
 

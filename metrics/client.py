@@ -2,8 +2,9 @@
 
     python metrics/client.py <alias> "prompt"     # one call; prints what ask_once would return
 
-RELEASE-PLAN.md Phases 2a and 2b. A drop-in for `llm -m <alias>`, chosen on
-Settings or by BENCH_CLIENT=builtin (see chosen()), used by suite/run.py's
+RELEASE-PLAN.md Phases 2a and 2b. A drop-in for `llm -m <alias>`, and the
+default since v0.3 (`llm` stays a choice on Settings or BENCH_CLIENT=llm; see
+chosen()), used by suite/run.py's
 ask_once, and so the perf probe, the suite, retries and auto-retire's
 confirmation call, and by the gateway's seats. It reads the same
 registration (the yaml entry's model name, base, key name and headers), the
@@ -118,7 +119,6 @@ import json
 import os
 import pathlib
 import random
-import shutil
 import sys
 import threading
 import time
@@ -146,10 +146,11 @@ CHOICE = DATA / "config" / "client.json"           # the Settings page's choice
 
 def chosen() -> tuple[str, str]:
     """The configured client and what set it: BENCH_CLIENT ("environment"),
-    else the Settings page's choice ("settings"), else ("default") `llm` where
-    the llm CLI is installed and the built-in client where it is not, as in
-    an install from npm or a container. Read on every call, so a change
-    applies to the next one."""
+    else the Settings page's choice ("settings"), else ("default") the
+    built-in client, installed `llm` or not: since v0.3 the `llm` CLI is an
+    alternative chosen on Settings, no longer the default (its trial week:
+    RELEASE-PLAN Phase 2a). Read on every call, so a change applies to the
+    next one."""
     env = (os.environ.get("BENCH_CLIENT") or "").strip().lower()
     if env:
         return env, "environment"
@@ -157,7 +158,7 @@ def chosen() -> tuple[str, str]:
         saved = json.loads(CHOICE.read_text(encoding="utf-8")).get("client")
     except (OSError, ValueError, AttributeError):
         saved = None
-    return (saved, "settings") if saved in CLIENTS else ("llm" if shutil.which("llm") else "builtin", "default")
+    return (saved, "settings") if saved in CLIENTS else ("builtin", "default")
 
 
 def backend(alias: str = "") -> str:

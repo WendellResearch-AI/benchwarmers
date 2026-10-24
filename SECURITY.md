@@ -58,7 +58,8 @@ open itself to anyone.
 ## What Benchwarmers touches
 
 - **Keys.** Endpoint keys come from `BENCHWARMERS_KEY_<NAME>` (the key name
-  upper-cased, `-` as `_`) first, then from the `llm` CLI's key store. They are
+  upper-cased, `-` as `_`) first, then from llm's key file (`keys.json` in
+  its user folder, used whether or not the `llm` CLI is installed). They are
   never written to the data folder, never shown back, and never put in a log.
   Sign-ins through a provider's page store their token the same way.
 - **The network.** Your prompts go only to the endpoints you add; the probes,
@@ -68,9 +69,9 @@ open itself to anyone.
   dashboard's page, and Hugging Face and GitHub only when you run
   `suite/rebench.py`. [PRIVACY.md](PRIVACY.md) lists them.
 - **Files.** It writes inside its data folder (`BENCHWARMERS_HOME`, or the
-  folder `.benchwarmers-home` names) and, in the `llm` CLI's own folder, its
-  key store (when you paste a key or sign in) and its model list (when it
-  registers a model). Images sent to the gateway are never written to a log.
+  folder `.benchwarmers-home` names) and, in llm's user folder, the key file
+  (when you paste a key or sign in) and the model list (when it registers a
+  model). Images sent to the gateway are never written to a log.
 - **Processes.** Onboarding, the probes and the suite run this repository's
   own scripts with the same Python. Model ids that reach a command line are
   checked against a strict pattern first.
