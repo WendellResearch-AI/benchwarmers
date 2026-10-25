@@ -150,6 +150,7 @@ import client  # noqa: E402
 import decide  # noqa: E402
 import formats  # noqa: E402
 import guard  # noqa: E402
+import mcp_server  # noqa: E402  -- its tools, answered at /mcp too
 import model_roles  # noqa: E402
 import offload  # noqa: E402
 import route  # noqa: E402
@@ -1041,6 +1042,9 @@ class Handler(BaseHTTPRequestHandler):
             row = dict(listed(self.who)).get(name)
             return self._json(200, formats.gemini_model(name, row)) if row else \
                 self._error(404, f"{name!r} is not a collection here; GET /v1beta/models lists them", fmt=fmt)
+        if guard.mcp_route(path):                      # no stream from the server: every reply is a POST's
+            return self._json(405, {"error": {"message": "POST /mcp, one JSON-RPC message per request"}},
+                              {"Allow": "POST"})
         self._error(404, "GET /v1/models, /api/tags, /api/version or /v1beta/models", fmt=fmt)
 
     def do_POST(self):                                 # noqa: N802
@@ -1053,6 +1057,8 @@ class Handler(BaseHTTPRequestHandler):
             self.who = guard.gateway_caller(self.headers, self._query_key(fmt))
         except guard.Refused as r:
             return self._error(r.status, str(r) + (TOO_BIG if r.status == 413 else ""), r.headers, fmt)
+        if guard.mcp_route(path):
+            return self._mcp(length)
         try:
             body = json.loads(self.rfile.read(length) or b"{}")
         except ValueError:
@@ -1098,6 +1104,54 @@ class Handler(BaseHTTPRequestHandler):
             return self._error(400, str(exc), fmt=fmt)
         alt = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("alt", [""])[0]
         self._panel(fmt, ask, sse=alt == "sse")
+
+    def _mcp(self, length: int) -> None:
+        """MCP over streamable HTTP, a reply to each POST (JSON, or SSE for a
+        tool call from a client that takes it): mcp_server.py's
+        tools on this port, so a client starts no process of its own. They call
+        this server's own routes over loopback with the caller's credential and
+        Host (both already checked above), so a key's collections and rate
+        limit hold exactly as on /v1."""
+        try:
+            msg = json.loads(self.rfile.read(length))
+        except ValueError:
+            return self._json(400, {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "parse error"}})
+        host, port = self.server.server_address[:2]
+        host = {"0.0.0.0": "127.0.0.1", "::": "::1"}.get(host, host)
+        sent = {h: self.headers[h] for h in ("Authorization", "Host", *guard.KEY_HEADERS) if self.headers.get(h)}
+        conn = (f"http://{'[' + host + ']' if ':' in host else host}:{port}", sent)
+        if isinstance(msg, dict) and msg.get("method") == "tools/call" and "id" in msg \
+                and "text/event-stream" in (self.headers.get("Accept") or ""):
+            return self._mcp_stream(msg, conn)
+        reply = mcp_server.answer(msg, conn)
+        if reply is None:                              # a notification: accepted, nothing to say
+            self.send_response(202)
+            self.send_header("Content-Length", "0")
+            return self.end_headers()
+        self._json(200, reply)
+
+    def _mcp_stream(self, msg: dict, conn: tuple[str, dict]) -> None:
+        """A tool call as an SSE stream: the 200 at once, a keep-alive every
+        KEEPALIVE seconds while a panel runs (minutes; a client's or proxy's
+        idle and header timeouts would otherwise end it), then the reply."""
+        done: queue.Queue = queue.Queue()
+        threading.Thread(target=lambda: done.put(mcp_server.answer(msg, conn)), daemon=True).start()
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            while True:
+                try:
+                    reply = done.get(timeout=KEEPALIVE)
+                except queue.Empty:
+                    self.wfile.write(b": keep-alive\n\n")
+                    self.wfile.flush()
+                    continue
+                self.wfile.write(b"event: message\ndata: " + json.dumps(reply).encode() + b"\n\n")
+                return
+        except OSError:
+            return                                     # the caller left; the panel still finishes, every seat recorded
 
     def _show(self, body: dict) -> None:
         """POST /api/show: Ollama's model card, for a collection the key may call."""

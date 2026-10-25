@@ -220,7 +220,14 @@ def startup(address: str) -> None:
 
 def gateway_route(path: str) -> bool:
     """A route the gateway answers, on its own port or the dashboard's."""
-    return path.startswith(GATEWAY_ROUTES) or path.rstrip("/") in OLLAMA_ROUTES
+    return path.startswith(GATEWAY_ROUTES) or path.rstrip("/") in OLLAMA_ROUTES or mcp_route(path)
+
+
+def mcp_route(path: str) -> bool:
+    """MCP over HTTP (gateway.py): /mcp, or /v1/mcp for a BENCHWARMERS_URL
+    pasted with its /v1; doubled and trailing slashes from joining a URL
+    that ends in one are the same route."""
+    return re.sub("/{2,}", "/", path.split("?", 1)[0]).rstrip("/") in ("/mcp", "/v1/mcp")
 
 
 def _sign(expires: int) -> bytes:

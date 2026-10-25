@@ -279,28 +279,38 @@ no server at `BENCHWARMERS_URL`.
 
 ## From Claude Code and other agents
 
-`benchwarmers mcp` is an MCP server on stdio with three tools:
-`list_collections`, `ask` (a collection, a prompt, optionally `merged`,
-`with` and `system`) and `verdict`. It is a client of a Benchwarmers that is
-already running, over the routes above, so start the dashboard (or the
-service) first. The tool descriptions carry the rules: ask a collection, not
-a favourite model; verify before acting; name every seat; send a verdict per
-seat you judged.
+A running Benchwarmers is an MCP server at `/mcp` on its own port
+(`http://127.0.0.1:8122/mcp`; `/v1/mcp` works too), over streamable HTTP,
+with three tools: `list_collections`, `ask` (a collection, a prompt,
+optionally `merged`, `with` and `system`) and `verdict`. Nothing to start per
+client: every agent session shares the one server, behind the same Host,
+Origin and gateway-key checks as `/v1`. The tool descriptions carry the
+rules: ask a collection, not a favourite model; verify before acting; name
+every seat; send a verdict per seat you judged.
 
-**Claude Code plugin.** The plugin adds the MCP server, a `/benchwarmers:ask
-<collection> <what to ask>` command and a `benchwarmers` skill saying when a
-panel helps (adversarial review, exhaustive enumeration over real files) and
-how to judge it:
+**Claude Code plugin.** The plugin connects to that `/mcp` and adds a
+`/benchwarmers:ask <collection> <what to ask>` command and a `benchwarmers`
+skill saying when a panel helps (adversarial review, exhaustive enumeration
+over real files) and how to judge it:
 
     /plugin marketplace add WendellResearch-AI/benchwarmers
     /plugin install benchwarmers@benchwarmers
 
-It needs Node 18 or later and Python 3.11 or later on PATH.
+It finds the server through `BENCHWARMERS_URL` (default
+`http://127.0.0.1:8122`; set it if you changed `BENCH_PORT`) and sends
+`BENCHWARMERS_KEY` where keys are required.
 
-**Any other MCP client** (or Claude Code without the plugin): run
-`benchwarmers mcp` once installed, `uvx benchwarmers mcp` or
+**Any other MCP client** that speaks HTTP:
+
+```json
+{"mcpServers": {"benchwarmers": {"type": "http", "url": "http://127.0.0.1:8122/mcp"}}}
+```
+
+with `"headers": {"Authorization": "Bearer <gateway key>"}` where keys are
+required. **A client that only speaks stdio**: run `benchwarmers mcp` once
+installed, `uvx benchwarmers mcp` or
 `npx -y @wendellresearch-ai/benchwarmers mcp` without installing, or `python mcp_server.py` from a
-checkout. For example:
+checkout, a small process per client that calls the same server. For example:
 
 ```json
 {"mcpServers": {"benchwarmers": {"command": "npx", "args": ["-y", "@wendellresearch-ai/benchwarmers", "mcp"],
@@ -315,6 +325,22 @@ On native Windows, a client that cannot start `npx` itself needs
 | `BENCHWARMERS_URL` | the server, default `http://127.0.0.1:8122` (a `/v1` on the end is fine) |
 | `BENCHWARMERS_KEY` | a gateway key from Settings, sent as `Authorization: Bearer`; needed for a server on another machine, or where keys are required |
 | `BENCHWARMERS_TIMEOUT` | seconds to wait for a panel, default 900 |
+
+**Behind an MCP aggregator** (1mcp, MetaMCP, mcp-proxy, Docker's MCP Gateway
+and the like): add `http://127.0.0.1:8122/mcp` as an HTTP (streamable HTTP)
+upstream, with the `Authorization` header where keys are required; an
+aggregator that only runs stdio servers takes `benchwarmers mcp` as above.
+Give it a request timeout of a few minutes or more, as a panel takes that
+long; 1mcp's default of 60 seconds ends most of them. With 1mcp, for example:
+
+    1mcp mcp add benchwarmers --type http --url http://127.0.0.1:8122/mcp --timeout 900000
+
+The aggregator prefixes the tool names (1mcp's are
+`benchwarmers_1mcp_ask` and so on). If you also use the Claude Code plugin,
+disable the plugin's own `benchwarmers` server in `/mcp` so the tools are not
+listed twice; the skill and `/benchwarmers:ask` keep working, though the
+command then asks before each tool call, since its pre-approved tools carry
+the plugin's names.
 
 **An agent running on a collection.** The MCP tools ask a panel for a
 second opinion; an agent can also *be driven by* a collection, in **route

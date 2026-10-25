@@ -102,11 +102,17 @@ def base_url() -> str:
     return url.removesuffix("/v1")
 
 
-def http(method: str, path: str, body: dict | None = None) -> dict:
-    url = base_url() + path
-    headers = {"Accept": "application/json"}
-    if key := (os.environ.get("BENCHWARMERS_KEY") or "").strip():
-        headers["Authorization"] = f"Bearer {key}"
+def env_conn() -> tuple[str, dict]:
+    """(server, headers) for the stdio server: BENCHWARMERS_URL and BENCHWARMERS_KEY. Served
+    over HTTP (gateway.py's /mcp), the server's own address and the caller's credential instead."""
+    key = (os.environ.get("BENCHWARMERS_KEY") or "").strip()
+    return base_url(), {"Authorization": f"Bearer {key}"} if key else {}
+
+
+def http(conn: tuple[str, dict], method: str, path: str, body: dict | None = None) -> dict:
+    base, extra = conn
+    url = base + path
+    headers = {"Accept": "application/json", **extra}
     data = None
     if body is not None:
         data = json.dumps(body).encode()
@@ -126,21 +132,21 @@ def http(method: str, path: str, body: dict | None = None) -> dict:
     except (urllib.error.URLError, ConnectionError) as e:
         reason = getattr(e, "reason", e)
         if isinstance(reason, TimeoutError):
-            raise ToolError(f"no answer from Benchwarmers at {base_url()} in {timeout:.0f} s;"
+            raise ToolError(f"no answer from Benchwarmers at {base} in {timeout:.0f} s;"
                             " set BENCHWARMERS_TIMEOUT for longer panels") from None
-        raise ToolError(f"Benchwarmers is not running at {base_url()} ({reason}). Start it (`benchwarmers`,"
+        raise ToolError(f"Benchwarmers is not running at {base} ({reason}). Start it (`benchwarmers`,"
                         " or its service), or point BENCHWARMERS_URL at the server you use.") from None
     except TimeoutError:
-        raise ToolError(f"no answer from Benchwarmers at {base_url()} in {timeout:.0f} s;"
+        raise ToolError(f"no answer from Benchwarmers at {base} in {timeout:.0f} s;"
                         " set BENCHWARMERS_TIMEOUT for longer panels") from None
     except ValueError:
-        raise ToolError(f"{base_url()} answered {method} {path} with something that is not JSON;"
+        raise ToolError(f"{base} answered {method} {path} with something that is not JSON;"
                         " is BENCHWARMERS_URL a Benchwarmers server?") from None
 
 
-def list_collections(_args: dict) -> list[str]:
+def list_collections(_args: dict, conn: tuple[str, dict]) -> list[str]:
     rows = []
-    for m in http("GET", "/v1/models").get("data") or []:
+    for m in http(conn, "GET", "/v1/models").get("data") or []:
         if ":" in m.get("id", ""):                     # the same collection in its other reply mode
             continue
         together = m.get("together") or {}
@@ -153,7 +159,7 @@ def list_collections(_args: dict) -> list[str]:
     return [json.dumps(rows, indent=1, ensure_ascii=False)]
 
 
-def ask(args: dict) -> list[str]:
+def ask(args: dict, conn: tuple[str, dict]) -> list[str]:
     collection, prompt = args.get("collection"), args.get("prompt")
     if not (isinstance(collection, str) and collection.strip()):
         raise ToolError("`collection` is required: a name from list_collections, e.g. core")
@@ -168,7 +174,7 @@ def ask(args: dict) -> list[str]:
         body["bench"] = {"reply": "merged" if args["merged"] else "all"}
     if args.get("with"):
         body["with"] = args["with"]
-    reply = http("POST", "/v1/chat/completions", body)
+    reply = http(conn, "POST", "/v1/chat/completions", body)
     content = reply["choices"][0]["message"]["content"]
     bench = reply.get("bench") or {}
     merged = bench.get("reply") == "merged"
@@ -185,14 +191,14 @@ def ask(args: dict) -> list[str]:
             + json.dumps(data, indent=1, ensure_ascii=False)]
 
 
-def verdict(args: dict) -> list[str]:
+def verdict(args: dict, conn: tuple[str, dict]) -> list[str]:
     if not (isinstance(args.get("call"), str) and args["call"].strip()):
         raise ToolError("`call` is required: the seat's call id from ask")
     if not isinstance(args.get("useful"), bool):
         raise ToolError("`useful` must be true or false")
     body = {"call": args["call"].strip(), "useful": args["useful"], "note": args.get("note") or "",
             "real": args.get("real") or [], "false": args.get("false") or []}
-    http("POST", "/bench/verdict", body)
+    http(conn, "POST", "/bench/verdict", body)
     return [f"Recorded {body['call']}: {'useful' if body['useful'] else 'not useful'},"
             f" {len(body['real'])} real, {len(body['false'])} false."]
 
@@ -208,46 +214,59 @@ def send(message: dict) -> None:
         sys.stdout.buffer.flush()
 
 
-def call_tool(rid, params: dict) -> None:
+def call_tool(rid, params: dict, conn: tuple[str, dict]) -> dict:
     name, args = params.get("name"), params.get("arguments") or {}
     if name not in HANDLERS:
-        return send({"jsonrpc": "2.0", "id": rid, "error": {"code": -32602, "message": f"unknown tool {name!r}"}})
+        return {"jsonrpc": "2.0", "id": rid, "error": {"code": -32602, "message": f"unknown tool {name!r}"}}
     try:
         if not isinstance(args, dict):
             raise ToolError("arguments must be an object")
-        texts, failed = HANDLERS[name](args), False
+        texts, failed = HANDLERS[name](args, conn), False
     except ToolError as e:
         texts, failed = [str(e)], True
     except Exception as e:                             # noqa: BLE001 -- a bad reply must not kill the server
         texts, failed = [f"{type(e).__name__}: {e}"], True
-    send({"jsonrpc": "2.0", "id": rid,
-          "result": {"content": [{"type": "text", "text": t} for t in texts], "isError": failed}})
+    return {"jsonrpc": "2.0", "id": rid,
+            "result": {"content": [{"type": "text", "text": t} for t in texts], "isError": failed}}
 
 
-def handle(msg) -> None:
+def answer(msg, conn: tuple[str, dict]) -> dict | None:
+    """The reply to one JSON-RPC message, or None for a notification. Both
+    transports: the stdio loop below and the HTTP route (gateway.py, /mcp)."""
     if not isinstance(msg, dict) or msg.get("jsonrpc") != "2.0" or not isinstance(msg.get("method"), str):
         rid = msg.get("id") if isinstance(msg, dict) else None
-        return send({"jsonrpc": "2.0", "id": rid, "error": {"code": -32600, "message": "invalid request"}})
+        return {"jsonrpc": "2.0", "id": rid, "error": {"code": -32600, "message": "invalid request"}}
     if "id" not in msg:                                # a notification (initialized, cancelled): nothing to answer
-        return
+        return None
     rid, method, params = msg["id"], msg["method"], msg.get("params") or {}
     if method == "initialize":
         asked = params.get("protocolVersion")
-        send({"jsonrpc": "2.0", "id": rid, "result": {
+        return {"jsonrpc": "2.0", "id": rid, "result": {
             "protocolVersion": asked if asked in PROTOCOLS else PROTOCOLS[0],
             "capabilities": {"tools": {"listChanged": False}},
             "serverInfo": {"name": "benchwarmers", "title": "Benchwarmers", "version": VERSION},
-            "instructions": RULES}})
-    elif method == "ping":
-        send({"jsonrpc": "2.0", "id": rid, "result": {}})
-    elif method == "tools/list":
-        send({"jsonrpc": "2.0", "id": rid, "result": {"tools": TOOLS}})
-    elif method == "tools/call":
+            "instructions": RULES}}
+    if method == "ping":
+        return {"jsonrpc": "2.0", "id": rid, "result": {}}
+    if method == "tools/list":
+        return {"jsonrpc": "2.0", "id": rid, "result": {"tools": TOOLS}}
+    if method == "tools/call":
+        return call_tool(rid, params, conn)
+    return {"jsonrpc": "2.0", "id": rid, "error": {"code": -32601, "message": f"no method {method!r}"}}
+
+
+def reply_to(msg) -> None:
+    if (reply := answer(msg, env_conn())) is not None:
+        send(reply)
+
+
+def handle(msg) -> None:
+    if isinstance(msg, dict) and msg.get("method") == "tools/call":
         # A panel takes minutes: on its own thread, so a ping or a second call is answered meanwhile.
         # Not a daemon: when stdin closes, a call already sent (a verdict) still finishes.
-        threading.Thread(target=call_tool, args=(rid, params)).start()
+        threading.Thread(target=reply_to, args=(msg,)).start()
     else:
-        send({"jsonrpc": "2.0", "id": rid, "error": {"code": -32601, "message": f"no method {method!r}"}})
+        reply_to(msg)
 
 
 def main() -> None:

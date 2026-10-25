@@ -511,7 +511,7 @@ key limited to its collection and a rate, or keep the key on the app's server.
 | Catalog | `metrics/catalog.py`: context window, output limit, rate limits and capabilities per model, refreshed daily (scheduled task WRBench-Catalog); a free model whose price goes above zero raises a "went paid" alert. |
 | Discover tab | `metrics/discover.py`: models.dev and FreeLLMAPI merged into one list of models worth adding, free first, marked by whether you can already reach the provider and whether the model is on the bench (on another provider counts as "also on bench"). |
 | Merged replies | Opt-in: one merger answer as `content`, every seat still in `bench` (The reply). |
-| MCP server | `mcp_server.py` (`benchwarmers mcp`): the same three routes as MCP tools for agents, `list_collections`, `ask` and `verdict`, over HTTP to a running server (`BENCHWARMERS_URL`, `BENCHWARMERS_KEY`), so it is a caller like any other. The Claude Code plugin in `plugin/` wraps it with a command and a skill. |
+| MCP server | `mcp_server.py`: the same three routes as MCP tools for agents, `list_collections`, `ask` and `verdict`. Two transports for one `answer()`: `POST /mcp` (or `/v1/mcp`) on either port, streamable HTTP with a JSON reply per request, its tools calling the server's own routes over loopback with the caller's credential and Host; and stdio (`benchwarmers mcp`), a caller like any other over HTTP (`BENCHWARMERS_URL`, `BENCHWARMERS_KEY`). The Claude Code plugin in `plugin/` connects to `/mcp` and adds a command and a skill. |
 
 ## Rules
 

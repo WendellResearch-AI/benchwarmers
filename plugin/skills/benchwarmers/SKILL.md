@@ -11,10 +11,11 @@ evidence is stalest. Every answer comes back under its own seat and model, with
 a call id. Your verdicts on those answers decide which models it seats next
 time, so using the bench and measuring it are the same act.
 
-The tools come from this plugin's MCP server, a client of a running
-Benchwarmers (`BENCHWARMERS_URL`, default `http://127.0.0.1:8122`; a gateway
-key in `BENCHWARMERS_KEY` where the server asks for one). If a tool says
-Benchwarmers is not running, tell the user; do not work around it.
+The tools are served by a running Benchwarmers itself, at its `/mcp`
+(`BENCHWARMERS_URL`, default `http://127.0.0.1:8122`; a gateway key in
+`BENCHWARMERS_KEY` where the server asks for one). If the tools are missing,
+or the `benchwarmers` server shows as failed in `/mcp`, Benchwarmers is not
+running: tell the user; do not work around it.
 
 ## When to ask
 

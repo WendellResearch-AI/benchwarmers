@@ -170,8 +170,120 @@ def main() -> int:
     assert r["isError"] and "not running" in r["content"][0]["text"], r
     c.close()
     stub.shutdown()
-    print("mcp server ok: initialize, ping, tools/list, each tool, refusals, a ping mid-panel, not running")
+    over_http()
+    print("mcp server ok: initialize, ping, tools/list, each tool, refusals, a ping mid-panel, not running;"
+          " /mcp on both ports, its paths, the key and its scope through the loopback, the guard")
     return 0
+
+
+def over_http() -> None:
+    """POST /mcp on the real handlers, both ports: the tools reach the server's own routes with the caller's key."""
+    import tempfile
+    import urllib.error
+    import urllib.request
+    sys.path.insert(0, str(ROOT))
+    import serve
+    import gateway
+    import guard
+
+    def post(port, path, msg, **headers):
+        headers = {"Host": f"127.0.0.1:{port}", "Content-Type": "application/json", **headers}
+        data = msg.encode() if isinstance(msg, str) else json.dumps(msg).encode()
+        req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", data, headers,
+                                     method="POST" if msg is not None else "GET")
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r:
+                raw = r.read()
+                return r.status, json.loads(raw) if raw else None
+        except urllib.error.HTTPError as e:
+            return e.code, json.loads(e.read() or b"null")
+
+    def tool(port, name, path="/mcp", **headers_and_args):
+        headers = {k: headers_and_args.pop(k) for k in ("Authorization", "Origin") if k in headers_and_args}
+        status, reply = post(port, path, {"jsonrpc": "2.0", "id": 7, "method": "tools/call",
+                                          "params": {"name": name, "arguments": headers_and_args}}, **headers)
+        assert status == 200 and reply["id"] == 7, (status, reply)
+        return reply["result"]
+
+    servers = [ThreadingHTTPServer(("127.0.0.1", 0), h) for h in (serve.Handler, gateway.Handler)]
+    for s in servers:
+        threading.Thread(target=s.serve_forever, daemon=True).start()
+    saved = (guard.KEYS, gateway.bench_collections.FILE, gateway.run_collection, sys.stderr,
+             os.environ.pop("BENCHWARMERS_ADMIN_TOKEN", None), os.environ.pop("BENCHWARMERS_REQUIRE_KEYS", None))
+    ran = []
+    with tempfile.TemporaryDirectory() as tmp:
+        try:
+            t = pathlib.Path(tmp)
+            guard.KEYS, gateway.bench_collections.FILE = t / "gateway-keys.json", t / "collections.json"
+            gateway.bench_collections.FILE.write_text(json.dumps({"core": {"members": [], "description": "x"},
+                                                                  "vision": {"members": [], "description": "y"}}),
+                                                      encoding="utf-8")
+            gateway.run_collection = lambda name, messages, nominated, reply, who: (
+                ran.append((name, who)) or f"answer from {name}", {"seats": []})
+            sys.stderr = open(os.devnull, "w")         # the access log
+            for port in (s.server_port for s in servers):
+                init = {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                        "params": {"protocolVersion": "2025-06-18", "capabilities": {}}}
+                # A BENCHWARMERS_URL with /v1 or a trailing slash, joined to /mcp, is the same route.
+                for path in ("/mcp", "/mcp/", "//mcp", "/v1/mcp", "/v1//mcp"):
+                    status, reply = post(port, path, init)
+                    assert status == 200 and reply["result"]["serverInfo"]["name"] == "benchwarmers", (path, reply)
+                assert not guard.mcp_route("/mcpx") and not guard.mcp_route("/v1/mcp/x")
+                assert post(port, "/mcp", {"jsonrpc": "2.0", "method": "notifications/initialized"}) == (202, None)
+                assert post(port, "/mcp", None)[0] == 405                     # no server stream
+                assert post(port, "/mcp", "{not json") == (400, {"jsonrpc": "2.0", "id": None,
+                                                                  "error": {"code": -32700, "message": "parse error"}})
+                status, reply = post(port, "/mcp", {"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+                assert {x["name"] for x in reply["result"]["tools"]} == {"list_collections", "ask", "verdict"}
+                r = tool(port, "list_collections", path="//mcp")
+                assert not r["isError"] and [x["name"] for x in json.loads(r["content"][0]["text"])] == \
+                    ["bench/core", "bench/vision"], r
+                r = tool(port, "ask", collection="core", prompt="hi")
+                assert not r["isError"] and "answer from core" in r["content"][0]["text"], r
+                # A client that takes SSE (every streamable-HTTP client must) gets a tool call as a stream,
+                # keep-alives while it runs and then the reply, so its idle timeouts never fire mid-panel.
+                saved_keepalive, gateway.KEEPALIVE = gateway.KEEPALIVE, 0.2
+                slow, gateway.run_collection = gateway.run_collection, lambda *a, **k: (time.sleep(0.7), slow(*a, **k))[1]
+                req = urllib.request.Request(
+                    f"http://127.0.0.1:{port}/mcp", json.dumps({"jsonrpc": "2.0", "id": 9, "method": "tools/call",
+                                                                "params": {"name": "ask", "arguments": {
+                                                                    "collection": "core", "prompt": "hi"}}}).encode(),
+                    {"Host": f"127.0.0.1:{port}", "Content-Type": "application/json",
+                     "Accept": "application/json, text/event-stream"})
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    assert resp.headers["Content-Type"] == "text/event-stream", resp.headers
+                    events = resp.read().decode()
+                gateway.KEEPALIVE, gateway.run_collection = saved_keepalive, slow
+                assert events.startswith(": keep-alive\n\n") and events.endswith("\n\n"), events
+                reply = json.loads(events.rsplit("data: ", 1)[1])
+                assert reply["id"] == 9 and "answer from core" in reply["result"]["content"][0]["text"], reply
+                # The guard on /mcp itself: Host and Origin, as on /v1.
+                assert post(port, "/mcp", init, Host="evil.example")[0] == 403
+                assert post(port, "/mcp", init, Origin="http://evil.example")[0] == 403
+            assert ran == [("core", "local")] * 4, ran
+
+            # Keys required: /mcp asks for one, and the loopback carries it, scope and all.
+            os.environ["BENCHWARMERS_REQUIRE_KEYS"] = "1"
+            vision = {"Authorization": "Bearer " + guard.make_key("vision-only", ["vision"])}
+            ran.clear()
+            for port in (s.server_port for s in servers):
+                assert post(port, "/mcp", init)[0] == 401
+                assert post(port, "/mcp", init, Authorization="Bearer ")[0] == 401     # the plugin with no key set
+                r = tool(port, "list_collections", **vision)
+                assert [x["name"] for x in json.loads(r["content"][0]["text"])] == ["bench/vision"], r
+                r = tool(port, "ask", collection="core", prompt="hi", **vision)
+                assert r["isError"] and "may call bench/vision" in r["content"][0]["text"], r
+                assert not tool(port, "ask", collection="vision", prompt="hi", **vision)["isError"]
+            assert ran == [("vision", "vision-only")] * 2, ran
+        finally:
+            sys.stderr.close()
+            guard.KEYS, gateway.bench_collections.FILE, gateway.run_collection, sys.stderr = saved[:4]
+            for name, value in (("BENCHWARMERS_ADMIN_TOKEN", saved[4]), ("BENCHWARMERS_REQUIRE_KEYS", saved[5])):
+                os.environ.pop(name, None)
+                if value is not None:
+                    os.environ[name] = value
+            for s in servers:
+                s.shutdown()
 
 
 if __name__ == "__main__":
