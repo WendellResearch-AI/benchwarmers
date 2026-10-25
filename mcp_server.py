@@ -216,7 +216,7 @@ def send(message: dict) -> None:
 
 def call_tool(rid, params: dict, conn: tuple[str, dict]) -> dict:
     name, args = params.get("name"), params.get("arguments") or {}
-    if name not in HANDLERS:
+    if not isinstance(name, str) or name not in HANDLERS:
         return {"jsonrpc": "2.0", "id": rid, "error": {"code": -32602, "message": f"unknown tool {name!r}"}}
     try:
         if not isinstance(args, dict):
@@ -232,13 +232,24 @@ def call_tool(rid, params: dict, conn: tuple[str, dict]) -> dict:
 
 def answer(msg, conn: tuple[str, dict]) -> dict | None:
     """The reply to one JSON-RPC message, or None for a notification. Both
-    transports: the stdio loop below and the HTTP route (gateway.py, /mcp)."""
+    transports: the stdio loop below and the HTTP route (gateway.py, /mcp).
+    Never raises: a request left unanswered would hang its client."""
+    try:
+        return _answer(msg, conn)
+    except Exception as e:                             # noqa: BLE001
+        rid = msg.get("id") if isinstance(msg, dict) else None
+        return {"jsonrpc": "2.0", "id": rid, "error": {"code": -32603, "message": f"{type(e).__name__}: {e}"}}
+
+
+def _answer(msg, conn: tuple[str, dict]) -> dict | None:
     if not isinstance(msg, dict) or msg.get("jsonrpc") != "2.0" or not isinstance(msg.get("method"), str):
         rid = msg.get("id") if isinstance(msg, dict) else None
         return {"jsonrpc": "2.0", "id": rid, "error": {"code": -32600, "message": "invalid request"}}
     if "id" not in msg:                                # a notification (initialized, cancelled): nothing to answer
         return None
     rid, method, params = msg["id"], msg["method"], msg.get("params") or {}
+    if not isinstance(params, dict):
+        return {"jsonrpc": "2.0", "id": rid, "error": {"code": -32602, "message": "params must be an object"}}
     if method == "initialize":
         asked = params.get("protocolVersion")
         return {"jsonrpc": "2.0", "id": rid, "result": {
@@ -275,7 +286,7 @@ def main() -> None:
             continue
         try:
             msg = json.loads(raw)
-        except ValueError:
+        except (ValueError, RecursionError):           # RecursionError: nesting deeper than json can parse
             send({"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "parse error"}})
             continue
         handle(msg)

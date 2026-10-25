@@ -154,9 +154,16 @@ def main() -> int:
     assert c.tool("verdict", call="p1.member1")["isError"]          # useful is required
 
     assert c.request("tools/call", {"name": "nope"})["error"]["code"] == -32602
+    assert c.request("tools/call", {"name": ["x"]})["error"]["code"] == -32602         # unhashable: answered
     assert c.request("resources/list")["error"]["code"] == -32601
     c.send("{not json")
     assert c.read()["error"]["code"] == -32700
+    c.send("[" * 100_000)                                          # deeper than json parses
+    assert c.read()["error"]["code"] == -32700
+    for method in ("initialize", "tools/call"):                    # params not an object: answered, never raised
+        c.send({"jsonrpc": "2.0", "id": method, "method": method, "params": [1]})
+        assert c.read() == {"jsonrpc": "2.0", "id": method,
+                            "error": {"code": -32602, "message": "params must be an object"}}
     c.close()
 
     # An unknown protocol version gets the newest; no server running is a clear tool error.
@@ -257,6 +264,16 @@ def over_http() -> None:
                 assert events.startswith(": keep-alive\n\n") and events.endswith("\n\n"), events
                 reply = json.loads(events.rsplit("data: ", 1)[1])
                 assert reply["id"] == 9 and "answer from core" in reply["result"]["content"][0]["text"], reply
+                # A tool call that cannot be answered still ends its stream (it once kept it open forever).
+                req = urllib.request.Request(
+                    f"http://127.0.0.1:{port}/mcp", json.dumps({"jsonrpc": "2.0", "id": 10, "method": "tools/call",
+                                                                "params": [1]}).encode(),
+                    {"Host": f"127.0.0.1:{port}", "Content-Type": "application/json",
+                     "Accept": "application/json, text/event-stream"})
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    reply = json.loads(resp.read().decode().rsplit("data: ", 1)[1])
+                assert reply["id"] == 10 and reply["error"]["code"] == -32602, reply
+                assert post(port, "/mcp", "[" * 100_000)[1]["error"]["code"] == -32700
                 # The guard on /mcp itself: Host and Origin, as on /v1.
                 assert post(port, "/mcp", init, Host="evil.example")[0] == 403
                 assert post(port, "/mcp", init, Origin="http://evil.example")[0] == 403

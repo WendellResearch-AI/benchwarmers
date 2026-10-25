@@ -1114,7 +1114,7 @@ class Handler(BaseHTTPRequestHandler):
         limit hold exactly as on /v1."""
         try:
             msg = json.loads(self.rfile.read(length))
-        except ValueError:
+        except (ValueError, RecursionError):           # RecursionError: nesting deeper than json can parse
             return self._json(400, {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "parse error"}})
         host, port = self.server.server_address[:2]
         host = {"0.0.0.0": "127.0.0.1", "::": "::1"}.get(host, host)
