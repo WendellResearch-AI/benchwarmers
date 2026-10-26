@@ -9,7 +9,7 @@
   <a href="https://github.com/WendellResearch-AI/benchwarmers/releases/latest"><img src="https://img.shields.io/github/v/release/WendellResearch-AI/benchwarmers?logo=github&color=181717" alt="Latest release"></a>
   <a href="https://www.npmjs.com/package/@wendellresearch-ai/benchwarmers"><img src="https://img.shields.io/npm/v/@wendellresearch-ai/benchwarmers?color=cb3837&logo=npm" alt="npm"></a>
   <a href="https://pypi.org/project/benchwarmers/"><img src="https://img.shields.io/pypi/v/benchwarmers?color=3775a9&logo=pypi&logoColor=white" alt="PyPI"></a>
-  <a href="https://github.com/WendellResearch-AI/benchwarmers/actions/workflows/check.yml"><img src="https://github.com/WendellResearch-AI/benchwarmers/actions/workflows/check.yml/badge.svg" alt="Checks"></a>
+  <a href="https://github.com/WendellResearch-AI/benchwarmers/actions/workflows/check.yml"><img src="https://img.shields.io/github/actions/workflow/status/WendellResearch-AI/benchwarmers/check.yml?branch=main&logo=github&label=CI%20tests" alt="CI tests"></a>
   <a href="#docker-and-hosting"><img src="https://img.shields.io/badge/Docker-compose-2496ED?logo=docker&logoColor=white" alt="Runs in Docker"></a>
   <br>
   <a href="GATEWAY.md#other-api-formats"><img src="https://img.shields.io/badge/API-OpenAI_%7C_Responses-111111" alt="OpenAI chat completions and Responses API"></a>
