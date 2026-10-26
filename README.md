@@ -298,7 +298,16 @@ over real files) and how to judge it:
 
 It finds the server through `BENCHWARMERS_URL` (default
 `http://127.0.0.1:8122`; set it if you changed `BENCH_PORT`) and sends
-`BENCHWARMERS_KEY` where keys are required.
+`BENCHWARMERS_KEY` where keys are required. It also adds a `Stop` hook: at
+the end of a turn it asks the server (the `pending_verdicts` tool, so nothing
+extra runs on your machine) which seats of that session's panels have no
+verdict yet, and reminds Claude of them once, as hook feedback. The server
+finds the session's panels in its transcript, so the reminder needs a server
+on the same machine; with one elsewhere the hook stays silent. A verdict sent
+any way counts, the dashboard's included. With the plugin enabled and no
+Benchwarmers running, the hook shows a hook-error notice at the end of each
+turn, as `/mcp` shows the server as failed; start the server, or disable the
+plugin for that session.
 
 **Any other MCP client** that speaks HTTP:
 
@@ -340,7 +349,9 @@ The aggregator prefixes the tool names (1mcp's are
 disable the plugin's own `benchwarmers` server in `/mcp` so the tools are not
 listed twice; the skill and `/benchwarmers:ask` keep working, though the
 command then asks before each tool call, since its pre-approved tools carry
-the plugin's names.
+the plugin's names. The plugin's verdict hook calls the plugin's own server,
+so it does not work through an aggregator: with that server disabled it only
+shows a hook-error notice at the end of each turn.
 
 **An agent running on a collection.** The MCP tools ask a panel for a
 second opinion; an agent can also *be driven by* a collection, in **route

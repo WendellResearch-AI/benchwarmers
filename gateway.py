@@ -441,7 +441,8 @@ def too_small(needed: int, aliases) -> dict[str, int]:
 
 def record_seat(task: str, call: str, label: str, alias: str, r: dict) -> dict:
     """Log one answer as an unjudged offload, the moment it is in, so explorer
-    rotation counts it even if nobody judges; returns the seat as logged."""
+    rotation counts it even if nobody judges; returns the seat as logged. The
+    note's "<seat>; <status> in" is what /bench/pending reads the status from."""
     offload.add(alias, task, None, f"{label}; {r['status']} in {r['seconds']}s"
                 + (f": {r['error'][:120]}" if r["error"] else ""), call)
     return {"call": call, "seat": label, "alias": alias, **r}
@@ -1077,6 +1078,22 @@ class Handler(BaseHTTPRequestHandler):
             except KeyError as exc:
                 return self._error(404, exc.args[0])
             return self._json(200, {"ok": True, "recorded": e})
+        if path == "/bench/pending":
+            # Which of these call ids are seats that answered (ok or empty, not errored) and have
+            # no verdict yet, however one is sent (mcp_server.py's pending_verdicts, the plugin's
+            # Stop hook). An id the log does not know is not a seat. A seat's first entry is
+            # record_seat's, its note "<seat>; <status> in <s>s".
+            calls = body.get("calls")
+            if not (isinstance(calls, list) and all(isinstance(c, str) for c in calls)):
+                return self._error(400, '"calls" must be a list of call ids')
+            first, judged = {}, set()
+            for e in offload.entries():
+                first.setdefault(e.get("call"), e)
+                if e.get("useful") is not None:
+                    judged.add(e.get("call"))
+            return self._json(200, {"pending": [
+                c for c in calls if c in first and c not in judged
+                and "; error in " not in str(first[c].get("note", "")).split(":", 1)[0]]})
         # Each format's request becomes one Ask (metrics/formats.py); a part
         # that would be lost on the way, tools above all, is refused with why.
         gemini = formats.gemini_route(path)
@@ -1130,12 +1147,17 @@ class Handler(BaseHTTPRequestHandler):
             return self.end_headers()
         self._json(200, reply)
 
-    def _mcp_stream(self, msg: dict, conn: tuple[str, dict]) -> None:
-        """A tool call as an SSE stream: the 200 at once, a keep-alive every
-        KEEPALIVE seconds while a panel runs (minutes; a client's or proxy's
-        idle and header timeouts would otherwise end it), then the reply."""
+    def _mcp_stream(self, msg: dict, conn: mcp_server.Conn) -> None:
+        """A tool call as an SSE stream: the 200 at once, then every KEEPALIVE
+        seconds while a panel runs (minutes) a progress notification when the
+        client gave a progressToken, else a keep-alive comment, then the reply.
+        A comment keeps proxies' idle timeouts away; only progress resets a
+        client's own (Claude Code aborts a tool silent for 300 seconds)."""
         done: queue.Queue = queue.Queue()
         threading.Thread(target=lambda: done.put(mcp_server.answer(msg, conn)), daemon=True).start()
+        params = msg.get("params") if isinstance(msg.get("params"), dict) else {}
+        token = (params.get("_meta") or {}).get("progressToken") if isinstance(params.get("_meta"), dict) else None
+        started = time.monotonic()
         try:
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
@@ -1145,7 +1167,14 @@ class Handler(BaseHTTPRequestHandler):
                 try:
                     reply = done.get(timeout=KEEPALIVE)
                 except queue.Empty:
-                    self.wfile.write(b": keep-alive\n\n")
+                    if token is None:
+                        self.wfile.write(b": keep-alive\n\n")
+                    else:
+                        seconds = round(time.monotonic() - started)
+                        self.wfile.write(b"event: message\ndata: " + json.dumps(
+                            {"jsonrpc": "2.0", "method": "notifications/progress",
+                             "params": {"progressToken": token, "progress": seconds,
+                                        "message": f"the panel is running, {seconds} s"}}).encode() + b"\n\n")
                     self.wfile.flush()
                     continue
                 self.wfile.write(b"event: message\ndata: " + json.dumps(reply).encode() + b"\n\n")

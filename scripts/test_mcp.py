@@ -23,6 +23,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SEEN: list[tuple[str, str, dict, str]] = []          # (method, path, body, Authorization)
+JUDGED: set[str] = set()                             # call ids the stub has a verdict for
 
 MODELS = {"object": "list", "data": [
     {"id": "bench/core", "description": "second opinions", "tags": ["general"], "members": ["m1", "m2"],
@@ -44,7 +45,10 @@ class Stub(BaseHTTPRequestHandler):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         SEEN.append(("POST", self.path, body, self.headers.get("Authorization", "")))
         if self.path == "/bench/verdict":
+            JUDGED.add(body["call"])
             return self._send(200, {"ok": True, "recorded": {"call": body["call"]}})
+        if self.path == "/bench/pending":
+            return self._send(200, {"pending": [c for c in body["calls"] if c not in JUDGED]})
         if body["model"] == "bench/nope":
             return self._send(404, {"error": {"message": "no collection nope; choose one of bench/core"}})
         time.sleep(1)                                  # a panel takes a while
@@ -112,7 +116,8 @@ def main() -> int:
     assert c.request("ping")["result"] == {}
 
     tools = {t["name"]: t for t in c.request("tools/list")["result"]["tools"]}
-    assert set(tools) == {"list_collections", "ask", "verdict"}, tools
+    assert set(tools) == {"list_collections", "ask", "verdict", "pending_verdicts"}, tools
+    assert c.tool("pending_verdicts", active="false")["content"][0]["text"] == ""     # no panel yet: nothing
     assert tools["ask"]["inputSchema"]["required"] == ["collection", "prompt"]
 
     r = c.tool("list_collections")
@@ -153,6 +158,29 @@ def main() -> int:
                                                 "real": ["a true claim"], "false": ["x"]}), SEEN[-1]
     assert c.tool("verdict", call="p1.member1")["isError"]          # useful is required
 
+    # The Stop hook's tool: the call ids in the session's transcript (each once), the server says which
+    # are unjudged, and those come back as feedback for Claude, once; nothing while the hook is already
+    # continuing a turn, nor for a transcript it cannot read.
+    import tempfile
+    a, b = "p20261025-120000-abcd.member1", "p20261025-120000-abcd.explorer2"
+    with tempfile.TemporaryDirectory() as tmp:
+        transcript = pathlib.Path(tmp) / "session.jsonl"
+        transcript.write_text(f'{{"tool_result": "`{a}` ok"}}\n{{"tool_result": "`{b}` ok, `{a}` again"}}\n',
+                              encoding="utf-8")
+        hook = {"session": "s", "transcript": str(transcript)}
+        assert not c.tool("verdict", call=a, useful=True)["isError"]
+        assert c.tool("pending_verdicts", active="true", **hook)["content"][0]["text"] == ""
+        out = json.loads(c.tool("pending_verdicts", active="false", **hook)["content"][0]["text"])
+        assert SEEN[-1][1:3] == ("/bench/pending", {"calls": [a, b]}), SEEN[-1]
+        ctx = out["hookSpecificOutput"]
+        assert ctx["hookEventName"] == "Stop" and "1 seat " in ctx["additionalContext"], ctx
+        assert b in ctx["additionalContext"] and a not in ctx["additionalContext"], ctx
+        assert c.tool("pending_verdicts", active="false", **hook)["content"][0]["text"] == ""        # reminded
+        assert c.tool("pending_verdicts", session="t", transcript=str(transcript) + ".missing.jsonl",
+                      active="false")["content"][0]["text"] == ""
+        assert c.tool("pending_verdicts", session="t", transcript=str(pathlib.Path(tmp) / "x.txt"),
+                      active="false")["content"][0]["text"] == ""                                 # not a transcript
+
     assert c.request("tools/call", {"name": "nope"})["error"]["code"] == -32602
     assert c.request("tools/call", {"name": ["x"]})["error"]["code"] == -32602         # unhashable: answered
     assert c.request("resources/list")["error"]["code"] == -32601
@@ -179,7 +207,8 @@ def main() -> int:
     stub.shutdown()
     over_http()
     print("mcp server ok: initialize, ping, tools/list, each tool, refusals, a ping mid-panel, not running;"
-          " /mcp on both ports, its paths, the key and its scope through the loopback, the guard")
+          " /mcp on both ports, its paths, the key and its scope through the loopback, the guard;"
+          " pending_verdicts and /bench/pending for the Stop hook")
     return 0
 
 
@@ -216,7 +245,8 @@ def over_http() -> None:
     for s in servers:
         threading.Thread(target=s.serve_forever, daemon=True).start()
     saved = (guard.KEYS, gateway.bench_collections.FILE, gateway.run_collection, sys.stderr,
-             os.environ.pop("BENCHWARMERS_ADMIN_TOKEN", None), os.environ.pop("BENCHWARMERS_REQUIRE_KEYS", None))
+             os.environ.pop("BENCHWARMERS_ADMIN_TOKEN", None), os.environ.pop("BENCHWARMERS_REQUIRE_KEYS", None),
+             gateway.offload.LOG)
     ran = []
     with tempfile.TemporaryDirectory() as tmp:
         try:
@@ -225,8 +255,11 @@ def over_http() -> None:
             gateway.bench_collections.FILE.write_text(json.dumps({"core": {"members": [], "description": "x"},
                                                                   "vision": {"members": [], "description": "y"}}),
                                                       encoding="utf-8")
+            gateway.offload.LOG = t / "offloads.jsonl"
             gateway.run_collection = lambda name, messages, nominated, reply, who: (
-                ran.append((name, who)) or f"answer from {name}", {"seats": []})
+                ran.append((name, who)) or f"answer from {name}",
+                {"seats": [{"call": f"{name}.member1", "seat": "member", "alias": "m1", "status": "ok"},
+                           {"call": f"{name}.explorer", "seat": "explorer", "alias": "x1", "status": "error"}]})
             sys.stderr = open(os.devnull, "w")         # the access log
             for port in (s.server_port for s in servers):
                 init = {"jsonrpc": "2.0", "id": 1, "method": "initialize",
@@ -241,7 +274,8 @@ def over_http() -> None:
                 assert post(port, "/mcp", "{not json") == (400, {"jsonrpc": "2.0", "id": None,
                                                                   "error": {"code": -32700, "message": "parse error"}})
                 status, reply = post(port, "/mcp", {"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
-                assert {x["name"] for x in reply["result"]["tools"]} == {"list_collections", "ask", "verdict"}
+                assert {x["name"] for x in reply["result"]["tools"]} == {"list_collections", "ask", "verdict",
+                                                                          "pending_verdicts"}
                 r = tool(port, "list_collections", path="//mcp")
                 assert not r["isError"] and [x["name"] for x in json.loads(r["content"][0]["text"])] == \
                     ["bench/core", "bench/vision"], r
@@ -260,10 +294,25 @@ def over_http() -> None:
                 with urllib.request.urlopen(req, timeout=30) as resp:
                     assert resp.headers["Content-Type"] == "text/event-stream", resp.headers
                     events = resp.read().decode()
-                gateway.KEEPALIVE, gateway.run_collection = saved_keepalive, slow
                 assert events.startswith(": keep-alive\n\n") and events.endswith("\n\n"), events
                 reply = json.loads(events.rsplit("data: ", 1)[1])
                 assert reply["id"] == 9 and "answer from core" in reply["result"]["content"][0]["text"], reply
+                # With a progressToken, progress notifications instead: what resets a client's idle timeout.
+                req = urllib.request.Request(
+                    f"http://127.0.0.1:{port}/mcp", json.dumps({"jsonrpc": "2.0", "id": 11, "method": "tools/call",
+                                                                "params": {"name": "ask", "_meta": {"progressToken": "t1"},
+                                                                           "arguments": {"collection": "core",
+                                                                                         "prompt": "hi"}}}).encode(),
+                    {"Host": f"127.0.0.1:{port}", "Content-Type": "application/json",
+                     "Accept": "application/json, text/event-stream"})
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    messages = [json.loads(line[6:]) for line in resp.read().decode().splitlines()
+                                if line.startswith("data: ")]
+                gateway.KEEPALIVE, gateway.run_collection = saved_keepalive, slow
+                assert ": keep-alive" not in json.dumps(messages) and len(messages) >= 2, messages
+                assert all(m["method"] == "notifications/progress" and m["params"]["progressToken"] == "t1"
+                           for m in messages[:-1]), messages
+                assert messages[-1]["id"] == 11 and not messages[-1]["result"]["isError"], messages[-1]
                 # A tool call that cannot be answered still ends its stream (it once kept it open forever).
                 req = urllib.request.Request(
                     f"http://127.0.0.1:{port}/mcp", json.dumps({"jsonrpc": "2.0", "id": 10, "method": "tools/call",
@@ -277,7 +326,33 @@ def over_http() -> None:
                 # The guard on /mcp itself: Host and Origin, as on /v1.
                 assert post(port, "/mcp", init, Host="evil.example")[0] == 403
                 assert post(port, "/mcp", init, Origin="http://evil.example")[0] == 403
-            assert ran == [("core", "local")] * 4, ran
+            assert ran == [("core", "local")] * 6, ran
+
+            # The Stop hook over HTTP: the call ids in the transcript, of which the call log says which are
+            # seats that answered (ok or empty, not errored) and have no verdict; reminded of once; a
+            # verdict sent any way clears one; an id the log does not know is not a seat.
+            g = servers[1].server_port
+            ok, empty, failed, judged, unknown = (f"p20261025-130000-beef.{s}" for s in
+                                                  ("member1", "member2", "explorer", "explorer2", "member9"))
+            for call, note in ((ok, "member; ok in 1.0s"), (empty, "member; empty in 2.0s"),
+                               (failed, "explorer; error in 0.4s: Error: 429"), (judged, "explorer 2; ok in 1.0s")):
+                gateway.offload.add("m", "t", None, note, call)
+            gateway.offload.add("m", "t", True, "checked", judged)
+            status, reply = post(g, "/bench/pending", {"calls": [ok, empty, failed, judged, unknown]})
+            assert (status, reply) == (200, {"pending": [ok, empty]}), reply
+            assert post(g, "/bench/pending", {"calls": "x"})[0] == 400
+            transcript = t / "claude-1.jsonl"
+            transcript.write_text(" ".join((ok, empty, failed, judged, unknown, ok)), encoding="utf-8")
+
+            def pending(session="claude-1"):
+                return tool(g, "pending_verdicts", session=session, transcript=str(transcript),
+                            active="false")["content"][0]["text"]
+            ctx = json.loads(pending())["hookSpecificOutput"]["additionalContext"]
+            assert "2 seats " in ctx and ok in ctx and empty in ctx and failed not in ctx and judged not in ctx, ctx
+            assert pending() == ""                                         # once per session
+            assert ok in pending("claude-2")                               # another session: its own reminder
+            assert not tool(g, "verdict", call=ok, useful=True)["isError"]
+            assert post(g, "/bench/pending", {"calls": [ok, empty]})[1] == {"pending": [empty]}
 
             # Keys required: /mcp asks for one, and the loopback carries it, scope and all.
             os.environ["BENCHWARMERS_REQUIRE_KEYS"] = "1"
@@ -295,6 +370,7 @@ def over_http() -> None:
         finally:
             sys.stderr.close()
             guard.KEYS, gateway.bench_collections.FILE, gateway.run_collection, sys.stderr = saved[:4]
+            gateway.offload.LOG = saved[6]
             for name, value in (("BENCHWARMERS_ADMIN_TOKEN", saved[4]), ("BENCHWARMERS_REQUIRE_KEYS", saved[5])):
                 os.environ.pop(name, None)
                 if value is not None:

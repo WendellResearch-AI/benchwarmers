@@ -15,7 +15,8 @@ the verdicts are that server's, whichever machine it is on:
     BENCHWARMERS_TIMEOUT   seconds to wait for a panel, default 900
 
 Tools: list_collections (GET /v1/models), ask (POST /v1/chat/completions),
-verdict (POST /bench/verdict). A refusal from the server, or no server at
+verdict (POST /bench/verdict), and pending_verdicts (POST /bench/pending) for
+the plugin's Stop hook. A refusal from the server, or no server at
 all, comes back as a tool error carrying its message. Standard library only,
 and nothing from metrics/: the data folder is the server's, not this one's.
 """
@@ -24,6 +25,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import threading
 import urllib.error
@@ -90,6 +92,16 @@ TOOLS = [
                                    "description": "Claims it made that are untrue, one sentence each."}}},
      "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True,
                      "openWorldHint": False}},
+    {"name": "pending_verdicts",
+     "title": "Seats still to judge",
+     "description": "For the Benchwarmers Claude Code plugin's Stop hook, which calls it at the end of a"
+                    " turn: the seats of this session's panels that have no verdict yet. You do not need to"
+                    " call it; send verdicts with `verdict`.",
+     "inputSchema": {"type": "object", "additionalProperties": False,
+                     "properties": {"session": {"type": "string", "description": "The Claude Code session id."},
+                                    "transcript": {"type": "string", "description": "The session's transcript_path."},
+                                    "active": {"description": "The hook's stop_hook_active: true says nothing."}}},
+     "annotations": {"readOnlyHint": True, "openWorldHint": False}},
 ]
 
 
@@ -102,14 +114,29 @@ def base_url() -> str:
     return url.removesuffix("/v1")
 
 
-def env_conn() -> tuple[str, dict]:
-    """(server, headers) for the stdio server: BENCHWARMERS_URL and BENCHWARMERS_KEY. Served
-    over HTTP (gateway.py's /mcp), the server's own address and the caller's credential instead."""
+# (server, headers for it): where a tool's calls go.
+Conn = tuple[str, dict]
+
+
+def env_conn() -> Conn:
+    """The stdio server's: BENCHWARMERS_URL and BENCHWARMERS_KEY. Served over HTTP
+    (gateway.py's /mcp), the server's own address and the caller's credential instead."""
     key = (os.environ.get("BENCHWARMERS_KEY") or "").strip()
     return base_url(), {"Authorization": f"Bearer {key}"} if key else {}
 
 
-def http(conn: tuple[str, dict], method: str, path: str, body: dict | None = None) -> dict:
+# A seat's call id, as ask returns it (gateway.py: p<date>-<time>-<hex>.<seat>); only ids the
+# call log knows count, so a loose match costs nothing.
+CALL_ID = re.compile(r"\bp\d{8}-\d{6}-[0-9a-f]{4}\.[a-z]+\d*\b")
+TRANSCRIPT_TAIL = 8 * 1024 * 1024                    # bytes of a transcript read: its recent panels
+# Per Claude Code session, the seats pending_verdicts already reminded it of. ponytail: in memory
+# and capped, so a restart reminds once more; keep it in the data folder if that ever matters.
+REMINDED: dict[str, set] = {}
+REMINDED_LOCK = threading.Lock()
+MAX_SESSIONS = 1000
+
+
+def http(conn: Conn, method: str, path: str, body: dict | None = None) -> dict:
     base, extra = conn
     url = base + path
     headers = {"Accept": "application/json", **extra}
@@ -144,7 +171,7 @@ def http(conn: tuple[str, dict], method: str, path: str, body: dict | None = Non
                         " is BENCHWARMERS_URL a Benchwarmers server?") from None
 
 
-def list_collections(_args: dict, conn: tuple[str, dict]) -> list[str]:
+def list_collections(_args: dict, conn: Conn) -> list[str]:
     rows = []
     for m in http(conn, "GET", "/v1/models").get("data") or []:
         if ":" in m.get("id", ""):                     # the same collection in its other reply mode
@@ -159,7 +186,7 @@ def list_collections(_args: dict, conn: tuple[str, dict]) -> list[str]:
     return [json.dumps(rows, indent=1, ensure_ascii=False)]
 
 
-def ask(args: dict, conn: tuple[str, dict]) -> list[str]:
+def ask(args: dict, conn: Conn) -> list[str]:
     collection, prompt = args.get("collection"), args.get("prompt")
     if not (isinstance(collection, str) and collection.strip()):
         raise ToolError("`collection` is required: a name from list_collections, e.g. core")
@@ -191,7 +218,46 @@ def ask(args: dict, conn: tuple[str, dict]) -> list[str]:
             + json.dumps(data, indent=1, ensure_ascii=False)]
 
 
-def verdict(args: dict, conn: tuple[str, dict]) -> list[str]:
+def pending_verdicts(args: dict, conn: Conn) -> list[str]:
+    """For the plugin's Stop hook: the seats of this session's panels with no verdict yet, as the
+    hook's feedback for Claude (Claude Code reads it as a command hook's stdout), once per seat;
+    nothing when all are judged, already reminded of, or the hook is already continuing a turn.
+
+    The session's panels are the call ids in its transcript (the hook's transcript_path): Claude
+    Code keeps no Mcp-Session-Id, so the transcript is the one record of which panels were whose,
+    a subagent's included once its report names them. Read by whichever process runs this: the
+    stdio server always can, a server on another machine cannot, and then this says nothing.
+    Which of those ids are unjudged seats that answered is the server's call log, so a verdict
+    sent any way counts."""
+    session, path = args.get("session"), args.get("transcript")
+    if str(args.get("active")).lower() == "true" or not (isinstance(session, str) and isinstance(path, str)) \
+            or not path.endswith(".jsonl"):
+        return [""]
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(max(0, os.fstat(fh.fileno()).st_size - TRANSCRIPT_TAIL))
+            calls = list(dict.fromkeys(CALL_ID.findall(fh.read().decode("utf-8", "replace"))))
+    except OSError:
+        return [""]
+    if not calls:
+        return [""]
+    pending = http(conn, "POST", "/bench/pending", {"calls": calls}).get("pending") or []
+    with REMINDED_LOCK:
+        if session not in REMINDED and len(REMINDED) >= MAX_SESSIONS:
+            REMINDED.pop(next(iter(REMINDED)))         # the oldest session
+        reminded = REMINDED.setdefault(session, set())
+        due = [c for c in pending if c not in reminded]
+        reminded.update(due)
+    if not due:
+        return [""]
+    return [json.dumps({"hookSpecificOutput": {"hookEventName": "Stop", "additionalContext": (
+        f"Benchwarmers: {len(due)} seat{'s' * (len(due) != 1)} from this session's panels"
+        f" {'have' if len(due) != 1 else 'has'} no verdict yet: {', '.join(due)}. Send a verdict for each"
+        " seat you judged (the verdict tool, with its true claims in `real` and untrue ones in `false`),"
+        " or say in one line why not.")}})]
+
+
+def verdict(args: dict, conn: Conn) -> list[str]:
     if not (isinstance(args.get("call"), str) and args["call"].strip()):
         raise ToolError("`call` is required: the seat's call id from ask")
     if not isinstance(args.get("useful"), bool):
@@ -203,7 +269,8 @@ def verdict(args: dict, conn: tuple[str, dict]) -> list[str]:
             f" {len(body['real'])} real, {len(body['false'])} false."]
 
 
-HANDLERS = {"list_collections": list_collections, "ask": ask, "verdict": verdict}
+HANDLERS = {"list_collections": list_collections, "ask": ask, "verdict": verdict,
+            "pending_verdicts": pending_verdicts}
 OUT = threading.Lock()
 
 
@@ -214,7 +281,7 @@ def send(message: dict) -> None:
         sys.stdout.buffer.flush()
 
 
-def call_tool(rid, params: dict, conn: tuple[str, dict]) -> dict:
+def call_tool(rid, params: dict, conn: Conn) -> dict:
     name, args = params.get("name"), params.get("arguments") or {}
     if not isinstance(name, str) or name not in HANDLERS:
         return {"jsonrpc": "2.0", "id": rid, "error": {"code": -32602, "message": f"unknown tool {name!r}"}}
@@ -230,7 +297,7 @@ def call_tool(rid, params: dict, conn: tuple[str, dict]) -> dict:
             "result": {"content": [{"type": "text", "text": t} for t in texts], "isError": failed}}
 
 
-def answer(msg, conn: tuple[str, dict]) -> dict | None:
+def answer(msg, conn: Conn) -> dict | None:
     """The reply to one JSON-RPC message, or None for a notification. Both
     transports: the stdio loop below and the HTTP route (gateway.py, /mcp).
     Never raises: a request left unanswered would hang its client."""
@@ -241,7 +308,7 @@ def answer(msg, conn: tuple[str, dict]) -> dict | None:
         return {"jsonrpc": "2.0", "id": rid, "error": {"code": -32603, "message": f"{type(e).__name__}: {e}"}}
 
 
-def _answer(msg, conn: tuple[str, dict]) -> dict | None:
+def _answer(msg, conn: Conn) -> dict | None:
     if not isinstance(msg, dict) or msg.get("jsonrpc") != "2.0" or not isinstance(msg.get("method"), str):
         rid = msg.get("id") if isinstance(msg, dict) else None
         return {"jsonrpc": "2.0", "id": rid, "error": {"code": -32600, "message": "invalid request"}}

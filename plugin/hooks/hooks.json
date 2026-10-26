@@ -1,0 +1,18 @@
+{
+  "description": "Benchwarmers: at the end of a turn, a reminder for each seat of this session's panels that has no verdict yet.",
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "server": "plugin:benchwarmers:benchwarmers",
+            "tool": "pending_verdicts",
+            "input": {"session": "${session_id}", "transcript": "${transcript_path}", "active": "${stop_hook_active}"},
+            "timeout": 20
+          }
+        ]
+      }
+    ]
+  }
+}
