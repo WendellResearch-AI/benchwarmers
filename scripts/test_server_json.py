@@ -11,7 +11,9 @@ repository URL spells it, since the match is case-sensitive); every version is
 VERSION; package.json carries the name as mcpName (npm's proof) and the README
 PyPI shows carries `mcp-name: <name>` (PyPI's); the identifiers are the real
 package names; the arguments start the MCP server through launcher.py; the
-environment variables are the ones mcp_server.py reads. Standard library
+environment variables are the ones mcp_server.py reads. The root's mcp.json,
+.cursor-plugin and skills/ (cursor.directory and Glama read the repo root, not
+plugin/) start the same server and carry the plugin's skill. Standard library
 only: the full schema is validated by mcp-publisher in the release itself.
 """
 
@@ -71,7 +73,21 @@ def main() -> int:
         assert set(names) == read and len(names) == len(read), f"{kind}: lists {names}, mcp_server.py reads {read}"
         for e in p["environmentVariables"]:
             assert e.get("isSecret", False) == (e["name"] == "BENCHWARMERS_KEY"), e
-    print(f"server.json ok: {name} {version}, npm and pypi")
+
+    # The repo root as cursor.directory and Glama read it: mcp.json starts the npm
+    # package's server, and skills/ is the Claude Code plugin's skill, word for word.
+    root_mcp = json.loads((ROOT / "mcp.json").read_text(encoding="utf-8"))["mcpServers"]["benchwarmers"]
+    assert root_mcp["command"] == "npx" and root_mcp["args"][:2] == ["-y", npm["name"]], root_mcp
+    assert launcher.plan(root_mcp["args"][2:]).get("script") == "mcp_server.py", root_mcp["args"]
+    cursor = json.loads((ROOT / ".cursor-plugin" / "plugin.json").read_text(encoding="utf-8"))
+    assert (cursor["skills"], cursor["mcpServers"]) == ("./skills/", "./mcp.json"), cursor
+    lf = lambda p: p.read_text(encoding="utf-8").replace("\r\n", "\n")  # noqa: E731
+    copies = sorted(p.name for p in (ROOT / "skills").iterdir())
+    assert copies == sorted(p.name for p in (ROOT / "plugin" / "skills").iterdir()), copies
+    for skill in copies:
+        assert lf(ROOT / "skills" / skill / "SKILL.md") == lf(ROOT / "plugin" / "skills" / skill / "SKILL.md"), \
+            f"skills/{skill}/SKILL.md differs from plugin/skills/{skill}/SKILL.md: copy one over the other"
+    print(f"server.json ok: {name} {version}, npm and pypi; mcp.json, .cursor-plugin and skills/ match")
     return 0
 
 

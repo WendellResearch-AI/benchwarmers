@@ -1,0 +1,14 @@
+{
+  "name": "benchwarmers",
+  "displayName": "Benchwarmers",
+  "description": "Ask a collection of models from your Benchwarmers server for a second, third and fourth opinion: every seat's answer side by side, and your verdicts fed back into routing.",
+  "author": { "name": "Wendell Research" },
+  "homepage": "https://github.com/WendellResearch-AI/benchwarmers#readme",
+  "repository": "https://github.com/WendellResearch-AI/benchwarmers",
+  "license": "MIT",
+  "keywords": ["llm", "multi-model", "second-opinion", "code-review", "mcp"],
+  "category": "developer-tools",
+  "tags": ["llm", "multi-model", "mcp"],
+  "skills": "./skills/",
+  "mcpServers": "./mcp.json"
+}
