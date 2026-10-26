@@ -10,6 +10,7 @@
   <a href="https://www.npmjs.com/package/@wendellresearch-ai/benchwarmers"><img src="https://img.shields.io/npm/v/@wendellresearch-ai/benchwarmers?color=cb3837&logo=npm" alt="npm"></a>
   <a href="https://pypi.org/project/benchwarmers/"><img src="https://img.shields.io/pypi/v/benchwarmers?color=3775a9&logo=pypi&logoColor=white" alt="PyPI"></a>
   <a href="https://github.com/WendellResearch-AI/benchwarmers/actions/workflows/check.yml"><img src="https://img.shields.io/github/actions/workflow/status/WendellResearch-AI/benchwarmers/check.yml?branch=main&logo=github&label=CI%20tests" alt="CI tests"></a>
+  <a href="https://registry.modelcontextprotocol.io/?q=benchwarmers"><img src="https://img.shields.io/badge/MCP_Registry-111111?logo=modelcontextprotocol&logoColor=white" alt="In the official MCP Registry"></a>
   <a href="#docker-and-hosting"><img src="https://img.shields.io/badge/Docker-compose-2496ED?logo=docker&logoColor=white" alt="Runs in Docker"></a>
   <br>
   <a href="GATEWAY.md#other-api-formats"><img src="https://img.shields.io/badge/API-OpenAI_%7C_Responses-111111" alt="OpenAI chat completions and Responses API"></a>
@@ -17,7 +18,6 @@
   <a href="GATEWAY.md#other-api-formats"><img src="https://img.shields.io/badge/API-Gemini-111111" alt="Gemini API"></a>
   <a href="GATEWAY.md#other-api-formats"><img src="https://img.shields.io/badge/API-Ollama-111111" alt="Ollama API"></a>
   <a href="GATEWAY.md#route-mode-agent-clients"><img src="https://img.shields.io/badge/agents-tool_calling-111111" alt="Agent clients with tool calling, through route mode"></a>
-  <a href="https://registry.modelcontextprotocol.io/?q=benchwarmers"><img src="https://img.shields.io/badge/MCP_Registry-111111?logo=modelcontextprotocol&logoColor=white" alt="In the official MCP Registry"></a>
   <br>
   <a href="#try-it"><img src="https://img.shields.io/badge/Python-3.11_%7C_3.12_%7C_3.13-3776AB?logo=python&logoColor=white" alt="Python 3.11 to 3.13"></a>
   <a href="#try-it"><img src="https://img.shields.io/badge/core-stdlib_only-2ea44f" alt="The core needs only the Python standard library"></a>
