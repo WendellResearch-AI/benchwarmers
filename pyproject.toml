@@ -53,6 +53,12 @@ exclude = ["metrics/*.json", "metrics/*.jsonl", "perf/*.csv", "perf/*.json", "re
 [tool.hatch.build.targets.wheel.sources]
 "" = "benchwarmers"
 
+# A checkout runs as it is, so `uv sync` there (Glama's build does one) makes a
+# bare venv instead of an editable install, which the rewrite above rules out.
+# `python -m build` ignores this.
+[tool.uv]
+package = false
+
 [tool.hatch.build.targets.sdist]
 only-include = ["launcher.py", "serve.py", "gateway.py", "mcp_server.py", "cli.py", "metrics", "scripts",
                 "suite", "perf", "repoqa", "ui", "examples", "VERSION", "NOTICE", "LICENSE", "README.md",
