@@ -1,0 +1,5 @@
+{
+  "mcpServers": {
+    "benchwarmers": { "command": "npx", "args": ["-y", "@wendellresearch-ai/benchwarmers", "mcp"] }
+  }
+}

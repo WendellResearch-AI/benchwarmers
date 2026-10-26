@@ -12,7 +12,8 @@ VERSION; package.json carries the name as mcpName (npm's proof) and the README
 PyPI shows carries `mcp-name: <name>` (PyPI's); the identifiers are the real
 package names; the arguments start the MCP server through launcher.py; the
 environment variables are the ones mcp_server.py reads. The root's mcp.json,
-.cursor-plugin and skills/ (cursor.directory and Glama read the repo root, not
+mcp_config.json (Antigravity's name for it), plugin.json, .cursor-plugin and
+skills/ (cursor.directory, Glama and Antigravity read the repo root, not
 plugin/) start the same server and carry the plugin's skill. Standard library
 only: the full schema is validated by mcp-publisher in the release itself.
 """
@@ -79,6 +80,9 @@ def main() -> int:
     root_mcp = json.loads((ROOT / "mcp.json").read_text(encoding="utf-8"))["mcpServers"]["benchwarmers"]
     assert root_mcp["command"] == "npx" and root_mcp["args"][:2] == ["-y", npm["name"]], root_mcp
     assert launcher.plan(root_mcp["args"][2:]).get("script") == "mcp_server.py", root_mcp["args"]
+    agy = json.loads((ROOT / "mcp_config.json").read_text(encoding="utf-8"))["mcpServers"]["benchwarmers"]
+    assert agy == root_mcp, f"mcp_config.json (Antigravity's) {agy} differs from mcp.json {root_mcp}"
+    assert json.loads((ROOT / "plugin.json").read_text(encoding="utf-8"))["name"] == "benchwarmers"
     cursor = json.loads((ROOT / ".cursor-plugin" / "plugin.json").read_text(encoding="utf-8"))
     assert (cursor["skills"], cursor["mcpServers"]) == ("./skills/", "./mcp.json"), cursor
     lf = lambda p: p.read_text(encoding="utf-8").replace("\r\n", "\n")  # noqa: E731
