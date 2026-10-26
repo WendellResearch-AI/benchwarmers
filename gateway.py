@@ -448,6 +448,26 @@ def record_seat(task: str, call: str, label: str, alias: str, r: dict) -> dict:
     return {"call": call, "seat": label, "alias": alias, **r}
 
 
+def record(collection: str, task: str = "") -> dict[str, dict]:
+    """Each model's verdicts on one collection's seats, for a client that weighs
+    its seats by how they have done (thicken breaks ties with it): useful, not
+    useful and judged, counted, and the last one's date. `task` keeps only the
+    verdicts whose note holds it ("thicken slab faces"). Counts only: never a
+    prompt, an answer or a note."""
+    out: dict[str, dict] = {}
+    for e in offload.entries():
+        # The collection ends each seat's task as run_collection writes it: "(bench/<name>, <shape>)".
+        if e.get("useful") is None or f"({collection}," not in e.get("task", ""):
+            continue
+        if task and task not in (e.get("note") or ""):
+            continue
+        r = out.setdefault(e["model"], {"useful": 0, "notUseful": 0, "judged": 0, "lastAt": ""})
+        r["useful" if e["useful"] else "notUseful"] += 1
+        r["judged"] += 1
+        r["lastAt"] = max(r["lastAt"], e.get("date", ""))
+    return out
+
+
 def merger_candidates(collection: dict, members: list[str], shape: str, large: bool):
     """Who may merge, best first. The collection's `merger` alone when set;
     else the members with verdicts on this shape, most useful first, then the
@@ -1032,6 +1052,12 @@ class Handler(BaseHTTPRequestHandler):
             # orchestrator can choose one by task. Clients ignore extra keys.
             return self._json(200, {"object": "list", "data": [
                 {"id": n, "object": "model", "owned_by": "benchwarmers", **d} for n, d in listed(self.who)]})
+        if path == "/bench/record":
+            query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+            collection, task = (query.get(k, [""])[0] for k in ("collection", "task"))
+            if not collection:
+                return self._error(400, "GET /bench/record?collection=bench/<name>[&task=<words in the verdicts' notes>]")
+            return self._json(200, {"collection": collection, "task": task, "aliases": record(collection, task)})
         if path == "/api/tags":
             return self._json(200, formats.ollama_tags(listed(self.who)))
         if path == "/api/version":
@@ -1046,7 +1072,7 @@ class Handler(BaseHTTPRequestHandler):
         if guard.mcp_route(path):                      # no stream from the server: every reply is a POST's
             return self._json(405, {"error": {"message": "POST /mcp, one JSON-RPC message per request"}},
                               {"Allow": "POST"})
-        self._error(404, "GET /v1/models, /api/tags, /api/version or /v1beta/models", fmt=fmt)
+        self._error(404, "GET /v1/models, /bench/record, /api/tags, /api/version or /v1beta/models", fmt=fmt)
 
     def do_POST(self):                                 # noqa: N802
         # Without this any web page could spend model calls, seat ad hoc

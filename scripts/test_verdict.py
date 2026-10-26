@@ -96,7 +96,24 @@ def bench_field() -> None:
     srv.shutdown()
 
 
+def records() -> None:
+    """GET /bench/record's counts: one collection's judged seats, a task's by its notes, never an unjudged one."""
+    for call, model, coll, useful, note in [("r1.m1", "m1", "bench/vision", True, "thicken slab faces: agreed"),
+                                            ("r1.m2", "m2", "bench/vision", False, "thicken slab faces: no answer"),
+                                            ("r2.m1", "m1", "bench/vision", True, "thicken what it is: agreed"),
+                                            ("r3.m1", "m1", "bench/core", False, "a review")]:
+        offload.add(model, f"look at this ({coll}, vision)", None, "member; ok", call)
+        offload.verdict(call, useful, note)
+    offload.add("m3", "look at this (bench/vision, vision)", None, "member; ok", "r4.m3")   # never judged
+    assert gateway.record("bench/vision", "thicken slab faces") == {
+        "m1": {"useful": 1, "notUseful": 0, "judged": 1, "lastAt": offload.entries()[-1]["date"]},
+        "m2": {"useful": 0, "notUseful": 1, "judged": 1, "lastAt": offload.entries()[-1]["date"]}}
+    assert gateway.record("bench/vision")["m1"]["judged"] == 2 and "m3" not in gateway.record("bench/vision")
+    assert gateway.record("bench/core")["m1"]["notUseful"] == 1 and gateway.record("bench/none") == {}
+
+
 if __name__ == "__main__":
     verdicts()
     bench_field()
-    print("verdict and bench-field checks pass")
+    records()
+    print("verdict, bench-field and record checks pass")

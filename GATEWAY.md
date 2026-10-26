@@ -167,6 +167,14 @@ A verdict is `POST /bench/verdict` with `{"call", "useful": true|false, "note",
 dialog in the dashboard's Collections tab, under Gateway (click a seat). Sending the same verdict
 twice writes nothing.
 
+A client that weighs its seats by how they have done reads the verdicts back:
+`GET /bench/record?collection=bench/vision&task=thicken slab faces` answers
+`{"collection", "task", "aliases": {"<alias>": {"useful", "notUseful",
+"judged", "lastAt"}}}`, counting each model's judged seats on that collection.
+`task` (optional) keeps the verdicts whose note holds it. Counts only: never a
+prompt, an answer or a note. thicken breaks ties between its vision seats with
+it.
+
 ## Streaming
 
 With `"stream": true` (or the format's own way of asking, below):
