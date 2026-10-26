@@ -6,7 +6,7 @@
 </h1>
 
 <p align="center">
-  <a href="https://github.com/WendellResearch-AI/benchwarmers/releases"><img src="https://img.shields.io/github/v/release/WendellResearch-AI/benchwarmers?color=990000" alt="Latest release"></a>
+  <a href="https://github.com/WendellResearch-AI/benchwarmers/releases/latest"><img src="https://img.shields.io/github/v/release/WendellResearch-AI/benchwarmers?logo=github&color=181717" alt="Latest release"></a>
   <a href="https://www.npmjs.com/package/@wendellresearch-ai/benchwarmers"><img src="https://img.shields.io/npm/v/@wendellresearch-ai/benchwarmers?color=cb3837&logo=npm" alt="npm"></a>
   <a href="https://pypi.org/project/benchwarmers/"><img src="https://img.shields.io/pypi/v/benchwarmers?color=3775a9&logo=pypi&logoColor=white" alt="PyPI"></a>
   <a href="https://github.com/WendellResearch-AI/benchwarmers/actions/workflows/check.yml"><img src="https://github.com/WendellResearch-AI/benchwarmers/actions/workflows/check.yml/badge.svg" alt="Checks"></a>
