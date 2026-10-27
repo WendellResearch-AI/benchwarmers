@@ -776,15 +776,28 @@ def restore_model(alias: str, who: str = "ui") -> dict:
 DISMISSED_PATH = DATA / "config" / "dismissed.json"
 
 
+_modalities_index: tuple = (None, {})
+
+
 def _modelsdev_modalities() -> dict[str, dict]:
     """models.dev's cached modalities by comparable model name
-    (sources.norm_model), read once per picker opening, not once per row."""
+    (sources.norm_model), not once per row, and built again only when the
+    daily fetch rewrites its copy (a second of every picker opening)."""
+    global _modalities_index
     import sources
+    try:
+        st = (sources.CACHE / "modelsdev.json").stat()
+        key = (st.st_mtime_ns, st.st_size)
+    except OSError:
+        key = None
+    if key and _modalities_index[0] == key:
+        return _modalities_index[1]
     out = {}
     for p in sources.cached("modelsdev").values():
         for k, m in ((p or {}).get("models") or {}).items():
             if (m.get("modalities") or {}).get("input"):
                 out.setdefault(sources.norm_model(k), m["modalities"])
+    _modalities_index = (key, out)
     return out
 
 
@@ -800,7 +813,14 @@ def _modalities(entry: dict, served: str, index: dict) -> dict:
     return {"inputs": m.get("input") or [], "outputs": m.get("output") or []}
 
 
-def onboard_candidates() -> dict:
+# What each endpoint answered, for LISTED_FOR seconds: name -> (when, its
+# config, live, conns). Only the asking is kept; what is on the bench, retired
+# or dismissed is taken off fresh on every opening.
+LISTED_FOR = 300
+_listed: dict[str, tuple] = {}
+
+
+def onboard_candidates(fresh: bool = False) -> dict:
     """What every endpoint serves that the bench could onboard, for the picker.
 
     Served, minus registered, minus retired, minus dismissed (those come back
@@ -814,8 +834,13 @@ def onboard_candidates() -> dict:
     keys): provider-tags.json is written by that script on its schedule, so a
     model added to Open WebUI since was "unknown connection" until it ran.
     The file is the fallback when the hub's connections cannot be read.
+
+    An endpoint's answer is reused for LISTED_FOR seconds, unless `fresh` (the
+    picker's Refresh) or its entry in endpoints.json changed since; a failure
+    is never kept. Open WebUI alone can take ten seconds to list.
     """
-    names = list(endpoints.load())
+    config = endpoints.load()
+    names = list(config)
     if not names:
         return {"ok": False, "errors": ["no endpoint yet: add one first (Endpoints, then Manage, then"
                                         " Add an endpoint), and what it serves is listed here"]}
@@ -830,10 +855,13 @@ def onboard_candidates() -> dict:
     from concurrent.futures import ThreadPoolExecutor
 
     def ask(name: str):
+        kept = _listed.get(name)
+        if not fresh and kept and kept[1] == config[name] and time.time() - kept[0] < LISTED_FOR:
+            return kept[2], kept[3], kept[0]
         try:
             live = endpoints.models(name)
         except Exception as exc:                       # noqa: BLE001
-            return exc, []
+            return exc, [], 0
         conns = []
         if endpoints.hub(name) == "openwebui":
             import provider_tags
@@ -841,11 +869,14 @@ def onboard_candidates() -> dict:
                 conns = provider_tags.connection_names(name)
             except Exception:                          # noqa: BLE001 -- the tags file answers instead
                 pass
-        return live, conns
+        _listed[name] = (time.time(), config[name], live, conns)
+        return live, conns, _listed[name][0]
     with ThreadPoolExecutor(max_workers=len(names)) as pool:   # all at once, not in turn
         answers = dict(zip(names, pool.map(ask, names)))
+    # The oldest answer shown, so the picker can say how old its list is.
+    listed = min((at for _, _, at in answers.values() if at), default=time.time())
     mods = _modelsdev_modalities()
-    for name, (live, conns) in answers.items():
+    for name, (live, conns, _) in answers.items():
         if isinstance(live, Exception):
             errors.append(f"cannot reach {name}: {live}")
             continue
@@ -872,7 +903,8 @@ def onboard_candidates() -> dict:
             (gone if key in dismissed else open_).append(row)
     if not open_ and not gone and errors:
         return {"ok": False, "errors": errors}
-    return {"ok": True, "errors": errors, "candidates": open_, "dismissed": gone}
+    return {"ok": True, "errors": errors, "candidates": open_, "dismissed": gone,
+            "age": round(time.time() - listed)}
 
 
 def dismiss(served, undo: bool = False, who: str = "ui") -> dict:
@@ -3637,6 +3669,9 @@ def editor() -> str:
         " with progress in the header. A model from somewhere else? Add its endpoint first.</p>"
         "<input type='search' id='o-find' placeholder='Search models or connections'"
         " aria-label='Search models'>"
+        # How old the list is (serve.LISTED_FOR), and asking again now.
+        "<p class='muted' id='o-age' hidden><span></span>"
+        " <button class='linkish' type='button' id='o-refresh'>Refresh</button></p>"
         "<div class='picker' id='o-picker' role='group' aria-label='Served models'></div>"
         # serve.ONBOARD_MODES: how much each onboarding spends.
         "<label class='check'>Onboard as <select id='o-mode'>"
@@ -3778,8 +3813,8 @@ class Handler(gateway.Handler):
             log = parse_qs(urlparse(self.path).query).get("log", [""])[0]
             self._json(200, onboard_status(log))
             return
-        if self.path == "/api/candidates":
-            self._json(200, onboard_candidates())
+        if self.path in ("/api/candidates", "/api/candidates?fresh=1"):
+            self._json(200, onboard_candidates(fresh=self.path.endswith("fresh=1")))
             return
         if self.path == "/api/onboard-queue":
             self._json(200, onboard_queue())

@@ -241,12 +241,15 @@ def owner(fake: str) -> None:
     OWUI_MODELS.append({"id": "just-added", "urlIdx": 1})
     real_names = provider_tags.connection_names
     try:
-        live = {x["served"]: x["group"] for x in serve.onboard_candidates()["candidates"]}
+        # The picker's list is kept a few minutes (serve.LISTED_FOR); Refresh asks again.
+        kept = serve.onboard_candidates()
+        assert "just-added" not in {x["served"] for x in kept["candidates"]}, kept
+        live = {x["served"]: x["group"] for x in serve.onboard_candidates(fresh=True)["candidates"]}
 
         def refused(hub):
             raise OSError("401")
         provider_tags.connection_names = refused
-        c = serve.onboard_candidates()
+        c = serve.onboard_candidates(fresh=True)
     finally:
         provider_tags.connection_names = real_names
         OWUI_MODELS.pop()

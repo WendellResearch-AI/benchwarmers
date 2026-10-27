@@ -154,13 +154,29 @@ def connections() -> dict:
     return data if isinstance(data, dict) else {}
 
 
+_default: tuple = (None, "")
+
+
 def default() -> str:
+    """The default endpoint's name, read again only when endpoints.json
+    changes: snapshot_key asks once per model, hundreds of times a page."""
+    global _default
+    try:
+        st = FILE.stat()
+        key = (str(FILE), st.st_mtime_ns, st.st_size)
+    except OSError:
+        key = None
+    seen = _default
+    if key and seen[0] == key:
+        return seen[1]
     data = load()
     if not data:
         raise RuntimeError(f"no endpoints configured: add one from the dashboard (python serve.py), run"
                            f" scripts/init.py --endpoint NAME BASE_URL, or create {FILE}"
                            ' like {"name": {"base": "https://.../v1", "key": "name", "default": true}}')
-    return next((n for n, e in data.items() if e.get("default")), next(iter(data)))
+    name = next((n for n, e in data.items() if e.get("default")), next(iter(data)))
+    _default = (key, name)
+    return name
 
 
 def kind(name: str, data: dict | None = None) -> str:

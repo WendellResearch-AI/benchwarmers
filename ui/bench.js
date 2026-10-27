@@ -509,17 +509,26 @@
       o.picker.appendChild(d);
     }
   }
-  function loadCandidates() {
+  // The server keeps each endpoint's list a few minutes (serve.LISTED_FOR);
+  // Refresh asks them all again.
+  function showAge(s) {
+    var age = $('o-age');
+    age.hidden = s == null;
+    if (s == null) return;
+    age.firstChild.textContent = s < 60 ? 'Listed just now.' : 'Listed ' + Math.round(s / 60) + ' min ago.';
+  }
+  function loadCandidates(fresh) {
+    showAge(null);
     o.picker.textContent = ''; o.picker.appendChild(el('p', {class: 'empty'}, 'Please wait. Gathering models from your endpoints…'));
     o.start.disabled = o.dismiss.disabled = true;
     // Typing before the list arrives is lost, or lands on a row; the mode waits with it.
     o.find.readOnly = true; $('o-mode').disabled = true;
     function ready() { o.find.readOnly = false; $('o-mode').disabled = false; }
-    fetch('/api/candidates').then(function (r) { return r.json(); }).then(function (res) {
+    fetch('/api/candidates' + (fresh ? '?fresh=1' : '')).then(function (r) { return r.json(); }).then(function (res) {
       ready(); o.find.focus();
       if (!res.ok) { o.picker.textContent = ''; listErrors(o.errors, res.errors); return; }
       if (res.errors.length) listErrors(o.errors, res.errors);   // one endpoint down; the rest listed
-      data = res;
+      data = res; showAge(res.age);
       // Only what is still offered stays ticked.
       var offered = {};
       res.candidates.forEach(function (c) { offered[c.key] = 1; });
@@ -535,6 +544,7 @@
     od.showModal(); o.find.focus(); loadCandidates();
   });
   o.find.addEventListener('input', renderPicker);
+  $('o-refresh').addEventListener('click', function () { o.errors.textContent = ''; loadCandidates(true); });
   o.close.addEventListener('click', function () { od.close(); });
   od.addEventListener('close', function () { if (timer) { clearInterval(timer); timer = null; } });
 
