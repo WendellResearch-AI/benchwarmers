@@ -86,7 +86,49 @@ def main() -> None:
         finally:
             run.TASKS = kept
     panel()
+    sample()
     print("ok")
+
+
+def sample() -> None:
+    """vision_sample.py builds each source's key from rows shaped as datasets-server
+    returns them (no network: rows and pictures stand in)."""
+    import vision_sample as vs
+    kept = vs.rows, vs.image
+    receipt = {"menu": [{"nm": "EGG TART", "cnt": "1", "price": "13,000"}, {"nm": "TEA", "cnt": "2", "price": "8,000"}],
+               "total": {"total_price": "21.000", "cashprice": "50.000", "changeprice": "29.000"}}
+    data = {
+        "naver-clova-ix/cord-v2": [{"ground_truth": json.dumps({"gt_parse": receipt})},
+                                   {"ground_truth": json.dumps({"gt_parse": {**receipt, "total": {
+                                       **receipt["total"], "creditcardprice": "21.000"}}})}],   # paid by card: skipped
+        "bevaya/RICO-ScreenQA": [
+            {"screen_id": "7", "question": "What is the version?",
+             "ground_truth": [{"full_answer": "It is 1.69", "ui_elements": [{"text": "1.69"}]}]},
+            {"screen_id": "7", "question": "Is GPS on?", "ground_truth": [{"full_answer": "on", "ui_elements": [{"text": "ON"}]}]},
+            {"screen_id": "7", "question": "What is the lawn type?", "ground_truth": [{"full_answer": "<no answer>", "ui_elements": []}]}],
+        "lmms-lab-encoder/POPE": [{"image_source": "COCO_val2014_000000000042", "question": f"Is there a {t} in the image?",
+                                   "answer": a} for t, a in (("dog", "yes"), ("cat", "no"), ("ball", "yes"), ("car", "no"))],
+    }
+    vs.rows = lambda dataset, config, split, offset, length: data.get(dataset, [])
+    vs.image = lambda row, field="image": (b"\xff\xd8", ".jpg")
+    try:
+        (c, _, _), = list(vs.cord(0, 10))
+        (s, _, _), = list(vs.screenqa(0, 10))
+        (p, _, _), = list(vs.pope(0, 10))
+    finally:
+        vs.rows, vs.image = kept
+    for spec, right, wrong in (
+            (c, "total: Rp 21.000\ncash: 50,000\nchange: 29000\nitems: 2\ncard: not shown", "card: 4417"),
+            (s, "\n".join(f"q{n}: {a}" for n, a in enumerate(
+                ["not shown" if "lawn" in ln else "1.69" if "version" in ln else "on"
+                 for ln in s["prompt"].splitlines() if ln.startswith("q")], 1)), None),
+            (p, "\n".join(f"q{n}: {'yes' if ('dog' in ln or 'ball' in ln) else 'no'}"
+                          for n, ln in enumerate((ln for ln in p["prompt"].splitlines() if ln.startswith("q")), 1)), None)):
+        got = run.score(spec, right)
+        assert got["found"] == got["of"] and not got["invented"], (spec["id"], got, right)
+    assert run.score(c, "total: 21.000\ncard: 4417")["invented"], c
+    yes = "\n".join(f"q{n}: yes" for n in range(1, 5))
+    assert len(run.score(p, yes)["invented"]) == 2                     # a yes to each absent thing
 
 
 def panel() -> None:

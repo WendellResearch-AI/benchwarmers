@@ -29,7 +29,7 @@
       "label": "error_code: E-213"
     },
     {
-      "regex": "(?m)^[^\\w\\n]*account[^\\w\\n]*:[ \\t*_`\\\"']*(not shown|not visible|not present|not listed|not given|not stated|not on the|not in the|not provided|not included|none shown|n/?a\\b|none\\b|no such|does not show|doesn't show)",
+      "regex": "(?m)^[^\\w\\n]*account[^\\w\\n]*:[ \\t*_`\\\"']*(not shown|not visible|not present|not listed|not given|not stated|not on the|not in the|not provided|not included|none shown|n/?a\\b|none\\b|no such|does not show|doesn't show|cannot be (?:determined|answered|seen)|can't be (?:determined|answered|seen)|unanswerable)",
       "label": "account: not shown"
     }
   ],

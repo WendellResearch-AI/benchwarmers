@@ -25,7 +25,7 @@
       "label": "top_right: a yellow star"
     },
     {
-      "regex": "(?m)^[^\\w\\n]*purple[ _]shapes[^\\w\\n]*:[ \\t*_`\\\"']*(0\\b|none\\b|zero\\b|no\\b|not shown|not visible|not present|not listed|not given|not stated|not on the|not in the|not provided|not included|none shown|n/?a\\b|none\\b|no such|does not show|doesn't show)",
+      "regex": "(?m)^[^\\w\\n]*purple[ _]shapes[^\\w\\n]*:[ \\t*_`\\\"']*(0\\b|none\\b|zero\\b|no\\b|not shown|not visible|not present|not listed|not given|not stated|not on the|not in the|not provided|not included|none shown|n/?a\\b|none\\b|no such|does not show|doesn't show|cannot be (?:determined|answered|seen)|can't be (?:determined|answered|seen)|unanswerable)",
       "label": "purple_shapes: 0"
     }
   ],

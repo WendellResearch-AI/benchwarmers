@@ -31,13 +31,10 @@ import pathlib
 
 from PIL import Image, ImageDraw, ImageFont
 
+from vision_keys import NOT_SHOWN, PROMPT, clause
+
 HERE = pathlib.Path(__file__).resolve().parent
 OUT = HERE / "tasks"
-
-NOT_SHOWN = (r"(not shown|not visible|not present|not listed|not given|not stated|not on the|not in the"
-             r"|not provided|not included|none shown|n/?a\b|none\b|no such|does not show|doesn't show)")
-PROMPT = ("Read the attached image and answer in exactly these lines, one per line, nothing else:\n\n{lines}\n\n"
-          "If the image does not show something, write `not shown` for it. Do not guess.")
 
 
 def font(size: int, kind: str = "sans"):
@@ -50,16 +47,6 @@ def font(size: int, kind: str = "sans"):
         except OSError:
             continue
     return ImageFont.load_default(size)
-
-
-def key(name: str, value: str) -> str:
-    """A regex for the line `name: value`, markdown around the key allowed."""
-    k = name.replace("_", "[ _]")
-    return rf"(?m)^[^\w\n]*{k}[^\w\n]*:[ \t*_`\"']*{value}"
-
-
-def clause(name: str, value: str, label: str) -> dict:
-    return {"regex": key(name, value), "label": label}
 
 
 def write(task_id: str, title: str, image: Image.Image, lines: list[str], find: list[dict],

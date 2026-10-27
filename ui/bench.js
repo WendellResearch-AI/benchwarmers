@@ -1754,9 +1754,16 @@
       var V = C.vision;
       if (!V.heat.length) return el('p', {class: 'hint'}, 'No vision task answers yet: the suite runs them for models'
         + ' that take images, at onboarding (Full) or through the scheduled passes.');
-      var keys = [], head = {};
-      Object.keys(V.tasks).forEach(function (t) {
-        V.tasks[t].fields.forEach(function (f, i) { keys.push(t + '·' + f); if (!i) head[t + '·' + f] = t.replace(/^vision-/, ''); });
+      // Grouped by where the pictures come from, the group's name over its first field.
+      var order = ['made', 'own', 'receipts', 'screens', 'tables', 'objects'], keys = [], head = {};
+      Object.keys(V.tasks).sort(function (a, b) {
+        return order.indexOf(V.tasks[a].family) - order.indexOf(V.tasks[b].family) || (a < b ? -1 : 1);
+      }).forEach(function (t) {
+        var fam = V.tasks[t].family;
+        V.tasks[t].fields.forEach(function (f) {
+          if (!keys.some(function (k) { return head[k] === fam; })) head[t + '·' + f] = fam;
+          keys.push(t + '·' + f);
+        });
       });
       var S = V.summary;
       function share(m) { return S[m].fields ? S[m].right / S[m].fields : 0; }
@@ -1764,8 +1771,10 @@
       var colour = {right: good, misread: signal, 'left out': line, 'trap taken': err, 'no answer': muted};
       function tip(d) { return d.model + '\n' + d.task.replace(/^vision-/, '') + ': ' + d.field + (d.trap ? ' (a trap)' : '') + '\n' + d.state; }
       return Plot.plot({
-        width: w, height: 22 * models.length + 90, style: style, marginLeft: 300, marginTop: 30, padding: 0.08,
-        x: {domain: keys, axis: 'top', label: null, tickSize: 0, tickFormat: function (k) { return head[k] || ''; }},
+        // The group names tilted: a narrow group (a few tables) would run into its neighbour's.
+        width: w, height: 22 * models.length + 140, style: style, marginLeft: 300, marginTop: 80, padding: 0.08,
+        x: {domain: keys, axis: 'top', label: null, tickSize: 0, tickRotate: -60, textAnchor: 'start',
+            tickFormat: function (k) { return head[k] || ''; }},
         y: {domain: models, label: null, tickSize: 0,
             tickFormat: function (m) { return m + '  (' + S[m].right + '/' + S[m].fields + ')'; }},
         color: {legend: true, domain: V.states, range: V.states.map(function (s) { return colour[s]; })},

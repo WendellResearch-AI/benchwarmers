@@ -74,6 +74,7 @@ CHECKS = [
     ("suite/test_rebench.py", [], False),
     ("suite/test_pick.py", [], False),
     ("suite/test_vision_tasks.py", [], False),
+    ("suite/vision_keys.py", [], False),
     ("scripts/test_client.py", [], True),          # runs the llm CLI against a fake server
 ]
 

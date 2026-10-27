@@ -37,7 +37,7 @@
       "label": "surface: 8.5"
     },
     {
-      "regex": "(?m)^[^\\w\\n]*autograph[^\\w\\n]*:[ \\t*_`\\\"']*(no\\b|not shown|not visible|not present|not listed|not given|not stated|not on the|not in the|not provided|not included|none shown|n/?a\\b|none\\b|no such|does not show|doesn't show)",
+      "regex": "(?m)^[^\\w\\n]*autograph[^\\w\\n]*:[ \\t*_`\\\"']*(no\\b|not shown|not visible|not present|not listed|not given|not stated|not on the|not in the|not provided|not included|none shown|n/?a\\b|none\\b|no such|does not show|doesn't show|cannot be (?:determined|answered|seen)|can't be (?:determined|answered|seen)|unanswerable)",
       "label": "autograph: no, or not shown"
     }
   ],

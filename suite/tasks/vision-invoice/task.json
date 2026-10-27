@@ -25,7 +25,7 @@
       "label": "bill_to: Kestrel Labs BV"
     },
     {
-      "regex": "(?m)^[^\\w\\n]*po[ _]number[^\\w\\n]*:[ \\t*_`\\\"']*(not shown|not visible|not present|not listed|not given|not stated|not on the|not in the|not provided|not included|none shown|n/?a\\b|none\\b|no such|does not show|doesn't show)",
+      "regex": "(?m)^[^\\w\\n]*po[ _]number[^\\w\\n]*:[ \\t*_`\\\"']*(not shown|not visible|not present|not listed|not given|not stated|not on the|not in the|not provided|not included|none shown|n/?a\\b|none\\b|no such|does not show|doesn't show|cannot be (?:determined|answered|seen)|can't be (?:determined|answered|seen)|unanswerable)",
       "label": "po_number: not shown"
     }
   ],

@@ -2318,7 +2318,7 @@ def vision_rows() -> dict:
             continue
         names = list(dict.fromkeys(c["label"].split(":")[0] for c in spec["must_find"]))
         traps = {c["label"].split(":")[0] for c in spec.get("must_not_claim", [])}
-        tasks[spec["id"]] = {"title": spec["title"], "fields": names}
+        tasks[spec["id"]] = {"title": spec["title"], "fields": names, "family": _vision_family(spec)}
         for answer in sorted((path.parent / "output").glob("*.md")):
             alias = current_alias(answer.stem)
             if alias not in live:
@@ -2348,6 +2348,18 @@ def vision_rows() -> dict:
                    "right": m["right"], "traps": m["traps"], "taken": m["taken"]} for a, m in models.items()}
     return {"tasks": tasks, "heat": heat, "summary": summary, "states": list(VISION_STATES),
             "seatKinds": list(VISION_SEATS), "work": _vision_work_rows(live)}
+
+
+VISION_FAMILIES = (("vision-cord-", "receipts"), ("vision-screenqa-", "screens"), ("vision-tablevqa-", "tables"),
+                   ("vision-pope-", "objects"))
+
+
+def _vision_family(spec: dict) -> str:
+    """The grid's group: a public source (suite/vision_sample.py), the made
+    pictures (suite/vision_tasks.py), or the install's own (written by hand)."""
+    if spec.get("made_by", "").startswith("suite/vision_tasks.py"):
+        return "made"
+    return next((name for prefix, name in VISION_FAMILIES if spec["id"].startswith(prefix)), "own")
 
 
 def _vision_work_rows(live: set[str]) -> dict:
@@ -2422,12 +2434,14 @@ def vision_card() -> str:
                     + "</tr>")
     body.append("</tbody></table>")
     key = """<dl>
-      <dt>The vision tasks</dt><dd>Pictures made with their answer key (<code>suite/vision_tasks.py</code>):
-        a receipt, a graded card's label, a bar chart, a table, a settings screen, shapes to count and an
-        invoice turned on its side. Each field is <b>right</b>, <b>misread</b> (another value),
-        <b>left out</b>, or a <b>trap taken</b>: one field per task asks for something the picture does
-        not show, and the right answer is <code>not shown</code>. They run for every model that takes
-        images; a vision model gets only these, never the code tasks.</dd>
+      <dt>The vision tasks</dt><dd>Grouped by where the pictures come from: <b>made</b> with their answer
+        key (<code>suite/vision_tasks.py</code>), your <b>own</b> photos keyed by hand, and items sampled
+        from public datasets with people's answers (<code>suite/vision_sample.py</code>): photographed
+        <b>receipts</b>, app <b>screens</b>, <b>tables</b>, and <b>objects</b> in photos. Each field is
+        <b>right</b>, <b>misread</b> (another value), <b>left out</b>, or a <b>trap taken</b>: a value for
+        something the picture does not show, where the right answer is <code>not shown</code> (a dot marks
+        those fields). They run for every model that takes images; a vision model gets only these, never
+        the code tasks.</dd>
       <dt>Real work on images</dt><dd>Every seat of a vision panel through the gateway. <b>Checked</b> means
         its verdict lists claims, each compared with the picture by hand: the claims right and wrong
         come from these alone. <b>Useful, no claims</b> is a verdict without them, which on thicken's

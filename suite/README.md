@@ -107,6 +107,35 @@ The scorer ignores a `must_not_claim` phrase where it is negated in its own
 sentence ("there are no INSERT statements"), so ruling something out is never
 counted as claiming it.
 
+## Vision tasks
+
+A fifth shape, added 2026-10-27: **reading images**. A task with `"shape":
+"vision"` and `"images"` (files in its `fixtures/`) is sent with its pictures
+as image parts, through the built-in client, to every model the catalog says
+takes images; a vision model (role `vision`) gets only these, and a model that
+cannot see never gets one (`run.applies`). The answer is `key: value` lines,
+`not shown` for what the picture does not show, scored by
+`suite/vision_keys.py`: a value for a field the picture cannot answer is an
+invention, like a trap. They stay out of the routing recall and the code
+reports; the Benchmarks page's Vision panel shows them field by field.
+
+Three sources:
+
+- **Made pictures** (`suite/vision_tasks.py`, needs Pillow to regenerate): a
+  receipt, a grading label, a bar chart, a table, a settings screen, shapes
+  and an invoice turned sideways, each key built from the data that drew it.
+  Shipped in `suite/tasks/vision-*` and copied into the data folder on the
+  next run (`run.seed_shipped`). Never seen in training; clean renders.
+- **Public datasets** (`python suite/vision_sample.py --count 5`): photographed
+  receipts (CORD v2), app screens with an unanswerable question (RICO-ScreenQA),
+  tables (TableVQA-Bench) and absent-object questions (POPE), with the
+  datasets' human answers. Written into the data folder only, so each install
+  samples its own and nothing is redistributed.
+- **Your own**: any task folder you write into the data folder's
+  `suite/tasks/vision-*` in the same form, from photos whose answers you have
+  checked. Real pictures of the real job, never in anyone's training data:
+  the strongest of the three.
+
 ## Adding a task
 
 A task is one directory under `suite/tasks/` containing:
