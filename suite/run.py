@@ -147,19 +147,47 @@ def available_models(cache: dict | None = None,
 
 
 def images_only() -> set[str]:
-    """Aliases whose role is vision or image (model_roles): the suite's tasks
-    are text and code, which no shape would ever seat them for, so their
+    """Aliases whose role is vision or image (model_roles). No text shape
+    would ever seat them, so the text and code tasks are not theirs: their
     answers only spent calls and put a reader of images on the code charts.
-    The suite's own pickers skip them; routing does not (available_models),
-    where a vision model still sits for images. `--model` still runs any."""
+    Routing still sees them (available_models), where a vision model sits
+    for images."""
     import model_roles
     return {a for a, r in model_roles.load()["models"].items() if r in ("vision", "image")}
 
 
-def suite_models() -> list[str]:
-    """available_models(), less images_only()."""
-    skip = images_only()
-    return [m for m in available_models() if m not in skip]
+def sees_images(alias: str) -> bool:
+    """Whether the catalog says `alias` takes images, by the gateway's rule
+    (gateway.cannot_see): its input types, the Vision / OCR override in its
+    model popup, or the capability seen working. One the catalog knows
+    nothing about is not asked: a model that cannot see answers anyway,
+    describing a picture it never got, and that would score as reading badly."""
+    import catalog
+    import endpoints
+    if endpoints.entry_of(alias).get("api") == "responses":    # the client sends it no images yet
+        return False
+    return bool(catalog.info(alias).get("vision"))
+
+
+def applies(spec: dict, model: str, skip: set[str] | None = None, seeing: dict | None = None) -> bool:
+    """Whether `spec` is a task for `model`: a vision task (one with images)
+    for a model that takes them, any other for one that is not vision or
+    image only. So a vision model's suite is the vision tasks, a general one
+    that takes images gets both, and a text-only one never sees a picture.
+    `skip` (images_only()) and `seeing` (alias -> sees_images) save asking
+    again in a loop."""
+    if spec.get("images"):
+        if seeing is not None and model in seeing:
+            return seeing[model]
+        return sees_images(model)
+    return model not in (images_only() if skip is None else skip)
+
+
+def tasks_for(model: str, tasks: list[dict]) -> list[dict]:
+    skip, seeing = images_only(), {}
+    if any(t.get("images") for t in tasks):
+        seeing[model] = sees_images(model)
+    return [t for t in tasks if applies(t, model, skip, seeing)]
 
 
 def _registered_names() -> dict[str, str]:
@@ -243,9 +271,9 @@ def next_free(tasks_dir: pathlib.Path) -> str | None:
     is picked up on the next run rather than after a full cycle.
     """
     best, best_age = None, None
-    held = ad_hoc_models() | images_only()
+    held, specs = ad_hoc_models(), load_tasks(None)
     for model in free_models():
-        if model in held:
+        if model in held or not tasks_for(model, specs):
             continue
         outputs = list(tasks_dir.glob(f"*/output/{model}.md"))
         if not outputs:
@@ -283,17 +311,23 @@ def next_model(tasks_dir: pathlib.Path) -> str | None:
          A gap is a worse blind spot than a stale number: an old score is
          still evidence, a missing one is none.
       3. oldest, so the set refreshes on its own
+
+    Complete means every task that is the model's (tasks_for): a vision
+    model is complete on the vision tasks alone.
     """
-    total = len([p for p in tasks_dir.iterdir() if p.is_dir()])
+    specs = load_tasks(None)
     free = set(free_models())
     best, best_key = None, None
-    for model in suite_models():
+    for model in available_models():
         if model in free:
             continue
-        outputs = list(tasks_dir.glob(f"*/output/{model}.md"))
+        mine = tasks_for(model, specs)
+        if not mine:
+            continue
+        outputs = [p for p in (t["dir"] / "output" / f"{model}.md" for t in mine) if p.exists()]
         if not outputs:
             return model                      # never scored: go first
-        key = (len(outputs) >= total,         # False (incomplete) sorts first
+        key = (len(outputs) >= len(mine),     # False (incomplete) sorts first
                max(o.stat().st_mtime for o in outputs))
         if best_key is None or key < best_key:
             best, best_key = model, key
@@ -330,7 +364,28 @@ def pick_tasks(tasks: list[dict], model: str, n: int = PER_RUN) -> list[dict]:
     return sorted(tasks, key=lambda s: answer(s).stat().st_mtime)[:n]
 
 
+SHIPPED = HERE / "tasks"
+SHIPPED_PREFIX = "vision-"
+
+
+def seed_shipped() -> None:
+    """Copy the vision tasks this checkout ships (suite/tasks/vision-*: made
+    images with their answer keys, suite/vision_tasks.py) into the data
+    folder, and keep their prompt, key and images current there. The saved
+    answers (output/) are the install's and are never touched. Other tasks
+    are the install's own and are not shipped this way."""
+    if SHIPPED.resolve() == TASKS.resolve():
+        return
+    for task in SHIPPED.glob(f"{SHIPPED_PREFIX}*/task.json"):
+        for src in [task, *sorted((task.parent / "fixtures").glob("*"))]:
+            dst = TASKS / src.relative_to(SHIPPED)
+            if not dst.exists() or dst.read_bytes() != src.read_bytes():
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(src, dst)
+
+
 def load_tasks(only: str | None) -> list[dict]:
+    seed_shipped()
     tasks = []
     for path in sorted(TASKS.glob("*/task.json")):
         spec = json.loads(path.read_text(encoding="utf-8"))
@@ -362,6 +417,23 @@ def build_prompt(spec: dict) -> str:
         parts += [f"===== FILE: {rel} =====",
                   source.read_text(encoding="utf-8", errors="replace"), ""]
     return "\n".join(parts)
+
+
+MIME = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
+
+
+def image_urls(spec: dict) -> list[str]:
+    """A vision task's pictures (`images`, files in its fixtures/) as data:
+    URLs, the way the gateway passes a request's images on."""
+    import base64
+    urls = []
+    for name in spec.get("images", []):
+        path = spec["dir"] / "fixtures" / name
+        if not path.exists():
+            raise MissingAttachment(f"{spec['id']}: image not found: fixtures/{name}")
+        mime = MIME.get(path.suffix.lower(), "image/png")
+        urls.append(f"data:{mime};base64,{base64.b64encode(path.read_bytes()).decode('ascii')}")
+    return urls
 
 
 # A model that was never allowed to answer has not answered badly, and a
@@ -826,12 +898,20 @@ def _child_env() -> dict:
 
 
 def ask_once(binary: str, model: str, prompt: str,
-             timeout: int) -> tuple[str, float]:
+             timeout: int, images: list[str] | None = None) -> tuple[str, float]:
     # BENCH_CLIENT=builtin: the same call without the `llm` subprocess, giving
     # the same text for the same failure (metrics/client.py).
     if str(ROOT / "metrics") not in sys.path:
         sys.path.insert(0, str(ROOT / "metrics"))
     import client
+    if images:
+        # Pictures go as the API's own image parts, through the built-in
+        # client whichever is chosen: `llm -m` reads a prompt, not parts.
+        import formats
+        content = [formats.text_part(prompt), *(formats.image(u) for u in images)]
+        res = client.chat(model, "", timeout=timeout, messages=[{"role": "user", "content": content}],
+                          purpose="vision task")
+        return client.output(res, timeout), res["seconds"]
     if client.backend(model) == "builtin":
         res = client.chat(model, prompt, timeout=timeout)
         return client.output(res, timeout), res["seconds"]
@@ -858,7 +938,7 @@ def ask_once(binary: str, model: str, prompt: str,
 
 
 def ask(binary: str, model: str, prompt: str, timeout: int,
-        attempts: int = 3) -> tuple[str, float, int]:
+        attempts: int = 3, images: list[str] | None = None) -> tuple[str, float, int]:
     """Ask, retrying UPSTREAM FAILURES only.
 
     A rate limit or an overloaded service is a fact about the afternoon, not
@@ -869,7 +949,7 @@ def ask(binary: str, model: str, prompt: str, timeout: int,
     """
     total = 0.0
     for attempt in range(1, attempts + 1):
-        body, seconds = ask_once(binary, model, prompt, timeout)
+        body, seconds = ask_once(binary, model, prompt, timeout, images)
         total += seconds
         kind = (outcome(body) or ("answered", ""))[0]
         if kind != "error" or attempt == attempts:
@@ -911,7 +991,7 @@ def main() -> int:
         if chosen is None:
             sys.exit("no :free model registered")
         args.models = [chosen]
-        tasks = pick_tasks(tasks, chosen)
+        tasks = pick_tasks(tasks_for(chosen, tasks), chosen)
         print(f"--next-free chose {chosen}: {len(tasks)} tasks "
               f"(one model per run; the free tier is 50 calls a day, shared)")
 
@@ -920,13 +1000,13 @@ def main() -> int:
         if chosen is None:
             sys.exit("no paid model registered")
         args.models = [chosen]
-        total = len([p for p in TASKS.iterdir() if p.is_dir()])
-        have = len(list(TASKS.glob(f"*/output/{chosen}.md")))
-        tasks = pick_tasks(tasks, chosen)
-        print(f"--next chose {chosen} ({have}/{total} tasks scored; "
+        mine = tasks_for(chosen, tasks)
+        have = sum((t["dir"] / "output" / f"{chosen}.md").exists() for t in mine)
+        tasks = pick_tasks(mine, chosen)
+        print(f"--next chose {chosen} ({have}/{len(mine)} tasks scored; "
               f"{len(tasks)} this run)")
 
-    models = args.models or [m for m in suite_models()
+    models = args.models or [m for m in available_models()
                              if m not in free_models() or args.next_free]
     binary = None if args.dry_run else llm_binary()
 
@@ -935,10 +1015,20 @@ def main() -> int:
     ready = []
     for spec in tasks:
         try:
-            ready.append((spec, build_prompt(spec)))
+            ready.append((spec, build_prompt(spec), image_urls(spec)))
         except MissingAttachment as exc:
             print(f"skipped {exc}")
-    tasks, prompts = [s for s, _ in ready], {s["id"]: p for s, p in ready}
+    tasks, prompts = [s for s, _, _ in ready], {s["id"]: p for s, p, _ in ready}
+    pictures = {s["id"]: u for s, _, u in ready}
+    # Each pair only where the task is the model's (applies): pictures to a
+    # model that takes them, text and code to one that is not images only.
+    skip = images_only()
+    seeing = {m: sees_images(m) for m in models} if any(pictures.values()) else {}
+    pairs = {(s["id"], m) for s in tasks for m in models if applies(s, m, skip, seeing)}
+    left = len(tasks) * len(models) - len(pairs)
+    if left:
+        print(f"{left} task/model pair(s) left out: vision tasks go to models that take images,"
+              " text and code tasks to models that are not vision or image only")
 
     if args.dry_run:
         for spec in tasks:
@@ -955,16 +1045,20 @@ def main() -> int:
 
     for spec in tasks:
         prompt = prompts[spec["id"]]
+        if not any((spec["id"], m) in pairs for m in models):
+            continue
         print(f"\n## {spec['id']} — {spec['title']}")
         print(f"   {len(prompt):,} chars, {len(spec.get('must_find', []))} findings\n")
         for model in models:
+            if (spec["id"], model) not in pairs:
+                continue
             # N attempts at the SAME question. The spread is the point: a
             # single sample is a measurement of one afternoon, and this suite
             # has been reporting those as though they were properties.
             takes = []
             for _ in range(max(1, args.repeat)):
                 body, seconds, attempts = ask(binary, model, prompt,
-                                              args.timeout)
+                                              args.timeout, images=pictures[spec["id"]])
                 takes.append((score(spec, body), seconds, attempts, body))
                 if args.repeat > 1:
                     time.sleep(2)

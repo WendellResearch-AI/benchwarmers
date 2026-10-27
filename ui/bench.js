@@ -522,8 +522,8 @@
     o.picker.textContent = ''; o.picker.appendChild(el('p', {class: 'empty'}, 'Please wait. Gathering models from your endpoints…'));
     o.start.disabled = o.dismiss.disabled = true;
     // Typing before the list arrives is lost, or lands on a row; the mode waits with it.
-    o.find.readOnly = true; $('o-mode').disabled = true;
-    function ready() { o.find.readOnly = false; $('o-mode').disabled = false; }
+    o.find.readOnly = true; $('o-mode').disabled = $('o-vision').disabled = true;
+    function ready() { o.find.readOnly = false; $('o-mode').disabled = $('o-vision').disabled = false; }
     fetch('/api/candidates' + (fresh ? '?fresh=1' : '')).then(function (r) { return r.json(); }).then(function (res) {
       ready(); o.find.focus();
       if (!res.ok) { o.picker.textContent = ''; listErrors(o.errors, res.errors); return; }
@@ -539,7 +539,7 @@
   $('onboard-open').addEventListener('click', function () {
     preStep = null;
     o.errors.textContent = ''; o.find.value = ''; o.choose.hidden = false; o.run.hidden = true;
-    $('o-queue').hidden = true; chosen = {}; waitToken++;
+    $('o-queue').hidden = true; chosen = {}; waitToken++; $('o-vision').checked = false;
     o.start.hidden = o.dismiss.hidden = false; armStart(); o.title.textContent = 'Onboard a model';
     od.showModal(); o.find.focus(); loadCandidates();
   });
@@ -585,8 +585,8 @@
   // model at a time. The popup closes: the header's chip shows the batch, and
   // its Details the queue. Refused, it stays open with the reasons.
   o.start.addEventListener('click', function () {
-    var mode = $('o-mode').value;
-    var items = Object.keys(chosen).map(function (k) { return Object.assign({mode: mode}, chosen[k]); });
+    var mode = $('o-mode').value, vision = $('o-vision').checked;
+    var items = Object.keys(chosen).map(function (k) { return Object.assign({mode: mode, vision: vision}, chosen[k]); });
     if (!items.length) return;
     o.errors.textContent = ''; o.start.disabled = o.dismiss.disabled = true; o.start.textContent = 'Starting…';
     post('/api/onboard-queue', {items: items}).then(function (res) {
@@ -1745,6 +1745,62 @@
           Plot.cell(C.heat.filter(function (d) { return d.rate != null; }), {x: 'task', y: 'model', fill: 'rate', title: tip}),
           Plot.dot(C.heat.filter(function (d) { return d.invented; }), {x: 'task', y: 'model', r: 2.4, fill: ink}),
           Plot.ruleX(Object.keys(label), {x: function (t) { return t; }, stroke: ink, strokeOpacity: 0.25, dx: -2})
+        ]
+      });
+    });
+
+    // Vision tasks: one square per field and model, the task's name over its first field.
+    put('chart-vision-fields', function (w) {
+      var V = C.vision;
+      if (!V.heat.length) return el('p', {class: 'hint'}, 'No vision task answers yet: the suite runs them for models'
+        + ' that take images, at onboarding (Full) or through the scheduled passes.');
+      var keys = [], head = {};
+      Object.keys(V.tasks).forEach(function (t) {
+        V.tasks[t].fields.forEach(function (f, i) { keys.push(t + '·' + f); if (!i) head[t + '·' + f] = t.replace(/^vision-/, ''); });
+      });
+      var S = V.summary;
+      function share(m) { return S[m].fields ? S[m].right / S[m].fields : 0; }
+      var models = Object.keys(S).sort(function (a, b) { return share(b) - share(a) || S[a].taken - S[b].taken; });
+      var colour = {right: good, misread: signal, 'left out': line, 'trap taken': err, 'no answer': muted};
+      function tip(d) { return d.model + '\n' + d.task.replace(/^vision-/, '') + ': ' + d.field + (d.trap ? ' (a trap)' : '') + '\n' + d.state; }
+      return Plot.plot({
+        width: w, height: 22 * models.length + 90, style: style, marginLeft: 300, marginTop: 30, padding: 0.08,
+        x: {domain: keys, axis: 'top', label: null, tickSize: 0, tickFormat: function (k) { return head[k] || ''; }},
+        y: {domain: models, label: null, tickSize: 0,
+            tickFormat: function (m) { return m + '  (' + S[m].right + '/' + S[m].fields + ')'; }},
+        color: {legend: true, domain: V.states, range: V.states.map(function (s) { return colour[s]; })},
+        marks: [
+          Plot.cell(V.heat, {x: 'key', y: 'model', fill: 'state', title: tip}),
+          Plot.dot(V.heat.filter(function (d) { return d.trap; }), {x: 'key', y: 'model', r: 1.8, fill: ink, fillOpacity: 0.55}),
+          Plot.ruleX(Object.keys(head), {x: function (k) { return k; }, stroke: ink, strokeOpacity: 0.25, dx: -2})
+        ]
+      });
+    });
+
+    // Vision, real work: each model's seats on image panels by how they were judged.
+    put('chart-vision-work', function (w) {
+      var W = C.vision.work, kinds = C.vision.seatKinds, data = [], total = {};
+      Object.keys(W).forEach(function (m) {
+        kinds.forEach(function (k) { if (W[m][k]) data.push({model: m, kind: k, count: W[m][k]}); total[m] = (total[m] || 0) + W[m][k]; });
+      });
+      if (!data.length) return el('p', {class: 'hint'}, 'No vision panels through the gateway yet.');
+      // The models doing the most image work first: their bars are the evidence.
+      var models = Object.keys(total).sort(function (a, b) { return total[b] - total[a] || (a < b ? -1 : 1); });
+      var colour = {'checked, helped': good, 'checked, did not help': err, 'useful, no claims': sky,
+                    'no use, no claims': warn, 'not judged': line, 'no answer': muted};
+      // The claims checked by hand, beside the bar: the only right-or-wrong count real work has.
+      var claims = models.filter(function (m) { return W[m].real + W[m].false; }).map(function (m) {
+        return {model: m, text: W[m].real + ' of ' + (W[m].real + W[m].false) + ' claims right'};
+      });
+      return Plot.plot({
+        width: w, height: rows(models.length), style: style, marginLeft: 300, marginRight: 150,
+        x: {label: 'Share of its seats on image panels →', tickFormat: '.0%', grid: true, domain: [0, 1]},
+        y: {domain: models, label: null, tickFormat: function (m) { return m + '  (' + total[m] + ')'; }},
+        color: {legend: true, domain: kinds, range: kinds.map(function (k) { return colour[k]; })},
+        marks: [
+          Plot.barX(data, Plot.stackX({x: 'count', y: 'model', fill: 'kind', offset: 'normalize', order: kinds,
+            title: function (d) { return d.model + ': ' + d.kind + ', ' + d.count + ' of ' + total[d.model] + ' seats'; }})),
+          Plot.text(claims, {x: 1, y: 'model', text: 'text', dx: 8, textAnchor: 'start', fill: ink})
         ]
       });
     });

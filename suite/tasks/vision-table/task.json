@@ -1,0 +1,40 @@
+{
+  "id": "vision-table",
+  "title": "Read a table",
+  "shape": "vision",
+  "images": [
+    "table.png"
+  ],
+  "prompt": "Read the attached image and answer in exactly these lines, one per line, nothing else:\n\nsouth_q3: <number>\nwest_q1: <number>\ncentral_q3: <number>\nq4_highest: <the region with the most units in Q4>\nnortheast_q2: <number>\n\nIf the image does not show something, write `not shown` for it. Do not guess.",
+  "min_answer_chars": 20,
+  "must_find": [
+    {
+      "regex": "(?m)^[^\\w\\n]*south[ _]q3[^\\w\\n]*:[ \\t*_`\\\"']*1,?120\\b",
+      "label": "south_q3: 1,120"
+    },
+    {
+      "regex": "(?m)^[^\\w\\n]*west[ _]q1[^\\w\\n]*:[ \\t*_`\\\"']*870\\b",
+      "label": "west_q1: 870"
+    },
+    {
+      "regex": "(?m)^[^\\w\\n]*central[ _]q3[^\\w\\n]*:[ \\t*_`\\\"']*1,?098\\b",
+      "label": "central_q3: 1,098"
+    },
+    {
+      "regex": "(?m)^[^\\w\\n]*q4[ _]highest[^\\w\\n]*:[ \\t*_`\\\"']*east",
+      "label": "q4_highest: East"
+    },
+    {
+      "regex": "(?m)^[^\\w\\n]*northeast[ _]q2[^\\w\\n]*:[ \\t*_`\\\"']*(not shown|not visible|not present|not listed|not given|not stated|not on the|not in the|not provided|not included|none shown|n/?a\\b|none\\b|no such|does not show|doesn't show)",
+      "label": "northeast_q2: not shown"
+    }
+  ],
+  "must_not_claim": [
+    {
+      "regex": "(?m)^[^\\w\\n]*northeast[ _]q2[^\\w\\n]*:[ \\t*_`\\\"']*\\d",
+      "label": "northeast_q2: a value (there is no Northeast row)"
+    }
+  ],
+  "why": "Cells found by row and column; Central's Q3 dips, so a value from the wrong column shows.",
+  "made_by": "suite/vision_tasks.py"
+}

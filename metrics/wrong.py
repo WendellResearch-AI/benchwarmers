@@ -84,7 +84,9 @@ def table() -> dict[str, dict]:
                  "hunt": dict.fromkeys(HUNT, 0)})
     for path in sorted(TASKS.glob("*/task.json")):
         spec = json.loads(path.read_text(encoding="utf-8"))
-        if spec.get("draft"):
+        # Reading images has its own record (serve.vision_rows): a trap taken
+        # there is a picture misread, not code.
+        if spec.get("draft") or spec.get("shape") == "vision":
             continue
         for answer in sorted((path.parent / "output").glob("*.md")):
             text = answer.read_text(encoding="utf-8", errors="replace")

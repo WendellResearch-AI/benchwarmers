@@ -1,0 +1,40 @@
+{
+  "id": "vision-bars",
+  "title": "Read a bar chart",
+  "shape": "vision",
+  "images": [
+    "bars.png"
+  ],
+  "prompt": "Read the attached image and answer in exactly these lines, one per line, nothing else:\n\ntallest: <team>\nshortest: <team>\nweb: <Web's value>\nover_30: <how many teams are above 30, not counting 30 itself>\ntarget: <the target line's value>\n\nIf the image does not show something, write `not shown` for it. Do not guess.",
+  "min_answer_chars": 20,
+  "must_find": [
+    {
+      "regex": "(?m)^[^\\w\\n]*tallest[^\\w\\n]*:[ \\t*_`\\\"']*billing",
+      "label": "tallest: Billing"
+    },
+    {
+      "regex": "(?m)^[^\\w\\n]*shortest[^\\w\\n]*:[ \\t*_`\\\"']*data",
+      "label": "shortest: Data"
+    },
+    {
+      "regex": "(?m)^[^\\w\\n]*web[^\\w\\n]*:[ \\t*_`\\\"']*35\\b",
+      "label": "web: 35"
+    },
+    {
+      "regex": "(?m)^[^\\w\\n]*over[ _]30[^\\w\\n]*:[ \\t*_`\\\"']*2\\b",
+      "label": "over_30: 2"
+    },
+    {
+      "regex": "(?m)^[^\\w\\n]*target[^\\w\\n]*:[ \\t*_`\\\"']*(not shown|not visible|not present|not listed|not given|not stated|not on the|not in the|not provided|not included|none shown|n/?a\\b|none\\b|no such|does not show|doesn't show)",
+      "label": "target: not shown"
+    }
+  ],
+  "must_not_claim": [
+    {
+      "regex": "(?m)^[^\\w\\n]*target[^\\w\\n]*:[ \\t*_`\\\"']*\\d",
+      "label": "target: a value (the chart has no target line)"
+    }
+  ],
+  "why": "Values read against gridlines every 5, labelled every 10; one count asks for care at the boundary.",
+  "made_by": "suite/vision_tasks.py"
+}

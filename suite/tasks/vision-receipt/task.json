@@ -1,0 +1,44 @@
+{
+  "id": "vision-receipt",
+  "title": "Read a receipt",
+  "shape": "vision",
+  "images": [
+    "receipt.png"
+  ],
+  "prompt": "Read the attached image and answer in exactly these lines, one per line, nothing else:\n\nstore: <name>\ndate: <YYYY-MM-DD>\nitems: <how many line items were bought>\npriciest: <the most expensive item>\ntotal: <amount paid>\ntip: <tip amount>\n\nIf the image does not show something, write `not shown` for it. Do not guess.",
+  "min_answer_chars": 20,
+  "must_find": [
+    {
+      "regex": "(?m)^[^\\w\\n]*store[^\\w\\n]*:[ \\t*_`\\\"']*harbor lane",
+      "label": "store: Harbor Lane Grocery"
+    },
+    {
+      "regex": "(?m)^[^\\w\\n]*date[^\\w\\n]*:[ \\t*_`\\\"']*2026-03-14\\b",
+      "label": "date: 2026-03-14"
+    },
+    {
+      "regex": "(?m)^[^\\w\\n]*items[^\\w\\n]*:[ \\t*_`\\\"']*4\\b",
+      "label": "items: 4"
+    },
+    {
+      "regex": "(?m)^[^\\w\\n]*priciest[^\\w\\n]*:[ \\t*_`\\\"']*cheddar",
+      "label": "priciest: Cheddar 200g"
+    },
+    {
+      "regex": "(?m)^[^\\w\\n]*total[^\\w\\n]*:[ \\t*_`\\\"']*\\$?\\s*22\\.17\\b",
+      "label": "total: 22.17"
+    },
+    {
+      "regex": "(?m)^[^\\w\\n]*tip[^\\w\\n]*:[ \\t*_`\\\"']*(not shown|not visible|not present|not listed|not given|not stated|not on the|not in the|not provided|not included|none shown|n/?a\\b|none\\b|no such|does not show|doesn't show)",
+      "label": "tip: not shown"
+    }
+  ],
+  "must_not_claim": [
+    {
+      "regex": "(?m)^[^\\w\\n]*tip[^\\w\\n]*:[ \\t*_`\\\"']*\\$?\\s*\\d",
+      "label": "tip: a value (the receipt shows none)"
+    }
+  ],
+  "why": "Printed text, a date written differently from how it is asked for, a count and a maximum.",
+  "made_by": "suite/vision_tasks.py"
+}

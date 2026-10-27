@@ -170,7 +170,8 @@ def suite_scores() -> dict:
     Not a vision or image model's (suite/run.images_only): the suite is text
     and code, which it is never seated for, and the answers it gave before it
     had that role stay in the notes, uncounted. Real work, perf and reviews
-    still count it.
+    still count it. Nor the vision tasks (vision-*): the Vision panel reads
+    those (vision_rows).
     """
     from run import images_only
     row = re.compile(r"^\|\s*([\w-]+)\s*\|\s*`([^`]+)`\s*\|\s*([^|]+?)\s*\|"
@@ -182,7 +183,7 @@ def suite_scores() -> dict:
             if (m := row.match(line.strip())):
                 task, model, found, invented, seconds = m.groups()
                 model = current_alias(model)
-                if model in skip:
+                if model in skip or task.startswith("vision-"):
                     continue
                 scores[(task, model)] = {
                     "found": found, "invented": invented.strip(" —-"),
@@ -1568,14 +1569,15 @@ def save_gateway_settings(max_calls, max_explorers, who: str = "ui") -> dict:
 # Quick: the probe only; the scheduled `suite --next` passes fill the suite in,
 # six tasks a run, so the same calls are spread out, not saved. Quick + ad
 # hoc: the probe only, and the bench never calls it on its own: the only one
-# that saves calls, for a metered, capped or trial key. Quick + vision: the
-# probe only, role vision (a seat only for requests that carry images), and
-# never the suite, whose tasks are text and code.
-ONBOARD_MODES = {"full": [], "quick": ["--skip-suite"], "quick-adhoc": ["--skip-suite", "--ad-hoc"],
-                 "quick-vision": ["--skip-suite", "--vision"]}
+# that saves calls, for a metered, capped or trial key. Apart from the mode,
+# `vision` (the picker's Vision model box) gives it role vision as it is
+# registered: a seat only for requests that carry images, and its suite is the
+# vision tasks alone (suite/run.applies), now or through the scheduled passes.
+ONBOARD_MODES = {"full": [], "quick": ["--skip-suite"], "quick-adhoc": ["--skip-suite", "--ad-hoc"]}
 
 
-def start_onboard(served: str, endpoint: str = "", who: str = "ui", mode: str = "full") -> dict:
+def start_onboard(served: str, endpoint: str = "", who: str = "ui", mode: str = "full",
+                  vision: bool = False) -> dict:
     """Kick off `scripts/onboard.py` for a served model, detached, logging to runs/.
 
     The script does its own checks in the right order (is it served, derive
@@ -1585,7 +1587,7 @@ def start_onboard(served: str, endpoint: str = "", who: str = "ui", mode: str = 
     hands the rest to the script. It runs for minutes and spends calls, so it
     runs in the background and the page tails its log.
     """
-    return _spawn_onboard(served, endpoint, who, mode)[0]
+    return _spawn_onboard(served, endpoint, who, mode, vision)[0]
 
 
 def _onboard_refusal(served: str, endpoint: str, mode: str = "full") -> list[str]:
@@ -1614,7 +1616,7 @@ def _onboard_refusal(served: str, endpoint: str, mode: str = "full") -> list[str
 
 
 def _spawn_onboard(served: str, endpoint: str = "", who: str = "ui",
-                   mode: str = "full") -> tuple[dict, subprocess.Popen | None]:
+                   mode: str = "full", vision: bool = False) -> tuple[dict, subprocess.Popen | None]:
     """start_onboard's result, and the process (None when refused) for a caller that waits on it."""
     served = (served or "").strip()
     endpoint = (endpoint or "").strip() or endpoints.default()
@@ -1626,7 +1628,7 @@ def _spawn_onboard(served: str, endpoint: str = "", who: str = "ui",
     log = DATA / "runs" / f"onboard-{stamp}-{safe}.log"
     from run import bench_python
     cmd = [bench_python(), str(ROOT / "scripts" / "onboard.py"), served, "--endpoint", endpoint,
-           *ONBOARD_MODES[mode]]
+           *ONBOARD_MODES[mode], *(["--vision"] if vision else [])]
     # The log handle goes straight to the child, unbuffered, so the page sees
     # each step as it prints. The old `cmd /c ... > log & echo` wrapper with
     # DETACHED_PROCESS sent the output to a console window instead, so every
@@ -1695,19 +1697,19 @@ def queue_onboard(items, who: str = "ui") -> dict:
         endpoint = str(it.get("endpoint") or "").strip() or endpoints.default()
         mode = str(it.get("mode") or "full")
         errors += _onboard_refusal(served, endpoint, mode)
-        picked.append((served, endpoint, mode))
+        picked.append((served, endpoint, mode, it.get("vision") is True))
     with _OQ_LOCK:
         waiting = {(i["served"], i["endpoint"]) for i in _OQ["items"] if i["state"] in ("queued", "running")}
-        errors += [f"{s} from {e} is already in the queue" for s, e, _ in picked if (s, e) in waiting]
-        if len({(s, e) for s, e, _ in picked}) < len(picked):
+        errors += [f"{s} from {e} is already in the queue" for s, e, *_ in picked if (s, e) in waiting]
+        if len({(s, e) for s, e, *_ in picked}) < len(picked):
             errors.append("a model is picked twice")
         if errors:
             return {"ok": False, "errors": errors}
         if _OQ["worker"] is None:
             _OQ["items"] = []
         _OQ["stop"] = False                              # added after a Stop: these run
-        _OQ["items"] += [{"served": s, "endpoint": e, "mode": m, "state": "queued", "alias": None, "log": None,
-                          "exit": None, "note": ""} for s, e, m in picked]
+        _OQ["items"] += [{"served": s, "endpoint": e, "mode": m, "vision": v, "state": "queued", "alias": None,
+                          "log": None, "exit": None, "note": ""} for s, e, m, v in picked]
         if _OQ["worker"] is None:
             _OQ["worker"] = threading.Thread(target=_onboard_worker, args=(who,), daemon=True)
             _OQ["worker"].start()
@@ -1759,7 +1761,8 @@ def _onboard_worker(who: str) -> None:
                 return
             nxt["state"] = "running"
         try:
-            res, proc = _spawn_onboard(nxt["served"], nxt["endpoint"], who, nxt.get("mode", "full"))
+            res, proc = _spawn_onboard(nxt["served"], nxt["endpoint"], who, nxt.get("mode", "full"),
+                                       nxt.get("vision", False))
             if proc is None:                             # refused now: the bench changed since it was queued
                 state, note, code = "failed", "; ".join(res["errors"]), None
             else:
@@ -2266,7 +2269,7 @@ def charts_data() -> dict:
     return {"overview": overview, "heat": heat, "families": ["hand-built", "claims", "seeded, function",
                                                              "seeded, whole file", "real bugs"],
             "wrong": bars, "wrongTotals": totals, "kinds": list(wrong.KINDS), "hunt": hunt,
-            "work": work_rows(), **perf_charts()}
+            "work": work_rows(), "vision": vision_rows(), **perf_charts()}
 
 
 def work_rows() -> list[dict]:
@@ -2281,6 +2284,167 @@ def work_rows() -> list[dict]:
     return [{"model": m, "offloads": s["offloads"], "judged": s["judged"], "useful": s["useful"],
              "real": claims.get(m, [0, 0])[0], "false": claims.get(m, [0, 0])[1]}
             for m, s in sorted(summary().items()) if m in live and s["judged"]]
+
+
+VISION_STATES = ("right", "misread", "left out", "trap taken", "no answer")
+VISION_SEATS = ("checked, helped", "checked, did not help", "useful, no claims", "no use, no claims",
+                "not judged", "no answer")
+_vision_work: tuple = (None, {})
+
+
+def vision_rows() -> dict:
+    """The Vision panel's evidence, in two kinds kept apart.
+
+    TASKS: the vision tasks' saved answers (suite/tasks/vision-*), scored by
+    the suite's own scorer and then field by field: right, misread (the line
+    is there with another value), left out, trap taken (a value for something
+    the picture does not show, or a switch that is off called on), no answer.
+    The keys exist by construction (suite/vision_tasks.py), so this is the
+    controlled comparison.
+
+    REAL WORK: every seat of the gateway's vision panels (runs/gateway/
+    calls.jsonl, shape vision) and how it was judged (metrics/offloads.jsonl).
+    A verdict that lists claims was checked claim by claim against the
+    picture; one without claims says only useful or not, which for thicken's
+    face corners means it agreed with another seat. Agreement is not a check
+    (the bench's own rule: seats fail together), so the two are never added.
+    """
+    import run
+    live = on_bench()
+    heat, tasks = [], {}
+    for path in sorted((DATA / "suite" / "tasks").glob("vision-*/task.json")):
+        spec = json.loads(read(path))
+        if spec.get("draft"):
+            continue
+        names = list(dict.fromkeys(c["label"].split(":")[0] for c in spec["must_find"]))
+        traps = {c["label"].split(":")[0] for c in spec.get("must_not_claim", [])}
+        tasks[spec["id"]] = {"title": spec["title"], "fields": names}
+        for answer in sorted((path.parent / "output").glob("*.md")):
+            alias = current_alias(answer.stem)
+            if alias not in live:
+                continue
+            text = read(answer)
+            s = run.score(spec, text)
+            missed = {lbl.split(":")[0] for lbl in s["missed"]}
+            invented = {lbl.split(":")[0] for lbl in s["invented"]}
+            for name in names:
+                there = re.search(rf"(?m)^[^\w\n]*{re.escape(name).replace('_', '[ _]')}[^\w\n]*:", text.lower())
+                state = ("no answer" if s["kind"] != "answered" else "trap taken" if name in invented
+                         else "right" if name not in missed else "misread" if there else "left out")
+                heat.append({"model": alias, "task": spec["id"], "field": name, "key": f"{spec['id']}·{name}",
+                             "state": state, "trap": name in traps})
+    models: dict[str, dict] = {}
+    for h in heat:
+        m = models.setdefault(h["model"], {"asked": set(), "answered": set(), "fields": 0, "right": 0,
+                                           "traps": 0, "taken": 0})
+        m["asked"].add(h["task"])
+        if h["state"] != "no answer":
+            m["answered"].add(h["task"])
+            m["fields"] += 1
+            m["right"] += h["state"] == "right"
+            m["traps"] += h["trap"]
+            m["taken"] += h["state"] == "trap taken"
+    summary = {a: {"asked": len(m["asked"]), "answered": len(m["answered"]), "fields": m["fields"],
+                   "right": m["right"], "traps": m["traps"], "taken": m["taken"]} for a, m in models.items()}
+    return {"tasks": tasks, "heat": heat, "summary": summary, "states": list(VISION_STATES),
+            "seatKinds": list(VISION_SEATS), "work": _vision_work_rows(live)}
+
+
+def _vision_work_rows(live: set[str]) -> dict:
+    """alias -> {seat kind: count, claims right, claims wrong, seconds}; read
+    again only when the gateway's log or the verdicts change (5 MB a render)."""
+    global _vision_work
+    calls, verdicts = DATA / "runs" / "gateway" / "calls.jsonl", DATA / "metrics" / "offloads.jsonl"
+    try:
+        key = tuple((p.stat().st_mtime_ns, p.stat().st_size) for p in (calls, verdicts)) + (frozenset(live),)
+    except OSError:
+        return {}
+    if _vision_work[0] == key:
+        return _vision_work[1]
+    from offload import entries
+    judged = {e["call"]: e for e in entries() if e.get("call") and e.get("useful") is not None}
+    out: dict[str, dict] = {}
+    for raw in read(calls).splitlines():
+        try:
+            panel = json.loads(raw)
+        except ValueError:
+            continue
+        if panel.get("shape") != "vision":
+            continue
+        for s in panel.get("seats", []):
+            alias = current_alias(s.get("alias", ""))
+            if alias not in live:
+                continue
+            r = out.setdefault(alias, {**dict.fromkeys(VISION_SEATS, 0), "real": 0, "false": 0, "seconds": []})
+            v = judged.get(s.get("call"))
+            if s.get("status") != "ok" or not (s.get("answer") or "").strip():
+                kind = "no answer"
+            elif v is None:
+                kind = "not judged"
+            elif v.get("real") or v.get("false"):
+                kind = "checked, helped" if v["useful"] else "checked, did not help"
+                r["real"] += len(v.get("real") or [])
+                r["false"] += len(v.get("false") or [])
+            else:
+                kind = "useful, no claims" if v["useful"] else "no use, no claims"
+            r[kind] += 1
+            if kind != "no answer" and s.get("seconds"):
+                r["seconds"].append(float(s["seconds"]))
+    for r in out.values():
+        secs = sorted(r.pop("seconds"))
+        r["seconds"] = secs[len(secs) // 2] if secs else None
+    _vision_work = (key, out)
+    return out
+
+
+def vision_card() -> str:
+    """Reading images: the vision tasks, then real work on images."""
+    v = vision_rows()
+    s, w = v["summary"], v["work"]
+    body = ["<table><thead><tr>", th("Model"), th("Tasks answered", True), th("Fields read right", True),
+            th("Traps taken", True), th("Image seats", True), th("Checked claims right", True),
+            th("Checked claims wrong", True), th("Useful, no claims", True), th("Not judged", True),
+            th("Median seconds", True), "</tr></thead><tbody>"]
+
+    def cell(n, d):
+        return (f"<td class='num' data-sort='{n / d:.3f}'>{n}/{d}</td>" if d
+                else "<td class='num muted' data-sort='-1'>—</td>")
+    for m in sorted(set(s) | set(w)):
+        t, r = s.get(m, {}), w.get(m, {})
+        seats = sum(r.get(k, 0) for k in VISION_SEATS)
+        claims = r.get("real", 0) + r.get("false", 0)
+        body.append(f"{tr(m)}<td>{named(m)}</td>" + cell(t.get("answered", 0), t.get("asked", 0))
+                    + cell(t.get("right", 0), t.get("fields", 0)) + cell(t.get("taken", 0), t.get("traps", 0))
+                    + f"<td class='num'>{seats or '—'}</td>" + cell(r.get("real", 0), claims)
+                    + cell(r.get("false", 0), claims) + f"<td class='num'>{r.get('useful, no claims', 0) or '—'}</td>"
+                    + f"<td class='num'>{r.get('not judged', 0) or '—'}</td>"
+                    + (f"<td class='num'>{r['seconds']:.1f}</td>" if r.get("seconds") else "<td class='num muted'>—</td>")
+                    + "</tr>")
+    body.append("</tbody></table>")
+    key = """<dl>
+      <dt>The vision tasks</dt><dd>Pictures made with their answer key (<code>suite/vision_tasks.py</code>):
+        a receipt, a graded card's label, a bar chart, a table, a settings screen, shapes to count and an
+        invoice turned on its side. Each field is <b>right</b>, <b>misread</b> (another value),
+        <b>left out</b>, or a <b>trap taken</b>: one field per task asks for something the picture does
+        not show, and the right answer is <code>not shown</code>. They run for every model that takes
+        images; a vision model gets only these, never the code tasks.</dd>
+      <dt>Real work on images</dt><dd>Every seat of a vision panel through the gateway. <b>Checked</b> means
+        its verdict lists claims, each compared with the picture by hand: the claims right and wrong
+        come from these alone. <b>Useful, no claims</b> is a verdict without them, which on thicken's
+        photos means the seat agreed with another seat. Agreement is not a check, since seats fail
+        together, so it is never counted as right.</dd>
+      <dt>The number beside a name</dt><dd>How much there is: fields asked on the tasks, seats on real work.</dd>
+    </dl>"""
+    return ("<div class='panel'><h2>Vision</h2><p class='sub'>Reading images: fields read right on pictures with"
+            " a known answer, then real work on images and how much of it was actually checked.</p>"
+            "<h3 class='chart-head'>On the vision tasks, field by field</h3><div class='chart' id='chart-vision-fields'></div>"
+            "<h3 class='chart-head'>On real work with images, by how each seat was judged</h3>"
+            "<div class='chart' id='chart-vision-work'></div>"
+            "<details class='key'><summary>Table</summary><div class='toolbar'><input type='search'"
+            " data-filter placeholder='Filter by model or connection' aria-label='Filter rows'>"
+            "<label><input type='checkbox' data-retired> Show retired</label></div>"
+            f"<div class='scroll'>{''.join(body)}</div></details>"
+            f"<details class='key'><summary>How to read this</summary>{key}</details></div>")
 
 
 def perf_charts() -> dict:
@@ -2473,7 +2637,8 @@ def wrong_card() -> str:
 
 def benchmarks_tab() -> str:
     data = json.dumps(charts_data(), ensure_ascii=False).replace("</", "<\\/")
-    return (overview_card() + bughunt_card() + work_card() + wrong_card() + suite_card() + perf_card() + external_card()
+    return (overview_card() + bughunt_card() + work_card() + wrong_card() + suite_card() + vision_card()
+            + perf_card() + external_card()
             + f"<script type='application/json' id='charts-data'>{data}</script>")
 
 
@@ -3698,9 +3863,9 @@ def editor() -> str:
         "<option value='full'>Full: probe, then the suite now</option>"
         "<option value='quick'>Quick: probe now, the suite through the scheduled passes</option>"
         "<option value='quick-adhoc'>Quick + ad hoc: probe only; the bench never calls it on its own"
-        " (metered, capped or trial keys)</option>"
-        "<option value='quick-vision'>Quick + vision: probe only; a seat only for questions about images,"
-        " never the code suite</option></select></label>"
+        " (metered, capped or trial keys)</option></select></label>"
+        "<label class='check'><input type='checkbox' id='o-vision'> Vision model: a seat only for questions"
+        " about images, and its suite is the vision tasks</label>"
         "</div>"
         "<div id='o-run' hidden><p class='served' id='o-result'></p><ol class='steps' id='o-steps'></ol>"
         "<details><summary class='muted'>Full log</summary><pre class='log' id='o-log'></pre></details></div>"
@@ -3955,7 +4120,8 @@ class Handler(gateway.Handler):
                                                            endpoint=str(p.get("endpoint") or "")),
                "/api/onboard": lambda p: start_onboard(str(p.get("served", "")),
                                                        str(p.get("endpoint", "")),
-                                                       mode=str(p.get("mode") or "full")),
+                                                       mode=str(p.get("mode") or "full"),
+                                                       vision=p.get("vision") is True),
                "/api/onboard-queue": lambda p: queue_onboard(p.get("items")),
                "/api/onboard-queue/stop": lambda p: stop_onboard_queue(),
                "/api/onboard-queue/clear": lambda p: clear_onboard_queue(),

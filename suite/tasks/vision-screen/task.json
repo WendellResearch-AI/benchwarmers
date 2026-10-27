@@ -1,0 +1,48 @@
+{
+  "id": "vision-screen",
+  "title": "Read a settings screen",
+  "shape": "vision",
+  "images": [
+    "screen.png"
+  ],
+  "prompt": "Read the attached image and answer in exactly these lines, one per line, nothing else:\n\ntoggles_on: <every switch that is on>\nconflict: <the option chosen>\ndisabled: <the button that cannot be pressed>\nerror_code: <code>\naccount: <the signed-in email>\n\nIf the image does not show something, write `not shown` for it. Do not guess.",
+  "min_answer_chars": 20,
+  "must_find": [
+    {
+      "regex": "(?m)^[^\\w\\n]*toggles[ _]on[^\\w\\n]*:[ \\t*_`\\\"']*.*back up photos",
+      "label": "toggles_on: Back up photos"
+    },
+    {
+      "regex": "(?m)^[^\\w\\n]*toggles[ _]on[^\\w\\n]*:[ \\t*_`\\\"']*.*notify on conflicts",
+      "label": "toggles_on: Notify on conflicts"
+    },
+    {
+      "regex": "(?m)^[^\\w\\n]*conflict[^\\w\\n]*:[ \\t*_`\\\"']*keep both",
+      "label": "conflict: Keep both"
+    },
+    {
+      "regex": "(?m)^[^\\w\\n]*disabled[^\\w\\n]*:[ \\t*_`\\\"']*sync now",
+      "label": "disabled: Sync now"
+    },
+    {
+      "regex": "(?m)^[^\\w\\n]*error[ _]code[^\\w\\n]*:[ \\t*_`\\\"']*e-?213\\b",
+      "label": "error_code: E-213"
+    },
+    {
+      "regex": "(?m)^[^\\w\\n]*account[^\\w\\n]*:[ \\t*_`\\\"']*(not shown|not visible|not present|not listed|not given|not stated|not on the|not in the|not provided|not included|none shown|n/?a\\b|none\\b|no such|does not show|doesn't show)",
+      "label": "account: not shown"
+    }
+  ],
+  "must_not_claim": [
+    {
+      "regex": "(?m)^[^\\w\\n]*toggles[ _]on[^\\w\\n]*:[ \\t*_`\\\"']*.*(mobile data|battery)",
+      "label": "toggles_on: a switch that is off"
+    },
+    {
+      "regex": "(?m)^[^\\w\\n]*account[^\\w\\n]*:[ \\t*_`\\\"']*\\S+@\\S+",
+      "label": "account: an email (the screen shows none)"
+    }
+  ],
+  "why": "A screen's state: which switches are on, which option is picked, which button is greyed out.",
+  "made_by": "suite/vision_tasks.py"
+}

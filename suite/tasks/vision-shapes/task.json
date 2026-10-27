@@ -1,0 +1,40 @@
+{
+  "id": "vision-shapes",
+  "title": "Count shapes and say where one is",
+  "shape": "vision",
+  "images": [
+    "shapes.png"
+  ],
+  "prompt": "Read the attached image and answer in exactly these lines, one per line, nothing else:\n\nblue_circles: <how many>\nred_squares: <how many>\ngreen_triangles: <how many>\ntop_right: <the shape in the top-right corner, with its colour>\npurple_shapes: <how many>\n\nIf the image does not show something, write `not shown` for it. Do not guess.",
+  "min_answer_chars": 20,
+  "must_find": [
+    {
+      "regex": "(?m)^[^\\w\\n]*blue[ _]circles[^\\w\\n]*:[ \\t*_`\\\"']*6\\b",
+      "label": "blue_circles: 6"
+    },
+    {
+      "regex": "(?m)^[^\\w\\n]*red[ _]squares[^\\w\\n]*:[ \\t*_`\\\"']*3\\b",
+      "label": "red_squares: 3"
+    },
+    {
+      "regex": "(?m)^[^\\w\\n]*green[ _]triangles[^\\w\\n]*:[ \\t*_`\\\"']*2\\b",
+      "label": "green_triangles: 2"
+    },
+    {
+      "regex": "(?m)^[^\\w\\n]*top[ _]right[^\\w\\n]*:[ \\t*_`\\\"']*.*star",
+      "label": "top_right: a yellow star"
+    },
+    {
+      "regex": "(?m)^[^\\w\\n]*purple[ _]shapes[^\\w\\n]*:[ \\t*_`\\\"']*(0\\b|none\\b|zero\\b|no\\b|not shown|not visible|not present|not listed|not given|not stated|not on the|not in the|not provided|not included|none shown|n/?a\\b|none\\b|no such|does not show|doesn't show)",
+      "label": "purple_shapes: 0"
+    }
+  ],
+  "must_not_claim": [
+    {
+      "regex": "(?m)^[^\\w\\n]*purple[ _]shapes[^\\w\\n]*:[ \\t*_`\\\"']*[1-9]",
+      "label": "purple_shapes: a count above 0 (there are none)"
+    }
+  ],
+  "why": "Counting to six without losing one, and a corner told apart from its neighbours.",
+  "made_by": "suite/vision_tasks.py"
+}

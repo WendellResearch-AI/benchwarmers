@@ -56,11 +56,15 @@ spends:
 - **Quick + ad hoc**: the probe only, and the bench never calls the model on
   its own (no explorer seat, no scheduled runs). The one that saves calls, for
   a metered, capped or trial key. A collection that lists it still calls it.
-- **Quick + vision**: the probe only, and role **vision**: it sits only for
-  requests that carry images, and the suite, whose tasks are text and code,
-  never runs it. For a model that reads images and little else.
 
-`bench onboard <served> --quick [--ad-hoc | --vision]` does the same from a terminal.
+**Vision model**, the box beside it, gives the model role **vision** as it is
+registered: it sits only for requests that carry images, and its suite is the
+vision tasks (photos of documents, charts, labels and screens with an answer
+key) rather than the text and code ones. Full runs them now, Quick through the
+scheduled passes. For a model that reads images and little else; a model that
+does everything and also takes images stays general and gets both.
+
+`bench onboard <served> [--quick [--ad-hoc]] [--vision]` does the same from a terminal.
 Onboarding takes minutes and spends calls, so models run **one at a time**,
 in a queue the dashboard keeps:
 

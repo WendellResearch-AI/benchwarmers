@@ -360,9 +360,9 @@ def main() -> int:
 
     modes = {}
 
-    def fake_spawn(served, endpoint="", who="ui", mode="full"):
+    def fake_spawn(served, endpoint="", who="ui", mode="full", vision=False):
         order.append(served)
-        modes[served] = mode
+        modes[served] = mode + (" vision" if vision else "")
         (runs / f"onboard-{served}.log").write_text(f"onboarding {served} from e  ->  alias {served}-x\n"
                                                     + outcome[served][1], encoding="utf-8")
         return {"ok": True, "errors": [], "log": f"onboard-{served}.log"}, Proc(served)
@@ -397,7 +397,7 @@ def main() -> int:
         settle()
         stopped = {i["served"]: i["state"] for i in serve.onboard_queue()["items"]}
         order.remove("quiet")
-        serve.queue_onboard([{"served": s, "endpoint": "e", "mode": m} for s, m in
+        serve.queue_onboard([{"served": s, "endpoint": "e", "mode": m, "vision": s == "quiet"} for s, m in
                              (("ok", "full"), ("quiet", "quick"), ("bad", "quick-adhoc"))])
         settle()
         batch = {i["served"]: (i["state"], i["alias"], bool(i["note"])) for i in serve.onboard_queue()["items"]}
@@ -412,7 +412,7 @@ def main() -> int:
           and batch == {"ok": ("done", "ok-x", False), "quiet": ("no answer", "quiet-x", True),
                         "bad": ("failed", "bad-x", True)}
           and cleared == [] and bad_input == (False, False, False)
-          and modes == {"a": "full", "ok": "full", "quiet": "quick", "bad": "quick-adhoc"})
+          and modes == {"a": "full", "ok": "full", "quiet": "quick vision", "bad": "quick-adhoc"})
     print(("ok   " if ok else "FAIL ") + "onboarding queue" + ("" if ok else f" -> {stopped} {order} {batch} {modes}"))
     failures += 0 if ok else 1
 

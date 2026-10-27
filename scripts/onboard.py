@@ -237,7 +237,7 @@ def main() -> None:
                          " (for a metered, capped or trial key)")
     ap.add_argument("--vision", action="store_true",
                     help="role vision as it is registered: it sits only for requests that carry"
-                         " images, and the suite (text and code tasks) never runs it")
+                         " images, and its suite is the vision tasks (suite/run.applies)")
     args = ap.parse_args()
 
     name = args.served_name
@@ -368,12 +368,12 @@ def main() -> None:
     record_issue(alias, None)
 
     # 5. the tier that decides routing
-    if args.vision:
-        print("  [5/5] no suite: its tasks are text and code, and a vision model is judged on images")
-    elif args.skip_suite:
+    # A vision model's suite is the vision tasks alone (suite/run.applies picks
+    # them by its role); a general model that takes images gets both.
+    if args.skip_suite:
         print("  [5/5] suite skipped by request")
     else:
-        print("  [5/5] running the internal suite...")
+        print("  [5/5] running the internal suite" + (" (its vision tasks)..." if args.vision else "..."))
         try:
             suite = run("suite/run.py", "--model", alias, "--timeout", "300",
                         timeout=3600)

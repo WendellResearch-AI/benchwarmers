@@ -73,6 +73,7 @@ CHECKS = [
     ("suite/test_seed.py", [], False),
     ("suite/test_rebench.py", [], False),
     ("suite/test_pick.py", [], False),
+    ("suite/test_vision_tasks.py", [], False),
     ("scripts/test_client.py", [], True),          # runs the llm CLI against a fake server
 ]
 

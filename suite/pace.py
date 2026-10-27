@@ -58,7 +58,7 @@ def models() -> list[str]:
         retiring = {a.get("alias") for a in alerts.active().values() if a.get("kind") == "retiring"}
     except Exception:                                  # noqa: BLE001
         retiring = set()
-    return [m for m in run.suite_models() if m not in retiring and m not in run.ad_hoc_models()]
+    return [m for m in run.available_models() if m not in retiring and m not in run.ad_hoc_models()]
 
 
 def answered(task: str, model: str) -> bool:
@@ -72,10 +72,14 @@ def answered(task: str, model: str) -> bool:
 
 
 def queue(prefix: str, roster: list[str]) -> list[tuple[str, str]]:
-    """(task, model) pairs without an answer yet, task by task across models."""
-    tasks = sorted(p.parent.name for p in TASKS.glob(f"{prefix}*/task.json")
-                   if not json.loads(p.read_text(encoding="utf-8")).get("draft"))
-    return [(t, m) for t in tasks for m in roster if not answered(t, m)]
+    """(task, model) pairs without an answer yet, task by task across models,
+    each only where the task is the model's (run.applies)."""
+    specs = [s for s in run.load_tasks(None) if s["id"].startswith(prefix)]
+    skip, seeing = run.images_only(), {}
+    if any(s.get("images") for s in specs):
+        seeing = {m: run.sees_images(m) for m in roster}
+    return [(s["id"], m) for s in specs for m in roster
+            if run.applies(s, m, skip, seeing) and not answered(s["id"], m)]
 
 
 def rate_limited(task: str, model: str) -> bool:

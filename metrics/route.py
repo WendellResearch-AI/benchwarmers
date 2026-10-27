@@ -250,8 +250,9 @@ def suite_recall() -> dict[str, tuple[int, int, int]]:
         # Claim-verification tasks are a true/false verdict, where a guess
         # scores half: folding them into finding-recall would blur the one
         # number that picks the primary. They are reported on their own, as
-        # are seeded and real-bug (rebench) FAULT/NO FAULT tasks.
-        if spec.get("shape") in ("claim", "seeded", "rebench") or spec.get("draft"):
+        # are seeded and real-bug (rebench) FAULT/NO FAULT tasks, and reading
+        # images (vision), which is not what a text panel is picked for.
+        if spec.get("shape") in ("claim", "seeded", "rebench", "vision") or spec.get("draft"):
             continue
         for answer in sorted((task_dir.parent / "output").glob("*.md")):
             alias = current_alias(answer.stem)      # a renamed model keeps its record

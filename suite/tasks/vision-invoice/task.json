@@ -1,0 +1,40 @@
+{
+  "id": "vision-invoice",
+  "title": "Read an invoice turned on its side",
+  "shape": "vision",
+  "images": [
+    "invoice.png"
+  ],
+  "prompt": "Read the attached image and answer in exactly these lines, one per line, nothing else:\n\ninvoice: <invoice number>\ndue: <YYYY-MM-DD>\namount_due: <amount>\nbill_to: <company>\npo_number: <purchase order number>\n\nIf the image does not show something, write `not shown` for it. Do not guess.",
+  "min_answer_chars": 20,
+  "must_find": [
+    {
+      "regex": "(?m)^[^\\w\\n]*invoice[^\\w\\n]*:[ \\t*_`\\\"']*inv-2026-0417\\b",
+      "label": "invoice: INV-2026-0417"
+    },
+    {
+      "regex": "(?m)^[^\\w\\n]*due[^\\w\\n]*:[ \\t*_`\\\"']*2026-05-02\\b",
+      "label": "due: 2026-05-02"
+    },
+    {
+      "regex": "(?m)^[^\\w\\n]*amount[ _]due[^\\w\\n]*:[ \\t*_`\\\"']*(eur|€)?\\s*1,?284\\.50\\b",
+      "label": "amount_due: EUR 1,284.50"
+    },
+    {
+      "regex": "(?m)^[^\\w\\n]*bill[ _]to[^\\w\\n]*:[ \\t*_`\\\"']*kestrel labs",
+      "label": "bill_to: Kestrel Labs BV"
+    },
+    {
+      "regex": "(?m)^[^\\w\\n]*po[ _]number[^\\w\\n]*:[ \\t*_`\\\"']*(not shown|not visible|not present|not listed|not given|not stated|not on the|not in the|not provided|not included|none shown|n/?a\\b|none\\b|no such|does not show|doesn't show)",
+      "label": "po_number: not shown"
+    }
+  ],
+  "must_not_claim": [
+    {
+      "regex": "(?m)^[^\\w\\n]*po[ _]number[^\\w\\n]*:[ \\t*_`\\\"']*\\d",
+      "label": "po_number: a value (the invoice has none)"
+    }
+  ],
+  "why": "A page a scanner or a phone delivered sideways; two dates close together, only one asked for.",
+  "made_by": "suite/vision_tasks.py"
+}

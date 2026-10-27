@@ -1,0 +1,52 @@
+{
+  "id": "vision-label",
+  "title": "Read a graded card's label",
+  "shape": "vision",
+  "images": [
+    "label.png"
+  ],
+  "prompt": "Read the attached image and answer in exactly these lines, one per line, nothing else:\n\ngrader: <company>\ngrade: <the number>\nyear: <year>\nnumber: <card number>\nplayer: <name>\ncert: <certification number>\nsurface: <surface subgrade>\nautograph: <is the card signed: yes or no>\n\nIf the image does not show something, write `not shown` for it. Do not guess.",
+  "min_answer_chars": 20,
+  "must_find": [
+    {
+      "regex": "(?m)^[^\\w\\n]*grader[^\\w\\n]*:[ \\t*_`\\\"']*northline",
+      "label": "grader: Northline"
+    },
+    {
+      "regex": "(?m)^[^\\w\\n]*grade[^\\w\\n]*:[ \\t*_`\\\"']*(mint\\s*)?9\\b(?!\\.)",
+      "label": "grade: 9"
+    },
+    {
+      "regex": "(?m)^[^\\w\\n]*year[^\\w\\n]*:[ \\t*_`\\\"']*2019\\b",
+      "label": "year: 2019"
+    },
+    {
+      "regex": "(?m)^[^\\w\\n]*number[^\\w\\n]*:[ \\t*_`\\\"']*#?\\s*148\\b",
+      "label": "number: 148"
+    },
+    {
+      "regex": "(?m)^[^\\w\\n]*player[^\\w\\n]*:[ \\t*_`\\\"']*maren okafor",
+      "label": "player: Maren Okafor"
+    },
+    {
+      "regex": "(?m)^[^\\w\\n]*cert[^\\w\\n]*:[ \\t*_`\\\"']*#?\\s*40731958\\b",
+      "label": "cert: 40731958"
+    },
+    {
+      "regex": "(?m)^[^\\w\\n]*surface[^\\w\\n]*:[ \\t*_`\\\"']*8\\.5\\b",
+      "label": "surface: 8.5"
+    },
+    {
+      "regex": "(?m)^[^\\w\\n]*autograph[^\\w\\n]*:[ \\t*_`\\\"']*(no\\b|not shown|not visible|not present|not listed|not given|not stated|not on the|not in the|not provided|not included|none shown|n/?a\\b|none\\b|no such|does not show|doesn't show)",
+      "label": "autograph: no, or not shown"
+    }
+  ],
+  "must_not_claim": [
+    {
+      "regex": "(?m)^[^\\w\\n]*autograph[^\\w\\n]*:[ \\t*_`\\\"']*(yes|signed|auto)",
+      "label": "autograph: yes (the label says nothing of one)"
+    }
+  ],
+  "why": "A label read field by field; the cert number must be exact to the digit.",
+  "made_by": "suite/vision_tasks.py"
+}
