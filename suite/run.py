@@ -146,6 +146,22 @@ def available_models(cache: dict | None = None,
     return models
 
 
+def images_only() -> set[str]:
+    """Aliases whose role is vision or image (model_roles): the suite's tasks
+    are text and code, which no shape would ever seat them for, so their
+    answers only spent calls and put a reader of images on the code charts.
+    The suite's own pickers skip them; routing does not (available_models),
+    where a vision model still sits for images. `--model` still runs any."""
+    import model_roles
+    return {a for a, r in model_roles.load()["models"].items() if r in ("vision", "image")}
+
+
+def suite_models() -> list[str]:
+    """available_models(), less images_only()."""
+    skip = images_only()
+    return [m for m in available_models() if m not in skip]
+
+
 def _registered_names() -> dict[str, str]:
     """alias -> the model name the endpoint knows it by; {} with no yaml yet."""
     import endpoints
@@ -227,7 +243,7 @@ def next_free(tasks_dir: pathlib.Path) -> str | None:
     is picked up on the next run rather than after a full cycle.
     """
     best, best_age = None, None
-    held = ad_hoc_models()
+    held = ad_hoc_models() | images_only()
     for model in free_models():
         if model in held:
             continue
@@ -271,7 +287,7 @@ def next_model(tasks_dir: pathlib.Path) -> str | None:
     total = len([p for p in tasks_dir.iterdir() if p.is_dir()])
     free = set(free_models())
     best, best_key = None, None
-    for model in available_models():
+    for model in suite_models():
         if model in free:
             continue
         outputs = list(tasks_dir.glob(f"*/output/{model}.md"))
@@ -910,7 +926,7 @@ def main() -> int:
         print(f"--next chose {chosen} ({have}/{total} tasks scored; "
               f"{len(tasks)} this run)")
 
-    models = args.models or [m for m in available_models()
+    models = args.models or [m for m in suite_models()
                              if m not in free_models() or args.next_free]
     binary = None if args.dry_run else llm_binary()
 

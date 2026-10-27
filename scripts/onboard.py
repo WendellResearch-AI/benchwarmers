@@ -235,6 +235,9 @@ def main() -> None:
     ap.add_argument("--ad-hoc", action="store_true",
                     help="mark it ad hoc as it is registered: the bench never calls it on its own"
                          " (for a metered, capped or trial key)")
+    ap.add_argument("--vision", action="store_true",
+                    help="role vision as it is registered: it sits only for requests that carry"
+                         " images, and the suite (text and code tasks) never runs it")
     args = ap.parse_args()
 
     name = args.served_name
@@ -296,6 +299,12 @@ def main() -> None:
                       lambda roles: roles.__setitem__("ad_hoc", sorted({*roles.get("ad_hoc", []), alias})),
                       ensure_ascii=False)
         print("        ad hoc: the bench never calls it on its own")
+    if args.vision:
+        # Before the probe too: a text panel or a suite pass in between would seat it.
+        locked.update(DATA / "config" / "model-roles.json",
+                      lambda roles: roles.setdefault("models", {}).__setitem__(alias, "vision"),
+                      ensure_ascii=False)
+        print("        role vision: a seat only for requests that carry images")
     run("scripts/sync_config.py", timeout=300)
     # Open WebUI's tags name the connection behind the hub; without a hub the
     # endpoint is the connection, and route.connection_of needs no tags.
@@ -359,7 +368,9 @@ def main() -> None:
     record_issue(alias, None)
 
     # 5. the tier that decides routing
-    if args.skip_suite:
+    if args.vision:
+        print("  [5/5] no suite: its tasks are text and code, and a vision model is judged on images")
+    elif args.skip_suite:
         print("  [5/5] suite skipped by request")
     else:
         print("  [5/5] running the internal suite...")

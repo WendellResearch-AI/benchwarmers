@@ -58,7 +58,7 @@ def models() -> list[str]:
         retiring = {a.get("alias") for a in alerts.active().values() if a.get("kind") == "retiring"}
     except Exception:                                  # noqa: BLE001
         retiring = set()
-    return [m for m in run.available_models() if m not in retiring and m not in run.ad_hoc_models()]
+    return [m for m in run.suite_models() if m not in retiring and m not in run.ad_hoc_models()]
 
 
 def answered(task: str, model: str) -> bool:

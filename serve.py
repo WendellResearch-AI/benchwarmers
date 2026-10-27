@@ -166,15 +166,24 @@ def suite_scores() -> dict:
     The notes are the record, so they are also the source here rather than a
     parallel database that could disagree with them. Later files win, which is
     what makes a re-run show up.
+
+    Not a vision or image model's (suite/run.images_only): the suite is text
+    and code, which it is never seated for, and the answers it gave before it
+    had that role stay in the notes, uncounted. Real work, perf and reviews
+    still count it.
     """
+    from run import images_only
     row = re.compile(r"^\|\s*([\w-]+)\s*\|\s*`([^`]+)`\s*\|\s*([^|]+?)\s*\|"
                      r"\s*([^|]*?)\s*\|\s*([\d.]+)\s*\|")
     scores: dict[tuple[str, str], dict] = {}
+    skip = images_only()
     for path in sorted(DATA.glob("runs/suite-*.md")):
         for line in read(path).splitlines():
             if (m := row.match(line.strip())):
                 task, model, found, invented, seconds = m.groups()
                 model = current_alias(model)
+                if model in skip:
+                    continue
                 scores[(task, model)] = {
                     "found": found, "invented": invented.strip(" —-"),
                     "seconds": float(seconds)}
@@ -1559,8 +1568,11 @@ def save_gateway_settings(max_calls, max_explorers, who: str = "ui") -> dict:
 # Quick: the probe only; the scheduled `suite --next` passes fill the suite in,
 # six tasks a run, so the same calls are spread out, not saved. Quick + ad
 # hoc: the probe only, and the bench never calls it on its own: the only one
-# that saves calls, for a metered, capped or trial key.
-ONBOARD_MODES = {"full": [], "quick": ["--skip-suite"], "quick-adhoc": ["--skip-suite", "--ad-hoc"]}
+# that saves calls, for a metered, capped or trial key. Quick + vision: the
+# probe only, role vision (a seat only for requests that carry images), and
+# never the suite, whose tasks are text and code.
+ONBOARD_MODES = {"full": [], "quick": ["--skip-suite"], "quick-adhoc": ["--skip-suite", "--ad-hoc"],
+                 "quick-vision": ["--skip-suite", "--vision"]}
 
 
 def start_onboard(served: str, endpoint: str = "", who: str = "ui", mode: str = "full") -> dict:
@@ -2217,9 +2229,15 @@ def wrong_table() -> dict:
     suite answer, and asking three times was a second of each reload."""
     global _wrong
     import wrong
+    from run import images_only
     seen = _wrong
     if time.monotonic() - seen[0] > 5:
         table = wrong.table()
+        # A vision or image model keeps its reviews (real work, judged) but not
+        # its code-task answers: the suite is not what it is for (suite_scores).
+        for alias in images_only() & set(table):
+            r = table[alias]
+            r.update(answers=0, wrong=0, by={k: [0, 0] for k in r["by"]}, hunt=dict.fromkeys(r["hunt"], 0))
         seen = _wrong = (time.monotonic(), table)    # stamped once scored, not before
     return seen[1]
 
@@ -2409,8 +2427,9 @@ def external_card() -> str:
 def wrong_card() -> str:
     """metrics/wrong.py: how often each model asserts something false."""
     import wrong
+    from run import images_only
     rows = wrong_table()
-    live = current()
+    live, images = current(), images_only()
     body = ["<table><thead><tr>", th("Model"), th("Confidently wrong", True),
             *[th(k.capitalize(), True) for k in wrong.KINDS], th("Reviews", True), "</tr></thead><tbody>"]
 
@@ -2427,7 +2446,8 @@ def wrong_card() -> str:
                      f" style='width:{max(4, round(rate * 100))}%'></span></span>"
                      f"<span class='mono'>{r['wrong']}/{r['answers']}</span></span>")
         else:
-            rate, meter = -1, "<span class='muted'>no tasks yet</span>"
+            rate, meter = -1, ("<span class='muted'>reads images: no code tasks</span>" if alias in images
+                               else "<span class='muted'>no tasks yet</span>")
         body.append(f"<tr><td>{named(alias)}</td><td data-sort='{rate:.3f}'>{meter}</td>"
                     + "".join(cell(*r["by"][k]) for k in wrong.KINDS)
                     + (f"<td class='num' data-sort='{r['review_false']}'>{r['review_false']} in {r['reviews']}</td>"
@@ -3678,7 +3698,9 @@ def editor() -> str:
         "<option value='full'>Full: probe, then the suite now</option>"
         "<option value='quick'>Quick: probe now, the suite through the scheduled passes</option>"
         "<option value='quick-adhoc'>Quick + ad hoc: probe only; the bench never calls it on its own"
-        " (metered, capped or trial keys)</option></select></label>"
+        " (metered, capped or trial keys)</option>"
+        "<option value='quick-vision'>Quick + vision: probe only; a seat only for questions about images,"
+        " never the code suite</option></select></label>"
         "</div>"
         "<div id='o-run' hidden><p class='served' id='o-result'></p><ol class='steps' id='o-steps'></ol>"
         "<details><summary class='muted'>Full log</summary><pre class='log' id='o-log'></pre></details></div>"

@@ -161,7 +161,8 @@ dependencies either way: the app is the Python standard library.
    each is registered, probed and run through the suite, one at a time, with
    the progress beside the button. **Quick** probes now and leaves the suite
    to the scheduled passes; **Quick + ad hoc** also keeps the bench from ever
-   calling the model on its own, for a metered or trial key.
+   calling the model on its own, for a metered or trial key; **Quick +
+   vision** seats it only for questions about images, never the code suite.
 
 5. **Make a collection** on the Collections page (the models a panel always
    includes, and what it is for). The dashboard answers the gateway's routes on

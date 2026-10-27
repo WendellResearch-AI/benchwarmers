@@ -20,7 +20,9 @@ roles:   general  reasoning / do-it-all: eligible for every shape
                   charts), weak at text-only work: admitted by the vision shape
                   alone, and a collection member with this role sits only when
                   the request carries images (gateway.py). A model that reads
-                  images AND does everything else stays general.
+                  images AND does everything else stays general. `bench onboard
+                  --quick --vision` (Quick + vision in the picker) onboards one
+                  this way; the suite never runs it (suite/run.available_models).
          decision typed answers with probabilities through a Decisions API, not
                   chat; no shape admits them (config/decision-models.json)
 

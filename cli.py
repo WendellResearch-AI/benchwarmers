@@ -258,9 +258,13 @@ def cmd_onboard(args) -> None:
         reply = call("GET", "/api/onboard-queue") if verb == "status" else \
             call("POST", f"/api/onboard-queue/{verb}", {})
     else:
-        if args.ad_hoc and not args.quick:
-            sys.exit("--ad-hoc goes with --quick: an ad hoc model gets no suite run of its own")
-        mode = "quick-adhoc" if args.ad_hoc else "quick" if args.quick else "full"
+        if (args.ad_hoc or args.vision) and not args.quick:
+            sys.exit(f"--{'ad-hoc' if args.ad_hoc else 'vision'} goes with --quick:"
+                     " that model gets no suite run of its own")
+        if args.ad_hoc and args.vision:
+            sys.exit("--ad-hoc or --vision, not both; set the other in the model's popup afterwards")
+        mode = ("quick-adhoc" if args.ad_hoc else "quick-vision" if args.vision
+                else "quick" if args.quick else "full")
         items = [{"served": s, "endpoint": args.endpoint or "", "mode": mode} for s in args.served]
         reply = call("POST", "/api/onboard-queue", {"items": items})
         if args.wait:
@@ -598,6 +602,8 @@ def parser() -> argparse.ArgumentParser:
                    help="probe only; the scheduled suite passes fill the suite in later")
     s.add_argument("--ad-hoc", action="store_true",
                    help="with --quick: the bench never calls it on its own (metered, capped or trial keys)")
+    s.add_argument("--vision", action="store_true",
+                   help="with --quick: role vision, a seat only for questions about images; never the code suite")
 
     s = cmd("dismiss", cmd_dismiss, "stop offering served models as candidates")
     s.add_argument("served", nargs="+"), s.add_argument("--endpoint"), s.add_argument("--undo", action="store_true")
