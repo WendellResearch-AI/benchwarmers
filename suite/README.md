@@ -136,6 +136,10 @@ Three sources:
   checked. Real pictures of the real job, never in anyone's training data:
   the strongest of the three.
 
+To hold them back for a while (a hub being changed, say), put the day they may
+start in the data folder's `config/suite.json`: `{"vision_from": "2026-10-30"}`.
+Until then no run picks a vision task; `--task <id>` still runs one.
+
 ## Adding a task
 
 A task is one directory under `suite/tasks/` containing:

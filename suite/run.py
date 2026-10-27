@@ -384,8 +384,24 @@ def seed_shipped() -> None:
                 shutil.copyfile(src, dst)
 
 
+SETTINGS = DATA / "config" / "suite.json"
+
+
+def vision_held() -> str:
+    """The day the vision tasks start, while it is still ahead: `vision_from`
+    (YYYY-MM-DD) in config/suite.json, else "". Until then no run picks them
+    (scheduled, onboarding, pace); `--task` still runs one. A hold, set at a
+    release so the first vision runs wait for a quiet hub."""
+    try:
+        day = str(json.loads(SETTINGS.read_text(encoding="utf-8")).get("vision_from") or "")
+    except (OSError, ValueError, AttributeError):
+        return ""
+    return day if day > dt.date.today().isoformat() else ""
+
+
 def load_tasks(only: str | None) -> list[dict]:
     seed_shipped()
+    held = "" if only else vision_held()
     tasks = []
     for path in sorted(TASKS.glob("*/task.json")):
         spec = json.loads(path.read_text(encoding="utf-8"))
@@ -395,6 +411,8 @@ def load_tasks(only: str | None) -> list[dict]:
             continue
         # A mined task is a draft until someone has read it (suite/mine.py).
         if spec.get("draft") and not only:
+            continue
+        if held and spec.get("images"):
             continue
         tasks.append(spec)
     if only and not tasks:

@@ -2347,7 +2347,7 @@ def vision_rows() -> dict:
     summary = {a: {"asked": len(m["asked"]), "answered": len(m["answered"]), "fields": m["fields"],
                    "right": m["right"], "traps": m["traps"], "taken": m["taken"]} for a, m in models.items()}
     return {"tasks": tasks, "heat": heat, "summary": summary, "states": list(VISION_STATES),
-            "seatKinds": list(VISION_SEATS), "work": _vision_work_rows(live)}
+            "seatKinds": list(VISION_SEATS), "work": _vision_work_rows(live), "held": run.vision_held()}
 
 
 VISION_FAMILIES = (("vision-cord-", "receipts"), ("vision-screenqa-", "screens"), ("vision-tablevqa-", "tables"),
@@ -2449,8 +2449,11 @@ def vision_card() -> str:
         together, so it is never counted as right.</dd>
       <dt>The number beside a name</dt><dd>How much there is: fields asked on the tasks, seats on real work.</dd>
     </dl>"""
+    held = (f"<p class='hint'>The vision tasks wait until {esc(v['held'])}: no run picks them before then"
+            " (<code>vision_from</code> in <code>config/suite.json</code>; remove it to start them now).</p>"
+            if v["held"] else "")
     return ("<div class='panel'><h2>Vision</h2><p class='sub'>Reading images: fields read right on pictures with"
-            " a known answer, then real work on images and how much of it was actually checked.</p>"
+            " a known answer, then real work on images and how much of it was actually checked.</p>" + held +
             "<h3 class='chart-head'>On the vision tasks, field by field</h3><div class='chart' id='chart-vision-fields'></div>"
             "<h3 class='chart-head'>On real work with images, by how each seat was judged</h3>"
             "<div class='chart' id='chart-vision-work'></div>"

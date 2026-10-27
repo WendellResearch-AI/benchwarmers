@@ -71,10 +71,18 @@ def main() -> None:
     assert not run.applies(text, "eyes-only", skip, seeing) and run.applies(pic, "eyes-only", skip, seeing)
 
     # The shipped tasks reach the data folder; its saved answers stay.
-    kept = run.TASKS
+    kept = run.TASKS, run.SETTINGS
     with tempfile.TemporaryDirectory() as tmp:
         run.TASKS = pathlib.Path(tmp)
+        run.SETTINGS = pathlib.Path(tmp) / "suite.json"
         try:
+            # A hold keeps them out of every run until its day; --task still runs one.
+            run.SETTINGS.write_text(json.dumps({"vision_from": "2999-01-01"}), encoding="utf-8")
+            assert run.vision_held() == "2999-01-01"
+            assert not [t for t in run.load_tasks(None) if t.get("images")]
+            assert run.load_tasks("vision-bars")[0]["images"]
+            run.SETTINGS.write_text(json.dumps({"vision_from": "2000-01-01"}), encoding="utf-8")
+            assert run.vision_held() == "" and len([t for t in run.load_tasks(None) if t.get("images")]) == len(RIGHT)
             saved = run.TASKS / "vision-bars" / "output" / "m.md"
             saved.parent.mkdir(parents=True)
             saved.write_text("an answer", encoding="utf-8")
@@ -84,7 +92,7 @@ def main() -> None:
                 assert (run.TASKS / tid / "task.json").read_bytes() == (HERE / "tasks" / tid / "task.json").read_bytes()
             assert saved.read_text(encoding="utf-8") == "an answer"
         finally:
-            run.TASKS = kept
+            run.TASKS, run.SETTINGS = kept
     panel()
     sample()
     print("ok")
