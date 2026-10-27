@@ -16,17 +16,38 @@ from __future__ import annotations
 
 import json
 import pathlib
+import time
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 from paths import DATA  # noqa: E402  -- the install's data folder (metrics/paths.py)
 HISTORY = DATA / "config" / "alias-history.json"
 
 
+_cache: tuple = (None, {}, 0.0)
+
+
 def history() -> dict[str, str]:
+    """The file, read again only when it changes, and looked at no more than
+    once a second: one dashboard render asks tens of thousands of times, and
+    even a stat each time was seconds on Windows. A rename written here
+    (serve.rename) calls forget(), so it shows at once."""
+    global _cache
+    seen, now = _cache, time.monotonic()          # one read: forget() may swap it on another thread
+    if seen[0] and seen[0][0] == str(HISTORY) and now - seen[2] < 1:
+        return seen[1]
     try:
-        return json.loads(HISTORY.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
+        st = HISTORY.stat()
+        key = (str(HISTORY), st.st_mtime_ns, st.st_size)
+        table = seen[1] if seen[0] == key else json.loads(HISTORY.read_text(encoding="utf-8"))
+    except (OSError, ValueError):                 # none yet, or half-written: no renames, for a second
+        key, table = (str(HISTORY), None, None), {}
+    _cache = (key, table, now)
+    return table
+
+
+def forget() -> None:
+    global _cache
+    _cache = (None, {}, 0.0)
 
 
 def current(alias: str, table: dict[str, str] | None = None) -> str:

@@ -43,6 +43,7 @@ import re
 import subprocess
 import sys
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 ROOT = pathlib.Path(__file__).resolve().parent
@@ -54,6 +55,7 @@ PORT = int(os.environ.get("BENCH_PORT") or 8122)
 # Once, at import: roster() used to insert two entries on every page render.
 for _d in ("metrics", "suite", "scripts"):
     sys.path.insert(0, str(ROOT / _d))
+import aliases  # noqa: E402
 from aliases import current as current_alias  # noqa: E402
 import connect  # noqa: E402
 import gateway  # noqa: E402  -- its routes are answered on this port too (one port)
@@ -444,6 +446,7 @@ def change_model(alias: str, new_alias: str | None, new_role: str | None,
         history = load_json(HISTORY_PATH)
         history[alias] = new_alias
         _write_atomic(HISTORY_PATH, _dump(history))
+        aliases.forget()                       # its one-second cache, so the next read has the rename
         changed.append("config/alias-history.json")
         # 3. configs keyed by alias
         roles = roles_config()
@@ -2174,13 +2177,28 @@ def _family(task: str) -> str:
     return "hand-built"
 
 
+_wrong: tuple = (0.0, {})
+
+
+def wrong_table() -> dict:
+    """wrong.table(), shared by the three cards of one render: it scores every
+    suite answer, and asking three times was a second of each reload."""
+    global _wrong
+    import wrong
+    seen = _wrong
+    if time.monotonic() - seen[0] > 5:
+        table = wrong.table()
+        seen = _wrong = (time.monotonic(), table)    # stamped once scored, not before
+    return seen[1]
+
+
 def charts_data() -> dict:
     """Everything the Benchmarks charts draw, for bench.js. Registered models
     only: the tables keep retired ones behind "Show retired", a chart has no toggle."""
     import route
     import wrong
     live = on_bench()
-    recall, wr = route.suite_recall(), wrong.table()
+    recall, wr = route.suite_recall(), wrong_table()
     overview = [{"model": m, "recall": recall[m][0] / recall[m][1], "wrong": wr[m]["wrong"] / wr[m]["answers"],
                  "found": f"{recall[m][0]}/{recall[m][1]}", "wrongN": f"{wr[m]['wrong']}/{wr[m]['answers']}"}
                 for m in sorted(live) if recall.get(m) and recall[m][1] and wr.get(m, {}).get("answers")]
@@ -2239,8 +2257,7 @@ def perf_charts() -> dict:
 
 def bughunt_card() -> str:
     """Seeded and real-bug tasks against their answer keys."""
-    import wrong
-    rows = {m: r["hunt"] for m, r in wrong.table().items() if m in current() and any(r["hunt"].values())}
+    rows = {m: r["hunt"] for m, r in wrong_table().items() if m in current() and any(r["hunt"].values())}
     body = ["<table><thead><tr>", th("Model"), th("Found", True), th("Wrong line", True), th("Missed", True),
             th("Clean said clean", True), th("False alarm", True), "</tr></thead><tbody>"]
     for m in sorted(rows, key=lambda m: -rows[m]["found"]):
@@ -2360,7 +2377,7 @@ def external_card() -> str:
 def wrong_card() -> str:
     """metrics/wrong.py: how often each model asserts something false."""
     import wrong
-    rows = wrong.table()
+    rows = wrong_table()
     live = current()
     body = ["<table><thead><tr>", th("Model"), th("Confidently wrong", True),
             *[th(k.capitalize(), True) for k in wrong.KINDS], th("Reviews", True), "</tr></thead><tbody>"]

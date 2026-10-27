@@ -322,13 +322,29 @@ def endpoint_name(reg: dict, data: dict | None = None) -> str | None:
     return next((n for n in same if data[n].get("key") == reg.get("api_key_name")), same[0] if same else None)
 
 
+_parsed: tuple = (None, {})
+
+
 def registrations() -> dict[str, dict]:
     """alias -> its yaml entry as written by yaml_block: model_name, api_base,
-    api_key_name and a `headers` dict. Not a YAML parser; the file is ours."""
+    api_key_name and a `headers` dict. Not a YAML parser; the file is ours.
+
+    Parsed again only when the file changes (a dashboard render asks hundreds
+    of times); every caller gets its own copies to change."""
+    global _parsed
+    try:
+        st = YAML.stat()
+    except OSError:                                # a fresh install has registered nothing yet
+        return {}
+    key = (str(YAML), st.st_mtime_ns, st.st_size)
+    if _parsed[0] != key:
+        _parsed = (key, _parse_registrations())
+    return {a: dict(r, headers=dict(r["headers"])) for a, r in _parsed[1].items()}
+
+
+def _parse_registrations() -> dict[str, dict]:
     out: dict[str, dict] = {}
     current = None
-    if not YAML.exists():                          # a fresh install has registered nothing yet
-        return out
     for line in YAML.read_text(encoding="utf-8").splitlines():
         if (m := re.match(r"\s*-\s*model_id:\s*(.+)", line)):
             current = out.setdefault(m.group(1).strip().strip("\"'"), {"headers": {}})
