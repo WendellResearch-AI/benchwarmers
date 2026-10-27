@@ -510,11 +510,13 @@
     }
   }
   function loadCandidates() {
-    o.picker.textContent = ''; o.picker.appendChild(el('p', {class: 'empty'}, 'Asking the endpoints what they serve…'));
+    o.picker.textContent = ''; o.picker.appendChild(el('p', {class: 'empty'}, 'Please wait. Gathering models from your endpoints…'));
     o.start.disabled = o.dismiss.disabled = true;
-    o.find.readOnly = true;   // typing before the list arrives is lost, or lands on a row
+    // Typing before the list arrives is lost, or lands on a row; the mode waits with it.
+    o.find.readOnly = true; $('o-mode').disabled = true;
+    function ready() { o.find.readOnly = false; $('o-mode').disabled = false; }
     fetch('/api/candidates').then(function (r) { return r.json(); }).then(function (res) {
-      o.find.readOnly = false; o.find.focus();
+      ready(); o.find.focus();
       if (!res.ok) { o.picker.textContent = ''; listErrors(o.errors, res.errors); return; }
       if (res.errors.length) listErrors(o.errors, res.errors);   // one endpoint down; the rest listed
       data = res;
@@ -523,7 +525,7 @@
       res.candidates.forEach(function (c) { offered[c.key] = 1; });
       Object.keys(chosen).forEach(function (k) { if (!offered[k]) delete chosen[k]; });
       renderPicker(); armStart();
-    }).catch(function (err) { o.find.readOnly = false; o.errors.textContent = String(err); });
+    }).catch(function (err) { ready(); o.errors.textContent = String(err); });
   }
   $('onboard-open').addEventListener('click', function () {
     preStep = null;
