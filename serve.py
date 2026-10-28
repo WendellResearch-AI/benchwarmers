@@ -2625,6 +2625,8 @@ def suite_card() -> str:
 
 
 EXTERNAL = (("LiveBench", "https://livebench.ai/", "contamination-limited questions, refreshed monthly"),
+            ("FreeLLMAPI", "https://freellmapi.co/models",
+             "every free tier: limits, ranks and quirks per model (Discover leads with it)"),
             ("models.dev", "https://models.dev/", "specs and prices per provider (the catalog reads it daily)"),
             ("BullshitBench", "https://petergpt.github.io/bullshit-benchmark/viewer/index.next.html",
              "pushing back on nonsense; the idea behind confidently wrong"))
@@ -3013,7 +3015,7 @@ def discover_model(provider: str, model: str) -> dict:
 
 
 def discover_card() -> str:
-    """Models worth adding, from models.dev and FreeLLMAPI (metrics/discover.py),
+    """Models worth adding, from FreeLLMAPI and models.dev (metrics/discover.py),
     deduped. Read from the daily cache, so the page never waits on the network;
     built once per cache refresh. A click on a row opens its popup (bench.js),
     which asks /api/discover-model for the rest: its routes are where Add is."""
@@ -3021,7 +3023,8 @@ def discover_card() -> str:
     rows = [r for r in all_rows if r["free"] or r["reach"] in ("connected", "on bench")]
     hidden = len(all_rows) - len(rows)
     reach_css = {"on bench": "ok", "connected": "ok", "easy to add": "warn", "other": ""}
-    body = ["<table><thead><tr>", th("Model"), th("Provider"), th("Reach"), th("Price"), th("Context", True),
+    body = ["<table><thead><tr>", th("Model"), th("Rank", True), th("Provider"), th("Reach"), th("Price"),
+            th("Context", True),
             th("In → out"), th("Can"), th("Released"), th("Limits"), "<th></th></tr></thead><tbody>"]
     for r in rows:
         caps = [c for c, on in (("tools", r["tools"]), ("vision", r["vision"]),
@@ -3030,8 +3033,13 @@ def discover_card() -> str:
         price = ("free" if r["free"] else
                  f"{cost.get('input', '?')} / {cost.get('output', '?')}" if cost else "paid")
         lim = r.get("limits") or {}
-        lim_text = " · ".join(f"{v:,} {k}" for k, v in lim.items()) if lim else ""
+        lim_text = " · ".join([f"{v:,} {k}" for k, v in lim.items()]
+                              + ([f"{r['budget']} tokens a month"] if r.get("budget") else []))
         ctx = r.get("context")
+        rank = (f"<td class='num' data-sort='{r['rank']}' title='FreeLLMAPI: smartest #{r['rank']}"
+                + (f", fastest #{r['speed']}" if r.get("speed") else "")
+                + (f", {esc(r['size'])}" if r.get("size") else "") + f"'>{r['rank']}</td>"
+                if r.get("rank") is not None else "<td class='num muted' data-sort='99999'>—</td>")
         add = ("<button class='btn small' type='button'>Add…</button>"
                if any(not x["on_bench_as"] for x in r["routes"]) else "")
         body.append(
@@ -3042,8 +3050,8 @@ def discover_card() -> str:
             + f"<span class='conn'>{esc(r['model'])}"
             + (f" · on bench as {esc(r['on_bench_as'])}" if r.get("on_bench_as") else "")
             + (f" · also on bench as {esc(', '.join(r['also_on']))}" if r.get("also_on") else "")
-            + "</span></td>"
-            f"<td title='{esc(r['provider'])}'>{esc(r['provider_name'])}</td>"
+            + "</span></td>" + rank
+            + f"<td title='{esc(r['provider'])}'>{esc(r['provider_name'])}</td>"
             f"<td data-sort='{['on bench', 'connected', 'easy to add', 'other'].index(r['reach'])}'>"
             f"{chip(r['reach'], reach_css[r['reach']], r.get('api') or '')}</td>"
             f"<td title='per million tokens, input / output'>{esc(price)}</td>"
@@ -3060,31 +3068,40 @@ def discover_card() -> str:
                " provider or reach' aria-label='Filter rows'>"
                "<label><input type='checkbox' data-paid> Show paid (connected providers)</label></div>")
     key = """<dl>
+      <dt>Rank</dt><dd>FreeLLMAPI's smartest-first order (1 is the smartest it lists); within
+        each reach the list follows it. Hover for its fastest-first rank and size. A dash where
+        only models.dev lists the model.</dd>
       <dt>Provider</dt><dd>Who serves the model: a row per provider, so the same model
-        from OpenRouter and from NVIDIA is two rows. Hover for its models.dev id.</dd>
+        from OpenRouter and from NVIDIA is two rows. Hover for its id.</dd>
       <dt>Reach</dt><dd><em>on bench</em> already registered; <em>connected</em> this
         install has a route to the provider (an Open WebUI connection, or an endpoint of its
         own); <em>easy to add</em> an OpenAI-compatible API, so one new connection away (hover
         for its base URL); <em>other</em> a native API or an unvetted reseller.</dd>
-      <dt>Price</dt><dd>Free if models.dev prices it at 0 or FreeLLMAPI lists it (a catalog of
-        free tiers): models.dev shows the PAID price even where a free tier exists. Otherwise
+      <dt>Price</dt><dd>Free if FreeLLMAPI lists it (a catalog of free tiers) or models.dev
+        prices it at 0: models.dev shows the PAID price even where a free tier exists. Otherwise
         input / output per million tokens.</dd>
+      <dt>Limits</dt><dd>The free tier's, from FreeLLMAPI: requests and tokens per minute (rpm,
+        tpm) and per day (rpd, tpd), and roughly how many tokens a month that allows.</dd>
       <dt>New</dt><dd>First seen in either list in the last 7 days.</dd>
       <dt>Add</dt><dd>Click a row: its popup has everything known about the model and every
         route this install has to it, each with <em>Add via this</em>. <em>Via Open WebUI</em>
         adds the model to that connection's Model IDs (when it lists them), creates its model
         record public, tagged like the connection's other models and with their logo, then runs
-        the bench's onboarding (register, 4-call probe, suite), so it is in the chats too.
+        the bench's onboarding as the confirm chooses (Onboard as, Vision model), so it is in
+        the chats too.
         <em>Via LiteLLM</em> or <em>CLI Proxy API</em> adds it to that hub's connection (one more
         deployment, or the provider's models list); those hubs are asked when the popup opens.
         <em>Direct</em> onboards it on the provider's own endpoint: bench only. A new provider
         needs a connection or an endpoint first; hover its <em>easy to add</em> chip for the
         base URL.</dd>
-      <dt>Sources</dt><dd>models.dev and/or FreeLLMAPI's free catalog (named in the popup); a
-        model one provider offers in both is shown once. Both are refreshed at most daily.</dd>
+      <dt>Sources</dt><dd>FreeLLMAPI's free catalog first: where it lists a model, its name,
+        provider, context, tools, limits, ranks and quirks lead, and the popup links its
+        freellmapi.co page. models.dev fills the rest and alone has the paid models, prices,
+        base URLs and modalities. A model one provider offers in both is shown once. Both are
+        refreshed at most daily.</dd>
     </dl>"""
-    return (f"<div class='panel'><h2>Discover</h2><p class='sub'>{free} free models from models.dev"
-            f" and FreeLLMAPI, deduped; {hidden:,} paid models on providers you have no route"
+    return (f"<div class='panel'><h2>Discover</h2><p class='sub'>{free} free models from FreeLLMAPI"
+            f" and models.dev, deduped; {hidden:,} paid models on providers you have no route"
             f" to are left out. Click a model for everything known about it and the routes it can be"
             f" added by.</p>{toolbar}"
             f"<div class='scroll'>{''.join(body)}</div>"

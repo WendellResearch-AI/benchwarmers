@@ -1,6 +1,10 @@
-"""Public model lists the bench reads: models.dev and FreeLLMAPI's free catalog.
+"""Public model lists the bench reads: FreeLLMAPI's free catalog and models.dev.
 
-    python metrics/sources.py            # fetch both now (normally once a day)
+    python metrics/sources.py            # fetch them now (normally once a day)
+
+Discover leads with FreeLLMAPI (easier for a person to follow: a page per
+model, its limits, ranks and quirks) and fills the rest from models.dev, which
+alone has prices, paid models, providers' API base URLs and modalities.
 
 WHY THESE TWO
 -------------
@@ -37,6 +41,9 @@ CACHE = DATA / "runs" / "cache"
 FEEDS = {
     "modelsdev": "https://models.dev/api.json",
     "freellmapi": "https://api.freellmapi.co/v1/latest",
+    # The model pages freellmapi.co has (its sitemap): a page exists only for
+    # what its monthly snapshot lists, so Discover links only to those.
+    "freellmapi-pages": "https://freellmapi.co/sitemap-core.xml",
 }
 MAX_AGE_S = 20 * 3600
 
@@ -90,7 +97,8 @@ def fetch(name: str, force: bool = False) -> dict:
         return json.loads(path.read_text(encoding="utf-8"))
     req = urllib.request.Request(FEEDS[name], headers={"User-Agent": "benchwarmers"})
     with urllib.request.urlopen(req, timeout=90) as r:
-        data = json.load(r)
+        data = (json.load(r) if not FEEDS[name].endswith(".xml") else
+                {"slugs": sorted(set(re.findall(r"/model/([^<\"/]+)<", r.read().decode("utf-8"))))})
     CACHE.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".part")
     tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
@@ -144,6 +152,20 @@ def freellmapi_entry(served: str, platform: str | None = None) -> dict | None:
     return None
 
 
+def freellmapi_name(display_name: str) -> str:
+    """A FreeLLMAPI display name without its trailing note, "Llama 4 Scout (CF)"
+    -> "Llama 4 Scout": the name freellmapi.co gives the model on every platform."""
+    return re.sub(r"\s*\([^)]*\)\s*$", "", display_name or "").strip()
+
+
+def freellmapi_page(display_name: str, pages: set[str]) -> str | None:
+    """The model's freellmapi.co page, if `pages` (its sitemap) has it. The site
+    names a page by the display name without its note, lowercased, each run of
+    other characters one dash (buildBundles in its app.js, read 2026-10-28)."""
+    slug = "-".join(re.findall(r"[a-z0-9]+", freellmapi_name(display_name).lower()))
+    return f"https://freellmapi.co/model/{slug}" if slug in pages else None
+
+
 def is_free(cost: dict | None) -> bool | None:
     if not cost:
         return None
@@ -156,9 +178,10 @@ def main() -> None:
     for name in FEEDS:
         try:
             data = fetch(name, force=True)
-            size = len(data) if name == "modelsdev" else len(data.get("models", []))
-            print(f"  {name}: {size} {'providers' if name == 'modelsdev' else 'models'}"
-                  f" at {dt.datetime.now():%H:%M}")
+            size, unit = {"modelsdev": (len(data), "providers"),
+                          "freellmapi-pages": (len(data.get("slugs", [])), "model pages")}.get(
+                              name, (len(data.get("models", [])), "models"))
+            print(f"  {name}: {size} {unit} at {dt.datetime.now():%H:%M}")
         except Exception as exc:                       # noqa: BLE001
             print(f"  {name}: could not fetch ({type(exc).__name__}: {exc}); keeping the cached copy")
 

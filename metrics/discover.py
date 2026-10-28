@@ -1,10 +1,16 @@
-"""One list of models worth adding, from models.dev and FreeLLMAPI, deduped.
+"""One list of models worth adding, from FreeLLMAPI and models.dev, deduped.
 
     python metrics/discover.py           # summary: free models by reach, new this week
 
 The shopping list: Discover's Add (serve.py) puts a model on the bench by one
 of the routes below. A model offered by the same provider in both sources
-appears once, carrying both sources and the better-filled fields.
+appears once, carrying both sources. FreeLLMAPI leads where it lists the
+model (its name, its provider's name, context, tools, limits, its smartest
+and fastest ranks, size, monthly budget, quirks and freellmapi.co page);
+models.dev fills the rest, and alone has the paid models and prices, API base
+URLs (reach, direct routes), modalities, release and knowledge dates.
+Image and audio generation in FreeLLMAPI's list are left out: the bench asks
+for text.
 
 FREE
 ----
@@ -158,6 +164,8 @@ def hub_routes(rows: list[dict]) -> tuple[list[list[dict]], list[str]]:
 def build() -> list[dict]:
     import endpoints
     md, fl = sources.cached("modelsdev"), sources.cached("freellmapi")
+    pages = set(sources.cached("freellmapi-pages").get("slugs") or [])
+    platform_names = {p.get("id"): p.get("name") for p in fl.get("platforms") or []}
     md_conn = {v: k for k, v in sources.connection_to_modelsdev().items()}
     bench = _on_bench()
     # Open WebUI's connections, as far as the bench can tell without asking it.
@@ -185,31 +193,37 @@ def build() -> list[dict]:
                 "vision": "image" in ((m.get("modalities") or {}).get("input") or []),
                 "released": m.get("release_date"), "knowledge": m.get("knowledge"),
                 "open_weights": m.get("open_weights"), "api": p.get("api"),
-                "openai_like": openai_like, "connection": md_conn.get(prov), "limits": None}
+                "openai_like": openai_like, "connection": md_conn.get(prov), "limits": None,
+                "rank": None, "speed": None, "size": None, "budget": None, "quirks": [], "page": None}
 
     for m in fl.get("models") or []:
+        if (m.get("modality") or "chat") != "chat":
+            continue                                # image or audio generation
         plat = m.get("platform", "")
         prov = sources.FREELLMAPI_TO_MODELSDEV.get(plat, plat)
         key = (prov, sources.norm_model(m.get("modelId", "")))
-        lim = {k: v for k, v in (m.get("limits") or {}).items() if v} or None
+        lead = {"sources": ["freellmapi"], "free": True,          # listed in a free-tier catalog
+                "name": sources.freellmapi_name(m.get("displayName") or "") or m.get("modelId"),
+                "provider_name": platform_names.get(plat) or prov,
+                "limits": {k: v for k, v in (m.get("limits") or {}).items() if v} or None,
+                "rank": m.get("intelligenceRank"), "speed": m.get("speedRank"),
+                "size": m.get("sizeLabel") or None, "budget": m.get("monthlyTokenBudget") or None,
+                "quirks": [{k: q.get(k) for k in ("title", "body", "severity")} for q in m.get("quirks") or []],
+                "page": sources.freellmapi_page(m.get("displayName") or "", pages)}
         row = rows.get(key)
         if row:
-            row["sources"].append("freellmapi")
-            row["free"] = True                      # listed in a free-tier catalog
-            row["limits"] = lim
-            row["context"] = row["context"] or m.get("contextWindow")
-            row["tools"] = row["tools"] if row["tools"] is not None else m.get("supportsTools")
+            row.update(lead, sources=list(dict.fromkeys(["freellmapi", *row["sources"]])),
+                       context=m.get("contextWindow") or row["context"],          # the free tier's, where it says
+                       tools=row["tools"] if m.get("supportsTools") is None else m.get("supportsTools"))
         else:
             rows[key] = {
-                "in_mods": ["text", "image"] if m.get("supportsVision") else ["text"], "out_mods": ["text"],
-                "provider": prov, "provider_name": prov, "model": m.get("modelId"),
-                "name": m.get("displayName") or m.get("modelId"), "sources": ["freellmapi"],
-                "free": True, "cost": None, "context": m.get("contextWindow"), "output": None,
+                **lead, "in_mods": ["text", "image"] if m.get("supportsVision") else ["text"], "out_mods": ["text"],
+                "provider": prov, "model": m.get("modelId"),
+                "cost": None, "context": m.get("contextWindow"), "output": None,
                 "tools": m.get("supportsTools"), "reasoning": None,
                 "vision": m.get("supportsVision"), "released": None, "knowledge": None,
                 "open_weights": None, "api": None,
-                "openai_like": False, "connection": FREELLMAPI_TO_CONNECTION.get(plat),
-                "limits": lim}
+                "openai_like": False, "connection": FREELLMAPI_TO_CONNECTION.get(plat)}
 
     # The same model through ANOTHER provider is fine to add, but worth knowing.
     by_model: dict[str, list[str]] = {}
@@ -245,7 +259,11 @@ def build() -> list[dict]:
         out.append(r)
     _write_seen(seen)
     order = {"connected": 0, "easy to add": 1, "on bench": 2, "other": 3}
-    out.sort(key=lambda r: (not r["free"], not r["new"], order[r["reach"]], r["provider"], r["model"]))
+    # Within each reach, FreeLLMAPI's smartest first; the models it does not rank
+    # after, new ones first. Not new first overall: models.dev adds hundreds a
+    # week, which buried the ranked ones (the badge still marks them).
+    out.sort(key=lambda r: (not r["free"], order[r["reach"]], r["rank"] is None, r["rank"] or 0, not r["new"],
+                            r["provider"], r["model"]))
     return out
 
 
@@ -293,6 +311,38 @@ def _selftest() -> None:
     over = sources.free_in_own_client_only({"opencode": False, "x": True})
     assert over["opencode"] is False and over["x"] is True and over["opencode-go"] is True, over
     assert sources.free_in_own_client_only(True) == sources.free_in_own_client_only({})   # not a map: ignored
+    # freellmapi.co names a page by the display name without its note; only its sitemap's pages exist.
+    assert sources.freellmapi_page("Llama 4 Scout (CF)", {"llama-4-scout"}) == "https://freellmapi.co/model/llama-4-scout"
+    assert sources.freellmapi_page("GLM-4.7 FlashX", {"llama-4-scout"}) is None
+    # FreeLLMAPI leads where it lists a model, models.dev fills the rest; image models out; smartest first.
+    md = {"acme": {"name": "Acme", "api": "https://acme.example/v1", "models": {
+        "acme/big": {"name": "Big", "cost": {"input": 1, "output": 2}, "limit": {"context": 8000},
+                     "modalities": {"input": ["text", "image"], "output": ["text"]}, "release_date": "2026-01-01"},
+        "acme/small": {"name": "Small", "cost": {"input": 0, "output": 0}},
+        "acme/tiny": {"name": "Tiny", "cost": {"input": 0, "output": 0}}}}}
+    fl = {"platforms": [{"id": "acme", "name": "Acme Cloud"}], "models": [
+        {"platform": "acme", "modelId": "acme/big", "displayName": "Big One (Acme)", "intelligenceRank": 3,
+         "speedRank": 9, "sizeLabel": "Large", "monthlyTokenBudget": "~3M", "contextWindow": 4000,
+         "limits": {"rpm": 10, "rpd": None}, "quirks": [{"slug": "q", "title": "T", "body": "B", "severity": "info"}]},
+        {"platform": "acme", "modelId": "acme/painter", "displayName": "Painter", "modality": "image"},
+        {"platform": "acme", "modelId": "acme/tiny", "displayName": "Tiny", "intelligenceRank": 1}]}
+    feeds = {"modelsdev": md, "freellmapi": fl, "freellmapi-pages": {"slugs": ["big-one"]}}
+    import tempfile
+    kept = sources.cached, globals()["_on_bench"], globals()["SEEN"]
+    try:
+        sources.cached = lambda name: feeds.get(name, {})
+        globals().update(_on_bench=lambda: [], SEEN=pathlib.Path(tempfile.mkdtemp()) / "seen.json")
+        rows = [r for r in build() if r["provider"] == "acme"]
+    finally:
+        sources.cached = kept[0]
+        globals().update(_on_bench=kept[1], SEEN=kept[2])
+    big = next(r for r in rows if r["model"] == "acme/big")
+    assert (big["sources"], big["name"], big["provider_name"]) == (["freellmapi", "models.dev"], "Big One", "Acme Cloud"), big
+    assert big["free"] and big["context"] == 4000 and big["limits"] == {"rpm": 10} and big["released"] == "2026-01-01", big
+    assert (big["rank"], big["speed"], big["size"], big["budget"]) == (3, 9, "Large", "~3M"), big
+    assert big["page"] == "https://freellmapi.co/model/big-one" and big["quirks"] == [
+        {"title": "T", "body": "B", "severity": "info"}] and big["vision"], big
+    assert [r["model"] for r in rows] == ["acme/tiny", "acme/big", "acme/small"], [r["model"] for r in rows]
     print("discover selftest ok")
 
 
@@ -306,7 +356,7 @@ def main() -> None:
     by = {}
     for r in free:
         by[r["reach"]] = by.get(r["reach"], 0) + 1
-    print(f"{len(rows)} models ({len(free)} free) from models.dev + FreeLLMAPI;"
+    print(f"{len(rows)} models ({len(free)} free) from FreeLLMAPI + models.dev;"
           f" free by reach: {by}; new this week: {sum(r['new'] for r in rows)}")
     both = sum(1 for r in rows if len(r["sources"]) > 1)
     print(f"{both} listed by both sources (shown once)")

@@ -834,8 +834,16 @@
         if (res.errors.length) listErrors($('d-errors'), res.errors);   // a hub that could not be asked
         var r = res.model, p = $('d-profile'), list = $('d-routes');
         $('d-title').textContent = r.name;
-        $('d-served').textContent = r.provider_name + ' · ' + r.model + ' · listed by ' + r.sources.join(' and ')
-          + (r.on_bench_as ? ' · on the bench as ' + r.on_bench_as : '');
+        // Each source a link: FreeLLMAPI's page for the model where its sitemap has one, else its catalog.
+        var sv = $('d-served');
+        sv.textContent = r.provider_name + ' · ' + r.model + ' · listed by ';
+        r.sources.forEach(function (s, i) {
+          var fl = s === 'freellmapi';
+          if (i) sv.appendChild(document.createTextNode(' and '));
+          sv.appendChild(el('a', {href: fl ? r.page || 'https://freellmapi.co/models' : 'https://models.dev/',
+                                  target: '_blank', rel: 'noopener'}, fl ? 'FreeLLMAPI' : 'models.dev'));
+        });
+        if (r.on_bench_as) sv.appendChild(document.createTextNode(' · on the bench as ' + r.on_bench_as));
         p.textContent = '';
         [['Input', r.in_mods], ['Output', r.out_mods]].forEach(function (x) {
           var row = el('div', {class: 'prof'});
@@ -846,16 +854,26 @@
         var can = [['tools', r.tools], ['vision', r.vision], ['reasons', r.reasoning]]
           .filter(function (x) { return x[1]; }).map(function (x) { return x[0]; });
         var facts = [
+          r.rank != null ? 'smartest #' + r.rank + (r.speed ? ', fastest #' + r.speed : '') + ' on FreeLLMAPI' : '',
+          r.size || '',
           r.context ? 'context ' + Number(r.context).toLocaleString() + ' tokens' : 'context unknown',
           r.output ? 'output up to ' + Number(r.output).toLocaleString() : '',
           can.length ? 'can: ' + can.join(', ') : '',
           price(r),
           r.limits ? 'limits ' + limits(r.limits) : '',
+          r.budget ? r.budget + ' tokens a month' : '',
           r.released ? 'released ' + r.released : '',
           r.knowledge ? 'knowledge to ' + r.knowledge : '',
           r.open_weights != null ? (r.open_weights ? 'open weights' : 'closed weights') : '',
           'first seen ' + (r.first_seen === 'baseline' ? 'before the list began' : r.first_seen)];
         p.appendChild(el('div', {class: 'prof'}, facts.filter(Boolean).join(' · ')));
+        // FreeLLMAPI's operating notes for this provider, e.g. thinking tokens that eat the output cap.
+        (r.quirks || []).forEach(function (q) {
+          var row = el('div', {class: 'prof'});
+          row.appendChild(el('strong', {}, q.title + ': '));
+          row.appendChild(document.createTextNode(q.body || ''));
+          p.appendChild(row);
+        });
         if (r.also_on && r.also_on.length) p.appendChild(el('div', {class: 'prof muted'}, 'Also on the bench as ' + r.also_on.join(', ')));
         list.textContent = '';
         res.routes.forEach(function (x) {

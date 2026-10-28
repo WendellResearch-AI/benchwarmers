@@ -197,8 +197,9 @@ dependencies either way: the app is the Python standard library.
   waits when the wait fits, or is refused before it goes out. Every call lands
   in a monthly usage ledger with its tokens, and the Quotas page shows what is
   left and when it resets.
-- **Discover.** models.dev and FreeLLMAPI, merged into one list of models
-  worth adding, each with the routes this install has to it.
+- **Discover.** FreeLLMAPI's free catalog, with models.dev for the details
+  and paid models it lacks, merged into one list of models worth adding,
+  smartest first, each with the routes this install has to it.
 
 ## Asking a panel
 
@@ -433,8 +434,9 @@ reaches Wendell Research. What it sends, and where:
   a hub such as Open WebUI, or a local runtime. That includes the probes, the
   suite and onboarding, which spend calls on your keys. Add only endpoints you
   are content to send that work to.
-- **Catalog reads**, no key and nothing of yours: models.dev and FreeLLMAPI
-  once a day, and OpenRouter's public model list.
+- **Catalog reads**, no key and nothing of yours: FreeLLMAPI (its feed and
+  its site's sitemap) and models.dev once a day, and OpenRouter's public
+  model list.
 - **Sign-ins**, only when you choose one: the provider's own sign-in page.
 - **Charts**: the dashboard's browser page loads Observable Plot from jsDelivr
   at a pinned version.
