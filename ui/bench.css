@@ -394,10 +394,26 @@ h3.chart-head { font-size: 1rem; margin: 1rem 0 .2rem; }
 .list-actions { display: flex; align-items: center; gap: 1rem; margin: .75rem 0; flex-wrap: wrap; }
 .list-actions .done { margin: 0; color: var(--ok); font-size: .9375rem; }
 .list-actions .errors { color: var(--err); font-size: .9375rem; }
-button.c-row { width: 100%; text-align: left; font: inherit; color: inherit; background: none; border: 0;
-               border-radius: var(--radius); cursor: pointer; }
+button.c-row { width: calc(100% + 1.5rem); padding: .9rem .75rem; text-align: left; font: inherit; color: inherit;
+               background: none; border: 0; border-top: 1px solid var(--line); border-radius: 0; cursor: pointer; }
+button.c-row:first-child { border-top: 0; }
 button.c-row:hover, button.c-row:focus-visible { background: var(--step-1); }
 .c-row .open-hint { color: var(--muted); font-size: .875rem; white-space: nowrap; }
+.c-row .top { display: flex; flex-wrap: wrap; align-items: baseline; gap: .3rem; }
+.c-row .top .alias { font-size: 1.125rem; font-weight: 500; margin-right: .5rem; }
+.c-row .desc { margin: .1rem 0 0; max-width: 75ch; }
+.c-row .together { margin: 0; font-size: .9375rem; max-width: 80ch; }
+/* The panel as it sits: each member a seat topped in the bench's colour, as
+   the header's bench is; an explorer seat empty and dashed; the merger outlined
+   after an arrow. The bordered seats trade padding for border, so all are one size. */
+.c-row .seats { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; margin: .6rem 0 .5rem; }
+.c-row .seat { font-family: var(--font-mono); font-size: .8125rem; padding: .3rem .6rem; background: var(--band);
+               border-top: 3px solid var(--bench-seat, var(--brand)); border-radius: var(--radius); }
+.c-row .seat:is(.explorer, .merger) { background: transparent; border: 1px dashed var(--muted); color: var(--muted);
+                                      padding: calc(.3rem + 2px) calc(.6rem - 1px) calc(.3rem - 1px); }
+.c-row .seat.merger { border-style: solid; border-color: var(--ink); color: var(--ink); }
+.c-row .seat .k { font-family: var(--font-display); color: var(--muted); margin-right: .35rem; }
+.c-row .merge { display: inline-flex; align-items: center; gap: .4rem; color: var(--muted); }
 /* suggested collection tags under the field */
 .tag-picks { display: flex; flex-wrap: wrap; gap: .35rem; margin-top: .45rem; }
 .tag-picks .chip { cursor: pointer; border: 0; font-family: inherit; }
@@ -424,6 +440,8 @@ dialog .pick { display: flex; gap: 1.5rem; }
   .ep .acts { justify-content: flex-start; }
   details.key dl { grid-template-columns: minmax(0, 1fr); }
   .toolbar input[type=search] { min-width: 0; width: 100%; }
+  button.c-row { grid-template-columns: minmax(0, 1fr); }     /* the seats get the width; the whole row opens */
+  .c-row .open-hint { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }

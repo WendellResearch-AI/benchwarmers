@@ -1454,6 +1454,13 @@
     });
     showMerger(); applyTags();
   }
+  // What a collection's members can all do, in the words the tag checks use.
+  var CAN = {reasoning: 'reason'};
+  Object.keys(CAP_TAGS).forEach(function (t) { CAN[CAP_TAGS[t][0]] = CAP_TAGS[t][1]; });
+  function tokens(n) {                                 // 512k, 1M (2^20), 1.9M
+    return n >= 1000000 ? String(Math.round(n / 104857.6) / 10).replace(/\.0$/, '') + 'M'
+                        : Math.floor(n / 1000).toLocaleString() + 'k';
+  }
   function loadCollections(keep) {
     fetch('/api/collections').then(function (r) { return r.json(); }).then(function (res) {
       C = res; c.list.textContent = '';
@@ -1462,24 +1469,38 @@
         var box = el('button', {class: 'endpoint c-row', type: 'button', 'data-name': row.name,
                                 'aria-label': 'Open bench/' + row.name});
         var left = el('div');
-        var title = el('div', {class: 'what'});
-        title.appendChild(el('span', {class: 'alias'}, 'bench/' + row.name + ' '));
-        row.tags.forEach(function (t) { title.appendChild(el('span', {class: 'chip', style: 'margin-left:.3rem'}, t)); });
+        var title = el('div', {class: 'top'});
+        title.appendChild(el('span', {class: 'alias'}, 'bench/' + row.name));
+        row.tags.forEach(function (t) { title.appendChild(el('span', {class: 'chip'}, t)); });
         left.appendChild(title);
-        if (row.description) left.appendChild(el('div', {}, row.description));
-        left.appendChild(el('div', {class: 'base'}, row.members.join(', ') + ' + ' + row.explorers + ' explorer' +
-          (row.explorers === 1 ? '' : 's') + (row.shape ? ' (' + row.shape + ')' : '') +
-          (row.reply === 'merged' ? ' · merged by ' + (row.merger || 'verdicts') : '')));
+        if (row.description) left.appendChild(el('p', {class: 'desc'}, row.description));
+        // The panel as it sits: a seat per member, an empty one per explorer,
+        // and the merger after an arrow.
+        var seats = el('div', {class: 'seats'});
+        row.members.forEach(function (m) { seats.appendChild(el('span', {class: 'seat'}, m)); });
+        for (var i = 0; i < row.explorers; i++) {
+          seats.appendChild(el('span', {class: 'seat explorer'}, 'explorer' + (row.shape ? ' · ' + row.shape : '')));
+        }
+        if (row.reply === 'merged') {
+          var merge = el('span', {class: 'merge'}), seat = el('span', {class: 'seat merger'});
+          merge.appendChild(el('span', {'aria-hidden': 'true'}, '→'));
+          seat.appendChild(el('span', {class: 'k'}, 'merger'));
+          seat.appendChild(document.createTextNode(row.merger || 'chosen by verdicts'));
+          merge.appendChild(seat); seats.appendChild(merge);
+        }
+        left.appendChild(seats);
         var t = row.together;
         if (t) {
           var lim = Object.keys(t.limits || {}).filter(function (k) { return t.limits[k]; })
             .map(function (k) { return t.limits[k].toLocaleString() + ' ' + k; });
-          left.appendChild(el('div', {class: 'base'}, 'Together: ' +
-            (t.context_window ? 'prompts up to ' + Math.floor(t.context_window / 1000).toLocaleString() + 'k tokens' : 'context unknown') +
-            (t.context_unknown.length ? ' (unknown for ' + t.context_unknown.join(', ') + ')' : '') +
-            ' · all can: ' + (t.capabilities.join(', ') || 'nothing known in common') +
-            ' · ' + t.connections.length + ' connection' + (t.connections.length === 1 ? '' : 's') +
-            (lim.length ? ' · tightest ' + lim.join(', ') : '')));
+          var can = t.capabilities.map(function (k) { return CAN[k] || k; });
+          var n = t.connections.length + ' connection' + (t.connections.length === 1 ? '' : 's');
+          left.appendChild(el('p', {class: 'together'},
+            (t.context_window ? 'Prompts up to ' + tokens(t.context_window) + ' tokens' : 'Context window unknown') +
+            (t.context_unknown.length ? ' (unknown for ' + t.context_unknown.join(', ') + '). ' : '. ') +
+            (can.length ? 'All can ' + (can.length > 1 ? can.slice(0, -1).join(', ') + ' and ' : '') + can[can.length - 1] + '. '
+                        : 'Nothing known they can all do. ') +
+            (lim.length ? 'Tightest limit ' + lim.join(', ') + ' across ' + n + '.' : 'No limits known across ' + n + '.')));
         }
         box.appendChild(left);
         box.appendChild(el('span', {class: 'open-hint', 'aria-hidden': 'true'}, 'Open ›'));
