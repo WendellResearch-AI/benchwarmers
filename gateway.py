@@ -330,6 +330,22 @@ def retired_why(entry: dict) -> str:
             " (Restore in its model popup brings it back)")
 
 
+def refused_now(aliases, est_tokens: int, within: float) -> dict[str, str]:
+    """alias -> why, for models whose known rate limits or quota leave no room
+    for a call within `within` seconds (metrics/pacing.held): asked, they
+    would only bring back the bench's own refusal, so they are not seated."""
+    import pacing
+    out = {}
+    for a in aliases:
+        try:
+            h = pacing.held(a, route.connection_of(a), est_tokens)
+        except Exception:                              # noqa: BLE001 -- a broken limit file is not a refusal
+            continue
+        if h and h[0] > within:
+            out[a] = f"held by a rate limit: {h[1]}; room in {pacing._wait_text(h[0])}"
+    return out
+
+
 def retiring() -> set[str]:
     """Aliases not to spend an explorer seat on: those on a retiring alert
     (failing their probes; 2026-10-16 both explorers of a bench/core call were
@@ -405,6 +421,10 @@ def _ask_llm(cmd: list[str], prompt: str) -> tuple[str, str]:
 
 class TooLarge(ValueError):
     """The prompt does not fit a member's context window (HTTP 413)."""
+
+
+class AllHeld(LookupError):
+    """Every seat is held by a known rate limit (HTTP 429): try again later."""
 
 
 def estimate_tokens(text: str) -> int:
@@ -590,6 +610,13 @@ def run_collection(name: str, messages: list[dict], nominated: list[str] | None 
                        f" windows) in bench/{name}. Trim it under {min(small.values()):,} tokens,"
                        " or choose a collection whose members have larger windows"
                        " (GET /v1/models lists each collection's context_window).")
+    # A MODEL THE BENCH KNOWS WILL BE REFUSED IS NOT ASKED: a member or a
+    # `with` whose limits have no room before its seat would give up, named
+    # like the others; it would only come back as the refusal.
+    held = refused_now([*sitting, *nominated], needed, SEAT_TIMEOUT)
+    skipped += [{"seat": "member" if a in sitting else "with", "alias": a, "why": why} for a, why in held.items()]
+    sitting = [a for a in sitting if a not in held]
+    nominated = [a for a in nominated if a not in held]
     if pictures and not collection.get("shape"):
         shape, how = "vision", "the request carries images"
     elif not n_explorers:
@@ -603,6 +630,8 @@ def run_collection(name: str, messages: list[dict], nominated: list[str] | None 
         # `with` in the request body is route.py's --with: an explorer seat.
         from run import _registered_names
         avoid = retiring() | set(too_small(needed, _registered_names()))   # explorers must fit too
+        # and have room now: an explorer seat can go to a model without a wait.
+        avoid |= set(refused_now(_registered_names(), needed, 0))
         if pictures:
             avoid |= {a for a in _registered_names() if cannot_see(a)}    # and see
         p = route.panel(shape, large=len(whole) > LARGE, nominated=nominated or None,
@@ -615,8 +644,9 @@ def run_collection(name: str, messages: list[dict], nominated: list[str] | None 
                          + ", and no model that takes images was free for an explorer seat. Add one to the"
                          " collection, or call one whose together.capabilities on GET /v1/models lists vision.")
     if not seats:
-        raise LookupError(f"collection {name!r} has no members and no explorer could be seated"
-                          + "".join(f"; {k['alias']} not asked: {k['why']}" for k in skipped))
+        raise (AllHeld if held else LookupError)(
+            f"collection {name!r} has no members and no explorer could be seated"
+            + "".join(f"; {k['alias']} not asked: {k['why']}" for k in skipped))
     panel_id = f"p{dt.datetime.now():%Y%m%d-%H%M%S}-{secrets.token_hex(2)}"
     model = bench_collections.PREFIX + name
     task = " ".join(prompt.split())[:90] + f" ({model}, {shape})"
@@ -718,6 +748,8 @@ def refusal(exc: Exception) -> tuple[int, str]:
         return 413, str(exc)
     if isinstance(exc, ValueError):
         return 400, str(exc)
+    if isinstance(exc, AllHeld):
+        return 429, str(exc)
     if isinstance(exc, LookupError):
         return 503, str(exc)
     return 500, f"the panel failed ({type(exc).__name__}: {exc})"

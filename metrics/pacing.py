@@ -177,6 +177,28 @@ def _ago(s: float) -> str:
     return "just now" if s < 60 else f"{s / 60:.0f} min ago" if s < 7200 else f"{s / 3600:.0f} h ago"
 
 
+def _since(rs: list[dict], records: list[dict]) -> float:
+    """The oldest ledger line any of these windows or quota records counts."""
+    spans = [AXES[r["axis"]][1] for r in rs]
+    return min([ledger.month_start(time.time()) if s == "month" else time.time() - s for s in spans]
+               + [_ts(q["observed_at"]) for q in records if q.get("observed_at")])
+
+
+def held(alias: str, connection: str, est_tokens: int = 1) -> tuple[float, str] | None:
+    """(seconds until there is room, why) when a call to `alias` would have to
+    wait or be refused now, else None. Read only: no slot is taken. For
+    picking seats, so a model the bench knows will be refused is not seated
+    (gateway.refused_now); `admit` still decides each call."""
+    import quota
+    rs, records = rules(alias, connection), quota.live(connection, alias)
+    if not rs and not records:
+        return None
+    now = time.time()
+    block = _blocked(rs, records, alias, connection, est_tokens, now,
+                     list(ledger.rows(_since(rs, records))), _inflight(now))
+    return None if block is None else (max(block[0] - now, 0.0), block[1])
+
+
 def admit(alias: str, connection: str, est_tokens: int, left: float, sleep=time.sleep) -> tuple[str | None, str]:
     """Wait for room, or refuse. Returns (ticket, refusal): a ticket to pass
     to `release` once the call's ledger line is written (None when no limit
@@ -189,9 +211,7 @@ def admit(alias: str, connection: str, est_tokens: int, left: float, sleep=time.
         records = quota.live(connection, alias)
         if not rs and not records:
             return None, ""
-        spans = [AXES[r["axis"]][1] for r in rs]
-        since = min([ledger.month_start(time.time()) if s == "month" else time.time() - s for s in spans]
-                    + [_ts(q["observed_at"]) for q in records if q.get("observed_at")])
+        since = _since(rs, records)
         with locked.lock(LOCK):
             now = time.time()
             rows = list(ledger.rows(since))

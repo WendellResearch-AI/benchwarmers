@@ -529,7 +529,11 @@ key limited to its collection and a rate, or keep the key on the app's server.
 - **Every seat is named** in the response, including ones that failed or came
   back empty, because who answered is itself evidence about the roster.
 - **Free models only**, so rate limits are the constraint; a failed seat is
-  reported and logged, not retried into the limit.
+  reported and logged, not retried into the limit. A model the bench already
+  knows has no room (a limit or quota it has counted, `metrics/pacing.py`) is
+  not seated at all: an explorer seat goes to a model with room now, a member
+  is named as not asked when its wait would outlast the seat, and a request
+  with no seat left gets a 429.
 - **Privacy:** prompts go only to providers the bench already uses.
 - **Bind to 127.0.0.1**, as the dashboard does. Elsewhere only with an admin
   token set, and then every call carries a gateway key made on the

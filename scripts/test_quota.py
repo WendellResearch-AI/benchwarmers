@@ -290,6 +290,16 @@ def main() -> int:
     check("rate limit (not sent" in r["error"] and "a calendar month" in r["error"] and "this month" in r["error"],
           "rpmo 3: the fourth call this month is refused", r["error"])
     check(client.chat("t-ok", "hi")["text"] != "", "another connection is not held by that cap")
+    # Seating asks the same question first (gateway.refused_now): held past any
+    # seat's wait, so not seated; a model with room is.
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+    import gateway
+    import pacing
+    h = pacing.held("t-month", "monthprov")
+    check(h is not None and h[0] > gateway.SEAT_TIMEOUT and "this month" in h[1], "held() sees the monthly cap", h)
+    check(pacing.held("t-ok", gateway.route.connection_of("t-ok")) is None, "held() is None with room")
+    out = gateway.refused_now(["t-month", "t-ok"], 10, gateway.SEAT_TIMEOUT)
+    check(list(out) == ["t-month"] and "rate limit" in out["t-month"], "refused_now names only the held model", out)
 
     # The free-tier guard: a model that went paid is held until allowed.
     before = len(seen.get("paid", []))
