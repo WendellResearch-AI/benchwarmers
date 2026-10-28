@@ -258,9 +258,7 @@ def cmd_onboard(args) -> None:
         reply = call("GET", "/api/onboard-queue") if verb == "status" else \
             call("POST", f"/api/onboard-queue/{verb}", {})
     else:
-        if args.ad_hoc and not args.quick:
-            sys.exit("--ad-hoc goes with --quick: an ad hoc model gets no suite run of its own")
-        mode = "quick-adhoc" if args.ad_hoc else "quick" if args.quick else "full"
+        mode = ("quick" if args.quick else "full") + ("-adhoc" if args.ad_hoc else "")
         items = [{"served": s, "endpoint": args.endpoint or "", "mode": mode, "vision": args.vision}
                  for s in args.served]
         reply = call("POST", "/api/onboard-queue", {"items": items})
@@ -608,7 +606,8 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--quick", action="store_true",
                    help="probe only; the scheduled suite passes fill the suite in later")
     s.add_argument("--ad-hoc", action="store_true",
-                   help="with --quick: the bench never calls it on its own (metered, capped or trial keys)")
+                   help="the bench never calls it on its own afterwards (metered, capped or trial keys);"
+                        " without --quick the suite still runs once now")
     s.add_argument("--vision", action="store_true",
                    help="role vision: a seat only for questions about images, and its suite is the vision tasks")
 

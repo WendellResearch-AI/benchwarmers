@@ -51,11 +51,14 @@ run through the suite. **Onboard as**, under the list, chooses how much that
 spends:
 
 - **Full**: the probe, then the suite now.
+- **Full + ad hoc**: the probe and the suite now, once, so routing has scores
+  for it; after that the bench never calls the model on its own (no explorer
+  seat, no scheduled runs). A collection that lists it still calls it.
 - **Quick**: the probe now; the scheduled suite passes fill the suite in, six
   tasks a run. The same calls, spread out.
-- **Quick + ad hoc**: the probe only, and the bench never calls the model on
-  its own (no explorer seat, no scheduled runs). The one that saves calls, for
-  a metered, capped or trial key. A collection that lists it still calls it.
+- **Quick + ad hoc**: the probe only, and then ad hoc as above. The one that
+  spends least, for a metered, capped or trial key; its suite stays empty,
+  since the scheduled passes leave ad hoc models alone.
 
 **Vision model**, the box beside it, gives the model role **vision** as it is
 registered: it sits only for requests that carry images, and its suite is the
@@ -64,7 +67,7 @@ key) rather than the text and code ones. Full runs them now, Quick through the
 scheduled passes. For a model that reads images and little else; a model that
 does everything and also takes images stays general and gets both.
 
-`bench onboard <served> [--quick [--ad-hoc]] [--vision]` does the same from a terminal.
+`bench onboard <served> [--quick] [--ad-hoc] [--vision]` does the same from a terminal.
 Onboarding takes minutes and spends calls, so models run **one at a time**,
 in a queue the dashboard keeps:
 

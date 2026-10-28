@@ -160,8 +160,9 @@ dependencies either way: the app is the Python standard library.
 4. **Onboard a few models** from it ("Onboard a model"): tick one or several;
    each is registered, probed and run through the suite, one at a time, with
    the progress beside the button. **Quick** probes now and leaves the suite
-   to the scheduled passes; **Quick + ad hoc** also keeps the bench from ever
-   calling the model on its own, for a metered or trial key. Tick **Vision
+   to the scheduled passes; **+ ad hoc** (with Full or Quick) keeps the bench
+   from ever calling the model on its own afterwards, for a metered or trial
+   key. Tick **Vision
    model** for one that reads images and little else: it sits only for
    questions about images, and is tested on the vision tasks, not the code ones.
 

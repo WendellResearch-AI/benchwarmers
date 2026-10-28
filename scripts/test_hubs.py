@@ -289,7 +289,7 @@ def discover_add() -> None:
     assert r["ok"] and onboarded[-1] == ("vendor/y:free", "cpa", "quick-adhoc", True), r
     assert [m for m, p, _b in SEEN if "management" in p and m == "PATCH"] == ["PATCH"]
     before = len(SEEN)
-    assert "mode must be" in serve.discover_add("openrouter", "vendor/q", endpoint="cpa", mode="full-adhoc")["errors"][0]
+    assert "mode must be" in serve.discover_add("openrouter", "vendor/q", endpoint="cpa", mode="slow")["errors"][0]
     assert len(SEEN) == before, SEEN[before:]
     r = serve.discover_add("groq-api", "vendor/z")                                 # no endpoint: Open WebUI, as before
     assert r["steps"] == ["owui added vendor/z on groq-api"] and onboarded[-1] == ("vendor/z", "owui", "full", False), r

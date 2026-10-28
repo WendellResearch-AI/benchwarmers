@@ -398,7 +398,7 @@ def main() -> int:
         stopped = {i["served"]: i["state"] for i in serve.onboard_queue()["items"]}
         order.remove("quiet")
         serve.queue_onboard([{"served": s, "endpoint": "e", "mode": m, "vision": s == "quiet"} for s, m in
-                             (("ok", "full"), ("quiet", "quick"), ("bad", "quick-adhoc"))])
+                             (("ok", "full-adhoc"), ("quiet", "quick"), ("bad", "quick-adhoc"))])
         settle()
         batch = {i["served"]: (i["state"], i["alias"], bool(i["note"])) for i in serve.onboard_queue()["items"]}
         cleared = serve.clear_onboard_queue()["items"]
@@ -412,7 +412,8 @@ def main() -> int:
           and batch == {"ok": ("done", "ok-x", False), "quiet": ("no answer", "quiet-x", True),
                         "bad": ("failed", "bad-x", True)}
           and cleared == [] and bad_input == (False, False, False)
-          and modes == {"a": "full", "ok": "full", "quiet": "quick vision", "bad": "quick-adhoc"})
+          and modes == {"a": "full", "ok": "full-adhoc", "quiet": "quick vision", "bad": "quick-adhoc"}
+          and serve.ONBOARD_MODES["full-adhoc"] == ["--ad-hoc"])            # the suite now, then ad hoc
     print(("ok   " if ok else "FAIL ") + "onboarding queue" + ("" if ok else f" -> {stopped} {order} {batch} {modes}"))
     failures += 0 if ok else 1
 

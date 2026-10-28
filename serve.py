@@ -1567,19 +1567,24 @@ def save_gateway_settings(max_calls, max_explorers, who: str = "ui") -> dict:
 
 # How much an onboarding spends. Full: the 4-call probe, then the suite now.
 # Quick: the probe only; the scheduled `suite --next` passes fill the suite in,
-# six tasks a run, so the same calls are spread out, not saved. Quick + ad
-# hoc: the probe only, and the bench never calls it on its own: the only one
-# that saves calls, for a metered, capped or trial key. Apart from the mode,
+# six tasks a run, so the same calls are spread out, not saved. Ad hoc: the
+# bench never calls it on its own afterwards, for a metered, capped or trial
+# key; Full + ad hoc spends the suite once now so routing has scores for it,
+# Quick + ad hoc only the probe, and no scheduled pass ever fills its suite in
+# (suite/pace.py leaves ad hoc models out). Apart from the mode,
 # `vision` (the picker's Vision model box) gives it role vision as it is
 # registered: a seat only for requests that carry images, and its suite is the
 # vision tasks alone (suite/run.applies), now or through the scheduled passes.
-ONBOARD_MODES = {"full": [], "quick": ["--skip-suite"], "quick-adhoc": ["--skip-suite", "--ad-hoc"]}
+ONBOARD_MODES = {"full": [], "full-adhoc": ["--ad-hoc"], "quick": ["--skip-suite"],
+                 "quick-adhoc": ["--skip-suite", "--ad-hoc"]}
 
 
 def onboard_choice(prefix: str) -> str:
     """The mode and the Vision box, as the Onboard dialog (o-) and Discover's Add confirm (ask-) show them."""
     return (f"<label class='check'>Onboard as <select id='{prefix}-mode'>"
             "<option value='full'>Full: probe, then the suite now</option>"
+            "<option value='full-adhoc'>Full + ad hoc: probe and the suite now; then the bench never calls it"
+            " on its own</option>"
             "<option value='quick'>Quick: probe now, the suite through the scheduled passes</option>"
             "<option value='quick-adhoc'>Quick + ad hoc: probe only; the bench never calls it on its own"
             " (metered, capped or trial keys)</option></select></label>"
