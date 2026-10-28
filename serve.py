@@ -826,7 +826,7 @@ def _modalities(entry: dict, served: str, index: dict) -> dict:
 # What each endpoint answered, for LISTED_FOR seconds: name -> (when, its
 # config, live, conns). Only the asking is kept; what is on the bench, retired
 # or dismissed is taken off fresh on every opening.
-LISTED_FOR = 1800                  # half an hour: lists rarely change sooner, and Refresh is one click
+LISTED_FOR = 3600                  # an hour: lists rarely change sooner, and Refresh is one click
 _listed: dict[str, tuple] = {}
 
 
