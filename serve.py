@@ -1964,9 +1964,17 @@ def problems() -> str:
     KIND = {"retiring": "err", "retired": "err", "connection": "warn",
             "registration": "warn", "plan": "warn"}
     items = []
+    live = set(names.values())
     for key, a in sorted(alerts.items(), key=lambda kv: kv[1].get("first_seen", "")):
         served = key.split(":", 2)[2] if key.count(":") >= 2 else ""
         alias = a.get("alias") or names.get(served, "")
+        # The alerts file is rewritten by the daily check; until then an alert
+        # whose models have all left the bench (Retire all, or one by one) has
+        # nothing left to act on.
+        if a.get("aliases") and not live & set(a["aliases"]):
+            continue
+        if a.get("kind") == "retiring" and alias and alias not in live:
+            continue
         try:
             age = (today - datetime.date.fromisoformat(a["first_seen"])).days
         except (KeyError, ValueError):

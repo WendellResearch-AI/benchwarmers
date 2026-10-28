@@ -438,6 +438,28 @@ def main() -> int:
     print(("ok   " if ok else "FAIL ") + "restart" + ("" if ok else f" -> {alone} {busy} {forced} {shut}"))
     failures += 0 if ok else 1
 
+    # Action needed: an alert whose models have all left the bench is not shown,
+    # before the daily check rewrites the file (2026-10-28: a kilo connection
+    # alert stayed after Retire all 4).
+    kept_data, kept_reg = serve.DATA, serve.registered
+    with tempfile.TemporaryDirectory() as tmp:
+        (pathlib.Path(tmp) / "metrics").mkdir()
+        (pathlib.Path(tmp) / "metrics" / "alerts.json").write_text(json.dumps({
+            "connection:held:gone.example": {"kind": "connection", "message": "every model on gone.example is failing",
+                                             "aliases": ["g1", "g2"], "first_seen": "2026-10-28"},
+            "connection:held:here.example": {"kind": "connection", "message": "every model on here.example is failing",
+                                             "aliases": ["h1", "g1"], "first_seen": "2026-10-28"},
+            "retiring:x:old": {"kind": "retiring", "alias": "old", "message": "old retires", "first_seen": "2026-10-28"}}),
+            encoding="utf-8")
+        serve.DATA, serve.registered = pathlib.Path(tmp), lambda: {"h1-served": "h1"}
+        try:
+            shown = serve.problems()
+        finally:
+            serve.DATA, serve.registered = kept_data, kept_reg
+    ok = "here.example" in shown and "gone.example" not in shown and "old retires" not in shown
+    print(("ok   " if ok else "FAIL ") + "action needed drops alerts on retired models")
+    failures += 0 if ok else 1
+
     # Dismiss: one picker key or many in one write, a change-log line each;
     # undo brings back only the ones named; nothing named is refused.
     serve.DISMISSED_PATH = cfg / "dismissed.json"
