@@ -833,8 +833,9 @@ _listed: dict[str, tuple] = {}
 def onboard_candidates(fresh: bool = False) -> dict:
     """What every endpoint serves that the bench could onboard, for the picker.
 
-    Served, minus registered, minus retired, minus dismissed (those come back
-    separately so a dismissal can be undone), each endpoint asked separately
+    Served, minus registered, minus retired, minus queued or onboarding now,
+    minus dismissed (those come back separately so a dismissal can be undone),
+    each endpoint asked separately
     so one being down only empties its own group. The live calls this page
     makes happen only when the picker opens: a dashboard that needs the
     network to render would be down exactly when you want to look at it.
@@ -858,6 +859,9 @@ def onboard_candidates(fresh: bool = False) -> dict:
              | {endpoints.snapshot_key(r.get("served", ""), r.get("endpoint") or endpoints.default())
                 for r in retired().values()}
              | {endpoints.snapshot_key(d["served"], d["endpoint"]) for d in decide.load().values()})
+    with _OQ_LOCK:                                  # on its way: Start would refuse it anyway
+        taken |= {endpoints.snapshot_key(i["served"], i["endpoint"]) for i in _OQ["items"]
+                  if i["state"] in ("queued", "running")}
     tags = load_json(DATA / "config" / "provider-tags.json")
     dismissed = load_json(DISMISSED_PATH)
     first_seen = load_json(DATA / "config" / "served-snapshot.json").get("last_seen", {})

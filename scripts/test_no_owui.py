@@ -132,6 +132,15 @@ def stranger(fake: str) -> None:
     assert c["ok"] and not c["errors"], c
     assert sorted(x["served"] for x in c["candidates"]) == ["vendor/c", "vendor/d", "vendor/e", "vendor/f"], c
     assert {x["group"] for x in c["candidates"]} == {"openrouter (direct)"} and not any(x["new"] for x in c["candidates"])
+    # Queued or onboarding now: left out until the queue is done with it.
+    kept_items = serve._OQ["items"]
+    serve._OQ["items"] = [{"served": "vendor/c", "endpoint": "openrouter", "state": "running"},
+                          {"served": "vendor/d", "endpoint": "openrouter", "state": "done"}]
+    try:
+        busy = sorted(x["served"] for x in serve.onboard_candidates()["candidates"])
+    finally:
+        serve._OQ["items"] = kept_items
+    assert busy == ["vendor/d", "vendor/e", "vendor/f"], busy
 
     # The served check: the registered models only, not the aggregator's catalogue.
     assert check_deprecations.served() == {"vendor/a:free", "vendor/b:free"}
