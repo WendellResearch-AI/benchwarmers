@@ -2803,7 +2803,7 @@ def gateway_card(limit: int = 30) -> str:
         judged = {}
     owed = seats_total = 0
     body = ["<table><thead><tr>", th("When"), th("Collection"), th("Asked by"), th("Explorer shape"),
-            th("Seats"), th("Owed", True), "</tr></thead><tbody>"]
+            th("Seats"), th("Time", True), "</tr></thead><tbody>"]
     for r in records:
         chips, row_owed = [], 0
         for seat in r.get("seats", []):
@@ -2823,13 +2823,20 @@ def gateway_card(limit: int = 30) -> str:
         chips += [f"<span class='chip muted' title='{esc('not asked: ' + str(k.get('why', '')))}'>"
                   f"{esc(k.get('alias', ''))} –</span>" for k in r.get("skipped", []) if isinstance(k, dict)]
         owed += row_owed
+        # The request's own time: its seats ran at once, so the slowest of
+        # them, then the merge (a merger seat answers after the rest).
+        secs = [(s.get("seat"), float(s.get("seconds") or 0)) for s in r.get("seats", [])]
+        panel = max((t for seat, t in secs if seat != "merger"), default=0.0)
+        merge = sum(t for seat, t in secs if seat == "merger")
+        took = (f"<td class='num' data-sort='{panel + merge:.1f}' title='slowest seat {panel:.1f}s"
+                f"{f' + merge {merge:.1f}s' if merge else ''}'>{panel + merge:.0f}s</td>" if secs
+                else "<td class='num muted' data-sort='-1'>—</td>")
         body.append(
             f"<tr><td class='mono' data-sort='{esc(r.get('at', ''))}'>{esc(r.get('at', '')[:16].replace('T', ' '))}</td>"
             f"<td class='mono'>{esc(r.get('model', ''))}</td>"
             f"<td class='mono'>{esc(r.get('key') or '—')}</td>"
             f"<td title='{esc(r.get('shape_by', ''))}'>{esc(r.get('shape', ''))}</td>"
-            f"<td>{' '.join(chips)}</td>"
-            f"<td class='num{' muted' if not row_owed else ''}'>{row_owed}</td></tr>")
+            f"<td>{' '.join(chips)}</td>{took}</tr>")
     if not records:
         body.append("<tr><td colspan='6' class='muted'>No gateway requests yet. Call a collection"
                     f" at <code>{esc(gateway_url())}</code>.</td></tr>")
@@ -2844,7 +2851,10 @@ def gateway_card(limit: int = 30) -> str:
         carried none. Hover it for why.</dd>
       <dt>Asked by</dt><dd>The gateway key that made the request, or <code>local</code>
         when no key is asked for.</dd>
-      <dt>Owed</dt><dd>Seats without a verdict. Each is recorded as an unjudged
+      <dt>Time</dt><dd>How long the caller waited: the seats run at once, so the
+        slowest of them, plus the merge when the reply was merged. Hover for the two
+        parts; a chip's own time is on the chip.</dd>
+      <dt>Verdicts owed</dt><dd>A chip with no mark. Each is recorded as an unjudged
         offload, so rotation still counts it; a verdict tells the router whether
         it helped. The orchestrator that called can also record one:
         <code>python metrics/offload.py verdict &lt;call id&gt; --useful</code>.</dd>
