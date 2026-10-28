@@ -196,7 +196,9 @@ first, with what is new this week badged. A row opens its popup: what the
 model takes and does, its price, and every route this install has to it, each
 with an **Add via this**. Adding through a hub (Open WebUI, LiteLLM, CLI Proxy
 API) puts it in that hub too; adding direct registers it on its own endpoint
-only. Either way the onboarding joins the same queue.
+only. Either way the onboarding joins the same queue, with the same
+**Onboard as** and **Vision model** choice as the Onboard dialog, asked in the
+confirm before anything is added.
 
 Some providers' free models work only inside their own app; Discover leaves
 those out and keeps their paid models. Settings, **Free only in their own

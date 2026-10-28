@@ -20,9 +20,11 @@
   // The page's own confirm, a Promise of true/false: window.confirm is
   // silently false where a browser blocks dialogs. Opens over any open popup.
   var askD = $('ask-dialog'), askDone = null;
-  function ask(text, yes, danger) {
+  function ask(text, yes, danger, onboard) {
     if (askDone) askDone(false);
     $('ask-text').textContent = text;
+    $('ask-onboard').hidden = !onboard;     // Discover's Add: the Onboard dialog's mode and Vision box
+    $('ask-vision').checked = false;
     $('ask-yes').textContent = yes || 'OK';
     $('ask-yes').className = 'btn ' + (danger ? 'danger' : 'primary');
     askD.showModal(); $('ask-no').focus();
@@ -771,19 +773,21 @@
   function addVia(x, b) {
     var direct = x.via === 'direct';
     ask('Add ' + x.model + ' via ' + x.label + (x.free ? '' : ' (PAID)') + '?\n\n'
-      + (direct ? 'The bench only: register it on the ' + x.endpoint + ' endpoint, a 4-call probe, then the suite.'
+      + (direct ? 'The bench only: register it on the ' + x.endpoint + ' endpoint and onboard it as chosen below.'
         // A LiteLLM or CLI Proxy API route says its own steps: only what that hub takes.
         : x.steps ? x.steps.map(function (s, i) { return (i + 1) + '. ' + s; }).join('\n')
         : '1. Open WebUI: add it to the ' + x.connection + ' connection\'s Model IDs (if that connection lists them)\n'
         + '2. Open WebUI: a public model record, tagged and with the logo of the connection\'s other models\n'
-        + '3. The bench: register, a 4-call probe, then the suite'), 'Add').then(function (yes) { if (yes) addNow(x, b, direct); });
+        + '3. The bench: register it and onboard it as chosen below'), 'Add', false, true).then(function (yes) {
+      if (yes) addNow(x, b, direct, {mode: $('ask-mode').value, vision: $('ask-vision').checked});
+    });
   }
-  function addNow(x, b, direct) {
+  function addNow(x, b, direct, how) {
     var title = 'Adding ' + x.model + ' via ' + x.label;
     $('d-errors').textContent = '';
     if (direct) {
       b.disabled = true; b.textContent = 'Adding…';
-      post('/api/onboard-queue', {items: [{served: x.model, endpoint: x.endpoint}]}).then(function (res) {
+      post('/api/onboard-queue', {items: [Object.assign({served: x.model, endpoint: x.endpoint}, how)]}).then(function (res) {
         if (!res.ok) { listErrors($('d-errors'), res.errors); b.disabled = false; b.textContent = 'Add via this'; return; }
         dd.close(); preStep = null; o.errors.textContent = ''; od.showModal();
         afterQueued(res, {served: x.model, endpoint: x.endpoint}, title, '');
@@ -798,7 +802,7 @@
     runView(title, 'Adding it to ' + x.label + '…');
     oq.box.hidden = false; oq.chip.classList.remove('done', 'fail'); oq.chip.style.setProperty('--fill', '3%');
     oq.text.textContent = oq.text.title = title; oq.stop.hidden = oq.clear.hidden = true;
-    post('/api/discover/add', {connection: x.connection, model: x.model, endpoint: x.endpoint}).then(function (res) {
+    post('/api/discover/add', Object.assign({connection: x.connection, model: x.model, endpoint: x.endpoint}, how)).then(function (res) {
       var hubDone = !!(res.served && res.steps && res.steps.length);   // in the hub, even if queueing it was refused
       preStep.state = hubDone ? 'done' : 'fail';
       preStep.note = (res.steps || []).join('. ') + (hubDone ? '' : (res.steps && res.steps.length ? '. ' : '') + res.errors.join(' '));

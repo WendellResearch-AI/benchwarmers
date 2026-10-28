@@ -278,16 +278,21 @@ def discover_add() -> None:
         os.environ["BENCHWARMERS_KEY_CPA_ADMIN"] = "mgmt-test"
 
     onboarded = []
-    serve.queue_onboard = lambda items, who="ui": onboarded.append((items[0]["served"], items[0]["endpoint"])) or {
+    serve.queue_onboard = lambda items, who="ui": onboarded.append(
+        (items[0]["served"], items[0]["endpoint"], items[0]["mode"], items[0]["vision"])) or {
         "ok": True, "errors": [], "items": []}
     owui.add = lambda c, m: (m, [f"owui added {m} on {c}"])
     r = serve.discover_add("groq", "vendor/new", endpoint="lite")
-    assert r["ok"] and "/lite/model/new" in writes() and onboarded[-1] == ("vendor/new", "lite"), r
-    r = serve.discover_add("openrouter", "vendor/y:free", endpoint="cpa")
-    assert r["ok"] and onboarded[-1] == ("vendor/y:free", "cpa"), r
+    assert r["ok"] and "/lite/model/new" in writes() and onboarded[-1] == ("vendor/new", "lite", "full", False), r
+    # The confirm's Onboard as and Vision box reach the queue; a bad mode is refused before the hub has it.
+    r = serve.discover_add("openrouter", "vendor/y:free", endpoint="cpa", mode="quick-adhoc", vision=True)
+    assert r["ok"] and onboarded[-1] == ("vendor/y:free", "cpa", "quick-adhoc", True), r
     assert [m for m, p, _b in SEEN if "management" in p and m == "PATCH"] == ["PATCH"]
+    before = len(SEEN)
+    assert "mode must be" in serve.discover_add("openrouter", "vendor/q", endpoint="cpa", mode="full-adhoc")["errors"][0]
+    assert len(SEEN) == before, SEEN[before:]
     r = serve.discover_add("groq-api", "vendor/z")                                 # no endpoint: Open WebUI, as before
-    assert r["steps"] == ["owui added vendor/z on groq-api"] and onboarded[-1] == ("vendor/z", "owui"), r
+    assert r["steps"] == ["owui added vendor/z on groq-api"] and onboarded[-1] == ("vendor/z", "owui", "full", False), r
     assert serve.discover_add("groq-api", "vendor/z", endpoint="owui")["ok"]
     assert "not a hub" in serve.discover_add("groq", "v/z", endpoint="plain")["errors"][0]
     changes = [json.loads(line)["field"] for line in serve.CHANGES_PATH.read_text(encoding="utf-8").splitlines()]

@@ -1576,6 +1576,17 @@ def save_gateway_settings(max_calls, max_explorers, who: str = "ui") -> dict:
 ONBOARD_MODES = {"full": [], "quick": ["--skip-suite"], "quick-adhoc": ["--skip-suite", "--ad-hoc"]}
 
 
+def onboard_choice(prefix: str) -> str:
+    """The mode and the Vision box, as the Onboard dialog (o-) and Discover's Add confirm (ask-) show them."""
+    return (f"<label class='check'>Onboard as <select id='{prefix}-mode'>"
+            "<option value='full'>Full: probe, then the suite now</option>"
+            "<option value='quick'>Quick: probe now, the suite through the scheduled passes</option>"
+            "<option value='quick-adhoc'>Quick + ad hoc: probe only; the bench never calls it on its own"
+            " (metered, capped or trial keys)</option></select></label>"
+            f"<label class='check'><input type='checkbox' id='{prefix}-vision'> Vision model: a seat only for"
+            " questions about images, and its suite is the vision tasks</label>")
+
+
 def start_onboard(served: str, endpoint: str = "", who: str = "ui", mode: str = "full",
                   vision: bool = False) -> dict:
     """Kick off `scripts/onboard.py` for a served model, detached, logging to runs/.
@@ -1780,13 +1791,17 @@ def _onboard_worker(who: str) -> None:
             nxt.update(state=state, note=note, exit=code)
 
 
-def discover_add(connection: str, model: str, who: str = "ui", endpoint: str = "") -> dict:
+def discover_add(connection: str, model: str, who: str = "ui", endpoint: str = "",
+                 mode: str = "full", vision: bool = False) -> dict:
     """From the Discover tab: put a model into a hub as it is otherwise done by
     hand, through the adapter of the hub `endpoint` is (endpoints.adapter:
     Open WebUI's connection Model IDs and a public, tagged record with a logo;
     a LiteLLM deployment; a CLI Proxy API provider's models list), then the
-    normal onboarding. Only for a connection the hub already has. No endpoint
+    normal onboarding, in the mode and with the Vision box the confirm chose
+    (ONBOARD_MODES). Only for a connection the hub already has. No endpoint
     means Open WebUI's, as before there were other hubs."""
+    if mode not in ONBOARD_MODES:                      # before the hub has it, not after
+        return {"ok": False, "errors": [f"mode must be one of {', '.join(ONBOARD_MODES)}; got {mode!r}"]}
     if not re.fullmatch(r"[\w./:@+-]{1,200}", model or ""):
         return {"ok": False, "errors": ["the model id is the provider's id, e.g. vendor/model:free"]}
     if not re.fullmatch(r"[\w.-]{1,80}", connection or ""):
@@ -1805,7 +1820,7 @@ def discover_add(connection: str, model: str, who: str = "ui", endpoint: str = "
         return {"ok": False, "errors": [f"{label} refused: {type(exc).__name__}: {exc}"]}
     _log_change(datetime.datetime.now().astimezone().isoformat(timespec="seconds"), who, "",
                 f"{which}-add", None, f"{served} on {connection}")
-    started = queue_onboard([{"served": served, "endpoint": hub.endpoint()}], who)
+    started = queue_onboard([{"served": served, "endpoint": hub.endpoint(), "mode": mode, "vision": vision}], who)
     return {**started, "served": served, "endpoint": hub.endpoint(), "steps": steps,
             "errors": started["errors"] + ([] if started["ok"] else
                                           [f"{label} now has {served}; onboard it from the Onboard dialog"])}
@@ -3951,6 +3966,7 @@ def editor() -> str:
         # The page's own confirm (bench.js ask): window.confirm can be blocked.
         "<dialog id='ask-dialog' aria-labelledby='ask-text'>"
         "<p id='ask-text' style='white-space:pre-line'></p>"
+        f"<div id='ask-onboard' hidden>{onboard_choice('ask')}</div>"     # Discover's Add only
         "<div class='actions'><button class='btn' id='ask-no' type='button'>Cancel</button>"
         "<button class='btn primary' id='ask-yes' type='button'>OK</button></div></dialog>"
         # onboarding
@@ -3968,13 +3984,7 @@ def editor() -> str:
         " <button class='linkish' type='button' id='o-refresh'>Refresh</button></p>"
         "<div class='picker' id='o-picker' role='group' aria-label='Served models'></div>"
         # serve.ONBOARD_MODES: how much each onboarding spends.
-        "<label class='check'>Onboard as <select id='o-mode'>"
-        "<option value='full'>Full: probe, then the suite now</option>"
-        "<option value='quick'>Quick: probe now, the suite through the scheduled passes</option>"
-        "<option value='quick-adhoc'>Quick + ad hoc: probe only; the bench never calls it on its own"
-        " (metered, capped or trial keys)</option></select></label>"
-        "<label class='check'><input type='checkbox' id='o-vision'> Vision model: a seat only for questions"
-        " about images, and its suite is the vision tasks</label>"
+        f"{onboard_choice('o')}"
         "</div>"
         "<div id='o-run' hidden><p class='served' id='o-result'></p><ol class='steps' id='o-steps'></ol>"
         "<details><summary class='muted'>Full log</summary><pre class='log' id='o-log'></pre></details></div>"
@@ -4232,7 +4242,9 @@ class Handler(gateway.Handler):
                "/api/retry": lambda p: retry_model(str(p.get("alias") or "")),
                "/api/discover/add": lambda p: discover_add(str(p.get("connection") or ""),
                                                            str(p.get("model") or ""),
-                                                           endpoint=str(p.get("endpoint") or "")),
+                                                           endpoint=str(p.get("endpoint") or ""),
+                                                           mode=str(p.get("mode") or "full"),
+                                                           vision=p.get("vision") is True),
                "/api/onboard": lambda p: start_onboard(str(p.get("served", "")),
                                                        str(p.get("endpoint", "")),
                                                        mode=str(p.get("mode") or "full"),

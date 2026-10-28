@@ -149,7 +149,7 @@ def hub_routes(rows: list[dict]) -> tuple[list[list[dict]], list[str]]:
                 mine.append({"via": "hub", "hub": which, "connection": conn, "endpoint": ep,
                              "label": f"{r['provider_name']} via {label} ({conn} connection)",
                              "note": f"Also serves it to everything else that uses {label}.",
-                             "steps": ["; ".join(said), "The bench: register, a 4-call probe, then the suite"],
+                             "steps": ["; ".join(said), "The bench: register it and onboard it as chosen below"],
                              "on_bench_as": next((a for e, _c, _n, a, s in bench if e == ep and s == served), None)})
         out.append(mine)
     return out, errors
