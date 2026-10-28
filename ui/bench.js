@@ -33,6 +33,34 @@
   $('ask-no').addEventListener('click', function () { answer(false); });
   askD.addEventListener('close', function () { answer(false); });   // Escape
 
+  // ---- restart (serve.restart): the page reloads once the new one answers ----
+  var rs = $('restart');
+  function restart(force) {
+    var out = $('restart-out');
+    rs.disabled = true; out.textContent = 'Restarting…';
+    post('/api/restart', {force: force}).then(function (res) {
+      if (res.ok) return back(Date.now());
+      rs.disabled = false; out.textContent = '';
+      if (!res.busy) { listErrors(out, res.errors); return; }
+      ask('Still in progress: ' + res.errors.join('; ') + '. Restart anyway and cut them off?', 'Restart anyway', true)
+        .then(function (yes) { if (yes) restart(true); });
+    }).catch(function (err) { rs.disabled = false; out.textContent = String(err); });
+  }
+  // The old one stops half a second after answering; /health answers again once the new one is up.
+  function back(since) {
+    setTimeout(function () {
+      fetch('/health', {cache: 'no-store'}).then(function (r) { if (!r.ok) throw r.status; location.reload(); })
+        .catch(function () {
+          if (Date.now() - since < 120000) back(since);
+          else $('restart-out').textContent = 'Not back after two minutes: look at whatever runs it.';
+        });
+    }, 1500);
+  }
+  if (rs) rs.addEventListener('click', function () {
+    ask('Restart Benchwarmers? The dashboard and the gateway on this port stop for a few seconds.', 'Restart')
+      .then(function (yes) { if (yes) restart(false); });
+  });
+
   // ---- tabs, remembered per browser ----------------------------------
   var tabs = document.querySelectorAll('.tabs button[data-tab]');      // not the sidebar's own toggle
   var onShow = {};                     // a page's loader, run each time it is shown

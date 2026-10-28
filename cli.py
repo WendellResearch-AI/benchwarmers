@@ -385,6 +385,13 @@ def cmd_verdict(args) -> None:
                                        f" {len(body['real'])} real, {len(body['false'])} false"))
 
 
+def cmd_restart(args) -> None:
+    """serve.restart: refused while work is in progress, unless --force."""
+    reply = call("POST", "/api/restart", {"force": args.force})
+    out(args, reply, lambda r: done(r, "restarting on the code now on disk; back in a few seconds"
+                                       + (f" (cut off: {'; '.join(r['cut'])})" if r.get("cut") else "")))
+
+
 def cmd_endpoints(args) -> None:
     reply = call("GET", "/api/endpoints")
     out(args, reply, lambda r: table(r["endpoints"], ["name", "base", "kind", "hub", "default", "key_set", "models"],
@@ -547,6 +554,9 @@ def parser() -> argparse.ArgumentParser:
         return act
 
     cmd("status", cmd_status, "what is running, and where")
+    s = cmd("restart", cmd_restart, "start the dashboard again on the code now on disk")
+    s.add_argument("--force", action="store_true",
+                   help="even while onboarding, a scheduled job or gateway calls are in progress (cuts them off)")
 
     s = cmd("ask", cmd_ask, "ask a collection: every seat answers")
     s.add_argument("collection", help="a collection, e.g. core (bench collections)")

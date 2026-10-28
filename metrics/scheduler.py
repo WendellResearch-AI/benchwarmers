@@ -168,6 +168,7 @@ def _start(name, args, due, running) -> None:
 
 
 _stop = threading.Event()
+RUNNING: dict = {}                                     # job name -> True while it runs (serve.restart reads it)
 
 
 def _loop() -> None:
@@ -180,7 +181,7 @@ def _loop() -> None:
     except TimeoutError:
         return                                          # another dashboard already runs it
     try:
-        running: dict = {}
+        running = RUNNING
         conf = settings()
         _log(f"scheduler started, mode {conf['mode']}, jobs {', '.join(enabled(conf))}")
         while True:

@@ -22,7 +22,7 @@ ROOT = Path(__file__).resolve().parent                 # the app: a checkout, th
 SERVERS = {"serve": "serve.py", "gateway": "gateway.py", "mcp": "mcp_server.py",
            "init": str(Path("scripts") / "init.py")}
 # Everything but running a server is cli.py, a client of a running server.
-CLIENT = ("status", "ask", "verdict", "models", "model", "candidates", "onboard", "dismiss",
+CLIENT = ("status", "restart", "ask", "verdict", "models", "model", "candidates", "onboard", "dismiss",
           "collections", "collection", "endpoints", "endpoint", "keys", "key", "settings")
 
 
@@ -57,6 +57,7 @@ def usage() -> str:
         "",
         "Using it (a client of a running server, BENCHWARMERS_URL; --help on any):",
         "  status                          what is running, and where",
+        "  restart [--force]               start the dashboard again on the code now on disk",
         "  ask <collection> [prompt]       ask a collection; -f FILE adds a file, a pipe reads stdin",
         "  verdict <call> --useful|--not-useful [--real ...] [--false ...]",
         "  models | model <action>         list, rename, role, retire, restore, max-tokens, ...",

@@ -1971,7 +1971,11 @@ def problems() -> str:
             age = (today - datetime.date.fromisoformat(a["first_seen"])).days
         except (KeyError, ValueError):
             age = 0
-        why = " · ".join(filter(None, [a.get("action", ""),
+        # Which model and where it comes from, first: the message alone left that to be looked up.
+        served_as = next((s for s, al in names.items() if al == alias), served) if alias else ""
+        where = (f"{alias} · {served_as or '?'} via {tag_for(alias) or a.get('endpoint') or '?'}"
+                 if alias else "")
+        why = " · ".join(filter(None, [where, a.get("action", ""),
                                        "open today" if age == 0 else f"open {age} days"]))
         acts = []
         if a.get("aliases"):
@@ -1988,7 +1992,10 @@ def problems() -> str:
         items.append((key, a.get("kind", "?"), KIND.get(a.get("kind"), "warn"),
                       a.get("message", ""), why, "".join(acts)))
     cutoff = (today - datetime.timedelta(days=7)).isoformat()
-    auto = [(f"retired:{alias}:{r['at']}", "", "", f"{alias} · {r['at'][:10]}",
+    tags = load_json(DATA / "config" / "provider-tags.json")      # a retired model's connection, by served name
+    auto = [(f"retired:{alias}:{r['at']}", "", "",
+             f"{alias} · {r.get('served') or '?'} via {tags.get(r.get('served', ''), '').strip('?') or r.get('endpoint') or endpoints.default()}"
+             f" · {r['at'][:10]}",
              r.get("why", "").removeprefix("auto: "),
              f"<button class='btn small' data-act='restore' data-alias='{esc(alias)}'>Restore</button>")
             for alias, r in sorted(retired().items(), key=lambda kv: kv[1].get("at", ""), reverse=True)
@@ -3295,12 +3302,71 @@ def access_card() -> str:
     body = "".join(f"<tr><th scope='row'>{esc(k)}</th><td>{esc(v)}</td>"
                    f"<td class='mono set-by'>{'<br>'.join(esc(s) for s in src.split(', '))}</td></tr>"
                    for k, v, src in rows)
+    running, disk = on_disk()
+    now = (f"Running {esc(RELEASE)} ({esc(running)}), the code on disk." if running == disk else
+           f"<strong>Newer code is on disk</strong> ({esc(disk)}; running {esc(RELEASE)}, {esc(running)}).")
     return ("<div class='panel'><h2>Server and access</h2><p class='muted'>How this install is reached and who"
             " may call it. Set in the environment, read at start: change one and restart. Shown here, never"
             " set here, since a page that could change its own login could open itself to anyone. No secret"
             " is shown, only whether one is set.</p>"
             f"<table class='facts'><thead><tr>{th('Setting')}{th('Now')}{th('Set by')}</tr></thead>"
-            f"<tbody>{body}</tbody></table></div>")
+            f"<tbody>{body}</tbody></table>"
+            # restart(): stopped and started again by serve.py's own parent process.
+            f"<h3>Restart</h3><p class='muted'>{now} A restart starts the dashboard again on the code on disk,"
+            " for an update or a setting"
+            " above, whatever runs it (a service, the launcher, a container or a terminal). It waits for"
+            " onboarding, a scheduled job and gateway calls in progress, or cuts them off if you insist; the"
+            " page comes back in a few seconds.</p>"
+            "<p><button class='btn' type='button' id='restart'>Restart Benchwarmers</button>"
+            " <span id='restart-out' role='status'></span></p></div>")
+
+
+RESTART = 75                       # the exit code serve.py's parent reads as "start me again"
+SERVER = None                      # the running ThreadingHTTPServer, set in __main__
+_answering = [0]                   # gateway calls being answered now
+_answering_lock = threading.Lock()
+
+
+def _follow_parent() -> None:
+    """End with serve.py's parent however it went (a service stopped, a
+    terminal closed), so no orphan keeps the port. Its process is waited on,
+    not a pipe read: on Windows a thread blocked reading stdin stalls every
+    subprocess started meanwhile (git, the onboarding, the jobs)."""
+    ppid = int(os.environ.get("BENCH_PARENT") or 0)
+    if not ppid:
+        return
+    if os.name == "nt":
+        import ctypes
+        k32 = ctypes.windll.kernel32
+        handle = k32.OpenProcess(0x00100000, False, ppid)          # SYNCHRONIZE
+        if not handle:
+            return                                                  # cannot watch it: stay up
+        k32.WaitForSingleObject(handle, 0xFFFFFFFF)                 # until it ends
+    else:
+        while os.getppid() == ppid:                                 # a new parent: the old one ended
+            time.sleep(2)
+    os._exit(0)
+
+
+def restart(force: bool = False, who: str = "ui") -> dict:
+    """End this dashboard and start it again on the code now on disk: after
+    an update, or a setting read at start. serve.py runs it as a child of its
+    own parent process (see __main__), which starts it again, so this works
+    however serve.py was started: Servy, the npm or pip launcher, Docker or a
+    terminal. Refused while something would be cut off, unless `force`."""
+    import scheduler
+    if os.environ.get("BENCH_SERVED") != "1" or SERVER is None:
+        return {"ok": False, "errors": ["this dashboard was not started by serve.py's own parent process,"
+                                        " so nothing would start it again: restart it the way you started it"]}
+    busy = ([f"onboarding is running ({sum(i['state'] in ('queued', 'running') for i in _OQ['items'])} left):"
+             " Stop it in the queue, or wait"] if _OQ["worker"] is not None else []) \
+        + ([f"a scheduled job is running: {', '.join(scheduler.RUNNING)}"] if scheduler.RUNNING else []) \
+        + ([f"{_answering[0]} gateway call(s) are being answered"] if _answering[0] else [])
+    if busy and not force:
+        return {"ok": False, "busy": True, "errors": busy}
+    _log_change(datetime.datetime.now().astimezone().isoformat(timespec="seconds"), who, "", "restart", *on_disk())
+    threading.Timer(0.5, SERVER.shutdown).start()      # after this reply has gone
+    return {"ok": True, "errors": [], "cut": busy}
 
 
 def save_scheduler(mode: str, jobs, who: str = "ui") -> dict:
@@ -3751,6 +3817,14 @@ RELEASE, RELEASE_DATE, COMMIT = version()
 VERSION = f"{RELEASE} {RELEASE_DATE}".strip()           # the X-Benchwarmers-Version header
 
 
+def on_disk() -> tuple[str, str]:
+    """(running, on disk): what this process started from and what a restart
+    would start, by commit, or by the VERSION file where there is no git."""
+    if COMMIT:
+        return COMMIT, _git("log", "-1", "--format=%h") or COMMIT
+    return RELEASE, read(ROOT / "VERSION").strip()
+
+
 def info_page() -> str:
     import scheduler
     import client as model_client
@@ -4122,7 +4196,13 @@ class Handler(gateway.Handler):
         """
         path = self.path.split("?", 1)[0]
         if guard.gateway_route(path):
-            return super().do_POST()
+            with _answering_lock:
+                _answering[0] += 1                     # restart() waits for these
+            try:
+                return super().do_POST()
+            finally:
+                with _answering_lock:
+                    _answering[0] -= 1
         if path == "/login":
             return self._login()
         ops = {"/api/model": lambda p: change_model(str(p.get("alias", "")),
@@ -4179,7 +4259,8 @@ class Handler(gateway.Handler):
                "/api/gateway-key": lambda p: make_gateway_key(str(p.get("name") or ""), p.get("collections"),
                                                               p.get("rpm")),
                "/api/gateway-key/remove": lambda p: revoke_gateway_key(str(p.get("name") or "")),
-               "/api/theme": lambda p: save_theme(str(p.get("theme") or ""))}
+               "/api/theme": lambda p: save_theme(str(p.get("theme") or "")),
+               "/api/restart": lambda p: restart(p.get("force") is True)}
         # SAME ORIGIN ONLY. Any page open in the browser can POST a plain form
         # to 127.0.0.1, and this used to parse whatever arrived as JSON -- so a
         # website could retire models, and now could set a key. The checks are
@@ -4276,6 +4357,19 @@ class Handler(gateway.Handler):
 
 
 if __name__ == "__main__":
+    if os.environ.get("BENCH_SERVED") != "1":
+        # The dashboard runs as this process's child, so Restart (restart())
+        # can end it and have it started again on the code now on disk,
+        # whatever started serve.py. The child ends with this one (_follow_parent).
+        env = {**os.environ, "BENCH_SERVED": "1", "BENCH_PARENT": str(os.getpid())}
+        try:
+            while (code := subprocess.call([sys.executable, os.path.abspath(__file__), *sys.argv[1:]],
+                                           env=env, stdin=subprocess.DEVNULL)) == RESTART:
+                print("Benchwarmers: restarting on the code now on disk", flush=True)
+        except KeyboardInterrupt:
+            code = 0
+        sys.exit(code)
+    threading.Thread(target=_follow_parent, daemon=True).start()
     address = guard.bind()
     guard.startup(address)                             # beyond this machine, only with an admin token
     shown = "localhost" if address == "127.0.0.1" else address
@@ -4284,4 +4378,6 @@ if __name__ == "__main__":
     paths.make()                                       # a fresh data folder's layout, before any writer
     import scheduler
     scheduler.start()                                  # off unless config/scheduler.json says otherwise
-    ThreadingHTTPServer((address, PORT), Handler).serve_forever()
+    SERVER = ThreadingHTTPServer((address, PORT), Handler)
+    SERVER.serve_forever()                             # returns only when restart() shuts it down
+    sys.exit(RESTART)

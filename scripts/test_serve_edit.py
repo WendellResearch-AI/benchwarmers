@@ -416,6 +416,28 @@ def main() -> int:
     print(("ok   " if ok else "FAIL ") + "onboarding queue" + ("" if ok else f" -> {stopped} {order} {batch} {modes}"))
     failures += 0 if ok else 1
 
+    # Restart: refused unless serve.py's parent started it (nothing would start it
+    # again); refused while a job runs, unless forced; then the server shuts down.
+    import scheduler
+    kept = os.environ.get("BENCH_SERVED"), serve.SERVER
+    shut = []
+    try:
+        os.environ.pop("BENCH_SERVED", None)
+        alone = serve.restart()
+        os.environ["BENCH_SERVED"] = "1"
+        serve.SERVER = type("Server", (), {"shutdown": lambda self: shut.append(1)})()
+        scheduler.RUNNING["suite"] = True
+        busy, forced = serve.restart(), serve.restart(force=True)
+        time.sleep(0.8)                                  # the shutdown waits half a second
+    finally:
+        scheduler.RUNNING.pop("suite", None)
+        serve.SERVER = kept[1]
+        os.environ.pop("BENCH_SERVED", None) if kept[0] is None else os.environ.update(BENCH_SERVED=kept[0])
+    ok = (not alone["ok"] and busy.get("busy") and not busy["ok"] and "suite" in busy["errors"][0]
+          and forced["ok"] and forced["cut"] and shut == [1])
+    print(("ok   " if ok else "FAIL ") + "restart" + ("" if ok else f" -> {alone} {busy} {forced} {shut}"))
+    failures += 0 if ok else 1
+
     # Dismiss: one picker key or many in one write, a change-log line each;
     # undo brings back only the ones named; nothing named is refused.
     serve.DISMISSED_PATH = cfg / "dismissed.json"
