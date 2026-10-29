@@ -221,6 +221,17 @@ def tag_for(llm_id: str) -> str:
     return "" if tag == "?" else tag
 
 
+def provider_label(tag: str) -> str:
+    """A connection tag as a short provider name for a chip: a proxy's vendor
+    (cli-proxy-api/antigravity: antigravity), else the host without its api./
+    router. prefix, -api suffix and TLD (router.requesty.ai: requesty)."""
+    if "/" in tag:
+        return tag.split("/", 1)[1]
+    host = re.sub(r"^(api|apihub|router)\.", "", tag)
+    host = host.rsplit(".", 1)[0] if "." in host else host
+    return host.removesuffix("-api") or tag
+
+
 def retired() -> dict[str, dict]:
     """Aliases removed from the bench by hand, with when and why."""
     return load_json(DATA / "config" / "retired.json")
@@ -1461,12 +1472,18 @@ def collections_view() -> dict:
     # What the tags check members against (bench.js tagBlocks): capabilities
     # (None: the catalog does not say), context, price and role. A shape's
     # tag admits the roles that shape admits, as route.py does for seats.
+    # The member picker draws one row per model, its providers as chips:
+    # `family` is route.family_of, the match that keeps one model out of two
+    # seats, and `provider` the chip's name for its connection.
+    import route
     roles = model_roles.load()
     facts = {}
     for a in _chat_aliases():
         f = catalog.info(a)
+        tag = directory[a].get("tag") or directory[a].get("endpoint") or ""
         facts[a] = {"caps": {c: f.get(c) for c in catalog.CAPS}, "context": f.get("context_window"),
-                    "price": price_of(a, served[a], f), "role": (roles.get("models") or {}).get(a, "general")}
+                    "price": price_of(a, served[a], f), "role": (roles.get("models") or {}).get(a, "general"),
+                    "family": route.family_of(a), "provider": provider_label(tag), "connection": tag}
     return {"ok": True, "errors": [], "collections": rows, "settings": s,
             "shapes": shapes, "models": _chat_aliases(), "served": served, "tag_suggestions": suggestions,
             "facts": facts, "shape_roles": {k: v for k, v in roles["shapes"].items() if k in shapes},
@@ -3149,8 +3166,11 @@ def collections_tab() -> str:
         # Not data-filter: that binds to the whole panel. The same match (any
         # text, case-insensitive), on the member list only; ticked ones stay shown.
         "<label class='field' for='c-member-filter'>Members</label>"
+        # The panel as it will sit, drawn as the Collections list draws it
+        # (bench.js recount): a seat per ticked member, explorer seats dashed.
+        "<div id='c-seats' class='seats' aria-live='polite'></div>"
         "<input type='search' id='c-member-filter' class='member-filter' spellcheck='false' autocomplete='off'"
-        " placeholder='Filter by alias or served name' aria-controls='c-members' aria-describedby='c-count'>"
+        " placeholder='Filter by model, provider or served name' aria-controls='c-members' aria-describedby='c-count'>"
         "<div id='c-members' class='members' role='group' aria-label='Members'></div>"
         "<p class='rules' id='c-count'></p>"
         "<label class='field' for='c-shape'>Explorer shape</label><select id='c-shape'></select>"

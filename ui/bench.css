@@ -283,9 +283,21 @@ dialog h2 { margin: 0 0 .2rem; font-size: 1.375rem; font-weight: 700; }
 :is(dialog, .form-panel) .rules { font-size: .875rem; color: var(--muted); margin: .35rem 0 0; }
 :is(dialog, .form-panel) label.check { display: flex; align-items: center; gap: .5rem; margin-top: 1rem; cursor: pointer; }
 :is(dialog, .form-panel) fieldset { border: 0; padding: 0; margin: 1rem 0 0; }
-:is(dialog, .form-panel) .members { display: grid; grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr)); gap: 0 1rem;
-                  max-height: 14rem; overflow: auto; }
-:is(dialog, .form-panel) .members label.check { margin-top: .35rem; font-size: .875rem; }
+:is(dialog, .form-panel) .members { max-height: 18rem; overflow: auto; border-top: 1px solid var(--line); }
+/* One row per model: its name and what it holds, then a chip per provider it
+   is on, each ticking that alias (bench.js fillForm). */
+:is(dialog, .form-panel) .members .m-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .2rem 1rem;
+                  align-items: center; padding: .4rem 0; border-bottom: 1px solid var(--line); }
+:is(dialog, .form-panel) .members .m-name { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 .5rem;
+                  font-size: .875rem; overflow-wrap: anywhere; }
+:is(dialog, .form-panel) .members .m-facts { color: var(--muted); font-size: .8125rem; }
+:is(dialog, .form-panel) .members .m-routes { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .3rem; }
+:is(dialog, .form-panel) .members label.check { margin-top: 0; font-size: .8125rem; gap: .3rem; padding: .15rem .5rem;
+                  border: 1px solid var(--line); border-radius: var(--radius); background: var(--paper-2); }
+:is(dialog, .form-panel) .members label.check:has(input:checked) { border-color: var(--bench-seat, var(--brand));
+                  background: var(--band); }
+#c-form .seats { min-height: 2rem; }
+#c-form .seat .k.after { margin: 0 0 0 .4rem; }
 :is(dialog, .form-panel) input.member-filter { font-size: .9375rem; padding: .4rem .6rem; margin-bottom: .2rem; }
 :is(dialog, .form-panel) .members input:disabled + span { color: var(--muted); }
 /* Ruled out by the collection's tags (bench.js applyTags): greyed; a ticked
@@ -300,7 +312,8 @@ dialog h2 { margin: 0 0 .2rem; font-size: 1.375rem; font-weight: 700; }
 :is(dialog, .form-panel) .profile .chip { margin-right: .25rem; }
 :is(dialog, .form-panel) .profile .src { font-size: .75rem; color: var(--muted); }
 :is(dialog, .form-panel) .settings { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 1rem; }
-@media (max-width: 40rem) { :is(dialog, .form-panel) .settings { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 40rem) { :is(dialog, .form-panel) :is(.settings, .members .m-row) { grid-template-columns: minmax(0, 1fr); }
+                            :is(dialog, .form-panel) .members .m-routes { justify-content: flex-start; } }
 :is(dialog, .form-panel) fieldset label.check { margin-top: .4rem; flex-wrap: wrap; }
 :is(dialog, .form-panel) fieldset label.check .muted { font-size: .875rem; }
 :is(dialog, .form-panel) .errors { color: var(--err); font-size: .9375rem; margin: .8rem 0 0; }
@@ -406,13 +419,13 @@ button.c-row:hover, button.c-row:focus-visible { background: var(--step-1); }
 /* The panel as it sits: each member a seat topped in the bench's colour, as
    the header's bench is; an explorer seat empty and dashed; the merger outlined
    after an arrow. The bordered seats trade padding for border, so all are one size. */
-.c-row .seats { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; margin: .6rem 0 .5rem; }
-.c-row .seat { font-family: var(--font-mono); font-size: .8125rem; padding: .3rem .6rem; background: var(--band);
+:is(.c-row, #c-form) .seats { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; margin: .6rem 0 .5rem; }
+:is(.c-row, #c-form) .seat { font-family: var(--font-mono); font-size: .8125rem; padding: .3rem .6rem; background: var(--band);
                border-top: 3px solid var(--bench-seat, var(--brand)); border-radius: var(--radius); }
-.c-row .seat:is(.explorer, .merger) { background: transparent; border: 1px dashed var(--muted); color: var(--muted);
+:is(.c-row, #c-form) .seat:is(.explorer, .merger) { background: transparent; border: 1px dashed var(--muted); color: var(--muted);
                                       padding: calc(.3rem + 2px) calc(.6rem - 1px) calc(.3rem - 1px); }
 .c-row .seat.merger { border-style: solid; border-color: var(--ink); color: var(--ink); }
-.c-row .seat .k { font-family: var(--font-display); color: var(--muted); margin-right: .35rem; }
+:is(.c-row, #c-form) .seat .k { font-family: var(--font-display); color: var(--muted); margin-right: .35rem; }
 .c-row .merge { display: inline-flex; align-items: center; gap: .4rem; color: var(--muted); }
 /* suggested collection tags under the field */
 .tag-picks { display: flex; flex-wrap: wrap; gap: .35rem; margin-top: .45rem; }

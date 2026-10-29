@@ -1329,7 +1329,8 @@
            shape: $('c-shape'), desc: $('c-desc'), tags: $('c-tags'), errors: $('c-errors'), done: $('c-done'),
            head: $('c-form-head'), maxCalls: $('g-max-calls'), maxExp: $('g-max-explorers'),
            gErrors: $('g-errors'), gDone: $('g-done'), form: $('c-form'), status: $('c-status'),
-           del: $('c-delete'), reply: $('c-reply'), merger: $('c-merger'), find: $('c-member-filter')};
+           del: $('c-delete'), reply: $('c-reply'), merger: $('c-merger'), find: $('c-member-filter'),
+           seats: $('c-seats')};
   var C = null, open = null;         // the collection whose details are showing
   function explorersFor(n) {
     return Math.max(0, Math.min(C.settings.max_explorers, C.settings.max_calls - n));
@@ -1349,10 +1350,37 @@
       (shown.length < rows.length ? ' · showing ' + shown.length + ' of ' + rows.length + ' models' : '') +
       (paid ? ' (' + paid + ' paid hidden by the free tag)' : '') +
       (greyed ? ' · ' + greyed + ' greyed out by the tags (hover one for why)' : '') +
-      (clash ? ' · ' + clash + ' ticked member' + (clash === 1 ? ' does' : 's do') + ' not fit the tags' : '');
+      (clash ? ' · ' + clash + ' ticked member' + (clash === 1 ? ' does' : 's do') + ' not fit the tags' : '') +
+      twice().map(function (t) {
+        return ' · ' + t.name + ' is ticked on ' + t.on.join(' and ') + ': one model agrees with itself, it does not check itself';
+      }).join('');
     c.members.querySelectorAll('input').forEach(function (x) {
       x.disabled = !x.checked && (n >= C.settings.max_calls || !!x.dataset.blocked);
     });
+    drawSeats(ex);
+  }
+  function fact(alias) { return (C.facts || {})[alias] || {}; }
+  // The same model ticked on two providers (route.family_of, as the gateway
+  // keeps explorers off a member's model): allowed, and said.
+  function twice() {
+    var by = {};
+    picked().forEach(function (a) { var f = fact(a).family || a; (by[f] = by[f] || []).push(a); });
+    return Object.keys(by).filter(function (f) { return by[f].length > 1; }).map(function (f) {
+      var row = c.members.querySelector('.m-row[data-family="' + CSS.escape(f) + '"]');
+      return {name: row ? row.dataset.name : by[f][0], on: by[f].map(function (a) { return fact(a).provider || a; })};
+    });
+  }
+  // The panel as it will sit, as the Collections list draws it.
+  function drawSeats(ex) {
+    c.seats.textContent = '';
+    picked().forEach(function (a) {
+      var seat = el('span', {class: 'seat'}, a);
+      if (fact(a).provider) seat.appendChild(el('span', {class: 'k after'}, fact(a).provider));
+      c.seats.appendChild(seat);
+    });
+    for (var i = 0; i < ex; i++) {
+      c.seats.appendChild(el('span', {class: 'seat explorer'}, 'explorer' + (c.shape.value ? ' · ' + c.shape.value : '')));
+    }
   }
   // Tags that say what every member must do: why a model does not fit them
   // (none: it fits). From collections_view's facts; an unknown context is
@@ -1390,20 +1418,28 @@
       lab.classList.toggle('clash', why.length > 0 && box.checked);
       lab.dataset.paid = paid ? '1' : '';
       if (why.length) box.dataset.blocked = '1'; else delete box.dataset.blocked;
+      // A chip says only the provider: the alias and served name are its first line.
       var served = lab.dataset.served;
-      lab.title = (served && served !== box.value ? served : '') + (why.length ? (served && served !== box.value ? '\n' : '') + why.join('\n') : '');
+      lab.title = [box.value + (served && served !== box.value ? ' (' + served + ')' : '')].concat(why).join('\n');
     });
     filterMembers();
   }
   // The member search: the filter boxes' match (any text, case-insensitive),
-  // over alias and served name. It only hides rows, and never a ticked one, so
-  // what is picked is always in view and every count still includes it.
+  // over the model's name and each chip's alias, served name and provider.
+  // It only hides chips, and never a ticked one, so what is picked is always
+  // in view and every count still includes it; a row goes when all its chips do.
   function filterMembers() {
     var q = c.find.value.trim().toLowerCase();
-    c.members.querySelectorAll('label.check').forEach(function (lab) {
-      var box = lab.querySelector('input');
-      lab.hidden = !box.checked && (!!lab.dataset.paid ||
-        !!q && (box.value + ' ' + (lab.dataset.served || '')).toLowerCase().indexOf(q) === -1);
+    c.members.querySelectorAll('.m-row').forEach(function (row) {
+      var named = !q || row.dataset.name.toLowerCase().indexOf(q) !== -1, any = false;
+      row.querySelectorAll('label.check').forEach(function (lab) {
+        var box = lab.querySelector('input');
+        var text = (box.value + ' ' + (lab.dataset.served || '') + ' ' + (fact(box.value).connection || '') + ' ' +
+                    lab.textContent).toLowerCase();
+        lab.hidden = !box.checked && (!!lab.dataset.paid || !named && text.indexOf(q) === -1);
+        any = any || !lab.hidden;
+      });
+      row.hidden = !any;
     });
     recount();
   }
@@ -1434,6 +1470,7 @@
   c.tags.addEventListener('input', function () { drawTagPicks(); applyTags(); });
   function showMerger() { $('c-merger-row').hidden = c.reply.value !== 'merged'; }
   c.reply.addEventListener('change', showMerger);
+  c.shape.addEventListener('change', recount);          // the explorer seats say their shape
   // A collection opens in a popup, as every other edit on the dashboard does:
   // the one clicked, or a new one from New collection.
   function closeForm() {
@@ -1450,14 +1487,37 @@
     c.desc.value = row ? row.description : ''; c.tags.value = row ? row.tags.join(', ') : '';
     drawTagPicks();
     c.members.textContent = ''; c.find.value = '';
-    C.models.forEach(function (alias) {
-      var box = el('input', {type: 'checkbox', value: alias});
-      box.checked = !!row && row.members.indexOf(alias) !== -1;
-      box.addEventListener('change', applyTags);        // ticked or not changes what a misfit shows as
-      var served = (C.served || {})[alias] || '';
-      var lab = el('label', {class: 'check', 'data-served': served});
-      lab.appendChild(box); lab.appendChild(el('span', {class: 'mono'}, alias));
-      c.members.appendChild(lab);
+    // One row per model, named by its shortest alias, with what the first
+    // route says it holds and can do; each provider it is on is a chip that
+    // ticks that alias. A chip whose window differs from the row's says its own.
+    var groups = {};
+    C.models.forEach(function (a) { var f = fact(a).family || a; (groups[f] = groups[f] || []).push(a); });
+    Object.keys(groups).map(function (f) {
+      var routes = groups[f].slice().sort(function (x, y) { return x.length - y.length || (x < y ? -1 : 1); });
+      return {family: f, name: routes[0], routes: routes};
+    }).sort(function (x, y) { return x.name.toLowerCase() < y.name.toLowerCase() ? -1 : 1; }).forEach(function (g) {
+      var first = fact(g.name), caps = first.caps || {};
+      var can = ['vision', 'tools'].filter(function (k) { return caps[k]; });
+      var line = el('div', {class: 'm-row', role: 'group', 'aria-label': g.name, 'data-family': g.family, 'data-name': g.name});
+      var name = el('div', {class: 'm-name'});
+      name.appendChild(el('span', {class: 'mono'}, g.name));
+      name.appendChild(el('span', {class: 'm-facts'}, [first.context ? tokens(first.context) : '', can.join(', '),
+        first.price === 'unknown' ? '' : first.price].filter(Boolean).join(' · ')));
+      line.appendChild(name);
+      var chips = el('div', {class: 'm-routes'});
+      g.routes.forEach(function (alias) {
+        var f = fact(alias);
+        var box = el('input', {type: 'checkbox', value: alias, 'aria-label': alias + ' on ' + (f.provider || 'its endpoint')});
+        box.checked = !!row && row.members.indexOf(alias) !== -1;
+        box.addEventListener('change', applyTags);      // ticked or not changes what a misfit shows as
+        var lab = el('label', {class: 'check', 'data-served': (C.served || {})[alias] || ''});
+        lab.appendChild(box);
+        lab.appendChild(el('span', null, (f.provider || alias) +
+          (f.context && first.context && f.context !== first.context ? ' · ' + tokens(f.context) : '')));
+        chips.appendChild(lab);
+      });
+      line.appendChild(chips);
+      c.members.appendChild(line);
     });
     c.shape.textContent = '';
     c.shape.appendChild(el('option', {value: ''}, 'automatic'));
@@ -1468,7 +1528,8 @@
     c.merger.textContent = '';
     c.merger.appendChild(el('option', {value: ''}, 'automatic'));
     C.models.forEach(function (alias) {
-      var o = el('option', {value: alias}, alias); if (row && row.merger === alias) o.selected = true; c.merger.appendChild(o);
+      var o = el('option', {value: alias}, alias + (fact(alias).provider ? ' · ' + fact(alias).provider : ''));
+      if (row && row.merger === alias) o.selected = true; c.merger.appendChild(o);
     });
     showMerger(); applyTags();
   }
