@@ -39,6 +39,7 @@ CHECKS = [
     ("metrics/bench_collections.py", [], False),
     ("metrics/learn.py", ["--selftest"], False),
     ("metrics/quota.py", ["--selftest"], False),
+    ("metrics/quotaview.py", ["--selftest"], False),
     ("metrics/discover.py", ["--selftest"], False),
     ("metrics/test_decide.py", [], False),
     ("metrics/wrong.py", [], False),

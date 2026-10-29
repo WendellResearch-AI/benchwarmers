@@ -2260,14 +2260,15 @@ def on_bench() -> set[str]:
     return set(registered().values())
 
 
-def chart_card(title: str, sub: str, chart_id: str, table: str, key: str, extra: str = "") -> str:
+def chart_card(title: str, sub: str, chart_id: str, table: str, key: str, extra: str = "",
+               retired: bool = True) -> str:
     """A Benchmarks panel: the chart first (drawn by bench.js with Observable
     Plot), the table folded under it, the key under that."""
     return (f"<div class='panel'><h2>{title}</h2><p class='sub'>{sub}</p>{extra}"
             f"<div class='chart' id='{chart_id}'></div>"
             "<details class='key'><summary>Table</summary><div class='toolbar'><input type='search'"
             " data-filter placeholder='Filter by model or connection' aria-label='Filter rows'>"
-            "<label><input type='checkbox' data-retired> Show retired</label></div>"
+            + ("<label><input type='checkbox' data-retired> Show retired</label>" if retired else "") + "</div>"
             f"<div class='scroll'>{table}</div></details>"
             f"<details class='key'><summary>How to read this</summary>{key}</details></div>")
 
@@ -3736,27 +3737,39 @@ def models_page() -> str:
             + "".join(cards))
 
 
+def quota_tiles() -> list[dict]:
+    """metrics/quotaview.py's tiles, each named as the collection popup names
+    its provider, unless the live read named the credentials behind it."""
+    import quotaview
+    return [dict(t, name=t["name"] or provider_label(t["tag"])) for t in quotaview.tiles()]
+
+
+def quota_op(which: str, tag) -> dict:
+    """Refresh or Check now on one tile: {ok, errors, note, tile}; "order"
+    saves the tiles' order (a list of tags, empty for the default sort)."""
+    import quotaview
+    if which == "order":
+        return quotaview.save_order(tag)
+    if tag not in {t["id"] for t in quota_tiles()}:
+        return {"ok": False, "errors": [f"no tile called {tag!r}"]}
+    try:
+        r = (quotaview.refresh if which == "refresh" else quotaview.check)(tag)
+    except (ValueError, OSError) as exc:              # OSError: URLError and timeouts
+        return {"ok": False, "errors": [str(exc)]}
+    if not r.get("ok"):
+        return {"ok": False, "errors": r.get("errors") or ["it failed"]}
+    return {"ok": True, "errors": [], "note": r.get("note", ""),
+            "tile": next((t for t in quota_tiles() if t["id"] == tag), None)}
+
+
 def quotas_page() -> str:
-    """What limits each connection, who is resting after one, what providers
-    last said was left (the built-in client's quota records, metrics/quota.py)
-    and what the bench itself sent (its usage ledger, metrics/ledger.py)."""
+    """A tile per provider: what is left and when it resets, shaped by how the
+    provider limits (metrics/quotaview.py), who is resting, Refresh and Check
+    now; the resets of the next week; what the bench sent (its usage ledger,
+    metrics/ledger.py); every limit known. bench.js draws tiles and charts."""
     import learn
     import ledger
-    import quota
     now = datetime.datetime.now().astimezone()
-    rec_rows = []
-    for r in sorted(quota.live(), key=lambda r: (r.get("connection", ""), r.get("alias", ""), r.get("metric", ""))):
-        try:
-            age = int((now - datetime.datetime.fromisoformat(r["observed_at"])).total_seconds() // 60)
-            reset = datetime.datetime.fromisoformat(r["reset_at"]).astimezone().strftime("%Y-%m-%d %H:%M")
-        except (KeyError, TypeError, ValueError):
-            continue
-        num = lambda v: f"{v:,}" if isinstance(v, int) else "—"          # noqa: E731
-        rec_rows.append(f"<tr><td>{esc(r.get('connection', ''))}</td><td>{named(r.get('alias', ''))}</td>"
-                        f"<td>{esc(r.get('metric', ''))} / {esc(r.get('window', ''))}</td>"
-                        f"<td class='num'>{num(r.get('remaining'))}</td><td class='num'>{num(r.get('limit'))}</td>"
-                        f"<td class='mono'>{esc(reset)}</td>"
-                        f"<td>{esc(r.get('source', ''))}, {age} min ago</td></tr>")
     t = now.timestamp()
     sent: dict = {}
     for row in ledger.rows(min(t - 86400, ledger.month_start(t))):
@@ -3768,15 +3781,10 @@ def quotas_page() -> str:
             s[2], s[3] = s[2] + n, s[3] + tok
     sent_rows = [f"<tr><td>{esc(c)}</td>" + "".join(f"<td class='num'>{v:,}</td>" for v in s) + "</tr>"
                  for c, s in sorted(sent.items())]
-    cool_rows = []
-    for alias, c in sorted(learn.cooldowns().items(), key=lambda kv: kv[1].get("until", "")):
-        try:
-            left = max(0, int((datetime.datetime.fromisoformat(c["until"]) - now).total_seconds() // 60))
-        except (KeyError, ValueError, TypeError):
-            left = 0
-        cool_rows.append(f"<tr><td>{named(alias)}</td><td>{esc(catalog.connection_of(alias))}</td>"
-                         f"<td class='num' data-sort='{left}'>{left} min</td>"
-                         f"<td>{'stated by the provider' if c.get('stated') else 'default wait'}</td></tr>")
+    data = json.dumps({"tiles": quota_tiles(),
+                       "sent": [{"provider": provider_label(c) if c != "?" else "?", "day": s[0], "month": s[2]}
+                                for c, s in sent.items() if s[2]]},
+                      ensure_ascii=False).replace("</", "<\\/")
     entered = catalog.connection_limits()
     keys = catalog.CONNECTION_LIMIT_KEYS
     lim_rows = [f"<tr><td>{esc(conn)}</td>" + "".join(
@@ -3791,40 +3799,42 @@ def quotas_page() -> str:
                                 + "".join(f"<td class='num'>{ev['value']:,}</td>" if kk == k
                                           else "<td class='num muted'>—</td>" for kk in keys)
                                 + f"<td>learned {esc(ev.get('at', '')[:10])} ({esc(ev.get('where', ''))})</td></tr>")
+    sent_table = ("<table><thead><tr>" + th("Connection") + th("Requests, 24 h", True) + th("Tokens, 24 h", True)
+                  + th("Requests, this month", True) + th("Tokens, this month", True)
+                  + f"</tr></thead><tbody>{''.join(sent_rows)}</tbody></table>"
+                  if sent_rows else "<p class='muted'>No call in the ledger this month.</p>")
+    sent_key = ("<p>One row per provider, most requests this month first. The pale bar is this month's"
+                " requests, the dark one inside it the last 24 hours'; the label reads 24 h / month."
+                " Retries count. Calls through the llm CLI are not in the ledger.</p>")
     return (
-        "<div class='panel'><h2>Quota management</h2><p class='sub'>What is left on each connection and"
-        " when it resets, from the rate-limit headers and 429 replies the built-in client sees, and what"
-        " the bench sent itself, from its usage ledger; who is resting after a rate limit, and every"
-        " limit known. The built-in client keeps to all of these. Calls through the llm CLI are in"
-        " neither record. Quotas of OAuth credentials stay in CLI Proxy API's own console.</p></div>"
-        "<div class='panel'><h3 class='chart-head'>What providers said is left · " + str(len(rec_rows)) + "</h3>"
-        + ("<table><thead><tr>" + th("Connection") + th("Model") + th("Counts") + th("Left", True)
-           + th("Of", True) + th("Resets") + th("From") + f"</tr></thead><tbody>{''.join(rec_rows)}</tbody></table>"
-           if rec_rows else "<p class='muted'>Nothing in force: no provider has stated a limit whose reset"
-                            " is still ahead.</p>")
-        + "</div>"
-        "<div class='panel'><h3 class='chart-head'>What the bench sent</h3><p class='sub'>Requests"
-        " (retries included) and tokens per connection, from the usage ledger.</p>"
-        + ("<table><thead><tr>" + th("Connection") + th("Requests, 24 h", True) + th("Tokens, 24 h", True)
-           + th("Requests, this month", True) + th("Tokens, this month", True)
-           + f"</tr></thead><tbody>{''.join(sent_rows)}</tbody></table>"
-           if sent_rows else "<p class='muted'>No call in the ledger this month.</p>")
-        + "</div>"
-        "<div class='panel'><h3 class='chart-head'>Resting after a rate limit · " + str(len(cool_rows)) + "</h3>"
-        + ("<table><thead><tr>" + th("Model") + th("Connection") + th("Back in", True) + th("Wait")
-           + f"</tr></thead><tbody>{''.join(cool_rows)}</tbody></table>" if cool_rows
-           else "<p class='muted'>None: every model is free to call.</p>")
-        + "</div>"
-        "<div class='panel'><h3 class='chart-head'>Known limits</h3><p class='sub'>How much each connection"
-        " or model allows (tokens or requests per minute or day), so the bench can space its calls."
-        " Two sources: what you enter per connection (Endpoints, Rate limits per connection), and what a"
-        " provider states in a rate-limit error, which the bench writes down by itself. The list grows on"
-        " its own as models meet their limits. A model's own limits (its popup) win, and learned ones"
-        " only ever lower a limit.</p>"
+        "<div class='panel'><h2>Quota</h2><p class='sub'>What is left with each provider and when it"
+        " resets, and who is resting after a rate limit. CLI Proxy API's credentials and OpenRouter are"
+        " read live by Refresh, which spends nothing; every other tile is what the provider last said"
+        " in its replies to the bench, and Check now, where it is offered, asks with one request."
+        " Drag a tile, or move it with the arrow keys, to keep it where you want it.</p>"
+        "<div class='list-actions'><button class='btn' id='q-all'>Refresh all live</button>"
+        "<button class='btn' id='q-reorder'>Sort: out first, then soonest reset</button>"
+        "<span class='done' id='q-done' aria-live='polite'></span>"
+        "<span class='errors' id='q-errors' aria-live='polite'></span></div>"
+        "<div class='q-tiles' id='q-tiles'></div></div>"
+        "<div class='panel'><h3 class='chart-head'>Resets, next 7 days</h3><p class='sub'>A dot where a"
+        " limit resets (a daily one every day), a bar while a model rests, the line is now.</p>"
+        "<div class='chart' id='chart-resets'></div></div>"
+        + chart_card("What the bench sent", "Requests per provider: this month, and the last 24 hours inside it.",
+                     "chart-sent", sent_table, sent_key, retired=False)
+        + "<details class='panel'><summary><b>Known limits</b></summary><p class='sub'>How much each"
+        " connection or model allows (tokens or requests per minute or day), so the bench can space its"
+        " calls. Two sources: what you enter per connection (Endpoints, Rate limits per connection), and"
+        " what a provider states in a rate-limit error, which the bench writes down by itself. A model's"
+        " own limits (its popup) win, and learned ones only ever lower a limit.</p>"
         + ("<table><thead><tr>" + th("Connection or model") + "".join(th(k, True) for k in keys) + th("From")
            + f"</tr></thead><tbody>{''.join(lim_rows)}</tbody></table>" if lim_rows
            else "<p class='muted'>None known yet.</p>")
-        + "</div>")
+        + "</details>"
+        "<dialog id='q-models' aria-labelledby='q-models-h'><h3 id='q-models-h'></h3>"
+        "<p class='sub' id='q-models-sub'></p><div class='scroll' id='q-models-list'></div>"
+        "<div class='list-actions'><button class='btn' id='q-models-close'>Close</button></div></dialog>"
+        f"<script type='application/json' id='quota-data'>{data}</script>")
 
 
 def _log_rows(path: pathlib.Path, limit: int = 200) -> list[str]:
@@ -4336,6 +4346,9 @@ class Handler(gateway.Handler):
                                                               p.get("rpm")),
                "/api/gateway-key/remove": lambda p: revoke_gateway_key(str(p.get("name") or "")),
                "/api/theme": lambda p: save_theme(str(p.get("theme") or "")),
+               "/api/quota/refresh": lambda p: quota_op("refresh", str(p.get("tag") or "")),
+               "/api/quota/check": lambda p: quota_op("check", str(p.get("tag") or "")),
+               "/api/quota/order": lambda p: quota_op("order", p.get("order")),
                "/api/restart": lambda p: restart(p.get("force") is True)}
         # SAME ORIGIN ONLY. Any page open in the browser can POST a plain form
         # to 127.0.0.1, and this used to parse whatever arrived as JSON -- so a

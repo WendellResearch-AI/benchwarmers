@@ -1676,6 +1676,290 @@
     }).catch(function (err) { $('v-errors').textContent = String(err); });
   });
 
+  // ---- Quota: a tile per provider (serve.quota_tiles, metrics/quotaview.py) ----
+  // Each tile takes its provider's shape: groups of windows (a 5-hour and a
+  // weekly limit boxed together), one pool (OpenRouter's free requests a day,
+  // a bar per key) or, where nothing is stated, each model's last day. A
+  // meter is ten segments filled like a bar: 85% is eight and a half.
+  var QD = $('quota-data') ? JSON.parse($('quota-data').textContent) : null;
+  var qBox = $('q-tiles');
+  function qWhen(iso) {
+    if (!iso) return '';
+    var d = new Date(iso), s = (d - Date.now()) / 1000;
+    if (s <= 0) return 'now';
+    if (s < 86400) {
+      var h = Math.floor(s / 3600), m = Math.round((s % 3600) / 60);
+      return 'in ' + (h ? h + 'h ' : '') + m + 'm';
+    }
+    if (s < 6 * 86400) return d.toLocaleDateString([], {weekday: 'short'}) + ' ' + d.toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'});
+    return d.toLocaleDateString([], {month: 'numeric', day: 'numeric'}) + ' ' + d.toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'});
+  }
+  function qAgo(iso) {
+    var s = (Date.now() - new Date(iso)) / 1000;
+    return s < 90 ? 'just now' : s < 5400 ? Math.round(s / 60) + ' min ago' : s < 129600 ? Math.round(s / 3600) + ' h ago' : Math.round(s / 86400) + ' days ago';
+  }
+  function qTone(left) { return left >= 70 ? 'ok' : left >= 25 ? 'warn' : 'err'; }
+  function qSegs(left) {
+    var box = el('div', {class: 'segs ' + qTone(left), role: 'img', 'aria-label': left + '% left'});
+    for (var i = 0; i < 10; i++) {
+      var s = el('span'), f = el('i');
+      f.style.width = Math.round(Math.min(Math.max(left / 10 - i, 0), 1) * 100) + '%';
+      s.appendChild(f); box.appendChild(s);
+    }
+    return box;
+  }
+  function qLine(label, right) {
+    var row = el('div', {class: 'q-line'});
+    row.appendChild(el('span', {}, label));
+    var r = el('span'); r.innerHTML = right; row.appendChild(r);
+    return row;
+  }
+  function qNum(n) { return Number(n).toLocaleString(); }
+  function qWindow(w) {
+    var frag = document.createDocumentFragment();
+    var row = qLine(w.label, '<b>' + w.left + '%</b>' + (w.reset_at ? ' · ' + qWhen(w.reset_at) : ''));
+    if (w.of) row.title = qNum(w.remaining) + ' of ' + qNum(w.of) + ' left';
+    frag.appendChild(row);
+    frag.appendChild(qSegs(w.left));
+    return frag;
+  }
+  function qResting(m) { return m.until && new Date(m.until) > Date.now(); }
+  function qTile(t) {
+    var node = el('article', {class: 'q-tile' + (t.out ? ' out' : ''), draggable: 'true', tabindex: '0',
+                              'data-id': t.id, 'aria-label': t.name + ': drag, or use the arrow keys, to move it'});
+    var head = el('div', {class: 'q-head'});
+    head.appendChild(el('b', {class: 'nm'}, t.name));
+    var f = t.fresh, how = f.how === 'live' ? 'read ' : f.how === 'seen' ? 'seen ' : 'answered ';
+    head.appendChild(el('span', {class: 'chip ' + (f.how === 'live' ? 'ok' : 'via')}, f.at ? how + qAgo(f.at) : 'nothing yet'));
+    node.appendChild(head);
+    node.appendChild(el('div', {class: 'q-tag mono'}, t.tag + (t.plan ? ' · ' + t.plan : '')));
+    if (t.kind === 'groups') {
+      t.groups.forEach(function (g) {
+        var box = el('section', {class: g.label ? 'q-group' : 'q-group bare'});
+        if (g.label) box.appendChild(el('h4', {}, g.label));
+        g.windows.forEach(function (w) { box.appendChild(qWindow(w)); });
+        node.appendChild(box);
+      });
+    } else if (t.kind === 'pool') {
+      t.pool.forEach(function (p) {
+        var box = el('section', {class: 'q-group bare'});
+        if (p.of) {
+          box.appendChild(qLine(p.label, '<b>' + qNum(Math.max(0, p.of - p.used)) + '</b> of ' + qNum(p.of) + ' left'
+                                + (p.reset_at ? ' · ' + qWhen(p.reset_at) : '')));
+          box.appendChild(qSegs(p.left));
+        } else {
+          box.appendChild(qLine(p.label, '<b>' + qNum(p.used) + '</b> sent · limit not known yet'));
+        }
+        node.appendChild(box);
+      });
+    } else {
+      var shown = t.models.slice(0, 6);
+      shown.forEach(function (m) {
+        var right = qResting(m) ? '<span class="warn-t">resting · ' + qWhen(m.until) + '</span>'
+                  : m.ok + m.failed ? m.ok + ' ok · ' + m.failed + ' failed' : 'no calls today';
+        var row = qLine('', right); row.firstChild.className = 'mono'; row.firstChild.textContent = m.alias;
+        node.appendChild(row);
+      });
+      if (t.models.length > shown.length) node.appendChild(el('div', {class: 'muted q-small'}, '+ ' + (t.models.length - shown.length) + ' more in Models · last 24 h'));
+      else node.appendChild(el('div', {class: 'muted q-small'}, 'last 24 h'));
+    }
+    if (t.kind !== 'models') {
+      t.models.filter(qResting).forEach(function (m) {
+        node.appendChild(el('div', {class: 'q-rest'}, m.alias + ' resting · back ' + qWhen(m.until)));
+      });
+    }
+    if (t.conn_limit) node.appendChild(el('div', {class: 'muted q-small'}, t.conn_limit + ', set by you'));
+    (t.notes || []).forEach(function (n) { node.appendChild(el('div', {class: 'muted q-small'}, n)); });
+    var msg = el('div', {class: 'q-msg', 'aria-live': 'polite'});
+    node.appendChild(msg);
+    var foot = el('div', {class: 'q-foot'});
+    var rb = el('button', {class: 'btn small', type: 'button', 'aria-label': 'Refresh ' + t.name,
+      title: t.refresh === 'live' ? 'Ask the provider what is left (free)' : 'Read the bench\'s own records again (free)'});
+    rb.innerHTML = '&#x21bb; Refresh';
+    rb.addEventListener('click', function () { qAct('refresh', t.id, node); });
+    foot.appendChild(rb);
+    if (t.check) {
+      var cb = el('button', {class: 'btn small', type: 'button', title: 'One short call to one of its models; its reply says what is left'}, 'Check now · 1 request');
+      cb.addEventListener('click', function () { qAct('check', t.id, node); });
+      foot.appendChild(cb);
+    }
+    var mb = el('button', {class: 'btn small', type: 'button'}, 'Models ');
+    mb.appendChild(el('span', {class: 'chip ' + (t.live === t.bench ? 'ok' : t.live ? 'warn' : 'err')}, t.live + '/' + t.bench));
+    mb.title = t.live + ' of the ' + t.bench + ' bench models on it are free to call';
+    mb.addEventListener('click', function () { qModels(t); });
+    foot.appendChild(mb);
+    node.appendChild(foot);
+    return node;
+  }
+  function qAct(which, id, node) {
+    var msg = node.querySelector('.q-msg');
+    msg.className = 'q-msg muted'; msg.textContent = which === 'check' ? 'Asking…' : 'Refreshing…';
+    return post('/api/quota/' + which, {tag: id}).then(function (r) {
+      if (!r.ok) { msg.className = 'q-msg errors'; msg.textContent = r.errors.join('; '); return; }
+      var i = QD.tiles.findIndex(function (t) { return t.id === id; });
+      if (r.tile && i >= 0) {
+        QD.tiles[i] = r.tile;
+        var fresh = qTile(r.tile);
+        node.replaceWith(fresh);
+        if (r.note) { var m = fresh.querySelector('.q-msg'); m.className = 'q-msg muted'; m.textContent = r.note; }
+      }
+      drawCharts();
+    }).catch(function (e) { msg.className = 'q-msg errors'; msg.textContent = String(e); });
+  }
+  function qModels(t) {
+    $('q-models-h').textContent = t.name + ': ' + t.bench + ' on the bench';
+    $('q-models-sub').textContent = t.live + ' free to call now · the last 24 hours of calls';
+    var list = $('q-models-list'); list.textContent = '';
+    var tb = el('table'), hd = el('tr');
+    ['Model', 'Now', 'Last 24 h', 'Last answered', 'Known limit'].forEach(function (h) { hd.appendChild(el('th', {}, h)); });
+    tb.appendChild(el('thead')).appendChild(hd);
+    var body = tb.appendChild(el('tbody'));
+    t.models.forEach(function (m) {
+      var tr = el('tr');
+      tr.appendChild(el('td', {class: 'mono'}, m.alias));
+      var now = el('td'); now.appendChild(el('span', {class: 'chip ' + (qResting(m) ? 'warn' : 'ok')}, qResting(m) ? 'resting · ' + qWhen(m.until) : 'ready'));
+      tr.appendChild(now);
+      tr.appendChild(el('td', {}, m.ok + ' ok · ' + m.failed + ' failed'));
+      tr.appendChild(el('td', {}, m.last_ok ? qAgo(m.last_ok) : '—'));
+      tr.appendChild(el('td', {}, m.limit || '—'));
+      body.appendChild(tr);
+    });
+    list.appendChild(tb);
+    $('q-models').showModal();
+  }
+  function qDefault(a, b) {
+    return (b.out - a.out) || ((a.next_reset || '9999') < (b.next_reset || '9999') ? -1 : (a.next_reset || '9999') > (b.next_reset || '9999') ? 1 : 0)
+           || (a.id < b.id ? -1 : 1);
+  }
+  function qDraw() {
+    qBox.textContent = '';
+    QD.tiles.forEach(function (t) { qBox.appendChild(qTile(t)); });
+    if (!QD.tiles.length) qBox.appendChild(el('p', {class: 'muted'}, 'No model on the bench yet.'));
+  }
+  function qSaveOrder() {
+    var ids = Array.prototype.map.call(qBox.querySelectorAll('.q-tile'), function (n) { return n.dataset.id; });
+    var at = {}; ids.forEach(function (id, i) { at[id] = i; });
+    QD.tiles.sort(function (a, b) { return at[a.id] - at[b.id]; });
+    post('/api/quota/order', {order: ids}).then(function (r) {
+      $('q-done').textContent = r.ok ? 'Order kept.' : ''; $('q-errors').textContent = r.ok ? '' : r.errors.join('; ');
+    });
+  }
+  if (QD && qBox) {
+    qDraw();
+    $('q-models-close').addEventListener('click', function () { $('q-models').close(); });
+    var dragged = null;
+    qBox.addEventListener('dragstart', function (e) {
+      dragged = e.target.closest && e.target.closest('.q-tile');
+      if (!dragged) return;
+      dragged.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', dragged.dataset.id);
+    });
+    qBox.addEventListener('dragover', function (e) {
+      if (!dragged) return;
+      e.preventDefault();
+      var over = e.target.closest && e.target.closest('.q-tile');
+      if (!over || over === dragged) return;
+      var r = over.getBoundingClientRect();
+      var after = e.clientX > r.left + r.width / 2;
+      over.parentNode.insertBefore(dragged, after ? over.nextSibling : over);
+    });
+    qBox.addEventListener('dragend', function () {
+      if (!dragged) return;
+      dragged.classList.remove('dragging'); dragged = null; qSaveOrder();
+    });
+    qBox.addEventListener('keydown', function (e) {
+      var t = e.target;
+      if (!t.classList || !t.classList.contains('q-tile')) return;
+      var back = e.key === 'ArrowLeft' || e.key === 'ArrowUp', fwd = e.key === 'ArrowRight' || e.key === 'ArrowDown';
+      if (!back && !fwd) return;
+      e.preventDefault();
+      var sib = back ? t.previousElementSibling : t.nextElementSibling;
+      if (!sib) return;
+      qBox.insertBefore(t, back ? sib : sib.nextSibling);
+      t.focus(); qSaveOrder();
+    });
+    $('q-reorder').addEventListener('click', function () {
+      QD.tiles.sort(qDefault); qDraw();
+      post('/api/quota/order', {order: []}).then(function (r) { $('q-done').textContent = r.ok ? 'Sorted: out first, then the soonest reset.' : ''; });
+    });
+    $('q-all').addEventListener('click', function () {
+      var live = QD.tiles.filter(function (t) { return t.refresh === 'live'; });
+      $('q-done').textContent = 'Refreshing ' + live.length + '…';
+      live.reduce(function (p, t) {
+        return p.then(function () {
+          var node = qBox.querySelector('.q-tile[data-id="' + CSS.escape(t.id) + '"]');
+          return node ? qAct('refresh', t.id, node) : null;
+        });
+      }, Promise.resolve()).then(function () { $('q-done').textContent = 'Refreshed ' + live.length + '.'; });
+    });
+  }
+
+  // The Quota page's two charts, in the theme's colours like the Benchmarks ones.
+  function drawQuotaCharts(tok, style, width) {
+    if (!QD) return;
+    if (!window.Plot) {
+      ['chart-sent', 'chart-resets'].forEach(function (id) {
+        if ($(id)) $(id).textContent = 'Charts need Observable Plot from cdn.jsdelivr.net, which did not load.';
+      });
+      return;
+    }
+    var ink = tok('--ink', '#24331f'), good = tok('--ok', '#327a16'), warn = tok('--warn', '#7a4d00'), line = tok('--line', '#e4dfd2');
+    var sent = $('chart-sent');
+    if (sent) {
+      var R = QD.sent.slice().sort(function (a, b) { return b.month - a.month; });
+      sent.textContent = '';
+      var lg = el('div', {class: 'q-legend'});
+      [['This month, requests', 0.3], ['Last 24 hours, requests', 1]].forEach(function (k) {
+        var s = el('span'), sw = el('i'); sw.style.background = good; sw.style.opacity = k[1];
+        s.appendChild(sw); s.appendChild(document.createTextNode(k[0])); lg.appendChild(s);
+      });
+      sent.appendChild(lg);
+      sent.appendChild(R.length ? Plot.plot({
+        width: width(), height: 22 * R.length + 60, style: style, marginLeft: 120, marginRight: 90,
+        x: {label: 'Requests →', grid: true}, y: {domain: R.map(function (r) { return r.provider; }), label: null},
+        marks: [
+          Plot.barX(R, {x: 'month', y: 'provider', fill: good, fillOpacity: 0.3,
+            title: function (r) { return r.provider + '\nthis month: ' + qNum(r.month) + '\nlast 24 hours: ' + qNum(r.day); }}),
+          Plot.barX(R, {x: 'day', y: 'provider', fill: good, insetTop: 4, insetBottom: 4}),
+          Plot.text(R, {x: 'month', y: 'provider', text: function (r) { return qNum(r.day) + ' / ' + qNum(r.month); }, dx: 6, textAnchor: 'start', fill: ink}),
+          Plot.ruleX([0], {stroke: ink})
+        ]}) : el('p', {class: 'hint'}, 'No call in the ledger this month.'));
+    }
+    var res = $('chart-resets');
+    if (res) {
+      var now = Date.now(), end = now + 7 * 86400e3, dots = [], bars = [];
+      QD.tiles.forEach(function (t) {
+        var wins = [];
+        t.groups.forEach(function (g) { g.windows.forEach(function (w) { wins.push({label: (g.label ? g.label + ' · ' : '') + w.label, at: w.reset_at}); }); });
+        t.pool.forEach(function (p) { if (p.reset_at) wins.push({label: p.label, at: p.reset_at, daily: true}); });
+        wins.forEach(function (w) {
+          var at = +new Date(w.at), daily = w.daily || / day$/.test(w.label);
+          for (; at && at <= end; at += 86400e3) {
+            if (at >= now) dots.push({tile: t.name, at: new Date(at), what: w.label});
+            if (!daily) break;
+          }
+        });
+        t.models.filter(qResting).forEach(function (m) {
+          bars.push({tile: t.name, x1: new Date(now), x2: new Date(Math.min(+new Date(m.until), end)), what: m.alias + ' resting until ' + new Date(m.until).toLocaleString()});
+        });
+      });
+      var names = QD.tiles.map(function (t) { return t.name; }).filter(function (n) {
+        return dots.some(function (d) { return d.tile === n; }) || bars.some(function (b) { return b.tile === n; });
+      });
+      res.textContent = '';
+      res.appendChild(names.length ? Plot.plot({
+        width: width(), height: 26 * names.length + 60, style: style, marginLeft: 120,
+        x: {domain: [new Date(now), new Date(end)], label: null, grid: true}, y: {domain: names, label: null},
+        marks: [
+          Plot.barX(bars, {x1: 'x1', x2: 'x2', y: 'tile', fill: warn, fillOpacity: 0.35, insetTop: 6, insetBottom: 6, title: 'what'}),
+          Plot.dot(dots, {x: 'at', y: 'tile', r: 4, fill: good, stroke: ink, strokeWidth: 0.5,
+            title: function (d) { return d.what + ' resets ' + d.at.toLocaleString(); }}),
+          Plot.ruleX([new Date(now)], {stroke: tok('--err', '#a12b2b'), strokeWidth: 1.5}),
+          Plot.ruleY(names, {stroke: line, strokeOpacity: 0.5})
+        ]}) : el('p', {class: 'hint'}, 'No reset or rest known for the next 7 days.'));
+    }
+  }
+
   // ---- Benchmarks charts: Observable Plot, data from serve.charts_data ------
   // A function, not run once: a theme switched on Settings redraws them in its colours.
   function drawCharts() {
@@ -1698,6 +1982,7 @@
       var col = document.querySelector('.panes') || document.querySelector('main');
       return Math.max(520, (col.clientWidth || 900) - 50);
     }
+    drawQuotaCharts(tok, style, width);
     function put(id, make) {
       var box = $(id);
       if (!box) return;

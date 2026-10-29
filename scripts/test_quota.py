@@ -332,8 +332,8 @@ def main() -> int:
           and "rpmo" not in ((serve.catalog.overrides().get("t-ok") or {}).get("limits") or {}),
           "a bad rpmo is refused; a model's own limits have none", bad)
     page = serve.quotas_page()
-    check("What providers said is left" in page and "fakeprov" in page and "What the bench sent" in page,
-          "the Quotas page shows the records and the ledger's counts")
+    check("id='quota-data'" in page and "fakeprov" in page and "What the bench sent" in page,
+          "the Quotas page carries its tiles and the ledger's counts")
 
     srv.shutdown()
     print("\nthe ledger, quotas and pacing hold" if not failures else f"\n{failures} FAILED")

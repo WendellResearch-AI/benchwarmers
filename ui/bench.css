@@ -397,6 +397,40 @@ pre.log { background: var(--log-ground, var(--ink-deep)); color: var(--log-ink, 
           white-space: pre-wrap; margin: .5rem 0 0; }
 pre.log.answer { max-height: 40vh; }
 
+/* Quota: a tile per provider, as many columns as fit; a group of windows (a
+   5-hour and a weekly limit of one model group) boxed together; a meter of
+   ten segments filled like a bar. */
+.q-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr)); gap: .75rem; align-items: start; margin-top: .75rem; }
+.q-tile { display: flex; flex-direction: column; gap: .45rem; padding: .75rem .85rem; background: var(--panel);
+          border: 1px solid var(--line); border-radius: var(--radius); cursor: grab; }
+.q-tile:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.q-tile.out { border-color: var(--err); }
+.q-tile.dragging { opacity: .45; }
+.q-tile .q-head { display: flex; justify-content: space-between; align-items: baseline; gap: .5rem; }
+.q-tile .nm { font-size: 1.0625rem; }
+.q-tag, .q-small { font-size: .8125rem; color: var(--muted); }
+.q-group { border: 1px solid var(--line); border-radius: var(--radius); padding: .45rem .55rem .55rem; display: flex; flex-direction: column; gap: .3rem; }
+.q-group.bare { border: 0; padding: 0; }
+.q-group h4 { margin: 0; font-size: .8125rem; font-weight: 500; color: var(--muted); }
+.q-line { display: flex; justify-content: space-between; gap: .5rem; font-size: .875rem; }
+.q-line b { font-weight: 600; }
+.q-line .mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.segs { display: flex; gap: 2px; }
+.segs span { flex: 1; height: .5rem; border-radius: 2px; background: var(--step-1); overflow: hidden; }
+.segs i { display: block; height: 100%; background: var(--ok); }
+.segs.warn i { background: var(--warn); }
+.segs.err i { background: var(--err); }
+.q-rest { font-size: .8125rem; background: var(--warn-ground); border-radius: var(--radius); padding: .2rem .45rem; }
+.warn-t { color: var(--warn); }
+.q-msg { font-size: .8125rem; }
+.q-msg:empty { display: none; }
+.q-tile .q-foot { display: flex; flex-wrap: wrap; gap: .4rem; justify-content: flex-end; margin-top: auto;
+                 padding-top: .5rem; border-top: 1px solid var(--line); }
+.q-tile .q-foot .chip { margin-left: .2rem; font-size: .75rem; }
+.q-legend { display: flex; flex-wrap: wrap; gap: 1rem; font-size: .875rem; margin: 0 0 .4rem; }
+.q-legend i { display: inline-block; width: .8rem; height: .7rem; border-radius: 2px; margin-right: .35rem; vertical-align: -1px; }
+#q-models { max-width: min(48rem, 94vw); }
+
 /* Benchmarks charts (Observable Plot) */
 .chart { margin: .5rem 0 .75rem; overflow-x: auto; }
 .chart.muted { font-size: .875rem; }
