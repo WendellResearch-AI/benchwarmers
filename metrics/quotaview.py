@@ -235,19 +235,35 @@ def read_cliproxy(tag: str, sibling_vendors: set[str]) -> dict:
 
 
 def refresh(tag: str) -> dict:
-    """Ask the provider when it can be asked for free, keep the answer;
-    {"ok", "how": "live"|"records", "note"}."""
-    if tag == "openrouter" and _openrouter_endpoint():
+    """The tile's one Refresh, which picks its own way (how_refreshed): ask the
+    provider when it can be asked for free; else, where it states limits in its
+    replies, one 16-token call (check); else the bench's own records.
+    {"ok", "how": "live"|"check"|"records", "note"}."""
+    how = how_refreshed(tag)
+    if how == "check":
+        r = check(tag)
+        if r.get("ok"):
+            return dict(r, how="check")
+        return {"ok": True, "how": "records", "note": "; ".join(r.get("errors") or []) + "; shown from the bench's own records"}
+    if how == "records":
+        return {"ok": True, "how": "records",
+                "note": "this provider states no limits to ask about: shown from the bench's own records"}
+    if tag == "openrouter":
         got = read_openrouter()
-    elif tag.split("/")[0] == "cli-proxy-api":
+    else:
         vendors = {t.split("/", 1)[1] for t in _tags() if t.startswith("cli-proxy-api/")}
         got = read_cliproxy(tag, vendors)
-    else:
-        return {"ok": True, "how": "records",
-                "note": "this provider has no free quota read: shown from the bench's own records"}
     got["at"] = _iso(time.time())
     locked.update(LIVE, lambda d: d.update({tag: got}), ensure_ascii=False)
     return {"ok": True, "how": "live", "note": "; ".join(got.get("notes") or [])}
+
+
+def how_refreshed(tag: str) -> str:
+    """"live" (a free read), "check" (one short call whose headers say what is
+    left) or "records" (nothing to ask: the bench's own records)."""
+    if tag.split("/")[0] == "cli-proxy-api" or tag == "openrouter" and _openrouter_endpoint():
+        return "live"
+    return "check" if _headers_seen(tag) else "records"
 
 
 def check(tag: str) -> dict:
@@ -341,14 +357,12 @@ def tiles(now: float | None = None) -> list[dict]:
         t = {"id": tag, "tag": tag, "host": host, "bench": len(aliases), "kind": "models", "groups": [],
              "pool": [], "notes": [], "conn_limit": _limit_text(entered.get(host) or {}),
              "models": _model_rows(aliases, rows, resting, limits),
-             "refresh": "records", "check": False, "plan": "", "name": ""}
+             "refresh": how_refreshed(tag), "plan": "", "name": ""}
         got = live.get(tag) or {}
         if tag.split("/")[0] == "cli-proxy-api":
-            t["refresh"] = "live"
             if got.get("groups"):
                 t.update(kind="groups", groups=got["groups"], name=got.get("name", ""), plan=got.get("plan", ""))
         elif tag == "openrouter":
-            t["refresh"] = "live" if _openrouter_endpoint() else "records"
             t["kind"] = "pool"
             t["pool"] = _openrouter_pool(aliases, utc_rows, regs, got, learned, now)
         if t["kind"] == "models":                       # the headers' windows, when any is in force
@@ -366,7 +380,6 @@ def tiles(now: float | None = None) -> list[dict]:
             seen = [_ts(r.get("observed_at")) or 0 for r in recs]
             if seen:
                 got = {"at": _iso(max(seen)), "how": "seen"}
-        t["check"] = t["refresh"] == "records" and _headers_seen(tag)
         last = max((r["t"] for r in rows if r.get("status") == "ok"), default=None)
         t["fresh"] = ({"how": "live", "at": got["at"]} if got.get("at") and got.get("how") != "seen"
                       else {"how": "seen", "at": got["at"]} if got.get("at")

@@ -109,8 +109,11 @@ seats dashed, and the merger after an arrow.
 In the popup, the panel's seats are on top, and the member list has one row
 per model with its context, vision and tools, and price. A model served by
 several providers is still one row, with a chip per provider: tick the chip
-of the route you want. Ticking two is allowed, and the count says so. The tags
-grey out the models that do not fit them, as before.
+of the route you want. Ticking two is allowed, and the count says so. The
+search matches a model, provider or served name, and the select beside it
+shows one provider's models; ticked ones always stay in view. A seat's ×
+takes that member off, as unticking it does. The tags grey out the models that
+do not fit them.
 
 Each call also seats explorers, the models unused longest, up to the gateway's
 limits (Gateway settings, on the same page: how many calls a request may make,
@@ -240,16 +243,19 @@ provider limits:
 - **Each model's last day**: shown where the provider states nothing.
 
 Each tile shows when its limits reset and which of its models are resting
-after a rate limit. **Models** lists the provider's bench models, whether each
-is free to call now, and its last 24 hours of calls.
+after a rate limit. Where nothing is stated, each model's last 24 hours is a
+meter of its calls: green for what answered, red for what failed. **Models**
+lists the provider's bench models (each opens its popup), whether each is free
+to call now, and its last 24 hours of calls.
 
-**Refresh never spends quota.** On OpenRouter it asks the key what is left. On
-CLI Proxy API's sign-ins it asks the proxy for each one's quota, as its own
-console does; this needs CLI Proxy API on the Endpoints page as a hub, with
-its management key. Every other tile re-reads what the provider last said in
-its replies to the bench. **Check now** sends one 16-token request to read the
-reply's limit headers. It is offered only where the provider has sent them
-before.
+**Refresh** picks its own way, and hovering it says which:
+- **A free read** on OpenRouter (it asks the key what is left) and on CLI
+  Proxy API's sign-ins (it asks the proxy for each one's quota, as its own
+  console does; this needs CLI Proxy API on the Endpoints page as a hub, with
+  its management key).
+- **One 16-token request** where a provider states its limits only in its
+  replies' headers, to read them.
+- **The bench's own records** again everywhere else.
 
 Tiles sort with the ones that are out first, then the soonest reset. Drag a
 tile, or move it with the arrow keys, and the order is kept; **Sort** brings

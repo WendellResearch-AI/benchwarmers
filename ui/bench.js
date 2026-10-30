@@ -1330,7 +1330,7 @@
            head: $('c-form-head'), maxCalls: $('g-max-calls'), maxExp: $('g-max-explorers'),
            gErrors: $('g-errors'), gDone: $('g-done'), form: $('c-form'), status: $('c-status'),
            del: $('c-delete'), reply: $('c-reply'), merger: $('c-merger'), find: $('c-member-filter'),
-           seats: $('c-seats')};
+           seats: $('c-seats'), prov: $('c-member-provider')};
   var C = null, open = null;         // the collection whose details are showing
   function explorersFor(n) {
     return Math.max(0, Math.min(C.settings.max_explorers, C.settings.max_calls - n));
@@ -1370,12 +1370,20 @@
       return {name: row ? row.dataset.name : by[f][0], on: by[f].map(function (a) { return fact(a).provider || a; })};
     });
   }
-  // The panel as it will sit, as the Collections list draws it.
+  // The panel as it will sit, as the Collections list draws it; a member's ×
+  // unticks it, as unticking its chip does.
   function drawSeats(ex) {
     c.seats.textContent = '';
     picked().forEach(function (a) {
       var seat = el('span', {class: 'seat'}, a);
       if (fact(a).provider) seat.appendChild(el('span', {class: 'k after'}, fact(a).provider));
+      var x = el('button', {type: 'button', class: 'seat-x', 'aria-label': 'Remove ' + a + ' from the collection',
+                            title: 'Remove from the collection'}, '×');
+      x.addEventListener('click', function () {
+        var box = c.members.querySelector('input[value="' + CSS.escape(a) + '"]');
+        if (box) { box.checked = false; applyTags(); }
+      });
+      seat.appendChild(x);
       c.seats.appendChild(seat);
     });
     for (var i = 0; i < ex; i++) {
@@ -1425,18 +1433,20 @@
     filterMembers();
   }
   // The member search: the filter boxes' match (any text, case-insensitive),
-  // over the model's name and each chip's alias, served name and provider.
-  // It only hides chips, and never a ticked one, so what is picked is always
-  // in view and every count still includes it; a row goes when all its chips do.
+  // over the model's name and each chip's alias, served name and provider,
+  // and the provider select beside it. It only hides chips, and never a ticked
+  // one, so what is picked is always in view and every count still includes
+  // it; a row goes when all its chips do.
   function filterMembers() {
-    var q = c.find.value.trim().toLowerCase();
+    var q = c.find.value.trim().toLowerCase(), prov = c.prov.value;
     c.members.querySelectorAll('.m-row').forEach(function (row) {
       var named = !q || row.dataset.name.toLowerCase().indexOf(q) !== -1, any = false;
       row.querySelectorAll('label.check').forEach(function (lab) {
         var box = lab.querySelector('input');
         var text = (box.value + ' ' + (lab.dataset.served || '') + ' ' + (fact(box.value).connection || '') + ' ' +
                     lab.textContent).toLowerCase();
-        lab.hidden = !box.checked && (!!lab.dataset.paid || !named && text.indexOf(q) === -1);
+        lab.hidden = !box.checked && (!!lab.dataset.paid || !named && text.indexOf(q) === -1
+                                      || !!prov && (fact(box.value).provider || '') !== prov);
         any = any || !lab.hidden;
       });
       row.hidden = !any;
@@ -1444,6 +1454,7 @@
     recount();
   }
   c.find.addEventListener('input', filterMembers);
+  c.prov.addEventListener('change', filterMembers);
   // Escape in a box with text clears it; only an empty box lets Escape close the popup.
   c.find.addEventListener('keydown', function (e) {
     if (e.key === 'Escape' && c.find.value) { e.preventDefault(); e.stopPropagation(); c.find.value = ''; filterMembers(); }
@@ -1487,6 +1498,9 @@
     c.desc.value = row ? row.description : ''; c.tags.value = row ? row.tags.join(', ') : '';
     drawTagPicks();
     c.members.textContent = ''; c.find.value = '';
+    c.prov.length = 1;                                 // "Every provider", then each one a model is on
+    Array.from(new Set(C.models.map(function (a) { return fact(a).provider; }).filter(Boolean))).sort()
+      .forEach(function (p) { c.prov.appendChild(el('option', {value: p}, p)); });
     // One row per model, named by its shortest alias, with what the first
     // route says it holds and can do; each provider it is on is a chip that
     // ticks that alias. A chip whose window differs from the row's says its own.
@@ -1698,91 +1712,104 @@
     var s = (Date.now() - new Date(iso)) / 1000;
     return s < 90 ? 'just now' : s < 5400 ? Math.round(s / 60) + ' min ago' : s < 129600 ? Math.round(s / 3600) + ' h ago' : Math.round(s / 86400) + ' days ago';
   }
-  function qTone(left) { return left >= 70 ? 'ok' : left >= 25 ? 'warn' : 'err'; }
-  function qSegs(left) {
-    var box = el('div', {class: 'segs ' + qTone(left), role: 'img', 'aria-label': left + '% left'});
+  function qTone(pct) { return pct == null ? 'none' : pct >= 70 ? 'ok' : pct >= 25 ? 'warn' : 'err'; }
+  // `pct` null draws the ten segments empty: nothing to count yet. Calls
+  // ("answered") fill green over red, the failed share showing as red.
+  function qSegs(pct, what) {
+    var tone = pct != null && what === 'answered' ? 'calls' : qTone(pct);
+    var box = el('div', {class: 'segs ' + tone, role: 'img',
+                         'aria-label': pct == null ? 'nothing yet' : pct + '% ' + (what || 'left')});
     for (var i = 0; i < 10; i++) {
       var s = el('span'), f = el('i');
-      f.style.width = Math.round(Math.min(Math.max(left / 10 - i, 0), 1) * 100) + '%';
+      f.style.width = Math.round(Math.min(Math.max((pct || 0) / 10 - i, 0), 1) * 100) + '%';
       s.appendChild(f); box.appendChild(s);
     }
     return box;
   }
-  function qLine(label, right) {
-    var row = el('div', {class: 'q-line'});
-    row.appendChild(el('span', {}, label));
-    var r = el('span'); r.innerHTML = right; row.appendChild(r);
-    return row;
-  }
   function qNum(n) { return Number(n).toLocaleString(); }
+  function qAlias(a) {                                 // as serve.named draws a model: its popup on a click
+    var link = el('a', {href: '#', class: 'model', 'data-alias': a, draggable: 'false', title: a});
+    link.appendChild(el('span', {class: 'alias mono'}, a));
+    return link;
+  }
+  // Every figure on a tile is one meter: what it counts and its value on one
+  // line (the label shortens, the value never wraps), the segments under it.
+  function qMeter(label, value, pct, what, title) {
+    var box = el('div', {class: 'q-meter'}), row = el('div', {class: 'q-line'});
+    row.appendChild(typeof label === 'string' ? el('span', {class: 'q-label'}, label) : label);
+    var v = el('span', {class: 'q-val'}); v.innerHTML = value; row.appendChild(v);
+    if (title) box.title = title;
+    box.appendChild(row); box.appendChild(qSegs(pct, what));
+    return box;
+  }
   function qWindow(w) {
-    var frag = document.createDocumentFragment();
-    var row = qLine(w.label, '<b>' + w.left + '%</b>' + (w.reset_at ? ' · ' + qWhen(w.reset_at) : ''));
-    if (w.of) row.title = qNum(w.remaining) + ' of ' + qNum(w.of) + ' left';
-    frag.appendChild(row);
-    frag.appendChild(qSegs(w.left));
-    return frag;
+    return qMeter(w.label, '<b>' + w.left + '%</b>' + (w.reset_at ? ' · ' + qWhen(w.reset_at) : ''), w.left, 'left',
+                  w.of ? qNum(w.remaining) + ' of ' + qNum(w.of) + ' left' : '');
+  }
+  // A model with nothing stated: how much of its last day answered.
+  function qCalls(m) {
+    var n = m.ok + m.failed, pct = n ? Math.round(100 * m.ok / n) : null;
+    var value = qResting(m) ? '<span class="warn-t">resting · ' + qWhen(m.until) + '</span>'
+              : n ? '<b>' + m.ok + '</b> of ' + n + ' answered' : '<span class="muted">no calls</span>';
+    return qMeter(qAlias(m.alias), value, pct, 'answered',
+                  n ? m.ok + ' answered, ' + m.failed + ' failed in the last 24 hours' : 'not called in the last 24 hours');
   }
   function qResting(m) { return m.until && new Date(m.until) > Date.now(); }
   function qTile(t) {
     var node = el('article', {class: 'q-tile' + (t.out ? ' out' : ''), draggable: 'true', tabindex: '0',
                               'data-id': t.id, 'aria-label': t.name + ': drag, or use the arrow keys, to move it'});
     var head = el('div', {class: 'q-head'});
-    head.appendChild(el('b', {class: 'nm'}, t.name));
-    var f = t.fresh, how = f.how === 'live' ? 'read ' : f.how === 'seen' ? 'seen ' : 'answered ';
-    head.appendChild(el('span', {class: 'chip ' + (f.how === 'live' ? 'ok' : 'via')}, f.at ? how + qAgo(f.at) : 'nothing yet'));
+    head.appendChild(el('b', {class: 'nm', title: t.name}, t.name));
+    var f = t.fresh, how = {live: 'read ', seen: 'seen ', answered: 'answered '}[f.how] || '';
+    head.appendChild(el('span', {class: 'chip ' + (f.how === 'live' ? 'ok' : 'via'),
+      title: {live: 'Last asked of the provider', seen: 'Last stated in a reply\'s headers',
+              answered: 'Last answer from one of its models'}[f.how] || 'Nothing known yet'},
+      f.at ? how + qAgo(f.at) : 'nothing yet'));
     node.appendChild(head);
-    node.appendChild(el('div', {class: 'q-tag mono'}, t.tag + (t.plan ? ' · ' + t.plan : '')));
+    node.appendChild(el('div', {class: 'q-tag mono', title: t.tag}, t.tag + (t.plan ? ' · ' + t.plan : '')));
+    var body = el('div', {class: 'q-body'});
     if (t.kind === 'groups') {
       t.groups.forEach(function (g) {
         var box = el('section', {class: g.label ? 'q-group' : 'q-group bare'});
         if (g.label) box.appendChild(el('h4', {}, g.label));
         g.windows.forEach(function (w) { box.appendChild(qWindow(w)); });
-        node.appendChild(box);
+        body.appendChild(box);
       });
     } else if (t.kind === 'pool') {
       t.pool.forEach(function (p) {
-        var box = el('section', {class: 'q-group bare'});
-        if (p.of) {
-          box.appendChild(qLine(p.label, '<b>' + qNum(Math.max(0, p.of - p.used)) + '</b> of ' + qNum(p.of) + ' left'
-                                + (p.reset_at ? ' · ' + qWhen(p.reset_at) : '')));
-          box.appendChild(qSegs(p.left));
-        } else {
-          box.appendChild(qLine(p.label, '<b>' + qNum(p.used) + '</b> sent · limit not known yet'));
-        }
-        node.appendChild(box);
+        body.appendChild(p.of
+          ? qMeter(p.label, '<b>' + qNum(Math.max(0, p.of - p.used)) + '</b> of ' + qNum(p.of) + ' left'
+                   + (p.reset_at ? ' · ' + qWhen(p.reset_at) : ''), p.left, 'left')
+          : qMeter(p.label, '<b>' + qNum(p.used) + '</b> sent · limit not known', null));
       });
     } else {
-      var shown = t.models.slice(0, 6);
-      shown.forEach(function (m) {
-        var right = qResting(m) ? '<span class="warn-t">resting · ' + qWhen(m.until) + '</span>'
-                  : m.ok + m.failed ? m.ok + ' ok · ' + m.failed + ' failed' : 'no calls today';
-        var row = qLine('', right); row.firstChild.className = 'mono'; row.firstChild.textContent = m.alias;
-        node.appendChild(row);
-      });
-      if (t.models.length > shown.length) node.appendChild(el('div', {class: 'muted q-small'}, '+ ' + (t.models.length - shown.length) + ' more in Models · last 24 h'));
-      else node.appendChild(el('div', {class: 'muted q-small'}, 'last 24 h'));
+      var box = el('section', {class: 'q-group bare'});
+      box.appendChild(el('h4', {}, 'Answered, last 24 hours'));
+      t.models.slice(0, 5).forEach(function (m) { box.appendChild(qCalls(m)); });
+      if (t.models.length > 5) box.appendChild(el('div', {class: 'q-small'}, '+ ' + (t.models.length - 5) + ' more in Models'));
+      body.appendChild(box);
     }
     if (t.kind !== 'models') {
       t.models.filter(qResting).forEach(function (m) {
-        node.appendChild(el('div', {class: 'q-rest'}, m.alias + ' resting · back ' + qWhen(m.until)));
+        var r = el('div', {class: 'q-rest'});
+        r.appendChild(qAlias(m.alias)); r.appendChild(document.createTextNode(' resting · back ' + qWhen(m.until)));
+        body.appendChild(r);
       });
     }
-    if (t.conn_limit) node.appendChild(el('div', {class: 'muted q-small'}, t.conn_limit + ', set by you'));
-    (t.notes || []).forEach(function (n) { node.appendChild(el('div', {class: 'muted q-small'}, n)); });
+    if (t.conn_limit) body.appendChild(el('div', {class: 'q-small'}, t.conn_limit + ', set by you'));
+    (t.notes || []).forEach(function (n) { body.appendChild(el('div', {class: 'q-small'}, n)); });
+    node.appendChild(body);
     var msg = el('div', {class: 'q-msg', 'aria-live': 'polite'});
     node.appendChild(msg);
+    // One Refresh: the server picks a free read, one short call or the records.
     var foot = el('div', {class: 'q-foot'});
     var rb = el('button', {class: 'btn small', type: 'button', 'aria-label': 'Refresh ' + t.name,
-      title: t.refresh === 'live' ? 'Ask the provider what is left (free)' : 'Read the bench\'s own records again (free)'});
+      title: {live: 'Asks the provider what is left (free)',
+              check: 'Sends one 16-token request; the reply\'s headers say what is left'}[t.refresh]
+             || 'Reads the bench\'s own records again (this provider states no limits to ask about)'});
     rb.innerHTML = '&#x21bb; Refresh';
-    rb.addEventListener('click', function () { qAct('refresh', t.id, node); });
+    rb.addEventListener('click', function () { qAct(t.id, node); });
     foot.appendChild(rb);
-    if (t.check) {
-      var cb = el('button', {class: 'btn small', type: 'button', title: 'One short call to one of its models; its reply says what is left'}, 'Check now · 1 request');
-      cb.addEventListener('click', function () { qAct('check', t.id, node); });
-      foot.appendChild(cb);
-    }
     var mb = el('button', {class: 'btn small', type: 'button'}, 'Models ');
     mb.appendChild(el('span', {class: 'chip ' + (t.live === t.bench ? 'ok' : t.live ? 'warn' : 'err')}, t.live + '/' + t.bench));
     mb.title = t.live + ' of the ' + t.bench + ' bench models on it are free to call';
@@ -1791,10 +1818,10 @@
     node.appendChild(foot);
     return node;
   }
-  function qAct(which, id, node) {
+  function qAct(id, node) {
     var msg = node.querySelector('.q-msg');
-    msg.className = 'q-msg muted'; msg.textContent = which === 'check' ? 'Asking…' : 'Refreshing…';
-    return post('/api/quota/' + which, {tag: id}).then(function (r) {
+    msg.className = 'q-msg muted'; msg.textContent = 'Refreshing…';
+    return post('/api/quota/refresh', {tag: id}).then(function (r) {
       if (!r.ok) { msg.className = 'q-msg errors'; msg.textContent = r.errors.join('; '); return; }
       var i = QD.tiles.findIndex(function (t) { return t.id === id; });
       if (r.tile && i >= 0) {
@@ -1815,11 +1842,14 @@
     tb.appendChild(el('thead')).appendChild(hd);
     var body = tb.appendChild(el('tbody'));
     t.models.forEach(function (m) {
-      var tr = el('tr');
-      tr.appendChild(el('td', {class: 'mono'}, m.alias));
+      var tr = el('tr'), name = el('td');
+      name.appendChild(qAlias(m.alias)); tr.appendChild(name);
       var now = el('td'); now.appendChild(el('span', {class: 'chip ' + (qResting(m) ? 'warn' : 'ok')}, qResting(m) ? 'resting · ' + qWhen(m.until) : 'ready'));
       tr.appendChild(now);
-      tr.appendChild(el('td', {}, m.ok + ' ok · ' + m.failed + ' failed'));
+      var n = m.ok + m.failed, calls = el('td', {class: 'q-calls', title: m.failed + ' failed'});
+      calls.appendChild(qSegs(n ? Math.round(100 * m.ok / n) : null, 'answered'));
+      calls.appendChild(el('span', {}, n ? m.ok + ' of ' + n + ' answered' : 'no calls'));
+      tr.appendChild(calls);
       tr.appendChild(el('td', {}, m.last_ok ? qAgo(m.last_ok) : '—'));
       tr.appendChild(el('td', {}, m.limit || '—'));
       body.appendChild(tr);
@@ -1888,7 +1918,7 @@
       live.reduce(function (p, t) {
         return p.then(function () {
           var node = qBox.querySelector('.q-tile[data-id="' + CSS.escape(t.id) + '"]');
-          return node ? qAct('refresh', t.id, node) : null;
+          return node ? qAct(t.id, node) : null;
         });
       }, Promise.resolve()).then(function () { $('q-done').textContent = 'Refreshed ' + live.length + '.'; });
     });

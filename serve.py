@@ -3170,8 +3170,10 @@ def collections_tab() -> str:
         # The panel as it will sit, drawn as the Collections list draws it
         # (bench.js recount): a seat per ticked member, explorer seats dashed.
         "<div id='c-seats' class='seats' aria-live='polite'></div>"
-        "<input type='search' id='c-member-filter' class='member-filter' spellcheck='false' autocomplete='off'"
-        " placeholder='Filter by model, provider or served name' aria-controls='c-members' aria-describedby='c-count'>"
+        "<div class='member-find'><input type='search' id='c-member-filter' class='member-filter' spellcheck='false'"
+        " autocomplete='off' placeholder='Filter by model, provider or served name' aria-controls='c-members'"
+        " aria-describedby='c-count'><select id='c-member-provider' aria-label='Provider' aria-controls='c-members'>"
+        "<option value=''>Every provider</option></select></div>"
         "<div id='c-members' class='members' role='group' aria-label='Members'></div>"
         "<p class='rules' id='c-count'></p>"
         "<label class='field' for='c-shape'>Explorer shape</label><select id='c-shape'></select>"
@@ -3745,15 +3747,16 @@ def quota_tiles() -> list[dict]:
 
 
 def quota_op(which: str, tag) -> dict:
-    """Refresh or Check now on one tile: {ok, errors, note, tile}; "order"
-    saves the tiles' order (a list of tags, empty for the default sort)."""
+    """Refresh on one tile, which picks a free read, one short call or the
+    records (quotaview.refresh): {ok, errors, note, tile}; "order" saves the
+    tiles' order (a list of tags, empty for the default sort)."""
     import quotaview
     if which == "order":
         return quotaview.save_order(tag)
     if tag not in {t["id"] for t in quota_tiles()}:
         return {"ok": False, "errors": [f"no tile called {tag!r}"]}
     try:
-        r = (quotaview.refresh if which == "refresh" else quotaview.check)(tag)
+        r = quotaview.refresh(tag)
     except (ValueError, OSError) as exc:              # OSError: URLError and timeouts
         return {"ok": False, "errors": [str(exc)]}
     if not r.get("ok"):
@@ -3764,8 +3767,8 @@ def quota_op(which: str, tag) -> dict:
 
 def quotas_page() -> str:
     """A tile per provider: what is left and when it resets, shaped by how the
-    provider limits (metrics/quotaview.py), who is resting, Refresh and Check
-    now; the resets of the next week; what the bench sent (its usage ledger,
+    provider limits (metrics/quotaview.py), who is resting, one Refresh; the
+    resets of the next week; what the bench sent (its usage ledger,
     metrics/ledger.py); every limit known. bench.js draws tiles and charts."""
     import learn
     import ledger
@@ -3808,9 +3811,10 @@ def quotas_page() -> str:
                 " Retries count. Calls through the llm CLI are not in the ledger.</p>")
     return (
         "<div class='panel'><h2>Quota</h2><p class='sub'>What is left with each provider and when it"
-        " resets, and who is resting after a rate limit. CLI Proxy API's credentials and OpenRouter are"
-        " read live by Refresh, which spends nothing; every other tile is what the provider last said"
-        " in its replies to the bench, and Check now, where it is offered, asks with one request."
+        " resets, and who is resting after a rate limit. Refresh asks the provider for free where it can"
+        " (CLI Proxy API's credentials, OpenRouter); where a provider states its limits only in its replies,"
+        " it sends one 16-token request to read them; elsewhere it reads the bench's own records again."
+        " Hover a Refresh to see which it will do."
         " Drag a tile, or move it with the arrow keys, to keep it where you want it.</p>"
         "<div class='list-actions'><button class='btn' id='q-all'>Refresh all live</button>"
         "<button class='btn' id='q-reorder'>Sort: out first, then soonest reset</button>"
@@ -4347,7 +4351,6 @@ class Handler(gateway.Handler):
                "/api/gateway-key/remove": lambda p: revoke_gateway_key(str(p.get("name") or "")),
                "/api/theme": lambda p: save_theme(str(p.get("theme") or "")),
                "/api/quota/refresh": lambda p: quota_op("refresh", str(p.get("tag") or "")),
-               "/api/quota/check": lambda p: quota_op("check", str(p.get("tag") or "")),
                "/api/quota/order": lambda p: quota_op("order", p.get("order")),
                "/api/restart": lambda p: restart(p.get("force") is True)}
         # SAME ORIGIN ONLY. Any page open in the browser can POST a plain form

@@ -299,6 +299,12 @@ dialog h2 { margin: 0 0 .2rem; font-size: 1.375rem; font-weight: 700; }
 #c-form .seats { min-height: 2rem; }
 #c-form .seat .k.after { margin: 0 0 0 .4rem; }
 :is(dialog, .form-panel) input.member-filter { font-size: .9375rem; padding: .4rem .6rem; margin-bottom: .2rem; }
+#c-form .member-find { display: flex; gap: .5rem; }
+#c-form .member-find input { flex: 1; min-width: 0; }
+#c-form .member-find select { flex: none; width: auto; max-width: 45%; margin-bottom: .2rem; }
+#c-form .seat .seat-x { border: 0; background: none; padding: 0 0 0 .45rem; font: inherit; font-size: 1rem; line-height: 1;
+                        color: var(--muted); cursor: pointer; }
+#c-form .seat .seat-x:hover, #c-form .seat .seat-x:focus-visible { color: var(--err); }
 :is(dialog, .form-panel) .members input:disabled + span { color: var(--muted); }
 /* Ruled out by the collection's tags (bench.js applyTags): greyed; a ticked
    one stays tickable and is marked, so it can be taken off. */
@@ -400,21 +406,35 @@ pre.log.answer { max-height: 40vh; }
 /* Quota: a tile per provider, as many columns as fit; a group of windows (a
    5-hour and a weekly limit of one model group) boxed together; a meter of
    ten segments filled like a bar. */
-.q-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr)); gap: .75rem; align-items: start; margin-top: .75rem; }
-.q-tile { display: flex; flex-direction: column; gap: .45rem; padding: .75rem .85rem; background: var(--panel);
+/* Tiles in a row share a height, so every footer sits on one line; nothing in
+   a tile is wider than it: names shorten, values never wrap. */
+.q-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr)); gap: .75rem; align-items: stretch; margin-top: .75rem; }
+.q-tile { display: flex; flex-direction: column; gap: .5rem; padding: .75rem .85rem; background: var(--panel); min-width: 0;
           border: 1px solid var(--line); border-radius: var(--radius); cursor: grab; }
 .q-tile:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
 .q-tile.out { border-color: var(--err); }
 .q-tile.dragging { opacity: .45; }
-.q-tile .q-head { display: flex; justify-content: space-between; align-items: baseline; gap: .5rem; }
-.q-tile .nm { font-size: 1.0625rem; }
+.q-tile .q-head { display: flex; justify-content: space-between; align-items: center; gap: .5rem; min-width: 0; }
+.q-tile .nm { font-size: 1.0625rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.q-tile .q-head .chip { flex: none; white-space: nowrap; font-size: .75rem; }
+.q-tag { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: -.3rem; }
 .q-tag, .q-small { font-size: .8125rem; color: var(--muted); }
-.q-group { border: 1px solid var(--line); border-radius: var(--radius); padding: .45rem .55rem .55rem; display: flex; flex-direction: column; gap: .3rem; }
+.q-body { display: flex; flex-direction: column; gap: .5rem; min-width: 0; }
+.q-group { border: 1px solid var(--line); border-radius: var(--radius); padding: .45rem .55rem .55rem; display: flex; flex-direction: column; gap: .45rem; }
 .q-group.bare { border: 0; padding: 0; }
 .q-group h4 { margin: 0; font-size: .8125rem; font-weight: 500; color: var(--muted); }
-.q-line { display: flex; justify-content: space-between; gap: .5rem; font-size: .875rem; }
+.q-meter { display: flex; flex-direction: column; gap: .2rem; min-width: 0; }
+.q-line { display: flex; justify-content: space-between; align-items: baseline; gap: .5rem; font-size: .875rem; min-width: 0; }
 .q-line b { font-weight: 600; }
-.q-line .mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.q-line > :first-child { min-width: 0; }
+.q-line > a.model { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.q-line .q-val { flex: none; white-space: nowrap; }
+.segs.none span { background: var(--step-1); opacity: .6; }
+/* Calls: green for what answered, red for what failed, out of every call. */
+.segs.calls span { background: var(--err); }
+.segs.calls i { background: var(--ok); }
+.q-calls { white-space: nowrap; }
+.q-calls .segs { display: inline-flex; width: 5.5rem; margin-right: .5rem; vertical-align: middle; }
 .segs { display: flex; gap: 2px; }
 .segs span { flex: 1; height: .5rem; border-radius: 2px; background: var(--step-1); overflow: hidden; }
 .segs i { display: block; height: 100%; background: var(--ok); }
@@ -424,12 +444,13 @@ pre.log.answer { max-height: 40vh; }
 .warn-t { color: var(--warn); }
 .q-msg { font-size: .8125rem; }
 .q-msg:empty { display: none; }
-.q-tile .q-foot { display: flex; flex-wrap: wrap; gap: .4rem; justify-content: flex-end; margin-top: auto;
+.q-tile .q-foot { display: flex; gap: .4rem; justify-content: space-between; margin-top: auto;
                  padding-top: .5rem; border-top: 1px solid var(--line); }
 .q-tile .q-foot .chip { margin-left: .2rem; font-size: .75rem; }
 .q-legend { display: flex; flex-wrap: wrap; gap: 1rem; font-size: .875rem; margin: 0 0 .4rem; }
 .q-legend i { display: inline-block; width: .8rem; height: .7rem; border-radius: 2px; margin-right: .35rem; vertical-align: -1px; }
-#q-models { max-width: min(48rem, 94vw); }
+#q-models { width: min(48rem, 94vw); max-width: none; }
+#q-models td:first-child { white-space: nowrap; }
 
 /* Benchmarks charts (Observable Plot) */
 .chart { margin: .5rem 0 .75rem; overflow-x: auto; }
