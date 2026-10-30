@@ -195,8 +195,9 @@ dependencies either way: the app is the Python standard library.
   (requests a minute, day or month; tokens a minute or day). They are kept per
   connection, since models behind one key share them, and enforced: a call
   waits when the wait fits, or is refused before it goes out. Every call lands
-  in a monthly usage ledger with its tokens, and the Quotas page shows what is
-  left and when it resets.
+  in a monthly usage ledger with its tokens. Quota management has a tile per
+  provider showing what is left, when it resets and who is resting. OpenRouter
+  and CLI Proxy API's sign-ins are read live, at no cost to quota.
 - **Discover.** FreeLLMAPI's free catalog, with models.dev for the details
   and paid models it lacks, merged into one list of models worth adding,
   smartest first, each with the routes this install has to it.
@@ -250,6 +251,7 @@ without it: ask and judge, and run the bench itself. It is a client of a
 running server, so the same commands work against one on another machine.
 
     bench status                                   what is running, and where
+    bench restart                                  start it again on the code now on disk
     bench collections                              what you can ask
     bench ask core "Where can this return a stale value?" -f cache.py
     git diff | bench ask core "Review this diff"   a pipe is the prompt
@@ -438,6 +440,9 @@ reaches Wendell Research. What it sends, and where:
   its site's sitemap) and models.dev once a day, and OpenRouter's public
   model list.
 - **Sign-ins**, only when you choose one: the provider's own sign-in page.
+- **Quota reads**, only when you press Refresh on Quota management, with no
+  prompt: OpenRouter's key status, with your key. CLI Proxy API asks each
+  sign-in's own provider for its quota.
 - **Charts**: the dashboard's browser page loads Observable Plot from jsDelivr
   at a pinned version.
 - **Seeding real-bug tasks**, only when you run `suite/rebench.py`: the

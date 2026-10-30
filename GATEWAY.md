@@ -389,7 +389,7 @@ the panels' verdicts. A verdict on a conversation is optional
 (`POST /bench/verdict` with that call id); the offload alone already counts
 toward rotation. The Gateway card lists route conversations in their own
 table (when, who asked, the first message, who answered with ✓/✗, turns,
-tool calls, failovers) and none of them adds to **Owed**.
+tool calls, failovers) and none of them counts as a verdict owed.
 
 **Shadows (later, opt-in).** A shadow seat would answer the same turn in the
 background for evaluation only, after the caller has its answer. The place
@@ -515,8 +515,8 @@ key limited to its collection and a rate, or keep the key on the app's server.
 | Shape picker | Optional decision model (above). |
 | Call log | `runs/gateway/calls.jsonl`, gitignored: every seat's answer, status, timing and call id. |
 | Evidence | Each seat is recorded in `metrics/offloads.jsonl` as an unjudged offload when it answers; `offload.py verdict <call id>` or `POST /bench/verdict` replaces it. |
-| Collections tab | The collections and their form, then the gateway's recent requests: every seat's status and verdict, and how many verdicts are owed. Clicking a seat opens its answer and the verdict form. |
-| Catalog | `metrics/catalog.py`: context window, output limit, rate limits and capabilities per model, refreshed daily (scheduled task WRBench-Catalog); a free model whose price goes above zero raises a "went paid" alert. |
+| Collections tab | The collections, each drawn as its panel sits, and their form (one row per model, a chip per provider). Then the gateway's recent requests: every seat's status and verdict, how long the caller waited (Time), and how many verdicts are owed. Clicking a seat opens its answer and the verdict form. |
+| Catalog | `metrics/catalog.py`: context window, output limit, rate limits and capabilities per model, refreshed daily by the built-in scheduler; a free model whose price goes above zero raises a "went paid" alert. |
 | Discover tab | `metrics/discover.py`: FreeLLMAPI (leading) and models.dev merged into one list of models worth adding, free first, FreeLLMAPI's smartest first, marked by whether you can already reach the provider and whether the model is on the bench (on another provider counts as "also on bench"). |
 | Merged replies | Opt-in: one merger answer as `content`, every seat still in `bench` (The reply). |
 | MCP server | `mcp_server.py`: the same three routes as MCP tools for agents, `list_collections`, `ask` and `verdict`. Two transports for one `answer()`: `POST /mcp` (or `/v1/mcp`) on either port, streamable HTTP with a JSON reply per request, its tools calling the server's own routes over loopback with the caller's credential and Host; and stdio (`benchwarmers mcp`), a caller like any other over HTTP (`BENCHWARMERS_URL`, `BENCHWARMERS_KEY`). The Claude Code plugin in `plugin/` connects to `/mcp` and adds a command, a skill and a `Stop` hook (`plugin/hooks/hooks.json`, an `mcp_tool` hook) that calls `pending_verdicts` with the session's `transcript_path`: the call ids in the transcript (Claude Code keeps no `Mcp-Session-Id`, so the transcript is the record of whose panels they were), of which the call log says which are answered seats with no verdict (`POST /bench/pending`), returned once as `additionalContext`. A server on another machine cannot read the transcript, so there the hook says nothing. A tool call answers as SSE with progress notifications, which reset Claude Code's 300-second idle limit. |

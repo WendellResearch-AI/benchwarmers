@@ -480,7 +480,7 @@ def main() -> int:
 
     # The member picker's provider chips: a proxy's vendor, else the bare host.
     names = {"nvidia-api": "nvidia", "api.unorouter.com": "unorouter", "router.requesty.ai": "requesty",
-             "cli-proxy-api/antigravity": "antigravity", "openrouter": "openrouter", "apihub.agnes-ai.com": "agnes-ai"}
+             "cli-proxy-api/codex": "codex", "openrouter": "openrouter", "apihub.agnes-ai.com": "agnes-ai"}
     got = {t: serve.provider_label(t) for t in names}
     ok = got == names
     print(("ok   " if ok else "FAIL ") + "provider chip names" + ("" if ok else f" -> {got}"))

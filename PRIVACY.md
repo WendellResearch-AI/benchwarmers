@@ -1,6 +1,6 @@
 # Privacy policy
 
-*Effective 23 October 2026.*
+*Effective 29 October 2026.*
 
 Benchwarmers runs on your own machine or server. It has no account, no
 telemetry and no server of its own, and nothing you do with it reaches
@@ -18,6 +18,11 @@ Wendell Research.
   model list.
 - **Sign-ins**, only when you choose one: the provider's own sign-in page, in
   your browser, and the provider's token endpoint.
+- **Quota reads**, only when you press Refresh on Quota management, carrying
+  no prompt:
+  - OpenRouter's key status, asked with your key.
+  - For CLI Proxy API's sign-ins, through the proxy, the quota endpoint of the
+    provider each sign-in belongs to (Google's, ChatGPT's).
 - **Charts**: the dashboard's page loads Observable Plot from jsDelivr, at a
   pinned version, in your browser.
 - **Real-bug task seeding**, only when you run `suite/rebench.py`: dataset rows

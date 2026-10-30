@@ -14,6 +14,7 @@ coding agent doing it with you); the gateway's whole contract is in
 - [Connecting an app](#connecting-an-app)
 - [Recording verdicts](#recording-verdicts)
 - [Discover: finding models to add](#discover-finding-models-to-add)
+- [Quota management](#quota-management)
 - [The scheduler](#the-scheduler)
 - [Your data folder](#your-data-folder)
 
@@ -25,18 +26,25 @@ coding agent doing it with you); the gateway's whole contract is in
 | --- | --- | --- |
 | Observe | **At a glance** | Every model on the bench: whether it works right now, its role, and its connection. Click a name for its popup: role, alias, facts, options, retire. |
 | | **Benchmarks** | How models do on the suite and on real work: bugs found against false alarms, who is confidently wrong, and speed. |
-| | **Quota management** | What limits each connection, and which models are resting after hitting one. |
+| | **Quota management** | A tile per provider: what is left, when it resets, and which of its models are resting. Then the week's resets, and what the bench sent. |
 | | **Logs** | Gateway calls (who sat and how it went, never the prompt), changes made from the dashboard, the scheduler, and onboarding runs. |
 | Gateway | **Endpoints** | Where models are served from. Add an endpoint (a provider's sign-in, or any OpenAI-compatible API key), change a key, and see what each one serves. Also your own app registrations and rate limits per connection. |
 | | **Models** | Every model on the bench, by the connection it comes from. |
 | | **Collections** | The named panels your apps ask for, and the gateway's settings. |
 | | **Discover** | Models worth adding, from public catalogs, with the ways this install can reach each one. |
-| Control | **Settings** | Theme, gateway keys, the scheduler, the model client, providers whose free models work only in their own app, and how the install is reached (shown only). |
+| Control | **Settings** | Theme, gateway keys, the scheduler, the model client, providers whose free models work only in their own app, how the install is reached (shown only), and Restart. |
 | | **Info** | Version, Python, data folder and counts. |
 
 "Action needed", above the pages, lists what will not fix itself, such as a
-model about to be retired, with Retry, Open and Retire now beside it. Hide
-folds it away until something new turns up.
+model about to be retired, naming each model and where it comes from, with
+Retry, Open and Retire now beside it. Hide folds it away until something new
+turns up; an alert whose models have all been retired goes at once.
+
+**Restart** (Settings, Server and access), or `bench restart`, starts the
+dashboard again on the code now on disk, after an update. It waits for
+onboarding, a scheduled job and gateway calls in progress (`--force` cuts them
+off), and Settings says when newer code is on disk. It needs no service
+manager: `serve.py` restarts its own dashboard.
 
 ## Onboarding models
 
@@ -44,7 +52,8 @@ folds it away until something new turns up.
 not on the bench yet. Search, and tick one or several: the ticks survive a new
 search, so you can gather models from different connections in one go.
 Dismiss hides one you never want offered (an image model, say); the dismissed
-list brings it back.
+list brings it back. Each endpoint's list is kept an hour, with its age and a
+Refresh, and a model already queued or onboarding is not offered again.
 
 Each model is registered, probed with four short calls, and, if it answers,
 run through the suite. **Onboard as**, under the list, chooses how much that
@@ -94,6 +103,15 @@ everything else well stays `general`.
 A collection is a named panel: the models it always includes, the shape of
 work it is for (review, design, enumeration, ...), and how its reply comes
 back. On the **Collections** page, **New collection**, then pick the members.
+Each collection is drawn as its panel sits: a seat per member, the explorer
+seats dashed, and the merger after an arrow.
+
+In the popup, the panel's seats are on top, and the member list has one row
+per model with its context, vision and tools, and price. A model served by
+several providers is still one row, with a chip per provider: tick the chip
+of the route you want. Ticking two is allowed, and the count says so. The tags
+grey out the models that do not fit them, as before.
+
 Each call also seats explorers, the models unused longest, up to the gateway's
 limits (Gateway settings, on the same page: how many calls a request may make,
 and how many of them explore).
@@ -210,6 +228,38 @@ confirm before anything is added.
 Some providers' free models work only inside their own app; Discover leaves
 those out and keeps their paid models. Settings, **Free only in their own
 app**, switches a provider either way or adds one.
+
+## Quota management
+
+One tile per provider a bench model arrives through, shaped by how that
+provider limits:
+- **Windows**: CLI Proxy API's sign-ins have a 5-hour and a weekly limit per
+  model group. Other providers have the windows their rate-limit headers state.
+- **Pool**: OpenRouter's free requests a day, shared by its models, with a bar
+  per key.
+- **Each model's last day**: shown where the provider states nothing.
+
+Each tile shows when its limits reset and which of its models are resting
+after a rate limit. **Models** lists the provider's bench models, whether each
+is free to call now, and its last 24 hours of calls.
+
+**Refresh never spends quota.** On OpenRouter it asks the key what is left. On
+CLI Proxy API's sign-ins it asks the proxy for each one's quota, as its own
+console does; this needs CLI Proxy API on the Endpoints page as a hub, with
+its management key. Every other tile re-reads what the provider last said in
+its replies to the bench. **Check now** sends one 16-token request to read the
+reply's limit headers. It is offered only where the provider has sent them
+before.
+
+Tiles sort with the ones that are out first, then the soonest reset. Drag a
+tile, or move it with the arrow keys, and the order is kept; **Sort** brings
+the default order back.
+
+Under the tiles are:
+- the next 7 days' resets, and when each resting model is back
+- **What the bench sent**: requests per provider this month and in the last 24
+  hours, as a chart with its table
+- the known limits, folded away
 
 ## The scheduler
 

@@ -4,7 +4,7 @@
     python metrics/quotaview.py --selftest   # the parsers and the tile shapes; no calls
 
 One tile per connection tag a bench model arrives through
-(route.full_tag_of: `cli-proxy-api/antigravity`, `openrouter`, `nvidia-api`).
+(route.full_tag_of: `cli-proxy-api/codex`, `openrouter`, `nvidia-api`).
 A tile takes the shape of what its provider says:
 
     groups  windows per model group, several each (CLI Proxy API's OAuth
@@ -188,8 +188,8 @@ def _api_call(base, secret, auth_index, method, url, header, data=None) -> dict:
 
 
 def read_cliproxy(tag: str, sibling_vendors: set[str]) -> dict:
-    """Every enabled credential behind `tag`: `cli-proxy-api/antigravity` is
-    the antigravity ones, bare `cli-proxy-api` those no sibling tag names."""
+    """Every enabled credential behind `tag`: `cli-proxy-api/codex` is
+    the codex ones, bare `cli-proxy-api` those no sibling tag names."""
     base, secret = _cpa_hub()
     vendor = tag.split("/", 1)[1] if "/" in tag else ""
     creds = [c for c in _cpa(base, secret, "/credentials").get("files") or []

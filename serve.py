@@ -223,7 +223,7 @@ def tag_for(llm_id: str) -> str:
 
 def provider_label(tag: str) -> str:
     """A connection tag as a short provider name for a chip: a proxy's vendor
-    (cli-proxy-api/antigravity: antigravity), else the host without its api./
+    (cli-proxy-api/codex: codex), else the host without its api./
     router. prefix, -api suffix and TLD (router.requesty.ai: requesty)."""
     if "/" in tag:
         return tag.split("/", 1)[1]

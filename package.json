@@ -1,6 +1,6 @@
 {
   "name": "@wendellresearch-ai/benchwarmers",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Self-hosted panel gateway for LLMs: ask a collection of models at once, keep every answer side by side, rotate explorer models in, and let your verdicts pick the next panel.",
   "mcpName": "io.github.WendellResearch-AI/benchwarmers",
   "license": "MIT",

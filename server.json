@@ -5,12 +5,12 @@
   "description": "Ask a collection of LLMs at once through your Benchwarmers server; verdicts pick the next panel.",
   "repository": { "url": "https://github.com/WendellResearch-AI/benchwarmers", "source": "github" },
   "websiteUrl": "https://github.com/WendellResearch-AI/benchwarmers#readme",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "@wendellresearch-ai/benchwarmers",
-      "version": "0.4.0",
+      "version": "0.5.0",
       "runtimeHint": "npx",
       "transport": { "type": "stdio" },
       "packageArguments": [{ "type": "positional", "value": "mcp" }],
@@ -23,7 +23,7 @@
     {
       "registryType": "pypi",
       "identifier": "benchwarmers",
-      "version": "0.4.0",
+      "version": "0.5.0",
       "runtimeHint": "uvx",
       "transport": { "type": "stdio" },
       "packageArguments": [{ "type": "positional", "value": "mcp" }],
