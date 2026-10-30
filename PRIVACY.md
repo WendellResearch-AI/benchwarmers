@@ -24,6 +24,8 @@ Wendell Research.
   - xKiro's usage, asked with your key for it (from its Open WebUI connection
     when no endpoint has one). Its reply names the account's owner; only the
     quota figures are kept.
+  - Requesty's usage for the key and its public model list, asked the same
+    way; only the count of free-model requests is kept.
   - For CLI Proxy API's sign-ins, through the proxy, the quota endpoint of the
     provider each sign-in belongs to (Google's, ChatGPT's).
 - **Charts**: the dashboard's page loads Observable Plot from jsDelivr, at a

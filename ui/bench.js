@@ -1757,8 +1757,9 @@
   }
   function qWindow(w) {
     var raw = w.of != null && w.remaining != null;
-    return qMeter(raw ? '<b>' + qShort(w.remaining) + '</b> left of ' + qShort(w.of) + ' ' + w.label
-                      : '<b>' + w.left + '%</b> left · ' + w.label,
+    // The percentage leads every meter, raw or not, so they line up.
+    return qMeter('<b>' + w.left + '%</b> left · ' + (raw ? '<b>' + qShort(w.remaining) + '</b> of '
+                  + qShort(w.of) + ' ' + w.label : w.label),
                   qReset(w.reset_at), w.left, 'left',
                   (raw ? qNum(w.remaining) + ' of ' + qNum(w.of) + ' left, ' : '') + w.left + '%');
   }
@@ -1786,8 +1787,9 @@
     // come from, its plan, your per-minute caps, what a live read said. The
     // connection's own name and address are in Models.
     var about = el('div', {class: 'q-about'});
-    about.appendChild(el('div', {class: 'q-from'}, 'From ' + (t.source || ['nothing stated']).join('; ')
-                                                   + (t.plan ? ' · ' + t.plan + ' plan' : '')));
+    var src = t.source || [];
+    about.appendChild(el('div', {class: 'q-from'}, (src.length && src[0] !== 'nothing stated'
+      ? 'From ' + src.join('; ') : 'No limit stated') + (t.plan ? ' · ' + t.plan + ' plan' : '')));
     if (t.conn_limit) about.appendChild(el('div', {}, 'Your cap: ' + t.conn_limit + '.'));
     (t.notes || []).forEach(function (n) { about.appendChild(el('div', {}, n)); });
     node.appendChild(about);
@@ -1809,7 +1811,8 @@
     } else if (t.kind === 'pool') {
       t.pool.forEach(function (p) {
         body.appendChild(p.of
-          ? qMeter('<b>' + qShort(Math.max(0, p.of - p.used)) + '</b> left of ' + qShort(p.of) + ' ' + p.label,
+          ? qMeter('<b>' + p.left + '%</b> left · <b>' + qShort(Math.max(0, p.of - p.used)) + '</b> of '
+                   + qShort(p.of) + ' ' + p.label,
                    qReset(p.reset_at), p.left, 'left')
           : qMeter('<b>' + qShort(p.used) + '</b> ' + p.label + ' · limit not known', qReset(p.reset_at), null));
       });

@@ -250,10 +250,11 @@ limit is that model's own:
 - **Nothing stated**: how the provider's calls went in the last 24 hours, all
   its models together (green answered, red failed).
 
-Nothing is taken from a provider's docs, which can change without notice.
-Each meter reads what is left of what, in the provider's own unit ("189 left of
-200 requests · day"; a percentage where the provider gives only that), with
-its reset on the right. Under the name, one block says where the figures come
+Nothing is taken from a provider's docs, which can change without notice; a
+limit a provider states in a rate-limit error (UnoRouter's "allows 1
+request(s) every 1 min" for a model) is learned and kept to. Each meter leads
+with the percentage left, then what is left of what in the provider's own unit
+("94% left · 189 of 200 requests · day"), with its reset on the right. Under the name, one block says where the figures come
 from (**From**: the provider's quota endpoint or its replies' headers, exact;
 or a stated limit counted by the bench), your per-minute caps, and anything a
 live read reported. **Models** names the connection and how it is reached
@@ -263,10 +264,13 @@ now, and its last 24 hours of calls.
 
 **Refresh** picks its own way, and hovering it says which:
 - **A free read** on OpenRouter (it asks the key what is left), on xKiro (its
-  usage endpoint: free-model tokens left today, with the key from its endpoint
-  or its Open WebUI connection) and on CLI Proxy API's sign-ins (it asks the
-  proxy for each one's quota, as its own console does; this needs CLI Proxy API
-  on the Endpoints page as a hub, with its management key).
+  usage endpoint: free-model tokens left today), on Requesty (its usage
+  endpoint: the key's free-model requests today, by Requesty's count; its limit
+  only once a rate-limit reply has stated it) and on CLI Proxy API's sign-ins
+  (it asks the proxy for each one's quota, as its own console does; this needs
+  CLI Proxy API on the Endpoints page as a hub, with its management key).
+  xKiro's and Requesty's keys come from their endpoint, else their Open WebUI
+  connection.
 - **One 16-token request** where a provider states its limits only in its
   replies' headers, to read them (Groq, Routeway, a Cohere trial key). Every
   ordinary call reads them too, through Open WebUI as well, since the bench

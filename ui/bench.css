@@ -429,8 +429,7 @@ pre.log.answer { max-height: 40vh; }
 .q-line b { font-weight: 600; }
 .q-line > :first-child { min-width: 0; }
 .q-line > a.model { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.q-line .q-val { flex: none; white-space: nowrap; }
-.segs.none span { background: var(--step-1); opacity: .6; }
+.q-line .q-val { flex: none; white-space: nowrap; }.segs.none span { background: var(--step-1); opacity: .6; }
 /* Calls: green for what answered, red for what failed, out of every call. */
 .segs.calls span { background: var(--err); }
 .segs.calls i { background: var(--ok); }

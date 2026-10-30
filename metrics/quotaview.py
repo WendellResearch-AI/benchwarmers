@@ -77,6 +77,11 @@ WINDOW_NAMES = {"5h": "5 hours", "weekly": "week", "daily": "day", "monthly": "m
 # Free to ask: no tokens, outside the rate limits (docs.xkiro.com/api/usage, read 2026-10-29).
 XKIRO_HOST = "api.xkiro.com"
 XKIRO_USAGE = "https://api.xkiro.com/v1/usage"
+# A key may read its own usage with completions permission alone; the org's
+# needs manage (docs.requesty.ai/features/key-management-api, tried 2026-10-30).
+REQUESTY_HOST = "router.requesty.ai"
+REQUESTY_KEYS = "https://api-v2.requesty.ai/v1/manage/apikey"
+REQUESTY_MODELS = "https://router.requesty.ai/v1/models"     # public; a free model is priced at zero
 # A day or month cap is drawn counted from the ledger, as pacing.py counts:
 # yours from Endpoints (enforced), else one a provider states in its replies
 # without saying what is left (Cohere's x-endpoint-monthly-call-limit; shown,
@@ -207,6 +212,31 @@ def read_xkiro() -> dict:
     return {"groups": xkiro_groups(body, time.time()), "plan": str(body.get("plan") or ""), "notes": []}
 
 
+def requesty_free(usage: dict, models: dict) -> int:
+    """Requests to free models in a usage reply's (first) period. Its
+    model_used drops the provider (`muse-glimmer-30b` for nvidia/muse-glimmer-30b)."""
+    free = {str(m.get("id", "")).split("/")[-1] for m in models.get("data") or []
+            if not float(m.get("input_price") or 0) and not float(m.get("output_price") or 0)}
+    day = next(iter((usage.get("usage") or {}).values()), {})
+    return sum(r.get("total_requests") or 0 for r in day.get("grouped_data") or []
+               if str((r.get("group_by_values") or {}).get("model_used", "")).split("/")[-1] in free)
+
+
+def read_requesty() -> dict:
+    """Requesty's own count of this key's free-model requests since midnight
+    UTC (its usage API, whose periods are UTC dates). Its free limit is not
+    reported anywhere: only a 429 that states one gives the pool its `of`."""
+    head = {"Authorization": f"Bearer {_key_for(REQUESTY_HOST)}", "User-Agent": "benchwarmers"}
+    try:
+        me = _get_json(REQUESTY_KEYS + "/self", head)
+        start = dt.datetime.fromtimestamp(_utc_midnight(time.time()), UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        usage = _get_json(f"{REQUESTY_KEYS}/{me['id']}/usage?start={start}&resolution=day&group_by=model_used", head)
+        models = _get_json(REQUESTY_MODELS, {"User-Agent": "benchwarmers"})
+    except urllib.error.HTTPError as exc:
+        raise ValueError(f"Requesty answered {exc.code} on its usage API") from None
+    return {"free_used": requesty_free(usage, models), "notes": []}
+
+
 def _cpa_hub() -> tuple[str, str]:
     """(management base, key) of the CLI Proxy API hub; ValueError when there is none."""
     import endpoints
@@ -312,6 +342,8 @@ def refresh(tag: str) -> dict:
         got = read_openrouter()
     elif _host(tag) == XKIRO_HOST:
         got = read_xkiro()
+    elif _host(tag) == REQUESTY_HOST:
+        got = read_requesty()
     else:
         vendors = {t.split("/", 1)[1] for t in _tags() if t.startswith("cli-proxy-api/")}
         got = read_cliproxy(tag, vendors)
@@ -350,7 +382,7 @@ def how_refreshed(tag: str) -> str:
     """"live" (a free read), "check" (one short call whose headers say what is
     left) or "records" (nothing to ask: the bench's own records)."""
     if (tag.split("/")[0] == "cli-proxy-api" or tag == "openrouter" and _openrouter_endpoint()
-            or _host(tag) == XKIRO_HOST):
+            or _host(tag) in (XKIRO_HOST, REQUESTY_HOST)):
         return "live"
     return "check" if _headers_seen(tag) else "records"
 
@@ -503,6 +535,14 @@ def tiles(now: float | None = None) -> list[dict]:
         elif tag == "openrouter":
             t["kind"] = "pool"
             t["pool"] = _openrouter_pool(aliases, utc_rows, regs, got, learned, now)
+        elif host == REQUESTY_HOST and "free_used" in got and (_ts(got.get("at")) or 0) >= _utc_midnight(now):
+            # Requesty's count; the limit only as a 429 stated it (learned).
+            of = min([v for v in (((learned.get(a) or {}).get("limits") or {}).get("rpd", {}).get("value")
+                                  for a in aliases) if v] or [0]) or None
+            used = got["free_used"]
+            t["kind"] = "pool"
+            t["pool"] = [{"label": "free requests today · this key", "used": used, "of": of,
+                          "left": max(0, round(100 * (of - used) / of)) if of else None, "reset_at": None}]
         if t["kind"] == "models":                       # the headers' windows, as last seen
             # A window past its reset has filled again: its limit is known, all
             # of it left, the next reset not.
@@ -523,7 +563,8 @@ def tiles(now: float | None = None) -> list[dict]:
         # Where the tile's figures come from, said on it: exact (an endpoint,
         # the replies' headers) or a stated limit counted by the bench.
         t["source"] = ((["its reply headers" if got.get("how") == "seen" else "its quota endpoint"] if t["groups"] else [])
-                       + (["its stated daily limit, counted by the bench"] if t["pool"] else [])
+                       + ([("its usage endpoint" if host == REQUESTY_HOST
+                             else "its stated daily limit, counted by the bench")] if t["pool"] else [])
                        + [g["label"] for g in t["caps"]]) or ["nothing stated"]
         last = max((r["t"] for r in rows if r.get("status") == "ok"), default=None)
         t["fresh"] = ({"how": "live", "at": got["at"]} if got.get("at") and got.get("how") != "seen"
@@ -613,6 +654,14 @@ def _selftest() -> None:
                                    "reset_at": "2026-10-30T00:00:00+00:00"}, xk
     assert xk[1]["windows"][0]["label"] == "5 hours · spend" and xk[1]["windows"][0]["left"] == 75, xk
     assert xkiro_groups({"free_tokens": {"limit_per_day": None}, "windows": []}, now) == []
+    rq = {"usage": {"2026-10-30": {"total_requests": 10, "grouped_data": [
+        {"group_by_values": {"model_used": "muse-glimmer-30b"}, "total_requests": 2},
+        {"group_by_values": {"model_used": "nemotron-3-nano-omni-30b-a3b-reasoning"}, "total_requests": 7},
+        {"group_by_values": {"model_used": "some-paid-model"}, "total_requests": 1}]}}}
+    ms = {"data": [{"id": "nvidia/muse-glimmer-30b", "input_price": 0, "output_price": 0},
+                   {"id": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning", "input_price": 0, "output_price": 0},
+                   {"id": "lab/some-paid-model", "input_price": 0.000001, "output_price": 0.000002}]}
+    assert requesty_free(rq, ms) == 9 and requesty_free({}, ms) == 0
     # Caps: yours beat a stated one on the same axis; counted since midnight UTC or the month's start.
     mid = _utc_midnight(now)
     day = [{"connection": "router.requesty.ai", "t": mid + 60, "attempts": 2},

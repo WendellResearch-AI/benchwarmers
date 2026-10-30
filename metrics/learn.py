@@ -60,9 +60,17 @@ RETRY = [
     r"\"retry_?delay\"\s*:\s*\"(\d+(?:\.\d+)?)s",
     r"\"retry_after\"\s*:\s*(\d+(?:\.\d+)?)",
     r"(?:try|retry) again in\s*(\d+(?:\.\d+)?)\s*(s|sec|seconds?|m|min|minutes?|h|hours?)\b",
-    r"please retry in\s*(\d+(?:\.\d+)?)\s*(s|m|h)",
+    r"\bretry in\s*(\d+(?:\.\d+)?)\s*(s|m|h)",         # "please retry in 2s", UnoRouter's "retry in 60s"
 ]
 RATE_LIMITED = re.compile(r"rate.?limit|too many requests|\b429\b|quota exceeded|resource_exhausted")
+# The number and its window in one phrase: UnoRouter's free tier, "allows 5
+# request(s) every 1 min per account on <model>:free". "every" only: the
+# bench's own refusal says "allows 3 requests per minute" (pacing.py), and a
+# limit the bench made up must never be learned back.
+ALLOWS = re.compile(r"allows?\s+([\d,]+)\s+requests?(?:\(s\))?\s+every\s+(?:1\s+)?(min(?:ute)?|day)\b")
+# new-api gateways (Agnes): "maximum 20 requests in 1 minutes" (its
+# middleware/model-rate-limit.go); a window of 1 minute or 1,440 only.
+MAXIMUM = re.compile(r"maximum\s+([\d,]+)\s+requests?\s+in\s+(1|1440)\s+minutes?\b")
 
 
 def _int(s: str) -> int:
@@ -83,6 +91,10 @@ def parse(text: str) -> dict:
     named = [axis for axis, pat in AXES.items() if re.search(pat, low)]
     if len(named) == 1 and (m := re.search(r"\blimit\b[\s:=]*([\d,]+)", low)):
         out["limits"] = {named[0]: _int(m.group(1))}
+    elif m := ALLOWS.search(low):
+        out["limits"] = {"rpd" if m.group(2) == "day" else "rpm": _int(m.group(1))}
+    elif m := MAXIMUM.search(low):
+        out["limits"] = {"rpd" if m.group(2) == "1440" else "rpm": _int(m.group(1))}
     for pat in RETRY:
         if m := re.search(pat, low):
             n = float(m.group(1))
@@ -205,6 +217,18 @@ def _selftest() -> None:
     assert p["retry_after_s"] == 180 and "limits" not in p, p      # no number under a named axis
     # Two axes named: the number is not filed under either.
     assert "limits" not in parse("limit 100 (tokens per minute) and requests per minute")
+    # UnoRouter's free tier says the number and its window together.
+    p = parse("Error code: 429 - {'error': {'message': 'Too many requests. The free tier allows 5 request(s) every"
+              " 1 min per account on llama-3.2-11b-vision:free - nothing is used up, retry in 60s.")
+    assert p["limits"] == {"rpm": 5} and p["retry_after_s"] == 60 and p["rate_limited"], p
+    assert parse("The free tier allows 200 requests every day")["limits"] == {"rpd": 200}
+    assert "limits" not in parse("allows 3 requests every 5 min")             # a window no axis holds
+    assert "limits" not in parse("rate limit (not sent; paced by the bench): x allows 3 requests per minute")
+    # A new-api gateway's 429 (Agnes).
+    p = parse("Error code: 429 - {'error': {'message': 'You have reached the request limit: maximum 20 requests"
+              " in 1 minutes', 'type': 'AgnesAI_error'}}")
+    assert p["limits"] == {"rpm": 20} and p["rate_limited"], p
+    assert "limits" not in parse("maximum 100 requests in 5 minutes")         # a window no axis holds
     assert parse("model not found") == {"rate_limited": False}
     assert parse("context length of 8k exceeded").get("context_window") is None   # "8" < 512
     print("ok")
