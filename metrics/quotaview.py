@@ -71,6 +71,21 @@ WINDOW_NAMES = {"5h": "5 hours", "weekly": "week", "daily": "day", "monthly": "m
 # Free to ask: no tokens, outside the rate limits (docs.xkiro.com/api/usage, read 2026-10-29).
 XKIRO_HOST = "api.xkiro.com"
 XKIRO_USAGE = "https://api.xkiro.com/v1/usage"
+# A day or month cap is drawn counted from the ledger, as pacing.py counts:
+# yours from Endpoints (enforced), else one a provider documents but no reply
+# or endpoint reports (STATED, read 2026-10-29: shown, never enforced, as
+# FreeLLMAPI's figures are not). (word in the connection, axis, cap, source, detail)
+COUNTED = {"rpd": ("requests", "day"), "tpd": ("tokens", "day"), "rpmo": ("requests", "month")}
+STATED = (("requesty", "rpd", 200, "Requesty's docs", "Free models, per organisation; 1,000 once it has paid."),
+          ("cohere", "rpmo", 1000, "Cohere's docs", "A trial key's calls a month, every endpoint together;"
+                                                     " its replies say 1,000 too (x-endpoint-monthly-call-limit)."))
+# Where the only limit is per minute, or a credit nothing reports: said, not drawn.
+STATED_NOTES = (
+    ("nvidia", "About 40 requests a minute per model; no daily or monthly cap (NVIDIA's forum)."),
+    ("agnes", "Agnes sets free requests a minute as it goes (about 20); no daily cap stated."),
+    ("unorouter", "Free models: 1 request a minute each; no daily cap (UnoRouter's docs)."),
+    ("moondream", "$5 of free credit a month, 2 requests a second; the credit left is not reported (Moondream's docs)."),
+    ("inceptionlabs", "1,000 requests a minute; a one-time credit of 100M tokens, not reported (Inception's docs)."))
 
 
 def _iso(t: float | None) -> str | None:
@@ -387,8 +402,40 @@ def _model_rows(aliases, rows, resting, limits) -> list[dict]:
 
 
 def _limit_text(lim: dict) -> str:
-    words = {"rpm": "requests a minute", "rpd": "requests a day", "tpm": "tokens a minute", "tpd": "tokens a day"}
+    words = {"rpm": "requests a minute", "rpd": "requests a day", "tpm": "tokens a minute", "tpd": "tokens a day",
+             "rpmo": "requests a calendar month"}
     return ", ".join(f"{v:,} {words[k]}" for k, v in lim.items() if k in words and v)
+
+
+def caps(host: str, tag: str, entered: dict, day_rows: list, month_rows, now: float) -> list[dict]:
+    """The connection's day and month caps as groups of windows, each counted
+    from the bench's ledger since midnight UTC or the month's start (what a
+    provider's calendar counts): yours, else STATED. `month_rows` is called
+    only when a month cap needs it."""
+    mine = {k: (v, "set by you", "On Endpoints, Rate limits per connection; the bench keeps to it.")
+            for k, v in (entered.get(host) or {}).items() if k in COUNTED and v}
+    where = (host + " " + tag).lower()
+    for word, axis, n, source, detail in STATED:
+        if word in where:
+            mine.setdefault(axis, (n, source, detail + " Shown, not enforced: set it on Endpoints to have"
+                                   " the bench keep to it."))
+    by: dict[str, list] = {}
+    about: dict[str, str] = {}
+    for axis, (n, source, detail) in mine.items():
+        about[source] = detail
+        metric, window = COUNTED[axis]
+        start, end = ((_utc_midnight(now), _utc_midnight(now) + 86400) if window == "day"
+                      else (__import__("ledger").month_start(now), __import__("ledger").next_month(now)))
+        rows = [r for r in (day_rows if window == "day" else month_rows())
+                if r.get("connection") == host and r["t"] >= start]
+        used = sum((r.get("attempts") or 0) if metric == "requests"
+                   else (r.get("tokens_in") or 0) + (r.get("tokens_out") or 0) for r in rows)
+        left = max(0, n - used)
+        by.setdefault(source, []).append({"label": f"{metric} · {window}", "left": round(100 * left / n),
+                                          "remaining": left, "of": n, "reset_at": _iso(end)})
+    return [{"label": f"{source} · counted by the bench", "title": about[source] + " Counted from the bench's"
+             " own calls: calls made elsewhere with the same key are not in it.", "windows": w}
+            for source, w in by.items()]
 
 
 def tiles(now: float | None = None) -> list[dict]:
@@ -405,6 +452,12 @@ def tiles(now: float | None = None) -> list[dict]:
     utc_rows = [r for r in day_rows if r["t"] >= _utc_midnight(now)]
     entered = catalog.connection_limits()
     regs = __import__("endpoints").registrations()
+    month: list = []                                   # this month's ledger, read once if a month cap asks
+
+    def month_rows() -> list:
+        if not month:
+            month.append(list(ledger.rows(ledger.month_start(now))))
+        return month[0]
     out = []
     for tag, aliases in tags.items():
         host = route.connection_of(aliases[0])
@@ -414,7 +467,9 @@ def tiles(now: float | None = None) -> list[dict]:
         limits = {a: t for a, t in limits.items() if t}
         rows = [r for r in day_rows if r.get("alias") in mine]
         t = {"id": tag, "tag": tag, "host": host, "bench": len(aliases), "kind": "models", "groups": [],
-             "pool": [], "notes": [], "conn_limit": _limit_text(entered.get(host) or {}),
+             "pool": [], "notes": [],          # a day or month cap is a meter (caps), a minute one is said
+             "conn_limit": _limit_text({k: v for k, v in (entered.get(host) or {}).items() if k in ("rpm", "tpm")}),
+             "caps": caps(host, tag, entered, day_rows, month_rows, now),
              "models": _model_rows(aliases, rows, resting, limits),
              "refresh": how_refreshed(tag), "plan": "", "name": ""}
         got = live.get(tag) or {}
@@ -444,13 +499,14 @@ def tiles(now: float | None = None) -> list[dict]:
                       else {"how": "seen", "at": got["at"]} if got.get("at")
                       else {"how": "answered", "at": _iso(last)} if last else {"how": "none", "at": None})
         t["live"] = sum(1 for a in aliases if a not in resting)
-        resets = [_ts(w.get("reset_at")) for g in t["groups"] for w in g["windows"]] \
-            + [_ts(p.get("reset_at")) for p in t["pool"]]
+        windows = [w for g in t["groups"] + t["caps"] for w in g["windows"]]
+        resets = [_ts(w.get("reset_at")) for w in windows] + [_ts(p.get("reset_at")) for p in t["pool"]]
         resets = [r for r in resets if r and r > now]
         t["next_reset"] = _iso(min(resets)) if resets else None
-        t["out"] = (t["live"] == 0 or any(w["left"] <= 0 for g in t["groups"] for w in g["windows"])
+        t["out"] = (t["live"] == 0 or any(w["left"] <= 0 for w in windows)
                     or any(p.get("left") == 0 for p in t["pool"]))
-        t["notes"] = list(got.get("notes") or [])
+        where = (host + " " + tag).lower()
+        t["notes"] = list(got.get("notes") or []) + [n for word, n in STATED_NOTES if word in where]
         out.append(t)
     return ordered(out)
 
@@ -527,6 +583,24 @@ def _selftest() -> None:
                                    "reset_at": "2026-10-30T00:00:00+00:00"}, xk
     assert xk[1]["windows"][0]["label"] == "5 hours · spend" and xk[1]["windows"][0]["left"] == 75, xk
     assert xkiro_groups({"free_tokens": {"limit_per_day": None}, "windows": []}, now) == []
+    # Caps: yours beat a stated one on the same axis; counted since midnight UTC or the month's start.
+    mid = _utc_midnight(now)
+    day = [{"connection": "router.requesty.ai", "t": mid + 60, "attempts": 2},
+           {"connection": "router.requesty.ai", "t": mid - 60, "attempts": 5},      # yesterday
+           {"connection": "api.cohere.ai", "t": mid + 60, "attempts": 1, "tokens_in": 10, "tokens_out": 5},
+           {"connection": "router.requesty.ai", "t": mid + 90, "attempts": 0}]       # refused: not sent
+    g = caps("router.requesty.ai", "router.requesty.ai", {}, day, lambda: [], now)
+    assert len(g) == 1 and g[0]["windows"][0] == {"label": "requests · day", "left": 99, "remaining": 198,
+                                                  "of": 200, "reset_at": _iso(mid + 86400)}, g
+    assert g[0]["label"] == "Requesty's docs · counted by the bench" and "not enforced" in g[0]["title"], g
+    g = caps("router.requesty.ai", "router.requesty.ai", {"router.requesty.ai": {"rpd": 10, "rpm": 5}}, day,
+             lambda: [], now)
+    assert g[0]["label"] == "set by you · counted by the bench" and g[0]["windows"] == [
+        {"label": "requests · day", "left": 80, "remaining": 8, "of": 10, "reset_at": _iso(mid + 86400)}], g
+    asked = []
+    g = caps("api.cohere.ai", "api.cohere.ai", {}, day, lambda: asked.append(1) or day, now)
+    assert asked and g[0]["windows"][0]["remaining"] == 999 and g[0]["windows"][0]["label"] == "requests · month", g
+    assert caps("nvidia-api", "nvidia-api", {}, day, lambda: 1 / 0, now) == []         # no cap: no ledger read
     assert _seconds_name(18000) == "5 hours" and _seconds_name(7200) == "2 hours"
     assert _utc_midnight(1793306000) == dt.datetime(2026, 10, 29, tzinfo=UTC).timestamp()
     assert _limit_text({"rpm": 20, "tpd": 200000}) == "20 requests a minute, 200,000 tokens a day"

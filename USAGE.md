@@ -243,7 +243,12 @@ provider limits:
 - **Each model's last day**: shown where the provider states nothing.
 
 Each tile shows when its limits reset and which of its models are resting
-after a rate limit. Where nothing is stated, each model's last 24 hours is a
+after a rate limit. A day or month cap is drawn too, counted from the bench's
+own calls: one you set on Endpoints (Rate limits per connection), else one the
+provider documents but never reports (Requesty's 200 free requests a day, a
+Cohere trial key's 1,000 calls a month), shown but not enforced until you set
+it. Calls made elsewhere with the same key are not in the count. Where a
+provider's only limit is per minute, the tile says so. Where nothing is stated, each model's last 24 hours is a
 meter of its calls: green for what answered, red for what failed. **Models**
 lists the provider's bench models (each opens its popup), whether each is free
 to call now, and its last 24 hours of calls.
@@ -255,7 +260,7 @@ to call now, and its last 24 hours of calls.
   proxy for each one's quota, as its own console does; this needs CLI Proxy API
   on the Endpoints page as a hub, with its management key).
 - **One 16-token request** where a provider states its limits only in its
-  replies' headers, to read them (Groq, Routeway). Every ordinary call reads
+  replies' headers, to read them (Groq, Routeway, a Cohere trial key's minute). Every ordinary call reads
   them too, through Open WebUI as well, since the bench streams.
 - **The bench's own records** again everywhere else.
 

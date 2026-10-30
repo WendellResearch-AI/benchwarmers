@@ -1768,6 +1768,13 @@
     node.appendChild(head);
     node.appendChild(el('div', {class: 'q-tag mono', title: t.tag}, t.tag + (t.plan ? ' · ' + t.plan : '')));
     var body = el('div', {class: 'q-body'});
+    // Day and month caps, counted by the bench: yours, else what the provider documents.
+    (t.caps || []).forEach(function (g) {
+      var box = el('section', {class: 'q-group', title: g.title || ''});
+      box.appendChild(el('h4', {}, g.label));
+      g.windows.forEach(function (w) { box.appendChild(qWindow(w)); });
+      body.appendChild(box);
+    });
     if (t.kind === 'groups') {
       t.groups.forEach(function (g) {
         var box = el('section', {class: g.label ? 'q-group' : 'q-group bare'});
@@ -1961,6 +1968,7 @@
       QD.tiles.forEach(function (t) {
         var wins = [];
         t.groups.forEach(function (g) { g.windows.forEach(function (w) { wins.push({label: (g.label ? g.label + ' · ' : '') + w.label, at: w.reset_at}); }); });
+        (t.caps || []).forEach(function (g) { g.windows.forEach(function (w) { wins.push({label: w.label + ' (' + g.label + ')', at: w.reset_at, daily: / day$/.test(w.label)}); }); });
         t.pool.forEach(function (p) { if (p.reset_at) wins.push({label: p.label, at: p.reset_at, daily: true}); });
         wins.forEach(function (w) {
           var at = +new Date(w.at), daily = w.daily || / day$/.test(w.label);
