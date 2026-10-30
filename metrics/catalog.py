@@ -283,6 +283,11 @@ def refresh() -> dict:
             "refreshed": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
             "models": models}
     CATALOG.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    try:                                               # NVIDIA's stated limits, watched daily (an alert on a change)
+        import quotaview
+        quotaview.watch_nvidia()
+    except Exception:                                  # noqa: BLE001
+        pass
     return data
 
 

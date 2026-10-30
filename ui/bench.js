@@ -411,6 +411,14 @@
       var act = b.dataset.act, aliases = (b.dataset.aliases || b.dataset.alias || '').split(' ').filter(Boolean);
       var status = b.closest('.problem').querySelector('.why');
       if (act === 'open') { openModel(aliases[0]); return; }
+      if (act === 'dismiss') {               // a notice: gone once seen
+        b.disabled = true;
+        post('/api/alerts/dismiss', {key: b.dataset.key}).then(function (res) {
+          if (!res.ok) { status.textContent = res.errors.join('; '); status.classList.add('err'); b.disabled = false; return; }
+          location.reload();
+        }).catch(function (err) { status.textContent = String(err); b.disabled = false; });
+        return;
+      }
       if (act === 'retry') {                 // no confirm: one call, and only an answer changes anything
         b.disabled = true; b.textContent = 'Asking…';
         post('/api/retry', {alias: aliases[0]}).then(function (res) {

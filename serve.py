@@ -686,6 +686,17 @@ def remove_model(alias: str, reason: str = "", who: str = "ui") -> dict:
     return {"ok": True, "errors": [], "changed": changed, "sync": _sync_cli()}
 
 
+def dismiss_alert(key: str) -> dict:
+    """Got it on a notice (an alert raised with dismiss=True, such as NVIDIA
+    changing its stated limits). A state that is still wrong is not dismissed:
+    its check clears it when it is put right."""
+    import alerts as _alerts
+    if not (_alerts.active().get(key) or {}).get("dismiss"):
+        return {"ok": False, "errors": [f"{key!r} is not a notice that can be dismissed"]}
+    _alerts.clear(key)
+    return {"ok": True, "errors": []}
+
+
 def retry_model(alias: str, who: str = "ui") -> dict:
     """One fresh call to a model on a retiring alert. An answer is written to
     perf/history.csv as evidence (scripts/auto_retire.py reads it, so the
@@ -2038,6 +2049,8 @@ def problems() -> str:
             acts.append(f"<button class='btn small' data-act='open' data-alias='{esc(alias)}'>Open</button>")
             acts.append(f"<button class='btn small danger' data-act='retire' data-alias='{esc(alias)}'"
                         f" data-why='{esc(a.get('message', ''))}'>Retire now</button>")
+        if a.get("dismiss"):                           # a notice, not a state: it goes once seen
+            acts.append(f"<button class='btn small' data-act='dismiss' data-key='{esc(key)}'>Got it</button>")
         items.append((key, a.get("kind", "?"), KIND.get(a.get("kind"), "warn"),
                       a.get("message", ""), why, "".join(acts)))
     cutoff = (today - datetime.timedelta(days=7)).isoformat()
@@ -4358,6 +4371,7 @@ class Handler(gateway.Handler):
                "/api/theme": lambda p: save_theme(str(p.get("theme") or "")),
                "/api/quota/refresh": lambda p: quota_op("refresh", str(p.get("tag") or "")),
                "/api/quota/about": lambda p: quota_op("about", str(p.get("tag") or "")),
+               "/api/alerts/dismiss": lambda p: dismiss_alert(str(p.get("key") or "")),
                "/api/quota/order": lambda p: quota_op("order", p.get("order")),
                "/api/restart": lambda p: restart(p.get("force") is True)}
         # SAME ORIGIN ONLY. Any page open in the browser can POST a plain form

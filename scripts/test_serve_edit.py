@@ -486,6 +486,15 @@ def main() -> int:
     print(("ok   " if ok else "FAIL ") + "provider chip names" + ("" if ok else f" -> {got}"))
     failures += 0 if ok else 1
 
+    # Got it clears a notice (NVIDIA changed its figures), never a state still wrong.
+    alerts.raise_alert("test:notice", "limits", "a notice", dismiss=True)
+    alerts.raise_alert("test:state", "limits", "a state")
+    ok = (serve.dismiss_alert("test:notice")["ok"] and not serve.dismiss_alert("test:state")["ok"]
+          and "test:notice" not in alerts.active() and "test:state" in alerts.active())
+    alerts.clear("test:state")
+    print(("ok   " if ok else "FAIL ") + "Got it dismisses a notice, not a state")
+    failures += 0 if ok else 1
+
     # The owner's files are as they were. alerts.json can change under a
     # running suite, so only what this test could do counts: the victim's
     # alerts cleared from the real file.

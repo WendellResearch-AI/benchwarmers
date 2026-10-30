@@ -252,7 +252,13 @@ limit is that model's own:
 
 Nothing is taken from a provider's docs, which can change without notice; a
 limit a provider states in a rate-limit error (UnoRouter's "allows 1
-request(s) every 1 min" for a model) is learned and kept to. Each meter leads
+request(s) every 1 min" for a model) is learned and kept to. One exception,
+watched: NVIDIA states no limit per key, so its tile reads the file
+build.nvidia.com's own badge reads (10,000 requests a day, up to 40 a minute,
+the same for every account) daily and on Refresh, and counts the bench's
+requests against it. If NVIDIA changes those figures, Action needed says so
+(Got it dismisses it); if the file moves or changes shape, Action needed says
+that too, and the tile keeps the figures it last read. Each meter leads
 with the percentage left, then what is left of what in the provider's own unit
 ("94% left · 189 of 200 requests · day"), with its reset on the right. Under the name, one block says where the figures come
 from (**From**: the provider's quota endpoint or its replies' headers, exact;

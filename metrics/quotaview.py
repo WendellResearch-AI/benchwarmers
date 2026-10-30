@@ -82,6 +82,10 @@ XKIRO_USAGE = "https://api.xkiro.com/v1/usage"
 REQUESTY_HOST = "router.requesty.ai"
 REQUESTY_KEYS = "https://api-v2.requesty.ai/v1/manage/apikey"
 REQUESTY_MODELS = "https://router.requesty.ai/v1/models"     # public; a free model is priced at zero
+# The one figure from a provider's published text, not its replies: the file
+# build.nvidia.com reads for its "Your API Rate Limit" badge, the same for
+# everyone. Watched (watch_nvidia): a change or a failure to read it is an alert.
+NVIDIA_COPY = "https://build.nvidia.com/api/runtime/content/copy.yaml"
 # A day or month cap is drawn counted from the ledger, as pacing.py counts:
 # yours from Endpoints (enforced), else one a provider states in its replies
 # without saying what is left (Cohere's x-endpoint-monthly-call-limit; shown,
@@ -237,6 +241,56 @@ def read_requesty() -> dict:
     return {"free_used": requesty_free(usage, models), "notes": []}
 
 
+def nvidia_figures(body: dict) -> dict:
+    """copy.yaml (JSON in fact) -> {rpd, rpm_text}; ValueError when its
+    rateLimits or a day's number is missing: the file changed shape."""
+    import re
+    rl = body.get("rateLimits") if isinstance(body, dict) else None
+    if not isinstance(rl, dict):
+        raise ValueError("it no longer has rateLimits")
+    m = re.search(r"([\d,]+)\s+requests?\s+(?:per|a)\s+day", str(rl.get("requestsPerDay") or ""))
+    if not m:
+        raise ValueError(f"its requestsPerDay no longer says a number a day: {str(rl.get('requestsPerDay'))[:60]!r}")
+    return {"rpd": int(m.group(1).replace(",", "")), "rpm_text": str(rl.get("requestsPerMinute") or "")}
+
+
+def _nvidia_on_bench() -> bool:
+    return any("nvidia" in (t + " " + _host(t)).lower() for t in _tags())
+
+
+def watch_nvidia() -> dict:
+    """Read NVIDIA's stated figures and keep the last good read (LIVE
+    "_nvidia"). A change raises an alert you dismiss; a failure (moved,
+    broken, a new shape) raises one that clears once it reads again. Run
+    daily by the catalog job and by the tile's Refresh; nothing without an
+    NVIDIA connection on the bench."""
+    import alerts
+    prev = locked.read_json(LIVE).get("_nvidia") or {}
+    if not _nvidia_on_bench():
+        return prev
+    try:
+        try:
+            body = _get_json(NVIDIA_COPY, {"User-Agent": "benchwarmers"})
+        except urllib.error.HTTPError as exc:
+            raise ValueError(f"build.nvidia.com answered {exc.code}") from None
+        got = dict(nvidia_figures(body), at=_iso(time.time()))
+    except (ValueError, OSError) as exc:
+        since = f" (last read {prev['at'][:10]})" if prev.get("at") else ""
+        alerts.raise_alert("limits:nvidia:unread", "limits", f"NVIDIA's limits file could not be read: {exc}",
+                           action=f"It may have moved from {NVIDIA_COPY}. The NVIDIA tile keeps the figures"
+                                  f" it read before{since}.")
+        locked.update(LIVE, lambda d: d.setdefault("_nvidia", {}).update(broken=str(exc)), ensure_ascii=False)
+        return dict(prev, broken=str(exc))
+    alerts.clear("limits:nvidia:unread")
+    if prev.get("rpd") and (prev["rpd"], prev.get("rpm_text")) != (got["rpd"], got["rpm_text"]):
+        alerts.raise_alert("limits:nvidia:changed", "limits",
+                           f"NVIDIA changed its stated limits: {prev['rpd']:,} a day, {prev.get('rpm_text')!r}"
+                           f" -> {got['rpd']:,} a day, {got['rpm_text']!r}",
+                           action="The NVIDIA tile counts against the new figures.", dismiss=True)
+    locked.update(LIVE, lambda d: d.update({"_nvidia": got}), ensure_ascii=False)
+    return got
+
+
 def _cpa_hub() -> tuple[str, str]:
     """(management base, key) of the CLI Proxy API hub; ValueError when there is none."""
     import endpoints
@@ -330,6 +384,10 @@ def refresh(tag: str) -> dict:
     replies, one 16-token call (check); else the bench's own records.
     {"ok", "how": "live"|"check"|"records", "note"}."""
     how = how_refreshed(tag)
+    if "nvidia" in (tag + " " + _host(tag)).lower():
+        got = watch_nvidia()
+        return {"ok": True, "how": "live", "note": f"NVIDIA's limits file could not be read: {got['broken']};"
+                " showing the figures read before" if got.get("broken") else ""}
     if how == "check":
         r = check(tag)
         if r.get("ok"):
@@ -382,7 +440,7 @@ def how_refreshed(tag: str) -> str:
     """"live" (a free read), "check" (one short call whose headers say what is
     left) or "records" (nothing to ask: the bench's own records)."""
     if (tag.split("/")[0] == "cli-proxy-api" or tag == "openrouter" and _openrouter_endpoint()
-            or _host(tag) in (XKIRO_HOST, REQUESTY_HOST)):
+            or _host(tag) in (XKIRO_HOST, REQUESTY_HOST) or "nvidia" in (tag + " " + _host(tag)).lower()):
         return "live"
     return "check" if _headers_seen(tag) else "records"
 
@@ -457,14 +515,14 @@ def _limit_text(lim: dict) -> str:
 def caps(host: str, entered: dict, stated: dict, day_rows: list, month_rows, now: float) -> list[dict]:
     """The connection's day and month caps as groups of windows, each counted
     from the bench's ledger since midnight UTC or the month's start (what a
-    provider's calendar counts): yours, else `stated` ({axis: limit}, what its
-    replies say with nothing left given). `month_rows` is called only when a
-    month cap needs it."""
+    provider's calendar counts): yours, else `stated` ({axis: (limit, source,
+    detail)}: what its replies say with nothing left given, or NVIDIA's site).
+    `month_rows` is called only when a month cap needs it."""
     mine = {k: (v, "your cap", "Set on Endpoints, Rate limits per connection; the bench keeps to it.")
             for k, v in (entered.get(host) or {}).items() if k in COUNTED and v}
-    for axis, n in stated.items():
-        mine.setdefault(axis, (n, "its replies", "The provider's replies state this limit but not what is"
-                               " left. Shown, not enforced: set it on Endpoints to have the bench keep to it."))
+    for axis, (n, source, detail) in stated.items():
+        mine.setdefault(axis, (n, source, detail + " Shown, not enforced: set it on Endpoints to have the bench"
+                                                   " keep to it."))
     by: dict[str, list] = {}
     about: dict[str, str] = {}
     for axis, (n, source, detail) in mine.items():
@@ -517,11 +575,17 @@ def tiles(now: float | None = None) -> list[dict]:
         seen_recs = [r for a, by in (locked.read_json(quota.FILE).get(host) or {}).items()
                      if a in mine and isinstance(by, dict) for r in by.values()
                      if isinstance(r, dict) and r.get("limit") and r.get("window") != "retry-after"]
-        stated: dict[str, int] = {}
+        stated: dict[str, tuple] = {}
         for r in seen_recs:
             if r.get("remaining") is None and r["metric"] == "requests" and r.get("window") in ("day", "month"):
                 axis = "rpd" if r["window"] == "day" else "rpmo"
-                stated[axis] = max(stated.get(axis, 0), r["limit"])
+                if r["limit"] > (stated.get(axis) or (0,))[0]:
+                    stated[axis] = (r["limit"], "its replies", "The provider's replies state this limit but not"
+                                                               " what is left.")
+        nv = (live.get("_nvidia") or {}) if "nvidia" in (host + " " + tag).lower() else {}
+        if nv.get("rpd"):
+            stated.setdefault("rpd", (nv["rpd"], "NVIDIA's site", "The figure build.nvidia.com shows every account"
+                                      f" (not this key's own), read {str(nv.get('at'))[:10]}."))
         t = {"id": tag, "tag": tag, "host": host, "bench": len(aliases), "kind": "models", "groups": [],
              "pool": [], "notes": [],          # a day or month cap is a meter (caps), a minute one is said
              "conn_limit": _limit_text({k: v for k, v in (entered.get(host) or {}).items() if k in ("rpm", "tpm")}),
@@ -577,7 +641,10 @@ def tiles(now: float | None = None) -> list[dict]:
         t["next_reset"] = _iso(min(resets)) if resets else None
         t["out"] = (t["live"] == 0 or any(w["left"] <= 0 for w in windows)
                     or any(p.get("left") == 0 for p in t["pool"]))
-        t["notes"] = list(got.get("notes") or [])
+        t["notes"] = list(got.get("notes") or []) \
+            + ([f"NVIDIA's site: {nv['rpm_text']}, varying by model and traffic."] if nv.get("rpm_text") else []) \
+            + ([f"NVIDIA's limits file could not be read ({nv['broken']}); these are the figures read"
+                f" {str(nv.get('at'))[:10]}."] if nv.get("broken") else [])
         out.append(t)
     return ordered(out)
 
@@ -668,17 +735,50 @@ def _selftest() -> None:
            {"connection": "router.requesty.ai", "t": mid - 60, "attempts": 5},      # yesterday
            {"connection": "api.cohere.ai", "t": mid + 60, "attempts": 1, "tokens_in": 10, "tokens_out": 5},
            {"connection": "router.requesty.ai", "t": mid + 90, "attempts": 0}]       # refused: not sent
-    g = caps("router.requesty.ai", {}, {"rpd": 200}, day, lambda: [], now)
+    said = (200, "its replies", "Stated.")
+    g = caps("router.requesty.ai", {}, {"rpd": said}, day, lambda: [], now)
     assert len(g) == 1 and g[0]["windows"][0] == {"label": "requests · day", "left": 99, "remaining": 198,
                                                   "of": 200, "reset_at": _iso(mid + 86400)}, g
     assert g[0]["label"] == "its replies · counted by the bench" and "not enforced" in g[0]["title"], g
-    g = caps("router.requesty.ai", {"router.requesty.ai": {"rpd": 10, "rpm": 5}}, {"rpd": 200}, day, lambda: [], now)
+    g = caps("router.requesty.ai", {"router.requesty.ai": {"rpd": 10, "rpm": 5}}, {"rpd": said}, day, lambda: [], now)
     assert g[0]["label"] == "your cap · counted by the bench" and g[0]["windows"] == [
         {"label": "requests · day", "left": 80, "remaining": 8, "of": 10, "reset_at": _iso(mid + 86400)}], g
     asked = []
-    g = caps("api.cohere.ai", {}, {"rpmo": 1000}, day, lambda: asked.append(1) or day, now)
+    g = caps("api.cohere.ai", {}, {"rpmo": (1000, "its replies", "")}, day, lambda: asked.append(1) or day, now)
     assert asked and g[0]["windows"][0]["remaining"] == 999 and g[0]["windows"][0]["label"] == "requests · month", g
     assert caps("nvidia-api", {}, {}, day, lambda: 1 / 0, now) == []                   # no cap: no ledger read
+    # NVIDIA's file: read, a change alerts (to dismiss), a move or a new shape alerts and keeps the last read.
+    nv = {"rateLimits": {"requestsPerMinute": "Up to 40 rpm", "requestsPerDay": "10,000 requests per day"}}
+    assert nvidia_figures(nv) == {"rpd": 10000, "rpm_text": "Up to 40 rpm"}
+    import tempfile
+    import alerts as al
+    g, seen = globals(), []
+    saved = (g["LIVE"], g["_get_json"], g["_nvidia_on_bench"], al.raise_alert, al.clear)
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            g["LIVE"], g["_nvidia_on_bench"] = pathlib.Path(tmp) / "live.json", lambda: True
+            al.raise_alert = lambda key, *a, **k: seen.append(("raise", key, k.get("dismiss")))
+            al.clear = lambda key: seen.append(("clear", key))
+            g["_get_json"] = lambda url, head: nv
+            assert watch_nvidia()["rpd"] == 10000 and not [s for s in seen if s[0] == "raise"], seen
+            nv = {"rateLimits": {"requestsPerMinute": "Up to 30 rpm", "requestsPerDay": "5,000 requests per day"}}
+            seen.clear()
+            assert watch_nvidia()["rpd"] == 5000 and ("raise", "limits:nvidia:changed", True) in seen, seen
+
+            def gone(url, head):
+                raise urllib.error.HTTPError(url, 404, "Not Found", {}, None)
+            g["_get_json"] = gone
+            seen.clear()
+            r = watch_nvidia()
+            assert r["rpd"] == 5000 and "404" in r["broken"] and ("raise", "limits:nvidia:unread", None) in seen, r
+            assert locked.read_json(g["LIVE"])["_nvidia"]["rpd"] == 5000                 # the last good read stays
+            g["_get_json"] = lambda url, head: {"somethingElse": {}}
+            assert "rateLimits" in watch_nvidia()["broken"]
+            g["_get_json"] = lambda url, head: nv
+            seen.clear()
+            assert "broken" not in watch_nvidia() and ("clear", "limits:nvidia:unread") in seen, seen
+    finally:
+        g["LIVE"], g["_get_json"], g["_nvidia_on_bench"], al.raise_alert, al.clear = saved
     assert _seconds_name(18000) == "5 hours" and _seconds_name(7200) == "2 hours"
     assert _utc_midnight(1793306000) == dt.datetime(2026, 10, 29, tzinfo=UTC).timestamp()
     assert _limit_text({"rpm": 20, "tpd": 200000}) == "20 requests a minute, 200,000 tokens a day"
