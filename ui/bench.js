@@ -1746,12 +1746,12 @@
     return qMeter(w.label, '<b>' + w.left + '%</b>' + (w.reset_at ? ' · ' + qWhen(w.reset_at) : ''), w.left, 'left',
                   w.of ? qNum(w.remaining) + ' of ' + qNum(w.of) + ' left' : '');
   }
-  // A model with nothing stated: how much of its last day answered.
-  function qCalls(m) {
+  // How much of a last day answered: a model's (its link), or `label`'s.
+  function qCalls(m, label) {
     var n = m.ok + m.failed, pct = n ? Math.round(100 * m.ok / n) : null;
     var value = qResting(m) ? '<span class="warn-t">resting · ' + qWhen(m.until) + '</span>'
               : n ? '<b>' + m.ok + '</b> of ' + n + ' answered' : '<span class="muted">no calls</span>';
-    return qMeter(qAlias(m.alias), value, pct, 'answered',
+    return qMeter(label || qAlias(m.alias), value, pct, 'answered',
                   n ? m.ok + ' answered, ' + m.failed + ' failed in the last 24 hours' : 'not called in the last 24 hours');
   }
   function qResting(m) { return m.until && new Date(m.until) > Date.now(); }
@@ -1767,11 +1767,13 @@
       f.at ? how + qAgo(f.at) : 'nothing yet'));
     node.appendChild(head);
     node.appendChild(el('div', {class: 'q-tag mono', title: t.tag}, t.tag + (t.plan ? ' · ' + t.plan : '')));
+    var from = 'From ' + (t.source || ['nothing stated']).join('; ');
+    node.appendChild(el('div', {class: 'q-from', title: from}, from));
     var body = el('div', {class: 'q-body'});
-    // Day and month caps, counted by the bench: yours, else what the provider documents.
+    // Day and month caps, counted by the bench: yours, else what the provider
+    // documents. The From line names the source; the title says the rest.
     (t.caps || []).forEach(function (g) {
-      var box = el('section', {class: 'q-group', title: g.title || ''});
-      box.appendChild(el('h4', {}, g.label));
+      var box = el('section', {class: 'q-group bare', title: g.title || ''});
       g.windows.forEach(function (w) { box.appendChild(qWindow(w)); });
       body.appendChild(box);
     });
@@ -1789,12 +1791,11 @@
                    + (p.reset_at ? ' · ' + qWhen(p.reset_at) : ''), p.left, 'left')
           : qMeter(p.label, '<b>' + qNum(p.used) + '</b> sent · limit not known', null));
       });
-    } else {
-      var box = el('section', {class: 'q-group bare'});
-      box.appendChild(el('h4', {}, 'Answered, last 24 hours'));
-      t.models.slice(0, 5).forEach(function (m) { box.appendChild(qCalls(m)); });
-      if (t.models.length > 5) box.appendChild(el('div', {class: 'q-small'}, '+ ' + (t.models.length - 5) + ' more in Models'));
-      body.appendChild(box);
+    } else if (!(t.caps || []).length) {
+      // Nothing stated to count against: how the provider's calls went, all
+      // its models together (each one's are in Models).
+      var all = t.models.reduce(function (s, m) { return {ok: s.ok + m.ok, failed: s.failed + m.failed}; }, {ok: 0, failed: 0});
+      body.appendChild(qCalls({alias: '', ok: all.ok, failed: all.failed, until: null}, 'Calls, last 24 hours'));
     }
     if (t.kind !== 'models') {
       t.models.filter(qResting).forEach(function (m) {

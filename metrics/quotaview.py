@@ -479,9 +479,13 @@ def tiles(now: float | None = None) -> list[dict]:
         elif tag == "openrouter":
             t["kind"] = "pool"
             t["pool"] = _openrouter_pool(aliases, utc_rows, regs, got, learned, now)
-        if t["kind"] == "models":                       # the headers' windows, when any is in force
-            recs = [r for r in quota.live(host, now=now) if r.get("alias") in mine
-                    and r.get("window") != "retry-after" and r.get("limit")]
+        if t["kind"] == "models":                       # the headers' windows, as last seen
+            # A window past its reset has filled again (quota.py keeps it a day
+            # past): its limit is known, all of it left, the next reset not.
+            seen_recs = [r for by in (locked.read_json(quota.FILE).get(host) or {}).values() if isinstance(by, dict)
+                         for r in by.values() if isinstance(r, dict)]
+            recs = [r if (_ts(r.get("reset_at")) or 0) > now else dict(r, remaining=r["limit"], reset_at=None)
+                    for r in seen_recs if r.get("alias") in mine and r.get("window") != "retry-after" and r.get("limit")]
             by: dict[str, list] = {}
             for r in recs:
                 by.setdefault(r["alias"], []).append(
@@ -494,6 +498,15 @@ def tiles(now: float | None = None) -> list[dict]:
             seen = [_ts(r.get("observed_at")) or 0 for r in recs]
             if seen:
                 got = {"at": _iso(max(seen)), "how": "seen"}
+        where = (host + " " + tag).lower()
+        stated = [n for word, n in STATED_NOTES if word in where]
+        # Where the tile's figures come from, said on it: exact (an endpoint,
+        # the replies' headers) or counted by the bench against a stated limit.
+        t["source"] = ((["its reply headers" if got.get("how") == "seen" else "its quota endpoint"] if t["groups"] else [])
+                       + (["its stated daily limit, counted by the bench"] if t["pool"] else [])
+                       + [g["label"].replace("set by you", "your cap") for g in t["caps"]]
+                       + (["its docs (nothing to count)"] if stated and not t["groups"] + t["pool"] + t["caps"] else [])) \
+            or ["nothing stated"]
         last = max((r["t"] for r in rows if r.get("status") == "ok"), default=None)
         t["fresh"] = ({"how": "live", "at": got["at"]} if got.get("at") and got.get("how") != "seen"
                       else {"how": "seen", "at": got["at"]} if got.get("at")
@@ -505,8 +518,7 @@ def tiles(now: float | None = None) -> list[dict]:
         t["next_reset"] = _iso(min(resets)) if resets else None
         t["out"] = (t["live"] == 0 or any(w["left"] <= 0 for w in windows)
                     or any(p.get("left") == 0 for p in t["pool"]))
-        where = (host + " " + tag).lower()
-        t["notes"] = list(got.get("notes") or []) + [n for word, n in STATED_NOTES if word in where]
+        t["notes"] = list(got.get("notes") or []) + stated
         out.append(t)
     return ordered(out)
 

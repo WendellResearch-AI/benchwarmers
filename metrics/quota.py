@@ -86,11 +86,17 @@ ANTHROPIC = re.compile(r"^anthropic-ratelimit-(requests|tokens|input-tokens|outp
 DURATION = re.compile(r"^(?:(\d+(?:\.\d+)?)h)?(?:(\d+(?:\.\d+)?)m(?!s))?(?:(\d+(?:\.\d+)?)s)?(?:(\d+(?:\.\d+)?)ms)?$")
 
 
-def profile_for(base: str) -> tuple[str, dict]:
-    """The profile for an endpoint's base URL; ("generic", {}) for any other host."""
+def profile_for(base: str, connection: str = "") -> tuple[str, dict]:
+    """The profile for an endpoint's base URL, else for the connection (a hub
+    such as Open WebUI relays the provider's headers: `groq`, `api.groq.com`);
+    ("generic", {}) for any other."""
     host = (urllib.parse.urlsplit(base or "").hostname or "").lower()
+    conn = (connection or "").lower()
     for known, prof in PROFILES.items():
         if host == known or host.endswith("." + known):
+            return prof
+    for known, prof in PROFILES.items():
+        if conn in (known, prof[0]) or conn.endswith("." + known):
             return prof
     return "generic", {}
 
@@ -258,7 +264,7 @@ def store(connection: str, alias: str, records: list[dict], now: float | None = 
 def observe(alias: str, connection: str, base: str, status: int, headers, body=None) -> list[dict]:
     """Record what one response states; returns the records. Called by the
     built-in client on every reply and every HTTP error."""
-    now, profile = time.time(), profile_for(base)
+    now, profile = time.time(), profile_for(base, connection)
     hint = " ".join(str(e.get("message") or "") for e in _error_objects(body)) if status == 429 else ""
     records = from_headers(headers, profile, now, status, hint)
     if status == 429 and body is not None:
@@ -329,6 +335,9 @@ def _selftest() -> None:
                       "X-Ratelimit-Reset-Requests": "2m59.56s"}, profile_for("https://api.groq.com/openai/v1"), now)
     g = one(r, "requests", "day")
     assert g["remaining"] == 0 and g["reset_at"] == _iso(now + 179.56) and g["source"] == "headers (groq)", g
+    # Through a hub, the connection names the provider.
+    assert profile_for("http://owui.lan/api", "groq")[0] == "groq" == profile_for("http://owui.lan/api", "api.groq.com")[0]
+    assert profile_for("http://owui.lan/api", "api.cohere.ai") == ("generic", {})
     # Cerebras names its windows.
     r = from_headers({"x-ratelimit-limit-requests-day": "14400", "x-ratelimit-remaining-requests-day": "14399",
                       "x-ratelimit-reset-requests-day": "33011.38", "x-ratelimit-limit-tokens-minute": "60000",

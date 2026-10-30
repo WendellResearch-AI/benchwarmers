@@ -234,24 +234,29 @@ app**, switches a provider either way or adds one.
 
 ## Quota management
 
-One tile per provider a bench model arrives through, shaped by how that
-provider limits:
+One tile per provider a bench model arrives through. Each draws the
+provider's limits at the level they apply, and names a model only where a
+limit is that model's own:
 - **Windows**: CLI Proxy API's sign-ins have a 5-hour and a weekly limit per
-  model group. Other providers have the windows their rate-limit headers state.
+  model group, a Codex sign-in one for the account. Other providers have the
+  windows their replies' headers state; a window past its reset is shown full.
 - **Pool**: OpenRouter's free requests a day, shared by its models, with a bar
   per key.
-- **Each model's last day**: shown where the provider states nothing.
+- **Caps**: a day or month cap, counted from the bench's own calls: one you set
+  on Endpoints (Rate limits per connection), else one the provider documents
+  but never reports (Requesty's 200 free requests a day for the organisation, a
+  Cohere trial key's 1,000 calls a month), shown but not enforced until you set
+  it. Calls made elsewhere with the same key are not in the count.
+- **Nothing stated**: how the provider's calls went in the last 24 hours, all
+  its models together (green answered, red failed), and what it limits per
+  minute where its docs say.
 
-Each tile shows when its limits reset and which of its models are resting
-after a rate limit. A day or month cap is drawn too, counted from the bench's
-own calls: one you set on Endpoints (Rate limits per connection), else one the
-provider documents but never reports (Requesty's 200 free requests a day, a
-Cohere trial key's 1,000 calls a month), shown but not enforced until you set
-it. Calls made elsewhere with the same key are not in the count. Where a
-provider's only limit is per minute, the tile says so. Where nothing is stated, each model's last 24 hours is a
-meter of its calls: green for what answered, red for what failed. **Models**
-lists the provider's bench models (each opens its popup), whether each is free
-to call now, and its last 24 hours of calls.
+Under the tag, **From** says where the tile's figures come from: the provider's
+quota endpoint or its replies' headers (exact), its docs counted by the bench
+(an estimate), or nothing stated. Each tile shows when its limits reset and
+which of its models are resting after a rate limit. **Models** lists the
+provider's bench models (each opens its popup), whether each is free to call
+now, and its last 24 hours of calls.
 
 **Refresh** picks its own way, and hovering it says which:
 - **A free read** on OpenRouter (it asks the key what is left), on xKiro (its
