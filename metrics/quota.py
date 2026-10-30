@@ -23,9 +23,9 @@ ONE HEADER NAME, DIFFERENT WINDOWS
 `x-ratelimit-limit-requests` is per minute at OpenAI and per day at Groq;
 Cerebras names its windows (`-requests-day`, `-tokens-minute`), Routeway only
 its windows (`X-RateLimit-Remaining-Day`, requests, resets in seconds), and a
-Cohere trial key its minute (`x-trial-endpoint-call-remaining`, no reset; its
-`x-endpoint-monthly-call-limit` says no remaining, so quotaview counts the
-month from the ledger); OpenRouter
+Cohere trial key its minute (`x-trial-endpoint-call-remaining`, no reset) and
+its month's limit with nothing left said (`x-endpoint-monthly-call-limit`:
+kept, never enforced, and quotaview counts the month from the ledger); OpenRouter
 sends bare `X-RateLimit-*` only on a 429, inside the body's metadata as well,
 and its message says which window ("free-models-per-day"); Anthropic's
 `anthropic-ratelimit-*` are per minute; Gemini sends no headers but its 429
@@ -82,6 +82,7 @@ OPENAI_STYLE = re.compile(r"^x-ratelimit-(limit|remaining|reset)-(requests|token
 BARE = re.compile(r"^x-ratelimit-(limit|remaining|reset)$")
 WINDOWED = re.compile(r"^x-ratelimit-(limit|remaining|reset)-(minute|hour|day)$")      # Routeway: requests
 COHERE = re.compile(r"^x-trial-endpoint-call-(limit|remaining)$")                      # a trial key's minute
+COHERE_MONTH = "x-endpoint-monthly-call-limit"          # a limit with no remaining: quotaview counts it
 ANTHROPIC = re.compile(r"^anthropic-ratelimit-(requests|tokens|input-tokens|output-tokens)-(limit|remaining|reset)$")
 DURATION = re.compile(r"^(?:(\d+(?:\.\d+)?)h)?(?:(\d+(?:\.\d+)?)m(?!s))?(?:(\d+(?:\.\d+)?)s)?(?:(\d+(?:\.\d+)?)ms)?$")
 
@@ -167,6 +168,8 @@ def from_headers(headers, profile: tuple[str, dict], now: float, status: int = 2
         elif m := COHERE.match(key):                   # no reset sent: the minute is the wait
             what, metric, window = m.group(1), "requests", "minute"
             fields.setdefault((metric, window), {}).setdefault("reset", "60")
+        elif key == COHERE_MONTH:                      # no remaining, no reset: never enforced (live())
+            what, metric, window = "limit", "requests", "month"
         else:
             continue
         fields.setdefault((metric, window), {})[what] = value
@@ -355,7 +358,9 @@ def _selftest() -> None:
     r = from_headers({"x-trial-endpoint-call-limit": "20", "x-trial-endpoint-call-remaining": "19",
                       "x-endpoint-monthly-call-limit": "1000"}, profile_for("http://owui.lan/api"), now)
     c = one(r, "requests", "minute")
-    assert c["limit"] == 20 and c["remaining"] == 19 and c["reset_at"] == _iso(now + 60) and len(r) == 1, r
+    assert c["limit"] == 20 and c["remaining"] == 19 and c["reset_at"] == _iso(now + 60) and len(r) == 2, r
+    mo = one(r, "requests", "month")
+    assert mo["limit"] == 1000 and mo["remaining"] is None and mo["reset_at"] is None, mo
     # Anthropic: RFC 3339 resets, per minute.
     r = from_headers({"anthropic-ratelimit-requests-limit": "50", "anthropic-ratelimit-requests-remaining": "0",
                       "anthropic-ratelimit-requests-reset": "2025-10-24T00:00:45Z"},

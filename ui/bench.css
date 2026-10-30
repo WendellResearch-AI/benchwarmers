@@ -417,9 +417,9 @@ pre.log.answer { max-height: 40vh; }
 .q-tile .q-head { display: flex; justify-content: space-between; align-items: center; gap: .5rem; min-width: 0; }
 .q-tile .nm { font-size: 1.0625rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .q-tile .q-head .chip { flex: none; white-space: nowrap; font-size: .75rem; }
-.q-tag, .q-from { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: -.3rem; }
-.q-tag, .q-from, .q-small { font-size: .8125rem; color: var(--muted); }
-.q-from { font-style: italic; }
+.q-about { display: flex; flex-direction: column; gap: .1rem; margin-top: -.3rem; font-size: .8125rem; color: var(--muted); }
+.q-about .q-from { font-style: italic; }
+.q-small { font-size: .8125rem; color: var(--muted); }
 .q-body { display: flex; flex-direction: column; gap: .5rem; min-width: 0; }
 .q-group { border: 1px solid var(--line); border-radius: var(--radius); padding: .45rem .55rem .55rem; display: flex; flex-direction: column; gap: .45rem; }
 .q-group.bare { border: 0; padding: 0; }

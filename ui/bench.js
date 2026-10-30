@@ -1732,19 +1732,35 @@
     link.appendChild(el('span', {class: 'alias mono'}, a));
     return link;
   }
-  // Every figure on a tile is one meter: what it counts and its value on one
-  // line (the label shortens, the value never wraps), the segments under it.
+  // 189, 19,997, 494k, 12.5M: whole below 100,000, then short.
+  function qShort(n) {
+    n = Number(n);
+    if (n < 1e5) return Math.round(n * 100) / 100 >= 1000 ? Math.round(n).toLocaleString() : String(Math.round(n * 100) / 100);
+    if (n < 1e6) return Math.round(n / 1e3) + 'k';
+    return String(n >= 1e8 ? Math.round(n / 1e6) : Math.round(n / 1e5) / 10).replace(/\.0$/, '') + 'M';
+  }
+  // Every figure on a tile is one meter: what is left of what, in the
+  // provider's own unit, on the left (it may wrap); when it resets on the
+  // right (it never does); the segments under it.
   function qMeter(label, value, pct, what, title) {
     var box = el('div', {class: 'q-meter'}), row = el('div', {class: 'q-line'});
-    row.appendChild(typeof label === 'string' ? el('span', {class: 'q-label'}, label) : label);
+    var l = typeof label === 'string' ? el('span', {class: 'q-label'}) : label;
+    if (typeof label === 'string') l.innerHTML = label;
+    row.appendChild(l);
     var v = el('span', {class: 'q-val'}); v.innerHTML = value; row.appendChild(v);
     if (title) box.title = title;
     box.appendChild(row); box.appendChild(qSegs(pct, what));
     return box;
   }
+  function qReset(iso) {
+    return iso ? '<span title="Resets ' + new Date(iso).toLocaleString() + '">' + qWhen(iso) + '</span>' : '';
+  }
   function qWindow(w) {
-    return qMeter(w.label, '<b>' + w.left + '%</b>' + (w.reset_at ? ' · ' + qWhen(w.reset_at) : ''), w.left, 'left',
-                  w.of ? qNum(w.remaining) + ' of ' + qNum(w.of) + ' left' : '');
+    var raw = w.of != null && w.remaining != null;
+    return qMeter(raw ? '<b>' + qShort(w.remaining) + '</b> left of ' + qShort(w.of) + ' ' + w.label
+                      : '<b>' + w.left + '%</b> left · ' + w.label,
+                  qReset(w.reset_at), w.left, 'left',
+                  (raw ? qNum(w.remaining) + ' of ' + qNum(w.of) + ' left, ' : '') + w.left + '%');
   }
   // How much of a last day answered: a model's (its link), or `label`'s.
   function qCalls(m, label) {
@@ -1766,9 +1782,15 @@
               answered: 'Last answer from one of its models'}[f.how] || 'Nothing known yet'},
       f.at ? how + qAgo(f.at) : 'nothing yet'));
     node.appendChild(head);
-    node.appendChild(el('div', {class: 'q-tag mono', title: t.tag}, t.tag + (t.plan ? ' · ' + t.plan : '')));
-    var from = 'From ' + (t.source || ['nothing stated']).join('; ');
-    node.appendChild(el('div', {class: 'q-from', title: from}, from));
+    // Every word about the figures in one place, under the name: where they
+    // come from, its plan, your per-minute caps, what a live read said. The
+    // connection's own name and address are in Models.
+    var about = el('div', {class: 'q-about'});
+    about.appendChild(el('div', {class: 'q-from'}, 'From ' + (t.source || ['nothing stated']).join('; ')
+                                                   + (t.plan ? ' · ' + t.plan + ' plan' : '')));
+    if (t.conn_limit) about.appendChild(el('div', {}, 'Your cap: ' + t.conn_limit + '.'));
+    (t.notes || []).forEach(function (n) { about.appendChild(el('div', {}, n)); });
+    node.appendChild(about);
     var body = el('div', {class: 'q-body'});
     // Day and month caps, counted by the bench: yours, else what the provider
     // documents. The From line names the source; the title says the rest.
@@ -1787,9 +1809,9 @@
     } else if (t.kind === 'pool') {
       t.pool.forEach(function (p) {
         body.appendChild(p.of
-          ? qMeter(p.label, '<b>' + qNum(Math.max(0, p.of - p.used)) + '</b> of ' + qNum(p.of) + ' left'
-                   + (p.reset_at ? ' · ' + qWhen(p.reset_at) : ''), p.left, 'left')
-          : qMeter(p.label, '<b>' + qNum(p.used) + '</b> sent · limit not known', null));
+          ? qMeter('<b>' + qShort(Math.max(0, p.of - p.used)) + '</b> left of ' + qShort(p.of) + ' ' + p.label,
+                   qReset(p.reset_at), p.left, 'left')
+          : qMeter('<b>' + qShort(p.used) + '</b> ' + p.label + ' · limit not known', qReset(p.reset_at), null));
       });
     } else if (!(t.caps || []).length) {
       // Nothing stated to count against: how the provider's calls went, all
@@ -1804,8 +1826,6 @@
         body.appendChild(r);
       });
     }
-    if (t.conn_limit) body.appendChild(el('div', {class: 'q-small'}, t.conn_limit + ', set by you'));
-    (t.notes || []).forEach(function (n) { body.appendChild(el('div', {class: 'q-small'}, n)); });
     node.appendChild(body);
     var msg = el('div', {class: 'q-msg', 'aria-live': 'polite'});
     node.appendChild(msg);
@@ -1844,6 +1864,23 @@
   function qModels(t) {
     $('q-models-h').textContent = t.name + ': ' + t.bench + ' on the bench';
     $('q-models-sub').textContent = t.live + ' free to call now · the last 24 hours of calls';
+    // How it is reached, asked when the popup opens (it reads Open WebUI's connections).
+    var reach = $('q-models-about');
+    function reachLine(after) {
+      reach.textContent = '';
+      var line = el('div'); line.appendChild(el('span', {class: 'mono'}, t.tag));
+      if (after) line.appendChild(document.createTextNode(' · ' + after));
+      reach.appendChild(line);
+    }
+    reachLine('finding how it is reached…');
+    post('/api/quota/about', {tag: t.id}).then(function (r) {
+      if (!r.ok) { reachLine(r.errors.join('; ')); return; }
+      reachLine(r.routes.length ? '' : 'no endpoint or Open WebUI connection by this name');
+      r.routes.forEach(function (x) {
+        var d = el('div', {}, 'Through ' + x.via + ': ');
+        d.appendChild(el('code', {}, x.url)); reach.appendChild(d);
+      });
+    }).catch(function (e) { reachLine(String(e)); });
     var list = $('q-models-list'); list.textContent = '';
     var tb = el('table'), hd = el('tr');
     ['Model', 'Now', 'Last 24 h', 'Last answered', 'Known limit'].forEach(function (h) { hd.appendChild(el('th', {}, h)); });

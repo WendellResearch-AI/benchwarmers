@@ -241,20 +241,23 @@ limit is that model's own:
   model group, a Codex sign-in one for the account. Other providers have the
   windows their replies' headers state; a window past its reset is shown full.
 - **Pool**: OpenRouter's free requests a day, shared by its models, with a bar
-  per key.
+  per key, against the limit OpenRouter stated in a rate-limit reply.
 - **Caps**: a day or month cap, counted from the bench's own calls: one you set
-  on Endpoints (Rate limits per connection), else one the provider documents
-  but never reports (Requesty's 200 free requests a day for the organisation, a
-  Cohere trial key's 1,000 calls a month), shown but not enforced until you set
-  it. Calls made elsewhere with the same key are not in the count.
+  on Endpoints (Rate limits per connection), else one the provider states in
+  its replies without saying what is left (a Cohere trial key's 1,000 calls a
+  month), shown but not enforced until you set it. Calls made elsewhere with
+  the same key are not in the count.
 - **Nothing stated**: how the provider's calls went in the last 24 hours, all
-  its models together (green answered, red failed), and what it limits per
-  minute where its docs say.
+  its models together (green answered, red failed).
 
-Under the tag, **From** says where the tile's figures come from: the provider's
-quota endpoint or its replies' headers (exact), its docs counted by the bench
-(an estimate), or nothing stated. Each tile shows when its limits reset and
-which of its models are resting after a rate limit. **Models** lists the
+Nothing is taken from a provider's docs, which can change without notice.
+Each meter reads what is left of what, in the provider's own unit ("189 left of
+200 requests · day"; a percentage where the provider gives only that), with
+its reset on the right. Under the name, one block says where the figures come
+from (**From**: the provider's quota endpoint or its replies' headers, exact;
+or a stated limit counted by the bench), your per-minute caps, and anything a
+live read reported. **Models** names the connection and how it is reached
+(each endpoint or Open WebUI connection, with its address), then lists the
 provider's bench models (each opens its popup), whether each is free to call
 now, and its last 24 hours of calls.
 
@@ -265,8 +268,9 @@ now, and its last 24 hours of calls.
   proxy for each one's quota, as its own console does; this needs CLI Proxy API
   on the Endpoints page as a hub, with its management key).
 - **One 16-token request** where a provider states its limits only in its
-  replies' headers, to read them (Groq, Routeway, a Cohere trial key's minute). Every ordinary call reads
-  them too, through Open WebUI as well, since the bench streams.
+  replies' headers, to read them (Groq, Routeway, a Cohere trial key). Every
+  ordinary call reads them too, through Open WebUI as well, since the bench
+  streams.
 - **The bench's own records** again everywhere else.
 
 Tiles sort with the ones that are out first, then the soonest reset. Drag a

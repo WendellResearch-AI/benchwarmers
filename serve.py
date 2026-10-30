@@ -3755,6 +3755,11 @@ def quota_op(which: str, tag) -> dict:
         return quotaview.save_order(tag)
     if tag not in {t["id"] for t in quota_tiles()}:
         return {"ok": False, "errors": [f"no tile called {tag!r}"]}
+    if which == "about":                               # the Models popup: how it is reached
+        try:
+            return {"ok": True, "errors": [], **quotaview.about(tag)}
+        except (ValueError, OSError) as exc:
+            return {"ok": False, "errors": [str(exc)]}
     try:
         r = quotaview.refresh(tag)
     except (ValueError, OSError) as exc:              # OSError: URLError and timeouts
@@ -3836,6 +3841,7 @@ def quotas_page() -> str:
            else "<p class='muted'>None known yet.</p>")
         + "</details>"
         "<dialog id='q-models' aria-labelledby='q-models-h'><h3 id='q-models-h'></h3>"
+        "<div class='sub q-reach' id='q-models-about'></div>"
         "<p class='sub' id='q-models-sub'></p><div class='scroll' id='q-models-list'></div>"
         "<div class='list-actions'><button class='btn' id='q-models-close'>Close</button></div></dialog>"
         f"<script type='application/json' id='quota-data'>{data}</script>")
@@ -4351,6 +4357,7 @@ class Handler(gateway.Handler):
                "/api/gateway-key/remove": lambda p: revoke_gateway_key(str(p.get("name") or "")),
                "/api/theme": lambda p: save_theme(str(p.get("theme") or "")),
                "/api/quota/refresh": lambda p: quota_op("refresh", str(p.get("tag") or "")),
+               "/api/quota/about": lambda p: quota_op("about", str(p.get("tag") or "")),
                "/api/quota/order": lambda p: quota_op("order", p.get("order")),
                "/api/restart": lambda p: restart(p.get("force") is True)}
         # SAME ORIGIN ONLY. Any page open in the browser can POST a plain form

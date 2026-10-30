@@ -12,13 +12,19 @@ A tile takes the shape of what its provider says:
             rate-limit headers the built-in client saw (metrics/quota.py)
     pool    one allowance the models share: OpenRouter's free requests a
             day, a bar per key, counted from the usage ledger
-    models  nothing stated: each bench model's last day, answered or not
+    models  nothing stated: the provider's last day of calls, all together
+
+and any of them its day and month caps (caps): yours, else a limit its replies
+state with nothing left said, counted from the ledger. A model is named only
+where a limit is its own. Nothing comes from a provider's docs: they change
+unseen.
 
 ONE REFRESH, THREE WAYS (how_refreshed). Three providers can be asked what is
 left for free, and are:
 
     OpenRouter      GET /key on a direct OpenRouter endpoint: free tier or
-                    not (50 or 1,000 free requests a day), and its credits
+                    not, and its credits (the free requests' limit comes
+                    from its 429s, never its docs)
     xKiro           GET /v1/usage: free-model tokens left today (to midnight
                     UTC) and a plan's spend windows; the key is a direct
                     endpoint's, else its Open WebUI connection's (_key_for)
@@ -72,20 +78,10 @@ WINDOW_NAMES = {"5h": "5 hours", "weekly": "week", "daily": "day", "monthly": "m
 XKIRO_HOST = "api.xkiro.com"
 XKIRO_USAGE = "https://api.xkiro.com/v1/usage"
 # A day or month cap is drawn counted from the ledger, as pacing.py counts:
-# yours from Endpoints (enforced), else one a provider documents but no reply
-# or endpoint reports (STATED, read 2026-10-29: shown, never enforced, as
-# FreeLLMAPI's figures are not). (word in the connection, axis, cap, source, detail)
+# yours from Endpoints (enforced), else one a provider states in its replies
+# without saying what is left (Cohere's x-endpoint-monthly-call-limit; shown,
+# never enforced). Never one from a provider's docs: they change unseen.
 COUNTED = {"rpd": ("requests", "day"), "tpd": ("tokens", "day"), "rpmo": ("requests", "month")}
-STATED = (("requesty", "rpd", 200, "Requesty's docs", "Free models, per organisation; 1,000 once it has paid."),
-          ("cohere", "rpmo", 1000, "Cohere's docs", "A trial key's calls a month, every endpoint together;"
-                                                     " its replies say 1,000 too (x-endpoint-monthly-call-limit)."))
-# Where the only limit is per minute, or a credit nothing reports: said, not drawn.
-STATED_NOTES = (
-    ("nvidia", "About 40 requests a minute per model; no daily or monthly cap (NVIDIA's forum)."),
-    ("agnes", "Agnes sets free requests a minute as it goes (about 20); no daily cap stated."),
-    ("unorouter", "Free models: 1 request a minute each; no daily cap (UnoRouter's docs)."),
-    ("moondream", "$5 of free credit a month, 2 requests a second; the credit left is not reported (Moondream's docs)."),
-    ("inceptionlabs", "1,000 requests a minute; a one-time credit of 100M tokens, not reported (Inception's docs)."))
 
 
 def _iso(t: float | None) -> str | None:
@@ -324,6 +320,25 @@ def refresh(tag: str) -> dict:
     return {"ok": True, "how": "live", "note": "; ".join(got.get("notes") or [])}
 
 
+def about(tag: str) -> dict:
+    """How a tile's provider is reached, for its Models popup: {connection,
+    routes: [{via, url}]}, a direct endpoint by that name and each Open WebUI
+    connection named so (scripts/provider_tags.py's names). URLs only:
+    /openai/config returns Open WebUI's keys too, never read here."""
+    import endpoints
+    host, routes = tag.split("/")[0], []
+    if host in endpoints.load() and not endpoints.hub(host):
+        routes.append({"via": f"its own endpoint, {host}", "url": endpoints.base(host)})
+    hub = endpoints.find_hub("openwebui")
+    if hub:
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import provider_tags
+        urls = provider_tags.get(hub, "/openai/config").get("OPENAI_API_BASE_URLS", [])
+        routes += [{"via": f"an Open WebUI connection on {hub}", "url": url}
+                   for name, url in zip(provider_tags.connection_names(hub), urls) if name == host]
+    return {"connection": tag, "routes": routes}
+
+
 def _host(tag: str) -> str:
     """The connection a tile's models are called through (route.connection_of)."""
     import route
@@ -407,18 +422,17 @@ def _limit_text(lim: dict) -> str:
     return ", ".join(f"{v:,} {words[k]}" for k, v in lim.items() if k in words and v)
 
 
-def caps(host: str, tag: str, entered: dict, day_rows: list, month_rows, now: float) -> list[dict]:
+def caps(host: str, entered: dict, stated: dict, day_rows: list, month_rows, now: float) -> list[dict]:
     """The connection's day and month caps as groups of windows, each counted
     from the bench's ledger since midnight UTC or the month's start (what a
-    provider's calendar counts): yours, else STATED. `month_rows` is called
-    only when a month cap needs it."""
-    mine = {k: (v, "set by you", "On Endpoints, Rate limits per connection; the bench keeps to it.")
+    provider's calendar counts): yours, else `stated` ({axis: limit}, what its
+    replies say with nothing left given). `month_rows` is called only when a
+    month cap needs it."""
+    mine = {k: (v, "your cap", "Set on Endpoints, Rate limits per connection; the bench keeps to it.")
             for k, v in (entered.get(host) or {}).items() if k in COUNTED and v}
-    where = (host + " " + tag).lower()
-    for word, axis, n, source, detail in STATED:
-        if word in where:
-            mine.setdefault(axis, (n, source, detail + " Shown, not enforced: set it on Endpoints to have"
-                                   " the bench keep to it."))
+    for axis, n in stated.items():
+        mine.setdefault(axis, (n, "its replies", "The provider's replies state this limit but not what is"
+                               " left. Shown, not enforced: set it on Endpoints to have the bench keep to it."))
     by: dict[str, list] = {}
     about: dict[str, str] = {}
     for axis, (n, source, detail) in mine.items():
@@ -466,10 +480,20 @@ def tiles(now: float | None = None) -> list[dict]:
                   for a in aliases}
         limits = {a: t for a, t in limits.items() if t}
         rows = [r for r in day_rows if r.get("alias") in mine]
+        # What the replies' headers said, kept a day past each reset (quota.py).
+        # A limit with nothing left said (Cohere's month) is a cap to count.
+        seen_recs = [r for a, by in (locked.read_json(quota.FILE).get(host) or {}).items()
+                     if a in mine and isinstance(by, dict) for r in by.values()
+                     if isinstance(r, dict) and r.get("limit") and r.get("window") != "retry-after"]
+        stated: dict[str, int] = {}
+        for r in seen_recs:
+            if r.get("remaining") is None and r["metric"] == "requests" and r.get("window") in ("day", "month"):
+                axis = "rpd" if r["window"] == "day" else "rpmo"
+                stated[axis] = max(stated.get(axis, 0), r["limit"])
         t = {"id": tag, "tag": tag, "host": host, "bench": len(aliases), "kind": "models", "groups": [],
              "pool": [], "notes": [],          # a day or month cap is a meter (caps), a minute one is said
              "conn_limit": _limit_text({k: v for k, v in (entered.get(host) or {}).items() if k in ("rpm", "tpm")}),
-             "caps": caps(host, tag, entered, day_rows, month_rows, now),
+             "caps": caps(host, entered, stated, day_rows, month_rows, now),
              "models": _model_rows(aliases, rows, resting, limits),
              "refresh": how_refreshed(tag), "plan": "", "name": ""}
         got = live.get(tag) or {}
@@ -480,12 +504,10 @@ def tiles(now: float | None = None) -> list[dict]:
             t["kind"] = "pool"
             t["pool"] = _openrouter_pool(aliases, utc_rows, regs, got, learned, now)
         if t["kind"] == "models":                       # the headers' windows, as last seen
-            # A window past its reset has filled again (quota.py keeps it a day
-            # past): its limit is known, all of it left, the next reset not.
-            seen_recs = [r for by in (locked.read_json(quota.FILE).get(host) or {}).values() if isinstance(by, dict)
-                         for r in by.values() if isinstance(r, dict)]
+            # A window past its reset has filled again: its limit is known, all
+            # of it left, the next reset not.
             recs = [r if (_ts(r.get("reset_at")) or 0) > now else dict(r, remaining=r["limit"], reset_at=None)
-                    for r in seen_recs if r.get("alias") in mine and r.get("window") != "retry-after" and r.get("limit")]
+                    for r in seen_recs if r.get("remaining") is not None]
             by: dict[str, list] = {}
             for r in recs:
                 by.setdefault(r["alias"], []).append(
@@ -498,15 +520,11 @@ def tiles(now: float | None = None) -> list[dict]:
             seen = [_ts(r.get("observed_at")) or 0 for r in recs]
             if seen:
                 got = {"at": _iso(max(seen)), "how": "seen"}
-        where = (host + " " + tag).lower()
-        stated = [n for word, n in STATED_NOTES if word in where]
         # Where the tile's figures come from, said on it: exact (an endpoint,
-        # the replies' headers) or counted by the bench against a stated limit.
+        # the replies' headers) or a stated limit counted by the bench.
         t["source"] = ((["its reply headers" if got.get("how") == "seen" else "its quota endpoint"] if t["groups"] else [])
                        + (["its stated daily limit, counted by the bench"] if t["pool"] else [])
-                       + [g["label"].replace("set by you", "your cap") for g in t["caps"]]
-                       + (["its docs (nothing to count)"] if stated and not t["groups"] + t["pool"] + t["caps"] else [])) \
-            or ["nothing stated"]
+                       + [g["label"] for g in t["caps"]]) or ["nothing stated"]
         last = max((r["t"] for r in rows if r.get("status") == "ok"), default=None)
         t["fresh"] = ({"how": "live", "at": got["at"]} if got.get("at") and got.get("how") != "seen"
                       else {"how": "seen", "at": got["at"]} if got.get("at")
@@ -518,14 +536,15 @@ def tiles(now: float | None = None) -> list[dict]:
         t["next_reset"] = _iso(min(resets)) if resets else None
         t["out"] = (t["live"] == 0 or any(w["left"] <= 0 for w in windows)
                     or any(p.get("left") == 0 for p in t["pool"]))
-        t["notes"] = list(got.get("notes") or []) + stated
+        t["notes"] = list(got.get("notes") or [])
         out.append(t)
     return ordered(out)
 
 
 def _openrouter_pool(aliases, utc_rows, regs, got, learned, now) -> list[dict]:
     """A bar per OpenRouter key the bench uses: free-model requests since
-    00:00 UTC, the bench's own count, against 50 or 1,000 a day."""
+    00:00 UTC, the bench's own count, against the day's limit OpenRouter
+    stated (a 429's), else none."""
     import endpoints
     import quota
     seen_429 = locked.read_json(quota.FILE).get("openrouter") or {}
@@ -536,14 +555,13 @@ def _openrouter_pool(aliases, utc_rows, regs, got, learned, now) -> list[dict]:
     for ep, eps in sorted(by_ep.items()):
         used = sum(r.get("attempts") or 1 for r in utc_rows
                    if r.get("alias") in eps and str(r.get("served", "")).endswith(":free"))
-        # What OpenRouter stated wins (learned, else the last 429's, kept a day
-        # past reset); the key's free tier only guesses, and was seen wrong.
+        # Only what OpenRouter stated (learned, else the last 429's, kept a day
+        # past reset): its docs' 50-or-1,000 by tier changes unseen, and the
+        # tier was seen wrong.
         stated = [((learned.get(a) or {}).get("limits") or {}).get("rpd", {}).get("value") for a in eps]
         stated += [r.get("limit") for a in eps for r in (seen_429.get(a) or {}).values()
                    if isinstance(r, dict) and r.get("window") in ("day", "unknown")]
         limit = min([s for s in stated if s] or [0]) or None
-        if not limit and got.get("endpoint") == ep:
-            limit = 50 if got.get("free_tier") else 1000
         via = "direct key" if not endpoints.hub(ep) else f"via {ep}"
         bar = {"label": f"free requests today · {via}", "used": used, "of": limit,
                "left": max(0, round(100 * (limit - used) / limit)) if limit else None,
@@ -601,18 +619,17 @@ def _selftest() -> None:
            {"connection": "router.requesty.ai", "t": mid - 60, "attempts": 5},      # yesterday
            {"connection": "api.cohere.ai", "t": mid + 60, "attempts": 1, "tokens_in": 10, "tokens_out": 5},
            {"connection": "router.requesty.ai", "t": mid + 90, "attempts": 0}]       # refused: not sent
-    g = caps("router.requesty.ai", "router.requesty.ai", {}, day, lambda: [], now)
+    g = caps("router.requesty.ai", {}, {"rpd": 200}, day, lambda: [], now)
     assert len(g) == 1 and g[0]["windows"][0] == {"label": "requests · day", "left": 99, "remaining": 198,
                                                   "of": 200, "reset_at": _iso(mid + 86400)}, g
-    assert g[0]["label"] == "Requesty's docs · counted by the bench" and "not enforced" in g[0]["title"], g
-    g = caps("router.requesty.ai", "router.requesty.ai", {"router.requesty.ai": {"rpd": 10, "rpm": 5}}, day,
-             lambda: [], now)
-    assert g[0]["label"] == "set by you · counted by the bench" and g[0]["windows"] == [
+    assert g[0]["label"] == "its replies · counted by the bench" and "not enforced" in g[0]["title"], g
+    g = caps("router.requesty.ai", {"router.requesty.ai": {"rpd": 10, "rpm": 5}}, {"rpd": 200}, day, lambda: [], now)
+    assert g[0]["label"] == "your cap · counted by the bench" and g[0]["windows"] == [
         {"label": "requests · day", "left": 80, "remaining": 8, "of": 10, "reset_at": _iso(mid + 86400)}], g
     asked = []
-    g = caps("api.cohere.ai", "api.cohere.ai", {}, day, lambda: asked.append(1) or day, now)
+    g = caps("api.cohere.ai", {}, {"rpmo": 1000}, day, lambda: asked.append(1) or day, now)
     assert asked and g[0]["windows"][0]["remaining"] == 999 and g[0]["windows"][0]["label"] == "requests · month", g
-    assert caps("nvidia-api", "nvidia-api", {}, day, lambda: 1 / 0, now) == []         # no cap: no ledger read
+    assert caps("nvidia-api", {}, {}, day, lambda: 1 / 0, now) == []                   # no cap: no ledger read
     assert _seconds_name(18000) == "5 hours" and _seconds_name(7200) == "2 hours"
     assert _utc_midnight(1793306000) == dt.datetime(2026, 10, 29, tzinfo=UTC).timestamp()
     assert _limit_text({"rpm": 20, "tpd": 200000}) == "20 requests a minute, 200,000 tokens a day"
