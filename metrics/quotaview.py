@@ -58,7 +58,9 @@ CPA_PREFIXES = ("/v8/management", "/v0/management")   # the console's, then the 
 # ($TOKEN$ is replaced by the proxy with the credential's token).
 AG_URLS = ("https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary",
            "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary")
-AG_HEAD = {"Authorization": "Bearer $TOKEN$", "Content-Type": "application/json"}
+# Google answers 403 without the Antigravity client's User-Agent.
+AG_HEAD = {"Authorization": "Bearer $TOKEN$", "Content-Type": "application/json",
+           "User-Agent": "antigravity/hub/2.23.0 darwin/arm64"}
 CODEX_URL = "https://chatgpt.com/backend-api/wham/usage"
 CODEX_HEAD = {"Authorization": "Bearer $TOKEN$", "Content-Type": "application/json",
               "User-Agent": "codex-tui/0.149.1"}
