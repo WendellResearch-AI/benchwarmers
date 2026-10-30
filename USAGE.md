@@ -249,12 +249,14 @@ lists the provider's bench models (each opens its popup), whether each is free
 to call now, and its last 24 hours of calls.
 
 **Refresh** picks its own way, and hovering it says which:
-- **A free read** on OpenRouter (it asks the key what is left) and on CLI
-  Proxy API's sign-ins (it asks the proxy for each one's quota, as its own
-  console does; this needs CLI Proxy API on the Endpoints page as a hub, with
-  its management key).
+- **A free read** on OpenRouter (it asks the key what is left), on xKiro (its
+  usage endpoint: free-model tokens left today, with the key from its endpoint
+  or its Open WebUI connection) and on CLI Proxy API's sign-ins (it asks the
+  proxy for each one's quota, as its own console does; this needs CLI Proxy API
+  on the Endpoints page as a hub, with its management key).
 - **One 16-token request** where a provider states its limits only in its
-  replies' headers, to read them.
+  replies' headers, to read them (Groq, Routeway). Every ordinary call reads
+  them too, through Open WebUI as well, since the bench streams.
 - **The bench's own records** again everywhere else.
 
 Tiles sort with the ones that are out first, then the soonest reset. Drag a

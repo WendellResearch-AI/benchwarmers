@@ -21,6 +21,9 @@ Wendell Research.
 - **Quota reads**, only when you press Refresh on Quota management, carrying
   no prompt:
   - OpenRouter's key status, asked with your key.
+  - xKiro's usage, asked with your key for it (from its Open WebUI connection
+    when no endpoint has one). Its reply names the account's owner; only the
+    quota figures are kept.
   - For CLI Proxy API's sign-ins, through the proxy, the quota endpoint of the
     provider each sign-in belongs to (Google's, ChatGPT's).
 - **Charts**: the dashboard's page loads Observable Plot from jsDelivr, at a

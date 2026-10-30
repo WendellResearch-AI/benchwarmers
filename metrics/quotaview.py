@@ -14,11 +14,14 @@ A tile takes the shape of what its provider says:
             day, a bar per key, counted from the usage ledger
     models  nothing stated: each bench model's last day, answered or not
 
-REFRESH NEVER SPENDS QUOTA. Two providers can be asked what is left for free,
-and are, when Refresh is pressed:
+ONE REFRESH, THREE WAYS (how_refreshed). Three providers can be asked what is
+left for free, and are:
 
     OpenRouter      GET /key on a direct OpenRouter endpoint: free tier or
                     not (50 or 1,000 free requests a day), and its credits
+    xKiro           GET /v1/usage: free-model tokens left today (to midnight
+                    UTC) and a plan's spend windows; the key is a direct
+                    endpoint's, else its Open WebUI connection's (_key_for)
     CLI Proxy API   its management route `requests/api-call`, which calls the
                     credential's own quota endpoint with the credential's
                     token, as its console does (Google's retrieveUserQuotaSummary,
@@ -27,10 +30,10 @@ and are, when Refresh is pressed:
                     (endpoints.admin_key, as metrics/cliproxy.py); the proxy is
                     on the LAN and calls only providers the credential uses.
 
-Every other provider's Refresh re-reads the bench's own records. `check`
-is the one that asks: a 16-token call to one of its models, whose reply
-headers quota.py records. Offered only where the provider has sent limit
-headers before, since elsewhere the reply would say nothing.
+Where a provider has sent limit headers before (Groq; Routeway, through Open
+WebUI too, since the bench streams), Refresh is `check`: a 16-token call to
+one of its models, whose reply headers quota.py records. Everywhere else it
+re-reads the bench's own records, since a call would say nothing.
 
 Live reads are kept in runs/quota-live.json, newest per tag.
 """
@@ -65,6 +68,9 @@ CODEX_URL = "https://chatgpt.com/backend-api/wham/usage"
 CODEX_HEAD = {"Authorization": "Bearer $TOKEN$", "Content-Type": "application/json",
               "User-Agent": "codex-tui/0.149.1"}
 WINDOW_NAMES = {"5h": "5 hours", "weekly": "week", "daily": "day", "monthly": "month"}
+# Free to ask: no tokens, outside the rate limits (docs.xkiro.com/api/usage, read 2026-10-29).
+XKIRO_HOST = "api.xkiro.com"
+XKIRO_USAGE = "https://api.xkiro.com/v1/usage"
 
 
 def _iso(t: float | None) -> str | None:
@@ -118,6 +124,24 @@ def codex_groups(body: dict) -> list[dict]:
     return [{"label": "", "windows": wins}] if wins else []
 
 
+def xkiro_groups(body: dict, now: float) -> list[dict]:
+    """/v1/usage -> the free models' tokens today (to midnight UTC), then the
+    plan's spend windows (USD, as strings), where there is a plan."""
+    out, ft = [], body.get("free_tokens") or {}
+    if ft.get("limit_per_day"):
+        lim, rem = int(ft["limit_per_day"]), int(ft.get("remaining") or 0)
+        out.append({"label": "free models", "windows": [
+            {"label": "tokens · day", "left": round(100 * rem / lim), "remaining": rem, "of": lim,
+             "reset_at": _iso(_utc_midnight(now) + 86400)}]})
+    wins = [{"label": _seconds_name(w.get("window_sec")) + " · spend",
+             "left": round(100 * float(w.get("remaining_usd") or 0) / float(w["cap_usd"])),
+             "reset_at": _iso(now + float(w.get("resets_in_sec") or 0))}
+            for w in body.get("windows") or [] if isinstance(w, dict) and float(w.get("cap_usd") or 0) > 0]
+    if wins:
+        out.append({"label": "plan", "windows": wins})
+    return out
+
+
 # ---- live reads --------------------------------------------------------------
 
 def _get_json(url: str, headers: dict, data: bytes | None = None, timeout: int = 20) -> dict:
@@ -145,6 +169,31 @@ def read_openrouter() -> dict:
     data = _get_json(endpoints.base(name) + "/key", {"Authorization": f"Bearer {endpoints.key(name)}"}).get("data") or {}
     return {"endpoint": name, "free_tier": bool(data.get("is_free_tier")),
             "limit": data.get("limit"), "remaining": data.get("limit_remaining"), "usage": data.get("usage")}
+
+
+def _key_for(host: str) -> str:
+    """A key for `host`: a direct endpoint's, else the Open WebUI connection's
+    (read with the hub's admin key, as owui.py reads its connections)."""
+    import endpoints
+    for name, entry in endpoints.load().items():
+        if (urllib.parse.urlsplit(entry.get("base", "")).hostname or "") == host and not endpoints.hub(name):
+            if endpoints.key(name):
+                return endpoints.key(name)
+    import owui
+    cfg = owui._call("/openai/config")
+    for url, key in zip(cfg.get("OPENAI_API_BASE_URLS") or [], cfg.get("OPENAI_API_KEYS") or []):
+        if (urllib.parse.urlsplit(url).hostname or "") == host and key:
+            return key
+    raise ValueError(f"no key for {host}: neither an endpoint nor an Open WebUI connection has one")
+
+
+def read_xkiro() -> dict:
+    """Only the figures are kept: the reply also names the account's owner."""
+    try:                                               # Cloudflare refuses Python's own User-Agent (1010)
+        body = _get_json(XKIRO_USAGE, {"Authorization": f"Bearer {_key_for(XKIRO_HOST)}", "User-Agent": "benchwarmers"})
+    except urllib.error.HTTPError as exc:
+        raise ValueError(f"xKiro answered {exc.code} on /v1/usage") from None
+    return {"groups": xkiro_groups(body, time.time()), "plan": str(body.get("plan") or ""), "notes": []}
 
 
 def _cpa_hub() -> tuple[str, str]:
@@ -250,6 +299,8 @@ def refresh(tag: str) -> dict:
                 "note": "this provider states no limits to ask about: shown from the bench's own records"}
     if tag == "openrouter":
         got = read_openrouter()
+    elif _host(tag) == XKIRO_HOST:
+        got = read_xkiro()
     else:
         vendors = {t.split("/", 1)[1] for t in _tags() if t.startswith("cli-proxy-api/")}
         got = read_cliproxy(tag, vendors)
@@ -258,10 +309,18 @@ def refresh(tag: str) -> dict:
     return {"ok": True, "how": "live", "note": "; ".join(got.get("notes") or [])}
 
 
+def _host(tag: str) -> str:
+    """The connection a tile's models are called through (route.connection_of)."""
+    import route
+    aliases = _tags().get(tag) or []
+    return route.connection_of(aliases[0]) if aliases else tag
+
+
 def how_refreshed(tag: str) -> str:
     """"live" (a free read), "check" (one short call whose headers say what is
     left) or "records" (nothing to ask: the bench's own records)."""
-    if tag.split("/")[0] == "cli-proxy-api" or tag == "openrouter" and _openrouter_endpoint():
+    if (tag.split("/")[0] == "cli-proxy-api" or tag == "openrouter" and _openrouter_endpoint()
+            or _host(tag) == XKIRO_HOST):
         return "live"
     return "check" if _headers_seen(tag) else "records"
 
@@ -359,7 +418,7 @@ def tiles(now: float | None = None) -> list[dict]:
              "models": _model_rows(aliases, rows, resting, limits),
              "refresh": how_refreshed(tag), "plan": "", "name": ""}
         got = live.get(tag) or {}
-        if tag.split("/")[0] == "cli-proxy-api":
+        if tag.split("/")[0] == "cli-proxy-api" or host == XKIRO_HOST:
             if got.get("groups"):
                 t.update(kind="groups", groups=got["groups"], name=got.get("name", ""), plan=got.get("plan", ""))
         elif tag == "openrouter":
@@ -460,6 +519,14 @@ def _selftest() -> None:
     assert c == [{"label": "", "windows": [{"label": "month", "left": 0,
                                             "reset_at": "2026-11-26T15:38:32+00:00"}]}], c
     assert codex_groups({}) == [] and antigravity_groups({}) == []
+    now = 1793306000.0                                   # 2026-10-29 ~19:13 UTC
+    xk = xkiro_groups({"free_tokens": {"used_today": 125000, "limit_per_day": 500000, "remaining": 375000},
+                       "windows": [{"kind": "short", "window_sec": 18000, "spent_usd": "1.500000",
+                                    "cap_usd": "6.000000", "remaining_usd": "4.500000", "resets_in_sec": 600}]}, now)
+    assert xk[0]["windows"][0] == {"label": "tokens · day", "left": 75, "remaining": 375000, "of": 500000,
+                                   "reset_at": "2026-10-30T00:00:00+00:00"}, xk
+    assert xk[1]["windows"][0]["label"] == "5 hours · spend" and xk[1]["windows"][0]["left"] == 75, xk
+    assert xkiro_groups({"free_tokens": {"limit_per_day": None}, "windows": []}, now) == []
     assert _seconds_name(18000) == "5 hours" and _seconds_name(7200) == "2 hours"
     assert _utc_midnight(1793306000) == dt.datetime(2026, 10, 29, tzinfo=UTC).timestamp()
     assert _limit_text({"rpm": 20, "tpd": 200000}) == "20 requests a minute, 200,000 tokens a day"

@@ -21,7 +21,8 @@ its reset, so a connection is never held for want of traffic to observe one.
 ONE HEADER NAME, DIFFERENT WINDOWS
 ----------------------------------
 `x-ratelimit-limit-requests` is per minute at OpenAI and per day at Groq;
-Cerebras names its windows (`-requests-day`, `-tokens-minute`); OpenRouter
+Cerebras names its windows (`-requests-day`, `-tokens-minute`), Routeway only
+its windows (`X-RateLimit-Remaining-Day`, requests, resets in seconds); OpenRouter
 sends bare `X-RateLimit-*` only on a 429, inside the body's metadata as well,
 and its message says which window ("free-models-per-day"); Anthropic's
 `anthropic-ratelimit-*` are per minute; Gemini sends no headers but its 429
@@ -76,6 +77,7 @@ PROFILES = {
 WINDOWS = {"minute": 60, "hour": 3600, "day": 86400}
 OPENAI_STYLE = re.compile(r"^x-ratelimit-(limit|remaining|reset)-(requests|tokens)(?:-(minute|hour|day))?$")
 BARE = re.compile(r"^x-ratelimit-(limit|remaining|reset)$")
+WINDOWED = re.compile(r"^x-ratelimit-(limit|remaining|reset)-(minute|hour|day)$")      # Routeway: requests
 ANTHROPIC = re.compile(r"^anthropic-ratelimit-(requests|tokens|input-tokens|output-tokens)-(limit|remaining|reset)$")
 DURATION = re.compile(r"^(?:(\d+(?:\.\d+)?)h)?(?:(\d+(?:\.\d+)?)m(?!s))?(?:(\d+(?:\.\d+)?)s)?(?:(\d+(?:\.\d+)?)ms)?$")
 
@@ -148,6 +150,8 @@ def from_headers(headers, profile: tuple[str, dict], now: float, status: int = 2
             what, metric, window = m.group(1), m.group(2), m.group(3) or defaults.get(m.group(2), "unknown")
         elif m := BARE.match(key):
             what, metric, window = m.group(1), "requests", _window_hint(hint)
+        elif m := WINDOWED.match(key):
+            what, metric, window = m.group(1), "requests", m.group(2)
         elif m := ANTHROPIC.match(key):
             metric, what, window = m.group(1), m.group(2), "minute"
         else:
@@ -324,6 +328,13 @@ def _selftest() -> None:
                       "x-ratelimit-remaining-tokens-minute": "59000", "x-ratelimit-reset-tokens-minute": "11.4"},
                      profile_for("https://api.cerebras.ai/v1"), now)
     assert one(r, "requests", "day")["limit"] == 14400 and one(r, "tokens", "minute")["remaining"] == 59000
+    # Routeway names only the window; requests, resets in seconds.
+    r = from_headers({"X-RateLimit-Limit-Day": "200", "X-RateLimit-Remaining-Day": "187", "X-RateLimit-Reset-Day": "3600",
+                      "X-RateLimit-Limit-Minute": "5", "X-RateLimit-Remaining-Minute": "4", "X-RateLimit-Reset-Minute": "42"},
+                     profile_for("http://owui.lan/api"), now)
+    d = one(r, "requests", "day")
+    assert d["limit"] == 200 and d["remaining"] == 187 and d["reset_at"] == _iso(now + 3600), d
+    assert one(r, "requests", "minute")["remaining"] == 4
     # Anthropic: RFC 3339 resets, per minute.
     r = from_headers({"anthropic-ratelimit-requests-limit": "50", "anthropic-ratelimit-requests-remaining": "0",
                       "anthropic-ratelimit-requests-reset": "2025-10-24T00:00:45Z"},
