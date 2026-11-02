@@ -2007,7 +2007,9 @@ def said(detail: str) -> tuple[str, str]:
     """An error as one short line, and the link the provider put in it: the
     status code and the provider's own words, without the JSON around them or
     a lead-in such as "Too many requests." that says less than the sentence
-    after it. The whole detail stays in the row's title."""
+    after it, ending where the link it gives begins (the link follows it on
+    the page). Cut to a line by the page, not here: a phone shows it whole.
+    The whole detail stays in the row's title."""
     code = re.search(r"Error code: (\w+)", detail)
     quoted = re.search(r"""['"](?:message|detail)['"]: ['"](.+?)(?:['"]\s*[,}]|$)""", detail)
     text = (quoted.group(1) if quoted else re.sub(r"^.*?Error: ", "", detail) if "Error: " in detail
@@ -2017,8 +2019,16 @@ def said(detail: str) -> tuple[str, str]:
     if rest and len(first) < 25:
         text = rest
     url = re.search(r"https?://[^\s;,'\"()]+", quoted.group(1) if quoted else "")
+    if url and url.group(0) in text:
+        text = text[:text.index(url.group(0))].rstrip()
     text = (f"{code.group(1)} · " if code else "") + text
-    return (text if len(text) <= 110 else text[:109].rstrip() + "…"), (url.group(0) if url else "")
+    return (text if len(text) <= 400 else text[:399].rstrip() + "…"), (url.group(0) if url else "")
+
+
+def breakable(name: str) -> str:
+    """An escaped name that may wrap at a domain's dots (`…-api.unorouter.com`),
+    never inside a version number (`llama-3.2`)."""
+    return re.sub(r"\.(?=[a-z])", ".<wbr>", name)
 
 
 def open_actions() -> tuple[dict[str, dict], list[tuple[str, dict]]]:
@@ -2128,7 +2138,7 @@ def actions_page(groups: dict, auto: list) -> str:
                     f"<span class='acts'>{got}</span></div>")
         alias = esc(r["alias"])
         return (f"<div class='a-row' data-row><a href='#' class='model' data-alias='{alias}'>"
-                f"<span class='alias'>{alias}</span></a><span>{chip(r['label'], r['css'])}</span>"
+                f"<span class='alias'>{breakable(alias)}</span></a><span>{chip(r['label'], r['css'])}</span>"
                 f"<span class='why' title='{esc(r['title'])}'><span class='said'>{esc(r['said'])}</span>{link(r['url'])}</span>"
                 f"<span class='acts'><button class='linkish' data-act='retry' data-alias='{alias}'"
                 " title='One call now; an answer clears the alert'>Retry</button>"
@@ -2155,7 +2165,7 @@ def actions_page(groups: dict, auto: list) -> str:
     tags = load_json(DATA / "config" / "provider-tags.json")      # a retired model's connection, by served name
     gone = "".join(
         f"<div class='a-row' data-row><a href='#' class='model' data-alias='{esc(alias)}'>"
-        f"<span class='alias'>{esc(alias)}</span></a><span class='when'>{esc(r['at'][:10])}</span>"
+        f"<span class='alias'>{breakable(esc(alias))}</span></a><span class='when'>{esc(r['at'][:10])}</span>"
         f"<span class='why' title='{esc(r.get('why', ''))}'><span class='said'>"
         f"{esc(tags.get(r.get('served', ''), '').strip('?') or r.get('endpoint') or endpoints.default())}"
         f" · {esc(said(r.get('why', '').removeprefix('auto: '))[0])}</span></span>"

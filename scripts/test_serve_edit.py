@@ -461,6 +461,15 @@ def main() -> int:
     print(("ok   " if ok else "FAIL ") + "action needed drops alerts on retired models")
     failures += 0 if ok else 1
 
+    # A provider's words end where its link begins, and are not cut short here:
+    # the page cuts them to a line, and a phone, with no hover, shows them whole.
+    text, url = serve.said("Error: Error code: 403 - {'error': {'message': 'm needs your consent. Give it once at"
+                           " https://p.example/consents?model=m; it covers every model.'}}")
+    long, _ = serve.said("Error: Error code: 429 - {'error': {'message': 'Too many requests. " + "w " * 80 + "end'}}")
+    ok = text.endswith("Give it once at") and url == "https://p.example/consents?model=m" and long.endswith("end")
+    print(("ok   " if ok else "FAIL ") + "action needed shows a provider's words whole, its link after them")
+    failures += 0 if ok else 1
+
     # Dismiss: one picker key or many in one write, a change-log line each;
     # undo brings back only the ones named; nothing named is refused.
     serve.DISMISSED_PATH = cfg / "dismissed.json"
