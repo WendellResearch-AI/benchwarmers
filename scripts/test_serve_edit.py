@@ -454,7 +454,7 @@ def main() -> int:
             encoding="utf-8")
         serve.DATA, serve.registered = pathlib.Path(tmp), lambda: {"h1-served": "h1"}
         try:
-            shown = serve.problems()
+            shown = serve.actions_page(*serve.open_actions())
         finally:
             serve.DATA, serve.registered = kept_data, kept_reg
     ok = "here.example" in shown and "gone.example" not in shown and "old retires" not in shown

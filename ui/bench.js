@@ -123,23 +123,10 @@
     c.addEventListener(c.tagName === 'SELECT' ? 'change' : 'input', function () { applyFilter(scope); });
   });
 
-  // ---- Action needed: folded to its heading by default; show keeps it open
-  // in this browser for 12 hours, Hide folds it again ----
-  var acts = $('actions');
-  if (acts) {
-    var opened = Number(store('bench.actions.open')) || 0;
-    var fold = function (on) {
-      acts.classList.toggle('collapsed', on);
-      $('actions-hide').textContent = on ? 'show' : 'Hide';
-      $('actions-hide').setAttribute('aria-expanded', String(!on));
-    };
-    fold(!(Date.now() - opened < 12 * 3600 * 1000));
-    $('actions-hide').addEventListener('click', function () {
-      var on = !acts.classList.contains('collapsed');
-      store('bench.actions.open', on ? '' : String(Date.now()));
-      fold(on);
-    });
-  }
+  // ---- a link to another page (At a glance's line to Action needed) ----
+  document.querySelectorAll('[data-go]').forEach(function (b) {
+    b.addEventListener('click', function () { show(b.dataset.go); scrollTo(0, 0); });
+  });
 
   // ---- retired rows: hidden unless asked for ---------------------------
   var showRetired = store('bench.retired') === '1';
@@ -406,8 +393,7 @@
   document.querySelectorAll('[data-act]').forEach(function (b) {
     b.addEventListener('click', function () {
       var act = b.dataset.act, aliases = (b.dataset.aliases || b.dataset.alias || '').split(' ').filter(Boolean);
-      var status = b.closest('.problem').querySelector('.why');
-      if (act === 'open') { openModel(aliases[0]); return; }
+      var status = b.closest('[data-row]').querySelector('.why');   // a model's line, or its group's head
       if (act === 'dismiss') {               // a notice: gone once seen
         b.disabled = true;
         post('/api/alerts/dismiss', {key: b.dataset.key}).then(function (res) {
@@ -416,12 +402,22 @@
         }).catch(function (err) { status.textContent = String(err); b.disabled = false; });
         return;
       }
-      if (act === 'retry') {                 // no confirm: one call, and only an answer changes anything
+      if (act === 'retry') {                 // no confirm: one call each, and only an answer changes anything
+        var label = b.textContent, said = [], failed = [];
         b.disabled = true; b.textContent = 'Asking…';
-        post('/api/retry', {alias: aliases[0]}).then(function (res) {
-          if (!res.ok) { status.textContent = res.errors.join('; '); status.classList.add('err'); b.disabled = false; b.textContent = 'Retry'; return; }
-          status.textContent = res.changed.join(' · ') + '. Reloading…'; setTimeout(function () { location.reload(); }, 900);
-        }).catch(function (err) { status.textContent = String(err); b.disabled = false; b.textContent = 'Retry'; });
+        aliases.reduce(function (chain, alias) {
+          return chain.then(function () {
+            return post('/api/retry', {alias: alias}).then(function (res) {
+              (res.ok ? said : failed).push(res.ok ? res.changed.join(' · ') : res.errors.join('; '));
+            });
+          });
+        }, Promise.resolve()).then(function () {
+          // A group's Retry all says how many answered; each failure is on hover, not ten lines in its heading.
+          var told = aliases.length > 1 ? said.length + ' of ' + aliases.length + ' answered' : said.concat(failed).join(' · ');
+          status.title = failed.join('\n');
+          if (!said.length) { status.textContent = told; status.classList.add('err'); b.disabled = false; b.textContent = label; return; }
+          status.textContent = told + '. Reloading…'; setTimeout(function () { location.reload(); }, 900);
+        }).catch(function (err) { status.textContent = String(err); b.disabled = false; b.textContent = label; });
         return;
       }
       var verb = act === 'restore' ? 'Restore' : 'Retire';

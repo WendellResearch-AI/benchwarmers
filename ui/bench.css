@@ -99,33 +99,56 @@ button { font: inherit; cursor: pointer; }
 /* ---- layout --------------------------------------------------------- */
 main { max-width: var(--page, 104rem); margin: 0 auto; padding: 0 var(--gutter) 4rem; }
 
-/* problems: what needs a person, each with the action that resolves it */
+/* first run: a fresh install's next step, above every page until it is done */
 .problems { background: var(--sheet, var(--panel)); border-radius: 14px; padding: 1rem 1.4rem; margin: .5rem 0 1.5rem;
             box-shadow: 0 1px 2px rgb(0 0 0 / .04), 0 12px 32px -14px rgb(0 0 0 / .14);
             -webkit-backdrop-filter: var(--glass, none); backdrop-filter: var(--glass, none); }
 .problems h2 { margin: 0 0 .25rem; font-size: 1.25rem; font-weight: 700; }
-.problems > p { margin: 0 0 .5rem; color: var(--muted); font-size: .9375rem; }
 .problem { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .25rem 1rem;
            align-items: center; padding: .55rem .75rem; margin: 0 -.75rem; border-radius: var(--radius); }
 .problem:hover { background: var(--step-1); }
-.problems details { margin-top: .5rem; }
-.problems details > summary { cursor: pointer; font-weight: 500; padding: .4rem 0; }
-.problems details > summary .muted { font-weight: 400; }
-.problem .what { font-weight: 500; }
 .problem .why { color: var(--muted); font-size: .875rem; overflow-wrap: anywhere; }
 .problem .acts, .endpoint .acts, .ep .acts { display: flex; gap: .5rem; flex-wrap: wrap; justify-content: flex-end; }
 .row-input { display: flex; gap: .5rem; align-items: center; margin-top: .35rem; }
 .row-input input { flex: 1; min-width: 0; margin: 0 !important; }
 .sub-head { font-weight: 600; margin: 1rem 0 .25rem; }
-.problem .chip { margin-right: .4rem; }
 .problems .head { display: flex; align-items: baseline; gap: .5rem; }
 .problems .head h2 { margin-bottom: .25rem; }
-.problems .sep { display: none; color: var(--muted); }
-/* Hidden (bench.js): one line, "Action needed · 3 · show", until something new */
-.problems.collapsed { padding: .5rem 1.25rem; }
-.problems.collapsed > :not(.head) { display: none; }
-.problems.collapsed .head h2 { margin: 0; font-size: 1rem; }
-.problems.collapsed .sep { display: inline; }
+
+/* Action needed: its own page, by connection. Each model is one line of a
+   grid shared by its group (name, state, the provider's words, actions), so
+   the columns line up down the group. */
+.a-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: .25rem .6rem; margin: 1.4rem 1.6rem 0;
+          padding: .45rem .75rem; background: var(--err-ground); border-radius: var(--radius); }
+.a-group { padding: 1rem 0 .75rem; border-top: 1px solid var(--line); }
+.a-group:first-of-type { border-top: 0; padding-top: .5rem; }
+.a-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: .25rem .6rem; margin-bottom: .4rem; }
+.a-head .conn { font-size: 1.0625rem; font-weight: 700; }
+.a-head .count { color: var(--muted); }
+.a-head .why { font-size: .875rem; }
+.a-head .why:empty { display: none; }
+.a-head .acts { margin-left: auto; display: flex; gap: .5rem; }
+.a-held { display: flex; gap: .6rem; align-items: baseline; margin: .35rem 0 .6rem; padding: .5rem .75rem;
+          background: var(--warn-ground); border-radius: var(--radius); font-size: .9375rem; overflow-wrap: anywhere; }
+.a-held .chip { flex: none; background: var(--ink); color: var(--paper); }
+.a-held a { color: var(--ink); font-weight: 500; }
+.a-rows { display: grid; grid-template-columns: minmax(10rem, max-content) max-content minmax(0, 1fr) max-content;
+          gap: 0 1rem; align-items: baseline; }
+.a-row { display: contents; }
+.a-row > * { padding: .3rem 0; border-top: 1px solid color-mix(in oklab, var(--line) 55%, transparent); }
+.a-row:first-child > * { border-top: 0; }
+.a-row .alias, .a-row .what { font-weight: 500; }
+.a-row .why, .a-row .when { color: var(--muted); font-size: .875rem; overflow-wrap: anywhere; }
+/* One line a model: the provider's words cut to the column, whole on hover; its link stays whole. */
+.a-row .why:has(> .said) { display: flex; gap: .5rem; min-width: 0; }
+.a-row .said { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.a-row .why > a { flex: none; }
+.a-row .acts { display: flex; gap: .9rem; font-size: .875rem; }
+.linkish.danger { color: var(--err); }
+.a-retired { margin-top: .75rem; border-top: 1px solid var(--line); padding-top: .5rem; }
+.a-retired > summary { cursor: pointer; font-weight: 500; padding: .35rem 0; }
+.a-retired > summary .muted { color: var(--muted); font-weight: 400; }
+.a-none { color: var(--muted); }
 
 /* pages: a grouped sidebar (Observe, Gateway, Control); the group names and
    the active page carry the theme's brand colour. A theme with a floor backs
@@ -156,6 +179,12 @@ main { max-width: var(--page, 104rem); margin: 0 auto; padding: 0 var(--gutter) 
   content: ""; position: absolute; left: calc(100% + .3em); top: -.05em; width: .75em; height: .75em;
   background: var(--brand);
   clip-path: polygon(50% 0, 62% 38%, 100% 50%, 62% 62%, 50% 100%, 38% 62%, 0 50%, 38% 38%); }
+/* A page's count (Action needed): hung outside the button like the sparkle,
+   so the active page's stroke runs under the word and not the number. */
+.tabs button:has(> .n) { position: relative; }
+.tabs button .n { position: absolute; left: calc(100% + .4rem); top: 50%; transform: translateY(-50%);
+                  padding: .05rem .4rem; border-radius: 999px; font: 700 .75rem/1.25 var(--font-mono);
+                  background: var(--err-ground); color: var(--err); }
 .tab { display: none; } .tab.active { display: block; }
 /* One surface for the page's content: its panels are sections of it,
    divided by a hairline, rather than separate boxes with gaps between. A
@@ -170,6 +199,7 @@ main { max-width: var(--page, 104rem); margin: 0 auto; padding: 0 var(--gutter) 
   .tabs { position: static; flex-direction: row; flex-wrap: wrap; gap: .5rem 1.5rem; }
   .tabs .group { flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: .1rem 1rem; }
   .tabs h2 { margin: 0; }
+  .tabs button:has(> .n) { margin-right: 2rem; }    /* room for its count in a row */
 }
 
 /* settings, connections, logs, info */
@@ -510,6 +540,12 @@ dialog .pick { display: flex; gap: 1.5rem; }
   .toolbar input[type=search] { min-width: 0; width: 100%; }
   button.c-row { grid-template-columns: minmax(0, 1fr); }     /* the seats get the width; the whole row opens */
   .c-row .open-hint { display: none; }
+  .a-line { margin: 1rem 1rem 0; }
+  .a-rows { grid-template-columns: minmax(0, 1fr) max-content; }    /* name and state; the words and actions under them */
+  .a-row .why, .a-row .acts { grid-column: 1 / -1; padding-top: 0; border-top: 0; }
+  .a-row .acts { padding-bottom: .5rem; }
+  .a-row .why:has(> .said) { flex-wrap: wrap; }
+  .a-row .said { white-space: normal; }             /* a phone has the height to read it whole */
 }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }

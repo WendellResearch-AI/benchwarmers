@@ -25,6 +25,7 @@ coding agent doing it with you); the gateway's whole contract is in
 | Group | Page | What it is for |
 | --- | --- | --- |
 | Observe | **At a glance** | Every model on the bench: whether it works right now, its role, and its connection. Click a name for its popup: role, alias, facts, options, retire. |
+| | **Action needed** | What will not fix itself, by the connection it comes from, with Retry and Retire on each model. |
 | | **Benchmarks** | How models do on the suite and on real work: bugs found against false alarms, who is confidently wrong, and speed. |
 | | **Quota management** | A tile per provider: what is left, when it resets, and which of its models are resting. Then the week's resets, and what the bench sent. |
 | | **Logs** | Gateway calls (who sat and how it went, never the prompt), changes made from the dashboard, the scheduler, and onboarding runs. |
@@ -35,14 +36,19 @@ coding agent doing it with you); the gateway's whole contract is in
 | Control | **Settings** | Theme, gateway keys, the scheduler, the model client, providers whose free models work only in their own app, how the install is reached (shown only), and Restart. |
 | | **Info** | Version, Python, data folder and counts. |
 
-"Action needed", above the pages, lists what will not fix itself, such as a
-model about to be retired, naming each model and where it comes from, with
-Retry, Open and Retire now beside it. It starts folded to its heading and
-count; show opens it in that browser for 12 hours. An alert whose models have
-all been retired goes at once. A model that is out of quota is not counting
-down: days the bench held its calls back until a stated reset, or an account's
-shared free quota was spent, pause its clock, and while it is still out of
-quota no countdown shows. One refused again after the short wait it named is
+**Action needed** lists what will not fix itself, such as a model about to be
+retired, grouped by the connection it comes from, since one cause usually
+reaches every model there. Each model is one line: its state, the provider's
+own words for the error (whole on hover), and Retry (one call; an answer
+clears the alert) and Retire. A group of two or more has Retry all and Retire
+all; a connection held because every model on it fails says so above its
+models, with any link the provider gave. Automatic retirements from the last
+week are folded at the end, each with Restore. Its count sits beside it in the
+sidebar, and At a glance opens on one line saying what is waiting and how
+soon. An alert whose models have all been retired goes at once. A model that
+is out of quota is not counting down: days the bench held its calls back until
+a stated reset, or an account's shared free quota was spent, pause its clock,
+and while it is still out of quota no countdown shows. One refused again after the short wait it named is
 failing, and keeps counting.
 
 **Restart** (Settings, Server and access), or `bench restart`, starts the

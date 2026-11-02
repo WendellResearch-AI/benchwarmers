@@ -2003,91 +2003,172 @@ def first_run() -> str:
             f"<button class='btn primary' id='first-go'>{label}</button></div></div></section>")
 
 
-def problems() -> str:
-    """What needs a person, each with the button that resolves it.
+def said(detail: str) -> tuple[str, str]:
+    """An error as one short line, and the link the provider put in it: the
+    status code and the provider's own words, without the JSON around them or
+    a lead-in such as "Too many requests." that says less than the sentence
+    after it. The whole detail stays in the row's title."""
+    code = re.search(r"Error code: (\w+)", detail)
+    quoted = re.search(r"""['"](?:message|detail)['"]: ['"](.+?)(?:['"]\s*[,}]|$)""", detail)
+    text = (quoted.group(1) if quoted else re.sub(r"^.*?Error: ", "", detail) if "Error: " in detail
+            else re.sub(r"^\w+: ", "", detail))
+    text = " ".join(text.replace("<<", "").replace(">>", "").split())
+    first, _, rest = text.partition(". ")
+    if rest and len(first) < 25:
+        text = rest
+    url = re.search(r"https?://[^\s;,'\"()]+", quoted.group(1) if quoted else "")
+    text = (f"{code.group(1)} · " if code else "") + text
+    return (text if len(text) <= 110 else text[:109].rstrip() + "…"), (url.group(0) if url else "")
+
+
+def open_actions() -> tuple[dict[str, dict], list[tuple[str, dict]]]:
+    """What needs a person, by the connection it comes from ({connection:
+    {"held": [...], "rows": [...]}}, the soonest to retire first), and the
+    last week's automatic retirements, newest first.
 
     Rate limits and timeouts are not listed: they resolve themselves, or count
     toward the 7-day backstop and appear here as `retiring` when that nears.
-    Automatic retirements from the last week ARE listed, with Restore, because
-    a decision taken without a person should be easy for one to undo."""
+    Automatic retirements ARE listed, with Restore, because a decision taken
+    without a person should be easy for one to undo."""
     alerts = load_json(DATA / "metrics" / "alerts.json")
     names = registered()
-    today = datetime.date.today()
-    KIND = {"retiring": "err", "retired": "err", "connection": "warn",
-            "registration": "warn", "plan": "warn"}
-    items = []
     live = set(names.values())
-    for key, a in sorted(alerts.items(), key=lambda kv: kv[1].get("first_seen", "")):
+    status = model_status()
+    groups: dict[str, dict] = {}
+
+    def group(conn: str) -> dict:
+        return groups.setdefault(conn or "?", {"held": [], "rows": {}})
+
+    def row(alias: str, key: str, a: dict) -> dict:
+        # The roster's words for its state, so the two pages agree; the
+        # alert's own evidence for a countdown, the latest probe otherwise.
+        label, css, latest = status.get(alias, (a.get("kind", "?"), "warn", ""))
+        days = re.search(r"in (\d+)d", label)
+        detail = a.get("action", "") if a.get("kind") == "retiring" else latest or a.get("message", "")
+        text, url = said(detail)
+        return {"alias": alias, "key": key, "label": label, "css": "warn" if days and int(days.group(1)) > 2 else css,
+                "days": int(days.group(1)) if days else 99, "said": text, "url": url, "title": detail,
+                "why": a.get("message", "")}
+
+    for key, a in alerts.items():
         served = key.split(":", 2)[2] if key.count(":") >= 2 else ""
         alias = a.get("alias") or names.get(served, "")
         # The alerts file is rewritten by the daily check; until then an alert
         # whose models have all left the bench (Retire all, or one by one) has
         # nothing left to act on.
-        if a.get("aliases") and not live & set(a["aliases"]):
+        if (a.get("aliases") and not live & set(a["aliases"])) or (alias and alias not in live):
             continue
-        if a.get("kind") == "retiring" and alias and alias not in live:
-            continue
-        try:
-            age = (today - datetime.date.fromisoformat(a["first_seen"])).days
-        except (KeyError, ValueError):
-            age = 0
-        # Which model and where it comes from, first: the message alone left that to be looked up.
-        served_as = next((s for s, al in names.items() if al == alias), served) if alias else ""
-        where = (f"{alias} · {served_as or '?'} via {tag_for(alias) or a.get('endpoint') or '?'}"
-                 if alias else "")
-        why = " · ".join(filter(None, [where, a.get("action", ""),
-                                       "open today" if age == 0 else f"open {age} days"]))
-        acts = []
-        if a.get("aliases"):
-            acts.append(f"<button class='btn small danger' data-act='retire'"
-                        f" data-aliases='{esc(' '.join(a['aliases']))}'"
-                        f" data-why='{esc(a.get('message', ''))}'>Retire all {len(a['aliases'])}</button>")
-        elif alias in names.values():
-            if a.get("kind") == "retiring":
-                acts.append(f"<button class='btn small' data-act='retry' data-alias='{esc(alias)}'"
-                            " title='One call now; an answer clears this alert'>Retry</button>")
-            acts.append(f"<button class='btn small' data-act='open' data-alias='{esc(alias)}'>Open</button>")
-            acts.append(f"<button class='btn small danger' data-act='retire' data-alias='{esc(alias)}'"
-                        f" data-why='{esc(a.get('message', ''))}'>Retire now</button>")
-        if a.get("dismiss"):                           # a notice, not a state: it goes once seen
-            acts.append(f"<button class='btn small' data-act='dismiss' data-key='{esc(key)}'>Got it</button>")
-        items.append((key, a.get("kind", "?"), KIND.get(a.get("kind"), "warn"),
-                      a.get("message", ""), why, "".join(acts)))
-    cutoff = (today - datetime.timedelta(days=7)).isoformat()
-    tags = load_json(DATA / "config" / "provider-tags.json")      # a retired model's connection, by served name
-    auto = [(f"retired:{alias}:{r['at']}", "", "",
-             f"{alias} · {r.get('served') or '?'} via {tags.get(r.get('served', ''), '').strip('?') or r.get('endpoint') or endpoints.default()}"
-             f" · {r['at'][:10]}",
-             r.get("why", "").removeprefix("auto: "),
-             f"<button class='btn small' data-act='restore' data-alias='{esc(alias)}'>Restore</button>")
-            for alias, r in sorted(retired().items(), key=lambda kv: kv[1].get("at", ""), reverse=True)
+        if a.get("kind") == "connection":
+            g = group(served)
+            text, url = said(a.get("action", ""))
+            g["held"].append({"said": text, "url": url, "title": a.get("action", "")})
+            for held in a.get("aliases", []):
+                if held in live:
+                    g["rows"].setdefault(held, row(held, key, a))
+        elif alias:                                    # its own alert says more than a held connection's list
+            group((tag_for(alias) or a.get("endpoint") or "?").split("/")[0])["rows"][alias] = row(alias, key, a)
+        else:                                          # a notice about no one model (NVIDIA's limits)
+            group("Notices")["rows"][key] = {"alias": "", "key": key, "label": a.get("kind", "?"), "css": "warn",
+                                             "days": 99, "said": a.get("message", ""), "url": "",
+                                             "title": a.get("action", ""), "dismiss": a.get("dismiss")}
+    for g in groups.values():
+        g["rows"] = sorted(g["rows"].values(), key=lambda r: (r["days"], r["alias"]))
+    order = sorted(groups.items(), key=lambda kv: (kv[0] == "Notices", min([r["days"] for r in kv[1]["rows"]] or [99]),
+                                                   -len(kv[1]["rows"]), kv[0]))
+    cutoff = (datetime.date.today() - datetime.timedelta(days=7)).isoformat()
+    auto = [(alias, r) for alias, r in sorted(retired().items(), key=lambda kv: kv[1].get("at", ""), reverse=True)
             if r.get("by") == "auto" and r.get("at", "") >= cutoff]
-    if not items and not auto:
-        return ""
+    return dict(order), auto
 
-    # Each row carries its alert key: Hide (bench.js) folds the section to its
-    # heading until a key it has not seen arrives, or 12 hours pass. Per browser.
-    def render_rows(rows):
-        return "".join(
-            f"<div class='problem' data-key='{esc(key)}'><div><div class='what'>"
-            f"{chip(kind, css) if kind else ''}{esc(what)}</div>"
-            f"<div class='why'>{esc(why)}</div></div><div class='acts'>{acts}</div></div>"
-            for key, kind, css, what, why, acts in rows)
-    # Folded: a week of automatic retirements is a record to check, not a
-    # list of things to do, and it must not push the roster off the screen.
-    folded = (f"<details><summary>Retired automatically this week · {len(auto)}"
-              " <span class='muted'>— each can be restored</span></summary>"
-              f"{render_rows(auto)}</details>") if auto else ""
-    # Folded by default, the count in its heading; bench.js keeps it open for
-    # 12 hours once shown.
-    return (f"<section class='problems collapsed' id='actions' aria-labelledby='actions-head'>"
-            f"<div class='head'><h2 id='actions-head'>Action needed · {len(items)}</h2>"
-            "<span class='sep' aria-hidden='true'>·</span>"
-            "<button type='button' class='linkish' id='actions-hide' aria-expanded='false'"
-            " title='Open it here for 12 hours'>show</button></div>"
-            + ("<p>States that will not fix themselves.</p>" if items
-               else "<p>Nothing open.</p>")
-            + f"{render_rows(items)}{folded}</section>")
+
+def open_count(groups: dict) -> int:
+    """Models and connections waiting on a person: the sidebar's count."""
+    return sum(len(g["rows"]) + len(g["held"]) for g in groups.values())
+
+
+def and_list(parts: list[str]) -> str:
+    return " and ".join(parts) if len(parts) < 3 else ", ".join(parts[:-1]) + " and " + parts[-1]
+
+
+def actions_line(groups: dict) -> str:
+    """At a glance's one line about Action needed, when anything is open:
+    what is waiting and how soon, and the way to its page."""
+    rows = [r for g in groups.values() for r in g["rows"]]
+    held = sum(len(g["held"]) for g in groups.values())
+    if not rows and not held:
+        return ""
+    models = sum(1 for r in rows if r["alias"])
+    what = and_list([f"{n} {word}{'s' * (n != 1)}" for n, word in
+                     ((models, "model"), (held, "connection"), (len(rows) - models, "notice")) if n])
+    soon = min(r["days"] for r in rows) if rows else 99
+    many = sum(r["days"] == soon for r in rows)
+    when = (f"; {many} retire{'s' * (many == 1)} in {soon} day{'s' * (soon != 1)}" if soon < 99 else "")
+    return (f"<p class='a-line'><strong>Action needed</strong> <span>{what}{when}.</span>"
+            " <button type='button' class='linkish' data-go='needs'>Review →</button></p>")
+
+
+def actions_page(groups: dict, auto: list) -> str:
+    """Action needed, its own page since 2026-11-02: it sat above every page
+    and grew to a screen and more of red. Grouped by connection, because
+    one cause usually reaches every model on it (nine models on one free
+    tier's rate limit); each model one line, its error in the provider's own
+    words, with Retry a click away."""
+    def link(url: str) -> str:
+        if not url:
+            return ""
+        shown = re.sub(r"^https?://", "", url).split("?")[0]
+        return f" <a href='{esc(url)}' target='_blank' rel='noopener'>{esc(shown)} ↗</a>"
+
+    def model_row(r: dict) -> str:
+        if not r["alias"]:                             # a notice: what it says, and Got it if it goes once seen
+            got = (f"<button class='linkish' data-act='dismiss' data-key='{esc(r['key'])}'>Got it</button>"
+                   if r.get("dismiss") else "")
+            return (f"<div class='a-row' data-row><span class='what'>{esc(r['said'])}</span>"
+                    f"<span>{chip(r['label'], r['css'])}</span><span class='why'>{esc(r['title'])}</span>"
+                    f"<span class='acts'>{got}</span></div>")
+        alias = esc(r["alias"])
+        return (f"<div class='a-row' data-row><a href='#' class='model' data-alias='{alias}'>"
+                f"<span class='alias'>{alias}</span></a><span>{chip(r['label'], r['css'])}</span>"
+                f"<span class='why' title='{esc(r['title'])}'><span class='said'>{esc(r['said'])}</span>{link(r['url'])}</span>"
+                f"<span class='acts'><button class='linkish' data-act='retry' data-alias='{alias}'"
+                " title='One call now; an answer clears the alert'>Retry</button>"
+                f"<button class='linkish danger' data-act='retire' data-alias='{alias}'"
+                f" data-why='{esc(r['why'] or r['label'])}'>Retire</button></span></div>")
+
+    def section(conn: str, g: dict) -> str:
+        aliases = [r["alias"] for r in g["rows"] if r["alias"]]
+        both = (f"<button class='btn small' data-act='retry' data-aliases='{esc(' '.join(aliases))}'"
+                f" title='One call each'>Retry all {len(aliases)}</button>"
+                f"<button class='btn small danger' data-act='retire' data-aliases='{esc(' '.join(aliases))}'"
+                f" data-why='every model on {esc(conn)} needed action'>Retire all {len(aliases)}</button>"
+                if len(aliases) > 1 else "")
+        held = "".join(
+            f"<div class='a-held' title='{esc(h['title'])}'><span class='chip'>held</span><span>Every model"
+            f" here is failing, likely the connection (key, credit, prefix), so nothing was retired."
+            f" Latest: {esc(h['said'])}{link(h['url'])}</span></div>" for h in g["held"])
+        n = len(g["rows"])
+        return (f"<div class='a-group'><div class='a-head' data-row><span class='conn'>{esc(conn)}</span>"
+                f"<span class='count'>{n} {'notice' if conn == 'Notices' else 'model'}{'s' * (n != 1)}</span>"
+                f"<span class='why'></span><span class='acts'>{both}</span></div>{held}"
+                f"<div class='a-rows'>{''.join(model_row(r) for r in g['rows'])}</div></div>")
+
+    tags = load_json(DATA / "config" / "provider-tags.json")      # a retired model's connection, by served name
+    gone = "".join(
+        f"<div class='a-row' data-row><a href='#' class='model' data-alias='{esc(alias)}'>"
+        f"<span class='alias'>{esc(alias)}</span></a><span class='when'>{esc(r['at'][:10])}</span>"
+        f"<span class='why' title='{esc(r.get('why', ''))}'><span class='said'>"
+        f"{esc(tags.get(r.get('served', ''), '').strip('?') or r.get('endpoint') or endpoints.default())}"
+        f" · {esc(said(r.get('why', '').removeprefix('auto: '))[0])}</span></span>"
+        f"<span class='acts'><button class='linkish' data-act='restore' data-alias='{esc(alias)}'>Restore</button></span></div>"
+        for alias, r in auto)
+    # Folded: a week of automatic retirements is a record to check, not a list of things to do.
+    folded = (f"<details class='a-retired'><summary>Retired automatically this week · {len(auto)}"
+              f" <span class='muted'>— each can be restored</span></summary><div class='a-rows'>{gone}</div></details>"
+              if auto else "")
+    body = "".join(section(conn, g) for conn, g in groups.items()) or "<p class='a-none'>Nothing open.</p>"
+    return ("<div class='panel'><h2>Action needed</h2><p class='sub'>States that will not fix themselves, by the"
+            " connection they come from. A reason's full error is on hover, and a name opens the model."
+            f" Retry spends one call; an answer clears the alert.</p>{body}{folded}</div>")
 
 
 CAP_LABELS = {"tools": "tools", "vision": "vision", "structured_output": "json", "reasoning": "reasons"}
@@ -2833,7 +2914,7 @@ def render(theme: str | None = None) -> str:
         "<button class='btn primary' id='onboard-open'>Onboard a model</button></div></header>"
         # What needs a person first, then the pages; endpoints are managed from
         # Connections now (the header button moved there).
-        f"<main>{first_run()}{problems()}<div class='layout'>{tabs()}</div></main>{editor()}"
+        f"<main>{first_run()}<div class='layout'>{tabs()}</div></main>{editor()}"
         f"<script>window.BENCH={directory_json()};</script>"
         # Observable Plot (on d3) draws the Benchmarks charts. Pinned versions from
         # jsDelivr; without a network the tables under each chart still work.
@@ -3235,6 +3316,7 @@ def collections_tab() -> str:
 # pages were too many for a row of tabs. Collections holds the gateway's
 # requests under the collections they ran; Benchmarks holds Performance.
 SECTIONS = (("Observe", (("glance", "At a glance", "roster"),
+                         ("needs", "Action needed", "actions_page"),
                          ("suite", "Benchmarks", "benchmarks_tab"),
                          ("quotas", "Quota management", "quotas_page"),
                          ("logs", "Logs", "logs_page"))),
@@ -3253,11 +3335,21 @@ def collections_and_gateway() -> str:
 
 
 def tabs() -> str:
+    # Read once a render: Action needed's page, its count in the sidebar and
+    # At a glance's line about it.
+    groups, auto = open_actions()
+    count = {"needs": open_count(groups)}
+    page = {"needs": lambda: actions_page(groups, auto), "glance": lambda: actions_line(groups) + roster()}
+
+    def button(key: str, label: str) -> str:
+        n = count.get(key)
+        return (f"<button role='tab' data-tab='{key}' aria-selected='false'"
+                + (f" aria-label='{esc(label)}, {n} open'>{esc(label)}<span class='n' aria-hidden='true'>{n}</span>"
+                   if n else f">{esc(label)}") + "</button>")
     nav = "".join(f"<div class='group'><h2>{esc(group)}</h2>"
-                  + "".join(f"<button role='tab' data-tab='{key}' aria-selected='false'>{esc(label)}</button>"
-                            for key, label, _ in pages) + "</div>"
+                  + "".join(button(key, label) for key, label, _ in pages) + "</div>"
                   for group, pages in SECTIONS)
-    panes = "".join(f"<section class='tab' id='tab-{key}'>{globals()[fn]()}</section>"
+    panes = "".join(f"<section class='tab' id='tab-{key}'>{page[key]() if key in page else globals()[fn]()}</section>"
                     for key, _, fn in TABS)
     return f"<nav class='tabs' role='tablist' aria-label='Pages'>{nav}</nav><div class='panes'>{panes}</div>"
 
