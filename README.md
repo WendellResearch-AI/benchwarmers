@@ -198,7 +198,8 @@ dependencies either way: the app is the Python standard library.
   in a monthly usage ledger with its tokens. Quota management has a tile per
   provider showing what is left, when it resets and who is resting. OpenRouter,
   xKiro, Requesty and CLI Proxy API's sign-ins are read live, at no cost to
-  quota; nothing is taken from a provider's docs.
+  quota. Nothing is taken from a provider's docs; NVIDIA's own stated figures
+  are read from its site and watched for changes.
 - **Discover.** FreeLLMAPI's free catalog, with models.dev for the details
   and paid models it lacks, merged into one list of models worth adding,
   smartest first, each with the routes this install has to it.
@@ -439,7 +440,8 @@ reaches Wendell Research. What it sends, and where:
   are content to send that work to.
 - **Catalog reads**, no key and nothing of yours: FreeLLMAPI (its feed and
   its site's sitemap) and models.dev once a day, and OpenRouter's public
-  model list.
+  model list. With an NVIDIA connection, the public file of rate limits
+  build.nvidia.com states, once a day and on Refresh.
 - **Sign-ins**, only when you choose one: the provider's own sign-in page.
 - **Quota reads**, only when you press Refresh on Quota management, with no
   prompt: OpenRouter's key status, and xKiro's and Requesty's usage, each with

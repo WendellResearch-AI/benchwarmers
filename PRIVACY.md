@@ -1,6 +1,6 @@
 # Privacy policy
 
-*Effective 29 October 2026.*
+*Effective 2 November 2026.*
 
 Benchwarmers runs on your own machine or server. It has no account, no
 telemetry and no server of its own, and nothing you do with it reaches
@@ -15,7 +15,9 @@ Wendell Research.
   applies to what it receives; some free tiers keep prompts or train on them.
 - **Catalog reads**, carrying nothing of yours: FreeLLMAPI (its feed and its
   site's sitemap) and models.dev (at most once a day) and OpenRouter's public
-  model list.
+  model list. With an NVIDIA connection on the bench, the public file of rate
+  limits build.nvidia.com states, once a day and when you press Refresh on its
+  quota tile.
 - **Sign-ins**, only when you choose one: the provider's own sign-in page, in
   your browser, and the provider's token endpoint.
 - **Quota reads**, only when you press Refresh on Quota management, carrying
