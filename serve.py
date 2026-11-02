@@ -2078,11 +2078,13 @@ def problems() -> str:
     folded = (f"<details><summary>Retired automatically this week · {len(auto)}"
               " <span class='muted'>— each can be restored</span></summary>"
               f"{render_rows(auto)}</details>") if auto else ""
-    return (f"<section class='problems' id='actions' aria-labelledby='actions-head'>"
+    # Folded by default, the count in its heading; bench.js keeps it open for
+    # 12 hours once shown.
+    return (f"<section class='problems collapsed' id='actions' aria-labelledby='actions-head'>"
             f"<div class='head'><h2 id='actions-head'>Action needed · {len(items)}</h2>"
             "<span class='sep' aria-hidden='true'>·</span>"
-            "<button type='button' class='linkish' id='actions-hide' aria-expanded='true'"
-            " title='Fold this away until something new needs you, or for 12 hours'>Hide</button></div>"
+            "<button type='button' class='linkish' id='actions-hide' aria-expanded='false'"
+            " title='Open it here for 12 hours'>show</button></div>"
             + ("<p>States that will not fix themselves.</p>" if items
                else "<p>Nothing open.</p>")
             + f"{render_rows(items)}{folded}</section>")

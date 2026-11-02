@@ -554,6 +554,7 @@ STRUCTURAL = (
     "unknown model",
     "invalid model",
     "model_not_found",
+    "no model found",                                  # Routeway: "No model found: <id>"
 )
 # ENTITLEMENT is its own class, and the difference decides what to DO.
 # `structural` means the model is not there and the registration should go.

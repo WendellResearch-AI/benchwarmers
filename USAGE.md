@@ -37,8 +37,13 @@ coding agent doing it with you); the gateway's whole contract is in
 
 "Action needed", above the pages, lists what will not fix itself, such as a
 model about to be retired, naming each model and where it comes from, with
-Retry, Open and Retire now beside it. Hide folds it away until something new
-turns up; an alert whose models have all been retired goes at once.
+Retry, Open and Retire now beside it. It starts folded to its heading and
+count; show opens it in that browser for 12 hours. An alert whose models have
+all been retired goes at once. A model that is out of quota is not counting
+down: days the bench held its calls back until a stated reset, or an account's
+shared free quota was spent, pause its clock, and while it is still out of
+quota no countdown shows. One refused again after the short wait it named is
+failing, and keeps counting.
 
 **Restart** (Settings, Server and access), or `bench restart`, starts the
 dashboard again on the code now on disk, after an update. It waits for

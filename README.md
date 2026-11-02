@@ -187,7 +187,8 @@ dependencies either way: the app is the Python standard library.
 - **Health.** Every morning each model gets a one-word prompt; once a week, a
   short and a long one for speed. A model that stops answering, or that its
   endpoint no longer serves, is retired automatically after one confirming
-  call, with the evidence kept, and can be restored in one click. The
+  call, with the evidence kept, and can be restored in one click. A model
+  that is only out of quota until a stated reset is not counted against. The
   built-in scheduler runs all of this once Settings switches it on; a fresh
   install spends no calls until then.
 - **Rate limits and usage.** Limits come from providers' rate-limit headers

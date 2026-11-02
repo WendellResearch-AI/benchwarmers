@@ -123,23 +123,20 @@
     c.addEventListener(c.tagName === 'SELECT' ? 'change' : 'input', function () { applyFilter(scope); });
   });
 
-  // ---- Action needed: Hide folds it to its heading, per browser, until an
-  // action it has not seen appears or 12 hours pass, whichever is first ----
+  // ---- Action needed: folded to its heading by default; show keeps it open
+  // in this browser for 12 hours, Hide folds it again ----
   var acts = $('actions');
   if (acts) {
-    var keys = Array.prototype.map.call(acts.querySelectorAll('.problem[data-key]'), function (p) { return p.dataset.key; });
-    var hid = null;
-    try { hid = JSON.parse(store('bench.actions.hidden') || 'null'); } catch (err) { hid = null; }
+    var opened = Number(store('bench.actions.open')) || 0;
     var fold = function (on) {
       acts.classList.toggle('collapsed', on);
       $('actions-hide').textContent = on ? 'show' : 'Hide';
       $('actions-hide').setAttribute('aria-expanded', String(!on));
     };
-    fold(!!(hid && hid.keys && Date.now() - hid.at < 12 * 3600 * 1000
-            && keys.every(function (k) { return hid.keys.indexOf(k) !== -1; })));
+    fold(!(Date.now() - opened < 12 * 3600 * 1000));
     $('actions-hide').addEventListener('click', function () {
       var on = !acts.classList.contains('collapsed');
-      store('bench.actions.hidden', on ? JSON.stringify({at: Date.now(), keys: keys}) : '');
+      store('bench.actions.open', on ? '' : String(Date.now()));
       fold(on);
     });
   }

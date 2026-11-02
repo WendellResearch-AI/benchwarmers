@@ -19,6 +19,14 @@ THE RULES (decided 2026-10-15)
   reason -- a rate limit that never lifts is a quota or a dead model.
   `mistral-medium-3-5` answered 429 to 11 calls out of 11.
 - NEVER on a rate limit or timeout alone inside those 7 days.
+- OUT OF QUOTA IS NOT FAILING (2026-11-02): a call the bench held back because
+  a limit is spent until a stated reset, or an account-wide quota, says
+  nothing about the model. Its days pause the clock, and while it is the
+  latest word there is no countdown. `gpt-5.6-luna` sat on "retires in 3
+  days" while CLI Proxy API's codex sign-in was out until 26 November and the
+  bench had not sent it a call since 28 October. A refusal that names a short
+  wait and is refused again after it still counts: that is a model that keeps
+  failing, not one that is tapped out.
 
 "No answer" means from ANY source: the perf probe, a useful offload, or a
 suite output that was a real answer. A model that answers in the suite resets
@@ -68,6 +76,16 @@ def account_quota(detail: str) -> bool:
     return any(marker in detail for marker in ACCOUNT_QUOTAS)
 
 
+HELD = "not sent; paced by the bench"                  # metrics/pacing.py's refusal
+
+
+def tapped_out(detail: str) -> bool:
+    """Out of quota right now, so the model could not be tried: the bench held
+    the call back (a limit spent until its reset, the provider's or a cap you
+    set), or the account's shared quota is spent (account_quota)."""
+    return HELD in detail or account_quota(detail)
+
+
 def plan(today: dt.date, models: dict[str, str], live: set[str],
          first_missing: dict[str, str], rows: list[dict],
          answers: dict[str, dt.date], restored: dict[str, dt.date],
@@ -87,15 +105,18 @@ def plan(today: dt.date, models: dict[str, str], live: set[str],
     down: dict[str, bool] = {}
     candidates: list[tuple[str, str, str]] = []      # (alias, bucket, why)
     for alias, served in models.items():
-        mine = [r for r in rows if r["alias"] == alias]
+        mine = sorted((r for r in rows if r["alias"] == alias), key=lambda r: r["date"])   # [-1] is the latest word
         last_ok = max([r["date"] for r in mine if r["answered"]]
                       + ([answers[alias]] if alias in answers else []),
                       default=None)
         floor = max(d for d in (last_ok, restored.get(alias), dt.date.min) if d)
         # A refused key (`signin`) is the endpoint's, fixed by signing in again.
         fails = sorted((r for r in mine if not r["answered"] and r["failure"] and r["failure"] != "signin"
-                        and r["date"] > floor and not account_quota(r["detail"])),
+                        and r["date"] > floor and not tapped_out(r["detail"])),
                        key=lambda r: r["date"])
+        quiet = {r["date"] for r in mine if not r["answered"] and r["date"] > floor
+                 and tapped_out(r["detail"])}
+        resting = bool(mine) and not mine[-1]["answered"] and tapped_out(mine[-1]["detail"])
         missing_since = None
         if served not in live and served in first_missing:
             missing_since = max(dt.date.fromisoformat(first_missing[served]),
@@ -107,8 +128,10 @@ def plan(today: dt.date, models: dict[str, str], live: set[str],
         why = (f"{latest['failure']}: {latest['detail']}".rstrip(": ")
                if latest else "")
         other_days = {r["date"] for r in fails if r["failure"] == "other"}
-        span = (today - fails[0]["date"]).days if fails else 0
         fail_days = {r["date"] for r in fails}
+        # Days it was out of quota, and nothing else, do not count: the clock pauses.
+        span = ((today - fails[0]["date"]).days
+                - len({q for q in quiet - fail_days if q > fails[0]["date"]})) if fails else 0
 
         # A CONNECTION PREFIX ADDED IN OPEN WEBUI renames every model on it
         # (`codestral-latest` -> `llm7.codestral-latest`), and the old names
@@ -146,7 +169,7 @@ def plan(today: dt.date, models: dict[str, str], live: set[str],
                 left.append((OTHER_DAYS - len(other_days), why))
             if fails:
                 left.append((BACKSTOP_DAYS - span, why))
-            if left:
+            if left and not resting:                   # resting: the Quota page says when it is back
                 days, reason = min(left)
                 out["pending"].append((alias, f"{max(days, 1)}|{reason}"))
 
@@ -351,6 +374,23 @@ def _selfcheck() -> None:
                    detail="429 Rate limit exceeded: free-models-per-day") for n in (8, 5, 0)]
     p = plan(d, {"quota": "v/quota"}, {"v/quota"}, {}, shared, {}, {}, {"v/quota": "v"})
     assert not p["retire"] and not p["pending"], p
+    # held back by the bench for days (its codex sign-in spent until a reset): no countdown
+    held = [dict(row("luna", n, "capacity"), detail=f"rate limit ({HELD}): 0 left") for n in (9, 5, 0)]
+    p = plan(d, {"luna": "c/luna"}, {"c/luna"}, {}, held, {}, {}, {"c/luna": "c"})
+    assert not p["retire"] and not p["pending"], p
+    # real failures, then out of quota for a week: those days pause the clock
+    paused = ([row("p", n, "capacity") for n in (10, 9, 8, 0)]
+              + [dict(row("p", n, "capacity"), detail=HELD) for n in range(1, 8)])
+    p = plan(d, {"p": "c/p"}, {"c/p"}, {}, paused, {}, {}, {"c/p": "c"})
+    assert not p["retire"] and dict(p["pending"])["p"].startswith("4|"), p
+    # ...and while it is still out of quota, no countdown is shown at all
+    p = plan(d, {"p": "c/p"}, {"c/p"}, {}, paused[:3] + paused[4:], {}, {}, {"c/p": "c"})
+    assert not p["retire"] and not p["pending"], p
+    # a short stated wait, refused again day after day, is a model that keeps failing
+    busy = [dict(row("u", n, "capacity"), detail="429 allows 1 request(s) every 1 min, retry in 60s")
+            for n in (8, 5, 0)]
+    p = plan(d, {"u": "v/u"}, {"v/u"}, {}, busy, {}, {}, {"v/u": "v"})
+    assert {a for a, _ in p["retire"]} == {"u"}, p
     # A refused key is the endpoint's, never the model's (suite/run.py SIGNIN)
     from run import failure_class
     assert failure_class("Error: Error code: 401 - {'error': 'invalid key'}") == "signin"
