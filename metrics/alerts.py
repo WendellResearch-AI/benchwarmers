@@ -76,6 +76,31 @@ def clear(key: str) -> bool:
     return _update(lambda data: data.pop(key, None) is not None)
 
 
+def answered(alias: str, served: str) -> list[str]:
+    """A model answered: clear what an answer disproves. Every alert about it,
+    by its alias or a `model:<kind>:<served>` key (retiring, unrecognised
+    failure, never served, gone, entitlement, paywalled), except a price
+    (`model:paid:`), which an answer says nothing about. A held connection
+    loses it from its list, and goes once none is left. The cleared keys."""
+    def resolve(data: dict) -> list[str]:
+        gone = []
+        for key, a in list(data.items()):
+            if a.get("kind") == "connection":
+                held = a.get("aliases") or []
+                if alias not in held:
+                    continue
+                a["aliases"] = [x for x in held if x != alias]
+                if a["aliases"]:
+                    continue
+            elif key.startswith("model:paid:") or not (
+                    a.get("alias") == alias or (key.startswith("model:") and key.split(":", 2)[2:] == [served])):
+                continue
+            del data[key]
+            gone.append(key)
+        return gone
+    return _update(resolve)
+
+
 def sweep(prefix: str, still_wrong: set[str]) -> list[str]:
     """Retire every alert under `prefix` that the caller did not re-raise.
 

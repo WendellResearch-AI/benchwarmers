@@ -698,10 +698,11 @@ def dismiss_alert(key: str) -> dict:
 
 
 def retry_model(alias: str, who: str = "ui") -> dict:
-    """One fresh call to a model on a retiring alert. An answer is written to
+    """One fresh call to a model on Action needed. An answer is written to
     perf/history.csv as evidence (scripts/auto_retire.py reads it, so the
-    clock resets) and the alert is cleared now rather than at the next 5am
-    check. A failure writes nothing: the daily probe keeps the record.
+    clock resets) and its alerts are cleared now rather than at the next 5am
+    check (alerts.answered). A failure writes nothing: the daily probe keeps
+    the record.
 
     One request, never the client's retries: a 429's stated wait (UnoRouter's
     60 s) then a second request spent a minute and another call of a 1-a-minute
@@ -725,12 +726,10 @@ def retry_model(alias: str, who: str = "ui") -> dict:
                                  f"{seconds:.2f}", f"{seconds:.2f}", f"{seconds:.2f}", f"{seconds:.2f}",
                                  0.0, 1, 0, 0, 0, "", "retry from the dashboard", ""])
     import alerts as _alerts
-    served = {a: s for s, a in names.items()}.get(alias, "")
-    # Exactly this model's: auto_retire.py raises model:pending:<served> with its alias.
-    cleared = [k for k, a in _alerts.active().items()
-               if a.get("kind") == "retiring" and (a.get("alias") == alias or k == f"model:pending:{served}")]
-    for key in cleared:
-        _alerts.clear(key)
+    # Every alert the answer disproves, not only a retiring one: 2026-11-02,
+    # big-pickle answered and stayed on Action needed as "healthy", its
+    # unrecognised-failure alert still open.
+    cleared = _alerts.answered(alias, {a: s for s, a in names.items()}.get(alias, ""))
     _log_change(datetime.datetime.now().astimezone().isoformat(timespec="seconds"), who, alias,
                 "retried", None, f"answered in {seconds:.1f}s")
     return {"ok": True, "errors": [], "sync": "",

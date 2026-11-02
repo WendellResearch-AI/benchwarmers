@@ -514,6 +514,25 @@ def main() -> int:
     print(("ok   " if ok else "FAIL ") + "provider chip names" + ("" if ok else f" -> {got}"))
     failures += 0 if ok else 1
 
+    # An answer clears every alert it disproves (2026-11-02: big-pickle answered a
+    # Retry and stayed listed, its unrecognised-failure alert open), never a price;
+    # a held connection loses the model, and goes with its last one.
+    alerts.raise_alert("model:unclassified:t/served", "registration", "t fails oddly")
+    alerts.raise_alert("model:pending:t/served", "retiring", "t retires", alias="t")
+    alerts.raise_alert("model:paid:t/served", "went paid", "t has a price", alias="t")
+    alerts.raise_alert("model:pending:t/served-too", "retiring", "another retires", alias="t2")
+    alerts.raise_alert("connection:held:x", "connection", "all fail", aliases=["t", "t2"])
+    alerts.raise_alert("connection:held:y", "connection", "all fail", aliases=["t"])
+    cleared = alerts.answered("t", "t/served")
+    left = alerts.active()
+    ok = (set(cleared) == {"model:unclassified:t/served", "model:pending:t/served", "connection:held:y"}
+          and "model:paid:t/served" in left and "model:pending:t/served-too" in left
+          and left["connection:held:x"]["aliases"] == ["t2"])
+    for k in ("model:paid:t/served", "model:pending:t/served-too", "connection:held:x"):
+        alerts.clear(k)
+    print(("ok   " if ok else "FAIL ") + "an answer clears what it disproves, not a price" + ("" if ok else f" -> {cleared}"))
+    failures += 0 if ok else 1
+
     # Got it clears a notice (NVIDIA changed its figures), never a state still wrong.
     alerts.raise_alert("test:notice", "limits", "a notice", dismiss=True)
     alerts.raise_alert("test:state", "limits", "a state")
