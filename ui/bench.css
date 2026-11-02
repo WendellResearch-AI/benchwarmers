@@ -138,6 +138,7 @@ main { max-width: var(--page, 104rem); margin: 0 auto; padding: 0 var(--gutter) 
 .a-row > * { padding: .3rem 0; border-top: 1px solid color-mix(in oklab, var(--line) 55%, transparent); }
 .a-row:first-child > * { border-top: 0; }
 .a-row .alias, .a-row .what { font-weight: 500; }
+.a-row .what { max-width: 24rem; }                  /* a notice's sentence wraps, leaving its detail room */
 .a-row .why, .a-row .when { color: var(--muted); font-size: .875rem; overflow-wrap: anywhere; }
 /* One line a model: the provider's words cut to the column, whole on hover; its link stays whole. */
 .a-row .why:has(> .said) { display: flex; gap: .5rem; min-width: 0; }

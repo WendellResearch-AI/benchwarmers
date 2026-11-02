@@ -77,13 +77,15 @@ def account_quota(detail: str) -> bool:
 
 
 HELD = "not sent; paced by the bench"                  # metrics/pacing.py's refusal
+USED_UP = ("free usage quota",)                        # xKiro: "...quota for this model is used up"
 
 
 def tapped_out(detail: str) -> bool:
     """Out of quota right now, so the model could not be tried: the bench held
     the call back (a limit spent until its reset, the provider's or a cap you
-    set), or the account's shared quota is spent (account_quota)."""
-    return HELD in detail or account_quota(detail)
+    set), the account's shared quota is spent (account_quota), or the
+    provider says the model's own free quota is used up."""
+    return HELD in detail or account_quota(detail) or any(m in detail for m in USED_UP)
 
 
 def plan(today: dt.date, models: dict[str, str], live: set[str],
@@ -378,6 +380,7 @@ def _selfcheck() -> None:
     held = [dict(row("luna", n, "capacity"), detail=f"rate limit ({HELD}): 0 left") for n in (9, 5, 0)]
     p = plan(d, {"luna": "c/luna"}, {"c/luna"}, {}, held, {}, {}, {"c/luna": "c"})
     assert not p["retire"] and not p["pending"], p
+    assert tapped_out("Error code: service_unavailable - The free usage quota for this model is used up")
     # real failures, then out of quota for a week: those days pause the clock
     paused = ([row("p", n, "capacity") for n in (10, 9, 8, 0)]
               + [dict(row("p", n, "capacity"), detail=HELD) for n in range(1, 8)])

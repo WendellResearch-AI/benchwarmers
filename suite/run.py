@@ -632,6 +632,9 @@ CAPACITY = (
     # way, filed as `other`, which the 3-day auto-retire rule would act on.
     "request limit reached",
     "resourceexhausted",
+    # xKiro: "The free usage quota for this model is used up" (503). Out of
+    # quota, not gone; filed as `other` it was 3 days from auto-retire.
+    "free usage quota",
 )
 
 

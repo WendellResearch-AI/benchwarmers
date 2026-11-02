@@ -47,9 +47,10 @@ week are folded at the end, each with Restore. Its count sits beside it in the
 sidebar, and At a glance opens on one line saying what is waiting and how
 soon. An alert whose models have all been retired goes at once. A model that
 is out of quota is not counting down: days the bench held its calls back until
-a stated reset, or an account's shared free quota was spent, pause its clock,
-and while it is still out of quota no countdown shows. One refused again after the short wait it named is
-failing, and keeps counting.
+a stated reset, an account's shared free quota was spent, or the provider said
+the model's free quota is used up, pause its clock, and while it is still out
+of quota no countdown shows. One refused again after the short wait it named
+is failing, and keeps counting.
 
 **Restart** (Settings, Server and access), or `bench restart`, starts the
 dashboard again on the code now on disk, after an update. It waits for
