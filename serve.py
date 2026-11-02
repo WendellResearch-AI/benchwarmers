@@ -2134,21 +2134,31 @@ def actions_page(groups: dict, auto: list) -> str:
         shown = re.sub(r"^https?://", "", url).split("?")[0]
         return f" <a href='{esc(url)}' target='_blank' rel='noopener'>{esc(shown)} ↗</a>"
 
+    def why(text: str, url: str, title: str) -> str:
+        return (f"<td class='why' title='{esc(title)}'><div class='said-line'><span class='said'>{esc(text)}</span>"
+                f"{link(url)}</div></td>")
+
     def model_row(r: dict) -> str:
         if not r["alias"]:                             # a notice: what it says, and Got it if it goes once seen
             got = (f"<button class='linkish' data-act='dismiss' data-key='{esc(r['key'])}'>Got it</button>"
                    if r.get("dismiss") else "")
-            return (f"<div class='a-row' data-row><span class='what'>{esc(r['said'])}</span>"
-                    f"<span>{chip(r['label'], r['css'])}</span><span class='why'>{esc(r['title'])}</span>"
-                    f"<span class='acts'>{got}</span></div>")
+            return (f"<tr data-row><td class='what'>{esc(r['said'])}</td><td>{chip(r['label'], r['css'])}</td>"
+                    f"<td class='why'>{esc(r['title'])}</td><td class='acts'>{got}</td></tr>")
         alias = esc(r["alias"])
-        return (f"<div class='a-row' data-row><a href='#' class='model' data-alias='{alias}'>"
-                f"<span class='alias'>{breakable(alias)}</span></a><span>{chip(r['label'], r['css'])}</span>"
-                f"<span class='why' title='{esc(r['title'])}'><span class='said'>{esc(r['said'])}</span>{link(r['url'])}</span>"
-                f"<span class='acts'><button class='linkish' data-act='retry' data-alias='{alias}'"
+        return (f"<tr data-row><td><a href='#' class='model' data-alias='{alias}'><span class='alias'>{breakable(alias)}"
+                f"</span></a></td><td data-sort='{r['days']:03d}{esc(r['label'])}'>{chip(r['label'], r['css'])}</td>"
+                + why(r["said"], r["url"], r["title"])
+                + f"<td class='acts'><button class='linkish' data-act='retry' data-alias='{alias}'"
                 " title='One call now; an answer clears the alert'>Retry</button>"
                 f"<button class='linkish danger' data-act='retire' data-alias='{alias}'"
-                f" data-why='{esc(r['why'] or r['label'])}'>Retire</button></span></div>")
+                f" data-why='{esc(r['why'] or r['label'])}'>Retire</button></td></tr>")
+
+    # One column plan for every table, as on Models, so they line up down the page.
+    cols = "<colgroup><col class='c-model'><col class='c-state'><col><col class='c-acts'></colgroup>"
+
+    def table(first: str, second: str, rows: str) -> str:
+        return (f"<table class='a-table'>{cols}<thead><tr>{th(first)}{th(second)}{th('Reason')}<th></th></tr></thead>"
+                f"<tbody>{rows}</tbody></table>")
 
     def section(conn: str, g: dict) -> str:
         aliases = [r["alias"] for r in g["rows"] if r["alias"]]
@@ -2161,29 +2171,30 @@ def actions_page(groups: dict, auto: list) -> str:
             f"<div class='a-held' title='{esc(h['title'])}'><span class='chip'>held</span><span>Every model"
             f" here is failing, likely the connection (key, credit, prefix), so nothing was retired."
             f" Latest: {esc(h['said'])}{link(h['url'])}</span></div>" for h in g["held"])
-        n = len(g["rows"])
-        return (f"<div class='a-group'><div class='a-head' data-row><span class='conn'>{esc(conn)}</span>"
-                f"<span class='count'>{n} {'notice' if conn == 'Notices' else 'model'}{'s' * (n != 1)}</span>"
-                f"<span class='why'></span><span class='acts'>{both}</span></div>{held}"
-                f"<div class='a-rows'>{''.join(model_row(r) for r in g['rows'])}</div></div>")
+        n, notices = len(g["rows"]), conn == "Notices"
+        return (f"<div class='panel'><div class='a-head' data-row><h3 class='chart-head'>{esc(conn)} · {n}"
+                f" {'notice' if notices else 'model'}{'s' * (n != 1)}</h3><span class='why'></span>"
+                f"<span class='acts'>{both}</span></div>{held}"
+                + table("Notice" if notices else "Model", "Kind" if notices else "State",
+                        "".join(model_row(r) for r in g["rows"])) + "</div>")
 
     tags = load_json(DATA / "config" / "provider-tags.json")      # a retired model's connection, by served name
     gone = "".join(
-        f"<div class='a-row' data-row><a href='#' class='model' data-alias='{esc(alias)}'>"
-        f"<span class='alias'>{breakable(esc(alias))}</span></a><span class='when'>{esc(r['at'][:10])}</span>"
-        f"<span class='why' title='{esc(r.get('why', ''))}'><span class='said'>"
-        f"{esc(tags.get(r.get('served', ''), '').strip('?') or r.get('endpoint') or endpoints.default())}"
-        f" · {esc(said(r.get('why', '').removeprefix('auto: '))[0])}</span></span>"
-        f"<span class='acts'><button class='linkish' data-act='restore' data-alias='{esc(alias)}'>Restore</button></span></div>"
+        f"<tr data-row><td><a href='#' class='model' data-alias='{esc(alias)}'>"
+        f"<span class='alias'>{breakable(esc(alias))}</span></a></td><td class='when'>{esc(r['at'][:10])}</td>"
+        + why(f"{tags.get(r.get('served', ''), '').strip('?') or r.get('endpoint') or endpoints.default()}"
+              f" · {said(r.get('why', '').removeprefix('auto: '))[0]}", "", r.get("why", ""))
+        + f"<td class='acts'><button class='linkish' data-act='restore' data-alias='{esc(alias)}'>Restore</button></td></tr>"
         for alias, r in auto)
     # Folded: a week of automatic retirements is a record to check, not a list of things to do.
-    folded = (f"<details class='a-retired'><summary>Retired automatically this week · {len(auto)}"
-              f" <span class='muted'>— each can be restored</span></summary><div class='a-rows'>{gone}</div></details>"
-              if auto else "")
-    body = "".join(section(conn, g) for conn, g in groups.items()) or "<p class='a-none'>Nothing open.</p>"
+    folded = (f"<div class='panel'><details class='a-retired'><summary><h3 class='chart-head'>Retired automatically"
+              f" this week · {len(auto)}</h3> <span class='muted'>each can be restored</span></summary>"
+              f"{table('Model', 'Retired', gone)}</details></div>" if auto else "")
+    body = "".join(section(conn, g) for conn, g in groups.items())
     return ("<div class='panel'><h2>Action needed</h2><p class='sub'>States that will not fix themselves, by the"
             " connection they come from. A reason's full error is on hover, and a name opens the model."
-            f" Retry spends one call; an answer clears the alert.</p>{body}{folded}</div>")
+            " Retry spends one call; an answer clears the alert.</p>"
+            + ("" if body else "<p class='a-none'>Nothing open.</p>") + f"</div>{body}{folded}")
 
 
 CAP_LABELS = {"tools": "tools", "vision": "vision", "structured_output": "json", "reasoning": "reasons"}

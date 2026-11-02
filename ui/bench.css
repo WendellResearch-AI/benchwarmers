@@ -115,16 +115,11 @@ main { max-width: var(--page, 104rem); margin: 0 auto; padding: 0 var(--gutter) 
 .problems .head { display: flex; align-items: baseline; gap: .5rem; }
 .problems .head h2 { margin-bottom: .25rem; }
 
-/* Action needed: its own page, by connection. Each model is one line of a
-   grid shared by its group (name, state, the provider's words, actions), so
-   the columns line up down the group. */
+/* Action needed: its own page, a panel per connection as on Models, each a
+   table (name, state, the provider's words, actions). */
 .a-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: .25rem .6rem; margin: 1.4rem 1.6rem 0;
           padding: .45rem .75rem; background: var(--err-ground); border-radius: var(--radius); }
-.a-group { padding: 1rem 0 .75rem; border-top: 1px solid var(--line); }
-.a-group:first-of-type { border-top: 0; padding-top: .5rem; }
-.a-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: .25rem .6rem; margin-bottom: .4rem; }
-.a-head .conn { font-size: 1.0625rem; font-weight: 700; }
-.a-head .count { color: var(--muted); }
+.a-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: .25rem .6rem; }
 .a-head .why { font-size: .875rem; }
 .a-head .why:empty { display: none; }
 .a-head .acts { margin-left: auto; display: flex; gap: .5rem; }
@@ -132,26 +127,26 @@ main { max-width: var(--page, 104rem); margin: 0 auto; padding: 0 var(--gutter) 
           background: var(--warn-ground); border-radius: var(--radius); font-size: .9375rem; overflow-wrap: anywhere; }
 .a-held .chip { flex: none; background: var(--ink); color: var(--paper); }
 .a-held a { color: var(--ink); font-weight: 500; }
-/* The same fixed columns in every group and the retired list, so state,
-   words and actions line up down the whole page whatever each group's
-   longest name; a long name wraps in its column. */
+/* The same fixed columns in every table, so state, words and actions line
+   up down the whole page whatever each group's longest name; a long name
+   wraps in its column. */
 #tab-needs > .panel { container-type: inline-size; }
-.a-rows { display: grid; grid-template-columns: minmax(0, 32%) 8.25rem minmax(0, 1fr) 6.25rem;
-          gap: 0 1rem; align-items: baseline; }
-.a-row { display: contents; }
-.a-row > * { padding: .3rem 0; border-top: 1px solid color-mix(in oklab, var(--line) 55%, transparent); }
-.a-row:first-child > * { border-top: 0; }
-.a-row .alias, .a-row .what { font-weight: 500; overflow-wrap: anywhere; }   /* a name breaks at its dots first (<wbr>) */
-.a-row .why, .a-row .when { color: var(--muted); font-size: .875rem; overflow-wrap: anywhere; }
+table.a-table { table-layout: fixed; }
+table.a-table col.c-model { width: 30%; }
+table.a-table col.c-state { width: 9.5rem; }
+table.a-table col.c-acts { width: 7.5rem; }
+.a-table .alias, .a-table .what { font-weight: 500; overflow-wrap: anywhere; }   /* a name breaks at its dots first (<wbr>) */
+.a-table .why, .a-table .when { color: var(--muted); font-size: .875rem; overflow-wrap: anywhere; }
 /* One line a model: the provider's words cut to the column, whole on hover; the link gives way last. */
-.a-row .why:has(> .said) { display: flex; gap: .5rem; min-width: 0; }
-.a-row .said { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.a-row .why > a { flex: none; max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.a-row .acts { display: flex; gap: .9rem; font-size: .875rem; }
+.a-table .said-line { display: flex; gap: .5rem; min-width: 0; }
+.a-table .said { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.a-table .said-line > a { flex: none; max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.a-table td.acts { white-space: nowrap; font-size: .875rem; }
+.a-table td.acts .linkish + .linkish { margin-left: .9rem; }
 .linkish.danger { color: var(--err); }
-.a-retired { margin-top: .75rem; border-top: 1px solid var(--line); padding-top: .5rem; }
-.a-retired > summary { cursor: pointer; font-weight: 500; padding: .35rem 0; }
-.a-retired > summary .muted { color: var(--muted); font-weight: 400; }
+.a-retired > summary { cursor: pointer; }
+.a-retired > summary h3 { display: inline; }
+.a-retired > summary .muted { color: var(--muted); }
 .a-none { color: var(--muted); }
 
 /* pages: a grouped sidebar (Observe, Gateway, Control); the group names and
@@ -550,13 +545,14 @@ dialog .pick { display: flex; gap: 1.5rem; }
    state on one line, the words and actions under them. No gap between name
    and state, so the line above a model runs unbroken. */
 @container (max-width: 46rem) {
-  .a-rows { grid-template-columns: minmax(0, 1fr) max-content; column-gap: 0; }
-  .a-row > :nth-child(2) { padding-left: .75rem; }
-  .a-row .why, .a-row .acts { grid-column: 1 / -1; padding-top: 0; border-top: 0; }
-  .a-row .acts { padding-bottom: .5rem; }
-  .a-row .why:has(> .said) { flex-wrap: wrap; }
-  .a-row .said { white-space: normal; }             /* the height to read it whole */
-  .a-row .why > a { max-width: none; }
+  .a-table thead { display: none; }
+  .a-table, .a-table tbody { display: block; }
+  .a-table tr { display: grid; grid-template-columns: minmax(0, 1fr) max-content; border-bottom: 1px solid var(--line); }
+  .a-table td { border-bottom: 0; }
+  .a-table td.why, .a-table td.acts { grid-column: 1 / -1; padding-top: 0; }
+  .a-table .said-line { flex-wrap: wrap; }
+  .a-table .said { white-space: normal; }           /* the height to read it whole */
+  .a-table .said-line > a { max-width: none; }
 }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }
