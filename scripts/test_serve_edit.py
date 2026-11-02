@@ -461,6 +461,25 @@ def main() -> int:
     print(("ok   " if ok else "FAIL ") + "action needed drops alerts on retired models")
     failures += 0 if ok else 1
 
+    # Retry is one request: no client retries after a 429 (2026-11-02: each
+    # UnoRouter Retry waited its 60 s and sent a second, refused, request).
+    import run
+    asked, kept_ask = {}, run.ask_once
+
+    def fake_ask(*a, **kw):
+        asked.update(kw)
+        raise StopIteration                      # stop before anything is written
+    run.ask_once = fake_ask
+    try:
+        serve.retry_model(next(iter(serve.registered().values())))
+    except StopIteration:
+        pass
+    finally:
+        run.ask_once = kept_ask
+    ok = asked.get("retries") == 0
+    print(("ok   " if ok else "FAIL ") + "Retry sends one request, no client retries" + ("" if ok else f" -> {asked}"))
+    failures += 0 if ok else 1
+
     # A provider's words end where its link begins, and are not cut short here:
     # the page cuts them to a line, and a phone, with no hover, shows them whole.
     text, url = serve.said("Error: Error code: 403 - {'error': {'message': 'm needs your consent. Give it once at"

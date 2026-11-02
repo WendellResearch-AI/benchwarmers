@@ -920,9 +920,11 @@ def _child_env() -> dict:
 
 
 def ask_once(binary: str, model: str, prompt: str,
-             timeout: int, images: list[str] | None = None) -> tuple[str, float]:
+             timeout: int, images: list[str] | None = None, retries: int | None = None) -> tuple[str, float]:
     # BENCH_CLIENT=builtin: the same call without the `llm` subprocess, giving
-    # the same text for the same failure (metrics/client.py).
+    # the same text for the same failure (metrics/client.py). `retries`: the
+    # built-in client's tries after a 429, 5xx or connection error (its two
+    # by default); the llm backend keeps its SDK's own.
     if str(ROOT / "metrics") not in sys.path:
         sys.path.insert(0, str(ROOT / "metrics"))
     import client
@@ -935,7 +937,7 @@ def ask_once(binary: str, model: str, prompt: str,
                           purpose="vision task")
         return client.output(res, timeout), res["seconds"]
     if client.backend(model) == "builtin":
-        res = client.chat(model, prompt, timeout=timeout)
+        res = client.chat(model, prompt, timeout=timeout, retries=retries)
         return client.output(res, timeout), res["seconds"]
     started = time.monotonic()
     try:

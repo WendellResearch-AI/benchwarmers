@@ -701,12 +701,17 @@ def retry_model(alias: str, who: str = "ui") -> dict:
     """One fresh call to a model on a retiring alert. An answer is written to
     perf/history.csv as evidence (scripts/auto_retire.py reads it, so the
     clock resets) and the alert is cleared now rather than at the next 5am
-    check. A failure writes nothing: the daily probe keeps the record."""
+    check. A failure writes nothing: the daily probe keeps the record.
+
+    One request, never the client's retries: a 429's stated wait (UnoRouter's
+    60 s) then a second request spent a minute and another call of a 1-a-minute
+    free tier, and Retry all did that for each model in turn. A person can
+    click again."""
     names = registered()
     if alias not in names.values():
         return {"ok": False, "errors": [f"{alias!r} is not registered"]}
     from run import ask_once, failure_class, llm_binary
-    body, seconds = ask_once(llm_binary(), alias, "Reply with exactly one word: ready", 90)
+    body, seconds = ask_once(llm_binary(), alias, "Reply with exactly one word: ready", 90, retries=0)
     cls = failure_class(body, min_length=1)
     if cls is not None:
         try:                                           # a stated quota or wait still teaches a cooldown
