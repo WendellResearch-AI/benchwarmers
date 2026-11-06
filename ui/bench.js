@@ -1331,10 +1331,14 @@
            head: $('c-form-head'), maxCalls: $('g-max-calls'), maxExp: $('g-max-explorers'),
            gErrors: $('g-errors'), gDone: $('g-done'), form: $('c-form'), status: $('c-status'),
            del: $('c-delete'), reply: $('c-reply'), merger: $('c-merger'), find: $('c-member-filter'),
-           seats: $('c-seats'), prov: $('c-member-provider')};
+           seats: $('c-seats'), prov: $('c-member-provider'), adHoc: $('c-ad-hoc'),
+           ownCalls: $('c-max-calls'), ownExp: $('c-max-explorers')};
   var C = null, open = null;         // the collection whose details are showing
+  // What the dialog's two limits come to: empty follows the gateway settings.
+  function limit(input, fallback) { return input.value === '' ? fallback : parseInt(input.value, 10); }
+  function maxCalls() { return limit(c.ownCalls, C.settings.max_calls); }
   function explorersFor(n) {
-    return Math.max(0, Math.min(C.settings.max_explorers, C.settings.max_calls - n));
+    return Math.max(0, Math.min(limit(c.ownExp, C.settings.max_explorers), maxCalls() - n));
   }
   function picked() {
     return Array.prototype.filter.call(c.members.querySelectorAll('input'), function (x) { return x.checked; })
@@ -1356,7 +1360,7 @@
         return ' · ' + t.name + ' is ticked on ' + t.on.join(' and ') + ': one model agrees with itself, it does not check itself';
       }).join('');
     c.members.querySelectorAll('input').forEach(function (x) {
-      x.disabled = !x.checked && (n >= C.settings.max_calls || !!x.dataset.blocked);
+      x.disabled = !x.checked && (n >= maxCalls() || !!x.dataset.blocked);
     });
     drawSeats(ex);
   }
@@ -1435,9 +1439,9 @@
   }
   // The member search: the filter boxes' match (any text, case-insensitive),
   // over the model's name and each chip's alias, served name and provider,
-  // and the provider select beside it. It only hides chips, and never a ticked
-  // one, so what is picked is always in view and every count still includes
-  // it; a row goes when all its chips do.
+  // and the provider select beside it. It only hides chips, ticked ones too:
+  // the seats above the list always show what is picked, each with its ×, and
+  // every count still includes it. A row goes when all its chips do.
   function filterMembers() {
     var q = c.find.value.trim().toLowerCase(), prov = c.prov.value;
     c.members.querySelectorAll('.m-row').forEach(function (row) {
@@ -1446,8 +1450,8 @@
         var box = lab.querySelector('input');
         var text = (box.value + ' ' + (lab.dataset.served || '') + ' ' + (fact(box.value).connection || '') + ' ' +
                     lab.textContent).toLowerCase();
-        lab.hidden = !box.checked && (!!lab.dataset.paid || !named && text.indexOf(q) === -1
-                                      || !!prov && (fact(box.value).provider || '') !== prov);
+        lab.hidden = !box.checked && !!lab.dataset.paid || !named && text.indexOf(q) === -1
+                     || !!prov && (fact(box.value).provider || '') !== prov;
         any = any || !lab.hidden;
       });
       row.hidden = !any;
@@ -1483,6 +1487,8 @@
   function showMerger() { $('c-merger-row').hidden = c.reply.value !== 'merged'; }
   c.reply.addEventListener('change', showMerger);
   c.shape.addEventListener('change', recount);          // the explorer seats say their shape
+  c.ownCalls.addEventListener('input', recount);
+  c.ownExp.addEventListener('input', recount);
   // A collection opens in a popup, as every other edit on the dashboard does:
   // the one clicked, or a new one from New collection.
   function closeForm() {
@@ -1497,6 +1503,10 @@
     if (!c.form.open) c.form.showModal();
     c.name.value = row ? row.name : ''; c.name.readOnly = !!row;
     c.desc.value = row ? row.description : ''; c.tags.value = row ? row.tags.join(', ') : '';
+    c.adHoc.checked = !!row && row.ad_hoc;
+    c.ownCalls.value = row && row.max_calls !== undefined ? row.max_calls : '';
+    c.ownExp.value = row && row.max_explorers !== undefined ? row.max_explorers : '';
+    c.ownCalls.placeholder = C.settings.max_calls; c.ownExp.placeholder = C.settings.max_explorers;
     drawTagPicks();
     c.members.textContent = ''; c.find.value = '';
     c.prov.length = 1;                                 // "Every provider", then each one a model is on
@@ -1565,6 +1575,7 @@
         var left = el('div');
         var title = el('div', {class: 'top'});
         title.appendChild(el('span', {class: 'alias'}, 'bench/' + row.name));
+        if (row.ad_hoc) title.appendChild(el('span', {class: 'chip'}, 'ad hoc: only when called by name'));
         row.tags.forEach(function (t) { title.appendChild(el('span', {class: 'chip'}, t)); });
         left.appendChild(title);
         if (row.description) left.appendChild(el('p', {class: 'desc'}, row.description));
@@ -1631,7 +1642,9 @@
     var name = c.name.value.trim().replace(/^bench\//, '');
     post('/api/collection', {name: name, members: picked(), shape: c.shape.value, description: c.desc.value,
                              tags: c.tags.value.split(','), reply: c.reply.value,
-                             merger: c.merger.value}).then(function (r) {
+                             merger: c.merger.value, ad_hoc: c.adHoc.checked,
+                             max_calls: c.ownCalls.value === '' ? null : Number(c.ownCalls.value),
+                             max_explorers: c.ownExp.value === '' ? null : Number(c.ownExp.value)}).then(function (r) {
       if (!r.ok) { listErrors(c.errors, r.errors); return; }
       finished('Saved bench/' + name + '.');
     }).catch(function (err) { c.errors.textContent = String(err); });

@@ -11,6 +11,12 @@ the same collection is called every day:
 
     explorers = min(max_explorers, max_calls - members)
 
+A collection may hold its own `max_calls` and `max_explorers`; what it leaves
+out follows gateway.json, so changing that moves every collection without its
+own. A member out of quota keeps its place and an explorer sits in for it
+until the quota is back (gateway.py), unless max_explorers is 0: then only the
+members ever run.
+
 `shape` (review, design, …) decides which models may fill those explorer
 seats; empty means a decision model labels each prompt, or `general` without
 one. `reply` is what the caller reads: `all` (every answer, the default) or
@@ -19,7 +25,9 @@ verdict record, gateway.py) or `route` (no panel: one member, picked by its
 record, gets the request as sent, tools and all, for agent clients;
 GATEWAY.md "Route mode"). A request may override it with a `:merged`,
 `:all` or `:route` suffix on the model name, or `"bench": {"reply": ...}`
-in the body.
+in the body. `ad_hoc` (false unless set) keeps a collection out of everything
+that offers collections to choose from: it runs when a request names it, as an
+ad hoc model does (suite/run.py), for the expensive ones a person decides on.
 Named `bench_collections` because `collections` would shadow the standard
 library for everything importing from metrics/.
 """
@@ -35,7 +43,8 @@ from paths import DATA  # noqa: E402  -- the install's data folder (metrics/path
 FILE = DATA / "config" / "collections.json"
 SETTINGS_FILE = DATA / "config" / "gateway.json"
 DEFAULTS = {"max_calls": 5, "max_explorers": 2}
-NAME = re.compile(r"^[a-z0-9][a-z0-9-]{1,31}$")
+BOUNDS = {"max_calls": (1, 10), "max_explorers": (0, 2)}   # route.py seats at most two explorers
+NAME =re.compile(r"^[a-z0-9][a-z0-9-]{1,31}$")
 PREFIX = "bench/"
 REPLIES = ("all", "merged", "route")
 
@@ -67,6 +76,19 @@ def settings() -> dict:
     return {**DEFAULTS, **{k: v for k, v in _read(SETTINGS_FILE).items() if k in DEFAULTS}}
 
 
+def limit_ok(key: str, value) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and BOUNDS[key][0] <= value <= BOUNDS[key][1]
+
+
+def own_limits(c: dict) -> dict:
+    """The limits a collection sets for itself; a hand-edited one out of bounds counts as unset."""
+    return {k: c[k] for k in DEFAULTS if limit_ok(k, c.get(k))}
+
+
+def limits(c: dict, s: dict | None = None) -> dict:
+    return {**(s or settings()), **own_limits(c)}
+
+
 def explorers_for(members: int, s: dict | None = None) -> int:
     s = s or settings()
     return max(0, min(s["max_explorers"], s["max_calls"] - members))
@@ -81,8 +103,8 @@ def described(name: str, c: dict, s: dict | None = None) -> dict:
     members = c.get("members", [])
     out = {"description": c.get("description") or c.get("note", ""),
            "tags": c.get("tags", []), "members": members, "shape": c.get("shape", ""),
-           "explorers": explorers_for(len(members), s),
-           "reply": c.get("reply") or "all", "merger": c.get("merger", "")}
+           "explorers": explorers_for(len(members), limits(c, s)), **own_limits(c),
+           "reply": c.get("reply") or "all", "merger": c.get("merger", ""), "ad_hoc": bool(c.get("ad_hoc"))}
     # What the members can handle together (metrics/catalog.py): the smallest
     # context window is what the gateway refuses above.
     try:
@@ -122,11 +144,11 @@ def reply_errors(reply: str, merger: str, known) -> list[str]:
 
 def choose_message(model: str | None) -> str:
     """The refusal for a request that names no collection, or the wrong one:
-    every collection with its description and tags, so the caller can choose."""
+    every collection on offer with its description and tags, so the caller can choose."""
     asked = f"{model!r} is not a collection here." if model else "No collection was named."
     rows = [f"- {PREFIX}{n}: {c.get('description') or 'no description'}"
             + (f" [{', '.join(c.get('tags', []))}]" if c.get("tags") else "")
-            for n, c in sorted(load().items())]
+            for n, c in sorted(load().items()) if not c.get("ad_hoc")]
     return (f"{asked} Set \"model\" to the collection that fits the task"
             " (GET /v1/models lists them with description and tags):\n"
             + ("\n".join(rows) or "- none yet: create one in the dashboard's Collections dialog"))
@@ -136,6 +158,9 @@ if __name__ == "__main__":
     # DEFAULTS, not settings(): the install's gateway.json must not decide the check.
     assert [explorers_for(n, DEFAULTS) for n in range(1, 7)] == [2, 2, 2, 1, 0, 0]
     assert explorers_for(3, {"max_calls": 4, "max_explorers": 2}) == 1
+    assert limits({"max_calls": 4, "max_explorers": 0}, DEFAULTS) == {"max_calls": 4, "max_explorers": 0}
+    assert limits({"max_calls": 99, "max_explorers": True}, DEFAULTS) == DEFAULTS and limits({}, DEFAULTS) == DEFAULTS
+    assert explorers_for(4, limits({"max_calls": 4}, DEFAULTS)) == 0
     assert resolve("bench/") is None and resolve("bench/no-such") is None and resolve("") is None
     assert split_reply("bench/core:merged") == ("bench/core", "merged") and split_reply("core:all") == ("core", "all")
     assert split_reply("bench/core:route") == ("bench/core", "route")

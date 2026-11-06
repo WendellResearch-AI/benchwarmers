@@ -554,7 +554,7 @@ def _return_to_collections(alias: str, was: dict, stamp: str, who: str) -> list[
     Returns the names it went back into."""
     if not was or bench_collections.unreadable(bench_collections.FILE):
         return []
-    data, cap = bench_collections.load(), bench_collections.settings()["max_calls"]
+    data, s = bench_collections.load(), bench_collections.settings()
     back = []
     for name, fields in was.items():
         c = data.get(name)
@@ -562,7 +562,7 @@ def _return_to_collections(alias: str, was: dict, stamp: str, who: str) -> list[
             continue
         old = json.loads(json.dumps(c))
         members = c.get("members") or []
-        if "members" in fields and alias not in members and len(members) < cap:
+        if "members" in fields and alias not in members and len(members) < bench_collections.limits(c, s)["max_calls"]:
             c["members"] = members + [alias]
         if "merger" in fields and not c.get("merger"):
             c["merger"] = alias
@@ -1510,19 +1510,25 @@ LONG_CONTEXT = 128_000          # the long-context tag: members known to hold at
 
 
 def save_collection(name: str, members, shape: str, description: str, tags=None,
-                    reply: str = "all", merger: str = "", who: str = "ui") -> dict:
+                    reply: str = "all", merger: str = "", ad_hoc: bool = False, who: str = "ui",
+                    max_calls=None, max_explorers=None) -> dict:
     """Create or replace a collection. Every member must be a chat model on the
     bench (a decision model cannot answer a prompt), no more than max_calls.
     The description and tags are what an orchestrator reads on /v1/models to
-    choose a collection, so they say what it is for."""
+    choose a collection, so they say what it is for. `ad_hoc` takes it off
+    /v1/models: it runs only when a request names it. `max_calls` and
+    `max_explorers`: its own limits; None follows the gateway settings."""
     # The name is what follows "bench/"; one typed with the prefix is taken as meant.
     name, shape = (name or "").strip().removeprefix(bench_collections.PREFIX), (shape or "").strip()
     description = " ".join((description or "").split())
     if isinstance(tags, str):
         tags = tags.split(",")
     tags = list(dict.fromkeys(t.strip().lower() for t in (tags or []) if isinstance(t, str) and t.strip()))
-    s = bench_collections.settings()
-    errors = []
+    own = {k: v for k, v in (("max_calls", max_calls), ("max_explorers", max_explorers)) if v is not None}
+    s = bench_collections.limits(own)
+    errors = [f"{k.replace('_', ' ')} must be a whole number from {bench_collections.BOUNDS[k][0]} to"
+              f" {bench_collections.BOUNDS[k][1]}, or empty for the gateway setting"
+              for k, v in own.items() if not bench_collections.limit_ok(k, v)]
     if not bench_collections.NAME.match(name):
         errors.append("name: 2-32 lower-case letters, digits or '-', saying what it is for,"
                       " e.g. reviewers; callers ask for bench/<name>")
@@ -1533,7 +1539,7 @@ def save_collection(name: str, members, shape: str, description: str, tags=None,
     if not members:
         errors.append("a collection needs at least one member")
     if len(members) > s["max_calls"]:
-        errors.append(f"at most {s['max_calls']} members (max calls per request, in settings)")
+        errors.append(f"at most {s['max_calls']} members (max calls per request)")
     unknown = [m for m in members if m not in known]
     if unknown:
         errors.append(f"not chat models on the bench: {', '.join(unknown)}")
@@ -1557,7 +1563,7 @@ def save_collection(name: str, members, shape: str, description: str, tags=None,
     data = bench_collections.load()
     old = data.get(name)
     data[name] = {"members": members, "shape": shape, "description": description, "tags": tags,
-                  "reply": reply, "merger": merger}
+                  "reply": reply, "merger": merger, **({"ad_hoc": True} if ad_hoc else {}), **own}
     _write_atomic(bench_collections.FILE, _dump(data))
     _log_change(datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
                 who, "", f"collection {name}", old, data[name])
@@ -1584,7 +1590,8 @@ def save_gateway_settings(max_calls, max_explorers, who: str = "ui") -> dict:
     if not isinstance(max_explorers, int) or isinstance(max_explorers, bool) or not 0 <= max_explorers <= 2:
         errors.append("max explorers must be 0, 1 or 2 (route.py seats at most two)")
     too_big = [n for n, c in bench_collections.load().items()
-               if isinstance(max_calls, int) and len(c.get("members", [])) > max_calls]
+               if isinstance(max_calls, int) and len(c.get("members", [])) > max_calls
+               and "max_calls" not in bench_collections.own_limits(c)]
     if too_big:
         errors.append(f"these collections have more members than {max_calls}: {', '.join(too_big)}")
     if bench_collections.unreadable(bench_collections.SETTINGS_FILE):
@@ -3286,7 +3293,7 @@ def collections_tab() -> str:
         " as <code>code</code> or <code>prose</code> the roles it does not admit; <code>free</code> hides"
         " the paid ones. Click a suggestion or type your own: comma-separated lower-case words, up to 8.</p>"
         # Not data-filter: that binds to the whole panel. The same match (any
-        # text, case-insensitive), on the member list only; ticked ones stay shown.
+        # text, case-insensitive), on the member list only; the seats show who is ticked.
         "<label class='field' for='c-member-filter'>Members</label>"
         # The panel as it will sit, drawn as the Collections list draws it
         # (bench.js recount): a seat per ticked member, explorer seats dashed.
@@ -3297,6 +3304,15 @@ def collections_tab() -> str:
         "<option value=''>Every provider</option></select></div>"
         "<div id='c-members' class='members' role='group' aria-label='Members'></div>"
         "<p class='rules' id='c-count'></p>"
+        "<div class='settings'>"
+        "<div><label class='field' for='c-max-calls'>Max calls per request</label>"
+        "<input id='c-max-calls' type='number' min='1' max='10'></div>"
+        "<div><label class='field' for='c-max-explorers'>Max explorers</label>"
+        "<input id='c-max-explorers' type='number' min='0' max='2'></div>"
+        "</div>"
+        "<p class='rules'>Empty follows the Gateway settings, shown greyed. A member out of quota stays"
+        " on the collection and an explorer sits in for it until the quota is back. Max explorers 0"
+        " means only the members ever run, stand-ins included.</p>"
         "<label class='field' for='c-shape'>Explorer shape</label><select id='c-shape'></select>"
         "<p class='rules'>Which models may fill the explorer seats. Automatic asks a decision"
         " model to label each prompt when one is onboarded, else general.</p>"
@@ -3315,6 +3331,10 @@ def collections_tab() -> str:
         "<label class='field' for='c-desc'>Description</label>"
         "<textarea id='c-desc' rows='2' maxlength='300'"
         " placeholder='e.g. Adversarial code review: finding bugs and broken guarantees in a diff'></textarea>"
+        "<label class='check'><input type='checkbox' id='c-ad-hoc'> Ad hoc: only when called by name</label>"
+        "<p class='rules'>Left off <code>GET /v1/models</code> and the list agents choose from, so an"
+        " agent picking for itself never spends it. For the expensive ones you decide to run: say"
+        " <code>bench/&lt;name&gt;</code> and it runs. Not a lock: anyone who knows the name can call it.</p>"
         "<div class='errors' id='c-errors' role='alert'></div><div class='done' id='c-done'></div>"
         "<div class='actions'><button class='btn danger' id='c-delete' hidden>Delete collection</button>"
         "<span class='spacer'></span><button class='btn' id='c-close'>Close</button>"
@@ -3328,7 +3348,8 @@ def collections_tab() -> str:
         "<input id='g-max-explorers' type='number' min='0' max='2'></div>"
         "</div>"
         "<p class='rules'>Explorers = min(max explorers, max calls − members): with 5 and 2, a"
-        " 2- or 3-model collection gets 2, a 4-model one 1, a 5-model one none. A request that"
+        " 2- or 3-model collection gets 2, a 4-model one 1, a 5-model one none. These apply to"
+        " every collection that does not set its own in its dialog. A request that"
         " names no collection is refused with each one's description and tags, so the caller"
         " can choose.</p>"
         "<div class='errors' id='g-errors' role='alert'></div><div class='done' id='g-done'></div>"
@@ -4470,7 +4491,9 @@ class Handler(gateway.Handler):
                                                             str(p.get("shape") or ""),
                                                             str(p.get("description") or ""),
                                                             p.get("tags"), str(p.get("reply") or ""),
-                                                            str(p.get("merger") or "")),
+                                                            str(p.get("merger") or ""), p.get("ad_hoc") is True,
+                                                            max_calls=p.get("max_calls"),
+                                                            max_explorers=p.get("max_explorers")),
                "/api/collection/remove": lambda p: delete_collection(str(p.get("name") or "")),
                "/api/model-facts": lambda p: save_model_facts(str(p.get("alias") or ""), p.get("facts")),
                "/api/model-options": lambda p: save_model_options(str(p.get("alias") or ""), p.get("max_tokens")),

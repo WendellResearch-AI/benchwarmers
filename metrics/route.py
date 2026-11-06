@@ -273,7 +273,7 @@ def suite_recall() -> dict[str, tuple[int, int, int]]:
 def panel(shape: str | None = None, large: bool = True,
           nominated: list[str] | None = None,
           members: list[str] | None = None, explorers: int = 2,
-          avoid: set[str] | None = None) -> dict:
+          avoid: set[str] | None = None, stand_ins: int = 0) -> dict:
     """`large=True` means the task is a big one — most of ours are.
 
     `members` is a bench-gateway COLLECTION: models the caller always runs. With
@@ -282,7 +282,8 @@ def panel(shape: str | None = None, large: bool = True,
     never with a member or a member's family. `avoid` keeps models out of
     those automatic picks (the gateway passes the ones on a retiring alert, so
     a seat is not spent on a model already known to be failing); a nomination
-    still seats one.
+    still seats one. `stand_ins` more are picked the same way, for members out
+    of quota (the gateway); fewer come back if the pool runs out.
 
     `nominated` names models the operator wants on the panel today, and they
     take EXPLORER seats — never the primary or the second.
@@ -469,6 +470,12 @@ def panel(shape: str | None = None, large: bool = True,
 
     explorer, explorer2 = seats[0], seats[1]
 
+    standing_in = []
+    while len(standing_in) < stand_ins and (pick := stalest()):
+        chosen.add(pick["model"])
+        seated_families.add(pick["family"])
+        standing_in.append(pick)
+
     # RESERVE: the fallback when the panel meets a rate limit.
     #
     # This replaces the hard rule that seats must sit on different
@@ -489,7 +496,7 @@ def panel(shape: str | None = None, large: bool = True,
                       key=lambda r: (r["found"], paid(r)), default=None)
 
     return {"primary": primary, "second": second, "explorer": explorer,
-            "explorer2": explorer2, "reserve": reserve,
+            "explorer2": explorer2, "reserve": reserve, "stand_ins": standing_in,
             "considered": len(rows),
             "untried": sum(1 for r in rows if not r["offloads"]),
             "contenders": len(contenders),

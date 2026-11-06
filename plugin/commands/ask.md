@@ -10,7 +10,7 @@ Arguments: $ARGUMENTS
 
 Follow the `benchwarmers` skill. In short:
 
-1. No collection given, or one you do not recognise: call `list_collections` and pick by its description and tags, or ask the user which one when none fits. Never substitute a single model.
+1. No collection given: call `list_collections` and pick by its description and tags, or ask the user which one when none fits. Never substitute a single model. A name given is the user's choice: ask it even if `list_collections` leaves it out (ad hoc collections are not listed), and only the gateway refusing it means it does not exist.
 2. Build a prompt that stands on its own. The seats cannot read this machine's files, so put the real material in it (the code, the diff, the file contents, line numbers), with the question stated exactly. Nothing private that should not leave this machine.
 3. Call `ask` with the collection and that prompt. Add `merged: true` only if the user asked for one answer.
 4. Check every claim a seat makes against the real source before you repeat it or act on it. Agreement between seats is not evidence.

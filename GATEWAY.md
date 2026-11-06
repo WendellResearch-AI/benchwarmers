@@ -43,6 +43,22 @@ model family. Collections live in `config/collections.json`, the limits in
 `config/gateway.json`; both are edited in the dashboard's
 **Collections** tab and every change is logged in `config/changes.jsonl`.
 
+**A collection's own limits.** `max_calls` (1 to 10) and `max_explorers` (0 to 2)
+can be set on a collection, in its dialog or with `bench collection save <name>
+--max-calls 4 --max-explorers 0`. What it leaves empty follows `gateway.json`,
+so changing that moves every collection without its own, and a collection can
+go above it.
+
+**Stand-ins.** A member the bench knows would be refused (a rate limit or quota
+with no room before its seat would give up, or a connection on an alert for not
+answering) stays on the collection, is named in `bench.skipped`, and an explorer
+sits in for it, as the seat `stand-in for <member>`, until there is room. That is
+decided per request, so it ends by itself, and stand-ins come from the same pool
+as explorers: they fit the shape and are never ad hoc. A member refused for the
+first time is still asked, since the bench does not know yet. With `max_explorers`
+0 there are no stand-ins: only the members ever run, and if all are held the
+request gets a 429.
+
 **Naming:** `bench/<name>`, lower-case letters, digits and `-`. The name says
 what the collection is *for* (`reviewers`, `design`), not who is in it, because
 members change. The `bench/` prefix keeps collections apart from real model ids
@@ -59,6 +75,15 @@ does not exist, is refused (400 / 404) with every collection's description and
 tags in the message, so a caller that could not choose learns how to. A
 `bench/auto` that guessed for it was considered and rejected: the caller knows
 the task, and a guess would run the wrong models silently.
+
+**Ad hoc collections.** A collection marked ad hoc (the checkbox in its dialog,
+`bench collection save <name> --ad-hoc`, or `"ad_hoc": true`) runs only when a
+request names it. It is left off `GET /v1/models`, `/api/tags`, `/v1beta/models`
+and that refusal, so an agent choosing for itself never sees it: for the
+expensive ones a person decides to run. It is not a lock, since a key that may
+call it and knows its name can. To stop a client outright, limit its gateway key
+to other collections. Members still sit in other collections, so to keep a
+model out of explorer seats too, mark the model ad hoc as well.
 
 ## Prompt size
 

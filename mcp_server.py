@@ -52,7 +52,8 @@ TOOLS = [
      "title": "List collections",
      "description": "The collections this Benchwarmers server offers: name, what each is for, tags, members,"
                     " explorer seats, reply mode, and what the members handle together (smallest context"
-                    " window, shared capabilities, tightest rate limits). Pick by task before calling ask.",
+                    " window, shared capabilities, tightest rate limits). Pick by task before calling ask."
+                    " A collection the user names may not be listed here: ask it anyway.",
      "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
      "annotations": {"readOnlyHint": True, "openWorldHint": False}},
     {"name": "ask",

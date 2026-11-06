@@ -328,7 +328,10 @@ def cmd_collection(args) -> None:
             "description": args.description if args.description is not None else old.get("description") or "",
             "tags": csv(args.tags) if args.tags is not None else old.get("tags") or [],
             "reply": args.reply or old.get("reply") or "all",
-            "merger": args.merger if args.merger is not None else old.get("merger") or ""}
+            "merger": args.merger if args.merger is not None else old.get("merger") or "",
+            "ad_hoc": args.ad_hoc if args.ad_hoc is not None else bool(old.get("ad_hoc"))}
+    for key, given in (("max_calls", args.max_calls), ("max_explorers", args.max_explorers)):
+        body[key] = old.get(key) if given is None else None if given == "default" else given
     reply = call("POST", "/api/collection", body)
     out(args, reply, lambda r: done(r, f"saved collection {name}: {', '.join(members)}"))
 
@@ -497,6 +500,8 @@ keeps only the answers. Then judge each seat you checked:
   bench collection save reviewers --members a,b,c --description "adversarial review" --tags review
   bench collection save reviewers --add d --remove a      (the rest stays as it was)
   bench collection save reviewers --reply merged --merger a
+  bench collection save heavy --ad-hoc      (runs only when called by name; --no-ad-hoc undoes it)
+  bench collection save heavy --max-calls 4 --max-explorers 0      (its own limits; "default" follows the gateway's)
   bench collection show reviewers
   bench collection rm reviewers --yes""",
     "endpoint": """examples:
@@ -629,6 +634,12 @@ def parser() -> argparse.ArgumentParser:
     c.add_argument("--tags", help="comma-separated")
     c.add_argument("--reply", choices=["all", "merged", "route"])
     c.add_argument("--merger", help="the alias that merges, for --reply merged")
+    c.add_argument("--ad-hoc", action=argparse.BooleanOptionalAction, default=None,
+                   help="only when called by name: left off what callers choose from")
+    own_limit = lambda v: v if v == "default" else int(v)  # noqa: E731
+    c.add_argument("--max-calls", type=own_limit, help="its own max calls per request, or default for the gateway's")
+    c.add_argument("--max-explorers", type=own_limit,
+                   help="its own max explorers, or default for the gateway's; 0 means only the members ever run")
 
     cmd("endpoints", cmd_endpoints, "where models are served from")
 

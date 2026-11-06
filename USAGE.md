@@ -123,13 +123,17 @@ per model with its context, vision and tools, and price. A model served by
 several providers is still one row, with a chip per provider: tick the chip
 of the route you want. Ticking two is allowed, and the count says so. The
 search matches a model, provider or served name, and the select beside it
-shows one provider's models; ticked ones always stay in view. A seat's ×
-takes that member off, as unticking it does. The tags grey out the models that
+shows one provider's models. The seats above the list always show who is
+ticked, filtered out or not, and a seat's × takes that member off, as unticking
+it does. The tags grey out the models that
 do not fit them.
 
 Each call also seats explorers, the models unused longest, up to the gateway's
 limits (Gateway settings, on the same page: how many calls a request may make,
-and how many of them explore).
+and how many of them explore). A collection can set its own in its popup; left
+empty, it follows those settings. A member out of quota stays on the collection
+and an explorer sits in for it, named `stand-in for <member>`, until the quota
+is back. Max explorers 0 means only the members ever run, stand-ins included.
 
 ## Connecting an app
 

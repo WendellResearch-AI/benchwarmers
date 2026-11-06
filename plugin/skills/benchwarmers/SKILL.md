@@ -34,7 +34,9 @@ you missed.
 1. **Ask a collection, not a favourite model.** `list_collections` says what
    each is for (description, tags, members, context window). The explorer
    rotation is what keeps the roster from narrowing to the two models that
-   were good last month. Use `with` only to seat a model the user named.
+   were good last month. Use `with` only to seat a model the user named. Ad
+   hoc collections are not listed: they are expensive and run when the user
+   names one, so ask it then, and never otherwise.
 2. **Make the prompt stand alone.** Seats cannot read files: include the code,
    the diff, the file contents, with paths and line numbers, and the exact
    question. Keep it within the collection's context window. Leave out

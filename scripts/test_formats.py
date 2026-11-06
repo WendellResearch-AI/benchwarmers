@@ -274,7 +274,8 @@ def gateway_routes() -> None:
                                "merge": {"members": ["m1", "m2"], "reply": "merged", "merger": "mg", "description": "x"},
                                "broken": {"members": ["m1", "boom"], "description": "x"},
                                "small": {"members": ["tiny"], "description": "x"},
-                               "other": {"members": ["m2"], "description": "x"}})
+                               "other": {"members": ["m2"], "description": "x"},
+                               "dear": {"members": ["m1"], "description": "held back", "ad_hoc": True}})
     import gateway
     import guard
     import serve
@@ -493,6 +494,65 @@ def gateway_routes() -> None:
         one = json.loads(ok("/v1beta/models/bench/core")[0])
         assert one["name"] == "models/bench/core" and "generateContent" in one["supportedGenerationMethods"]
         assert call("/v1beta/models/bench/nope")[0] == 404
+        # Ad hoc: on no list and in no refusal, so nobody picks it; named, it runs and can be looked up.
+        for listing in (ok("/v1/models")[0], ok("/api/tags")[0], ok("/v1beta/models")[0]):
+            assert "bench/dear" not in listing and "bench/core" in listing, listing
+        assert "bench/dear" not in call("/v1/chat/completions", {"model": "bench/nope", "messages": [
+            {"role": "user", "content": user}]})[2]
+        assert ok("/api/show", {"model": "bench/dear"}) and ok("/v1beta/models/bench/dear")
+        asked = json.loads(ok("/v1/chat/completions", {"model": "bench/dear", "messages": [
+            {"role": "user", "content": user}]})[0])
+        assert asked["model"] == "bench/dear" and [s["alias"] for s in asked["bench"]["seats"]] == ["m1"], asked
+        seats.asked.clear()
+        made = call("/api/collection", {"name": "dear", "members": ["m1"], "ad_hoc": True}, on=dash.server_port)
+        assert json.loads(made[2])["ok"] and serve.bench_collections.load()["dear"]["ad_hoc"] is True, made
+        made = call("/api/collection", {"name": "dear", "members": ["m1"]}, on=dash.server_port)
+        assert json.loads(made[2])["ok"] and "bench/dear" in ok("/v1/models")[0], made     # unticked: on offer again
+        serve.delete_collection("dear")
+
+        # A COLLECTION'S OWN LIMITS: above the gateway's 3 and 0 here, checked, undone by null.
+        def save(name, members, **own):
+            made = call("/api/collection", {"name": name, "members": members, "shape": "general", **own}, on=dash.server_port)
+            return json.loads(made[2])
+        def ask_it(name):
+            return json.loads(ok("/v1/chat/completions", {"model": f"bench/{name}", "messages": [
+                {"role": "user", "content": "x"}], "stream": False})[0])
+        for bad in ({"max_calls": 11}, {"max_calls": 0}, {"max_explorers": 3}, {"max_calls": "4"}, {"max_explorers": True}):
+            assert not save("own", ["m1"], **bad)["ok"], bad
+        assert not save("own", ["m1", "m2", "mg"], max_calls=2)["ok"]           # its own cap, not the gateway's
+        assert save("wide", ["m1", "m2", "mg", "boom"], max_calls=4)["ok"]      # above the gateway's
+        assert "wide" in serve.bench_collections.load() and not serve.save_gateway_settings(1, 0)["errors"][0].count("wide")
+        assert save("own", ["m1", "m2"], max_calls=4, max_explorers=1)["ok"]
+        listed_own = [m for m in json.loads(ok("/v1/models")[0])["data"] if m["id"] == "bench/own"][0]
+        assert listed_own["explorers"] == 1 and listed_own["max_calls"] == 4, listed_own
+        # (boom held throughout: the stub raises for it, and an explorer seat could pick it.)
+        real_refused = gateway.refused_now
+        gateway.refused_now = lambda aliases, *_: {a: "out of quota" for a in aliases if a == "boom"}
+        assert len(ask_it("own")["bench"]["seats"]) == 3                        # two members, its own explorer
+        # STAND-INS: a held member stays on the collection, named, with a seat in its place.
+        gateway.refused_now = lambda aliases, *_: {a: "out of quota" for a in aliases if a in ("m1", "boom")}
+        b = ask_it("own")["bench"]
+        by_seat = {s["seat"]: s["alias"] for s in b["seats"]}
+        assert [k["alias"] for k in b["skipped"]] == ["m1"] and "m1" not in by_seat.values(), b
+        assert len(b["seats"]) == 3 and "stand-in for m1" in by_seat and by_seat["stand-in for m1"] != "m2", b
+        assert "m1" in serve.bench_collections.load()["own"]["members"]
+        # Max explorers 0: only the members, here and when the gateway's own 0 applies.
+        assert save("own", ["m1", "m2"], max_calls=4, max_explorers=0)["ok"]
+        assert [s["alias"] for s in ask_it("own")["bench"]["seats"]] == ["m2"]
+        assert save("own", ["m1", "m2"], max_calls=None, max_explorers=None)["ok"]
+        assert "max_calls" not in serve.bench_collections.load()["own"]
+        assert [s["alias"] for s in ask_it("own")["bench"]["seats"]] == ["m2"]
+        gateway.refused_now = lambda aliases, *_: {a: "out of quota" for a in aliases}
+        assert call("/v1/chat/completions", {"model": "bench/own", "messages": [{"role": "user", "content": "x"}]})[0] == 429
+        gateway.refused_now = real_refused
+        # A connection the alerts say has stopped answering counts as held.
+        import alerts
+        real_active, alerts.active = alerts.active, lambda: {"c": {"kind": "connection", "message": "not answering", "aliases": ["m1"]}}
+        assert gateway.refused_now(["m1", "m2"], 10, 1) == {"m1": "not answering"}
+        alerts.active = real_active
+        serve.delete_collection("own")
+        serve.delete_collection("wide")
+        seats.asked.clear()
         # Token counts are estimates, without a model call; an image counts IMAGE_TOKENS.
         counted = {"model": "bench/core", "messages": [
             {"role": "user", "content": [{"type": "text", "text": "x" * 400},

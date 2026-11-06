@@ -333,10 +333,21 @@ def retired_why(entry: dict) -> str:
 def refused_now(aliases, est_tokens: int, within: float) -> dict[str, str]:
     """alias -> why, for models whose known rate limits or quota leave no room
     for a call within `within` seconds (metrics/pacing.held): asked, they
-    would only bring back the bench's own refusal, so they are not seated."""
+    would only bring back the bench's own refusal, so they are not seated.
+    So are models on a connection the alerts say has stopped answering: the
+    daily probes still try it, and the first answer ends the alert."""
     import pacing
     out = {}
+    try:
+        import alerts
+        down = {m: a.get("message") or "its connection is not answering"
+                for a in alerts.active().values() if a.get("kind") == "connection" for m in a.get("aliases") or []}
+    except Exception:                                  # noqa: BLE001 -- a broken alert file is not a refusal
+        down = {}
     for a in aliases:
+        if a in down:
+            out[a] = down[a]
+            continue
         try:
             h = pacing.held(a, route.connection_of(a), est_tokens)
         except Exception:                              # noqa: BLE001 -- a broken limit file is not a refusal
@@ -560,7 +571,7 @@ def run_collection(name: str, messages: list[dict], nominated: list[str] | None 
     if not prompt.strip():
         raise ValueError("no user message to put to the collection")
     collection = bench_collections.load()[name]
-    s = bench_collections.settings()
+    s = bench_collections.limits(collection)
     raw = collection.get("members") or []
     # The editor dedupes and caps; a hand-edited file may not have.
     members = list(dict.fromkeys(m for m in raw if isinstance(m, str) and m))
@@ -615,18 +626,22 @@ def run_collection(name: str, messages: list[dict], nominated: list[str] | None 
     # like the others; it would only come back as the refusal.
     held = refused_now([*sitting, *nominated], needed, SEAT_TIMEOUT)
     skipped += [{"seat": "member" if a in sitting else "with", "alias": a, "why": why} for a, why in held.items()]
+    # AND AN EXPLORER SITS IN FOR A HELD MEMBER, until its limit has room: the
+    # member stays on the collection, and this is decided per request. Each
+    # one is named on its seat. Max explorers 0 means only the members ever run.
+    lent = [a for a in sitting if a in held] if s["max_explorers"] else []
     sitting = [a for a in sitting if a not in held]
     nominated = [a for a in nominated if a not in held]
     if pictures and not collection.get("shape"):
         shape, how = "vision", "the request carries images"
-    elif not n_explorers:
+    elif not n_explorers and not lent:
         shape, how = collection.get("shape") or "general", "no explorer seats to fill"
     elif collection.get("shape"):
         shape, how = collection["shape"], "set on the collection"
     else:
         shape, how = pick_shape(whole)
     seats = [(f"member{i}", "member", alias) for i, alias in enumerate(sitting, 1)]
-    if n_explorers:
+    if n_explorers or lent:
         # `with` in the request body is route.py's --with: an explorer seat.
         from run import _registered_names
         avoid = retiring() | set(too_small(needed, _registered_names()))   # explorers must fit too
@@ -635,9 +650,11 @@ def run_collection(name: str, messages: list[dict], nominated: list[str] | None 
         if pictures:
             avoid |= {a for a in _registered_names() if cannot_see(a)}    # and see
         p = route.panel(shape, large=len(whole) > LARGE, nominated=nominated or None,
-                        members=sitting, explorers=n_explorers, avoid=avoid)
+                        members=sitting, explorers=n_explorers, avoid=avoid, stand_ins=len(lent))
         seats += [(key, label, p[key]["model"]) for key, label in
                   (("explorer", "explorer"), ("explorer2", "explorer 2")) if p.get(key)]
+        seats += [(f"standin{i}", f"stand-in for {member}", r["model"])
+                  for i, (member, r) in enumerate(zip(lent, p["stand_ins"]), 1)]
     if not seats and pictures:
         raise ValueError(f"no seat in bench/{name} can see images, so none is asked rather than answer"
                          " blind: " + ("; ".join(f"{k['alias']} {k['why']}" for k in skipped) or "no members")
@@ -716,15 +733,18 @@ def models() -> list[str]:
     return [bench_collections.PREFIX + n for n in bench_collections.load()]
 
 
-def listed(who: str) -> list[tuple[str, dict]]:
+def listed(who: str, ad_hoc: bool = False) -> list[tuple[str, dict]]:
     """(model name, what it is for) for every collection key `who` may call,
     each three times: as set, and in each other reply mode, so a client that
     offers only listed models (an agent's model picker above all, for
     `:route`) can still pick any. What GET /v1/models, /api/tags and
-    /v1beta/models list, each in its own shape."""
+    /v1beta/models list, each in its own shape. `ad_hoc`: with the collections
+    not on offer, for looking up one a client already named."""
     s, rows = bench_collections.settings(), []
     for n, c in bench_collections.load().items():
         if not guard.may_call(who, n):                 # a key limited to some collections sees those
+            continue
+        if c.get("ad_hoc") and not ad_hoc:             # runs when named; nobody is offered it to pick
             continue
         d = bench_collections.described(n, c, s)
         rows.append((bench_collections.PREFIX + n, d))
@@ -1098,7 +1118,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, formats.gemini_models(listed(self.who)))
         if path.startswith("/v1beta/models/"):
             name = urllib.parse.unquote(path[len("/v1beta/models/"):])
-            row = dict(listed(self.who)).get(name)
+            row = dict(listed(self.who, ad_hoc=True)).get(name)
             return self._json(200, formats.gemini_model(name, row)) if row else \
                 self._error(404, f"{name!r} is not a collection here; GET /v1beta/models lists them", fmt=fmt)
         if guard.mcp_route(path):                      # no stream from the server: every reply is a POST's
@@ -1243,7 +1263,7 @@ class Handler(BaseHTTPRequestHandler):
     def _show(self, body: dict) -> None:
         """POST /api/show: Ollama's model card, for a collection the key may call."""
         name = formats.ollama_model(body.get("model") or body.get("name") or "")
-        rows = dict(listed(self.who))
+        rows = dict(listed(self.who, ad_hoc=True))
         row = rows.get(name) or rows.get(bench_collections.PREFIX + str(name))
         if not row:
             return self._error(404, f"model {name!r} not found; GET /api/tags lists the collections",
