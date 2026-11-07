@@ -4102,13 +4102,19 @@ def on_disk() -> tuple[str, str]:
 def info_page() -> str:
     import scheduler
     import client as model_client
-    rows = [("Version", RELEASE), ("Date", RELEASE_DATE or "unknown"), ("Commit", COMMIT or "unknown"),
-            ("Python", f"{sys.version.split()[0]} · {sys.executable}"),
-            ("Folder", str(ROOT)), ("Data folder", str(DATA)), ("Endpoints", str(len(endpoints.load()))),
-            ("Models on the bench", str(len(_chat_aliases()))),
-            ("Scheduler", scheduler.settings()["mode"]), ("Model client", model_client.chosen()[0]),
-            ("Theme", saved_theme())]
-    body = "".join(f"<tr><th scope='row'>{esc(k)}</th><td class='mono'>{esc(v)}</td></tr>" for k, v in rows)
+    def link(url: str, text: str) -> str:
+        return f"<a href='{esc(url)}' target='_blank' rel='noopener'>{esc(text)}</a>"
+    # The release this is, or on a branch the one it builds on (0.5.6-dev -> v0.5.6).
+    rows = [("Source", link(connect.REPO, connect.REPO.removeprefix("https://"))),
+            ("Version", link(f"{connect.REPO}/releases/tag/v{RELEASE.split('-')[0]}", RELEASE))]
+    rows += [(k, esc(v)) for k, v in [
+        ("Date", RELEASE_DATE or "unknown"), ("Commit", COMMIT or "unknown"),
+        ("Python", f"{sys.version.split()[0]} · {sys.executable}"),
+        ("Folder", str(ROOT)), ("Data folder", str(DATA)), ("Endpoints", str(len(endpoints.load()))),
+        ("Models on the bench", str(len(_chat_aliases()))),
+        ("Scheduler", scheduler.settings()["mode"]), ("Model client", model_client.chosen()[0]),
+        ("Theme", saved_theme())]]
+    body = "".join(f"<tr><th scope='row'>{esc(k)}</th><td class='mono'>{v}</td></tr>" for k, v in rows)
     return (f"<div class='panel'><h2>Info</h2><table class='facts'><tbody>{body}</tbody></table>"
             "<p class='muted'>Benchwarmers · by Wendell Research · MIT licence"
             " (<code>LICENSE</code>, credits in <code>NOTICE</code>). Every response carries"
