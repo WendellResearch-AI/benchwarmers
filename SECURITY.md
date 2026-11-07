@@ -64,7 +64,8 @@ open itself to anyone.
   Sign-ins through a provider's page store their token the same way.
 - **The network.** Your prompts go only to the endpoints you add; the probes,
   the suite and onboarding spend calls there too. Otherwise: public catalog
-  reads (models.dev, FreeLLMAPI, OpenRouter's model list), a provider's
+  reads (models.dev, FreeLLMAPI, OpenRouter's model list), each Open WebUI
+  connection's model list (through Open WebUI, with its key), a provider's
   sign-in page when you choose one, Observable Plot from jsDelivr in the
   dashboard's page, and Hugging Face and GitHub only when you run
   `suite/rebench.py`. [PRIVACY.md](PRIVACY.md) lists them.

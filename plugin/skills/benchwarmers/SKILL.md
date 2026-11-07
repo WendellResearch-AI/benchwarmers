@@ -45,8 +45,8 @@ you missed.
    check each claim. Seats have found real dead code and untested invariants,
    and have also agreed, three at once, on a security hole that did not exist.
    Agreement is not evidence; they fail together.
-4. **Name every seat that answered**, by model and seat (member, explorer),
-   including those that errored or returned nothing useful. Two seats finding
+4. **Name every seat that answered**, by model and seat (member, explorer,
+   stand-in for a held member), including those that errored or returned nothing useful. Two seats finding
    the same thing independently is a much stronger claim than one, and that
    is only visible if both are named.
 5. **Send a verdict per seat you judged** with `verdict`: its call id,

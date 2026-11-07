@@ -14,5 +14,5 @@ Follow the `benchwarmers` skill. In short:
 2. Build a prompt that stands on its own. The seats cannot read this machine's files, so put the real material in it (the code, the diff, the file contents, line numbers), with the question stated exactly. Nothing private that should not leave this machine.
 3. Call `ask` with the collection and that prompt. Add `merged: true` only if the user asked for one answer.
 4. Check every claim a seat makes against the real source before you repeat it or act on it. Agreement between seats is not evidence.
-5. Report: name every seat that answered, by model and seat (member, explorer), including errors and empty replies, and say which claims held up and which did not.
+5. Report: name every seat that answered, by model and seat (member, explorer, stand-in for a held member), including errors and empty replies, and say which claims held up and which did not.
 6. Send one `verdict` per seat you judged, by its call id, with the true claims in `real` and the untrue ones in `false`.

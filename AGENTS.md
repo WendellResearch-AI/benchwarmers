@@ -95,7 +95,10 @@ cost with the person first. Three to five models make a useful first panel.
 ## 6. Make a collection, start the gateway
 
 On the Collections page: a name, the members a panel always includes, and the
-shape of work it is for (review, design, ...). Then:
+shape of work it is for (review, design, ...). A collection can set its own
+calls per request and explorers; one marked ad hoc runs only when a request
+names it, never as a default, so keep the person's expensive models there.
+Then:
 
     python gateway.py                      # http://127.0.0.1:8123/v1
 

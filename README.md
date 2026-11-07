@@ -176,7 +176,11 @@ dependencies either way: the app is the Python standard library.
 - **Collections and seats.** A collection names the models a panel always
   includes and the shape of work it is for (review, design, enumeration...).
   Each call adds explorer seats chosen by how long a model has gone unused, so
-  the bench keeps learning about models a router would stop asking.
+  the bench keeps learning about models a router would stop asking. A member
+  that is out of quota or rate-limited keeps its place while an explorer
+  stands in for it until it is back. A collection can set its own calls per
+  request and explorers, and one marked ad hoc (an expensive one, say) runs
+  only when a request names it.
 - **Verdicts.** Each seat's answer carries a call id. Once you have checked an
   answer against the real work, record whether it was useful, and which of its
   claims were real or false. Verdicts, not vibes, decide the next panel; a
@@ -203,7 +207,10 @@ dependencies either way: the app is the Python standard library.
   are read from its site and watched for changes.
 - **Discover.** FreeLLMAPI's free catalog, with models.dev for the details
   and paid models it lacks, merged into one list of models worth adding,
-  smartest first, each with the routes this install has to it.
+  smartest first, each with the routes this install has to it and links to
+  its pages on both. Each Open WebUI connection's own model list adds what a
+  provider serves before either catalog lists it; **Refresh lists** fetches
+  them all now rather than at the daily fetch.
 
 ## Asking a panel
 
@@ -266,6 +273,7 @@ running server, so the same commands work against one on another machine.
     bench model retire <alias> --reason "..."      and back: bench model restore <alias>
     bench collection save reviewers --members a,b,c --description "adversarial review"
     bench collection save reviewers --add d --remove a
+    bench collection save heavy-hitters --ad-hoc --max-calls 4 --max-explorers 0
     bench endpoint add openrouter --base https://openrouter.ai/api/v1   (asks for the key, hidden)
     bench key create my-app --collections core --rpm 30
     bench settings scheduler run --off perf
@@ -296,8 +304,9 @@ no server at `BENCHWARMERS_URL`.
 
 A running Benchwarmers is an MCP server at `/mcp` on its own port
 (`http://127.0.0.1:8122/mcp`; `/v1/mcp` works too), over streamable HTTP,
-with three tools: `list_collections`, `ask` (a collection, a prompt,
-optionally `merged`, `with` and `system`) and `verdict`. Nothing to start per
+with four tools: `list_collections`, `ask` (a collection, a prompt,
+optionally `merged`, `with` and `system`), `verdict` and `pending_verdicts`
+(the seats still unjudged). Nothing to start per
 client: every agent session shares the one server, behind the same Host,
 Origin and gateway-key checks as `/v1`. The tool descriptions carry the
 rules: ask a collection, not a favourite model; verify before acting; name
@@ -443,6 +452,9 @@ reaches Wendell Research. What it sends, and where:
   its site's sitemap) and models.dev once a day, and OpenRouter's public
   model list. With an NVIDIA connection, the public file of rate limits
   build.nvidia.com states, once a day and on Refresh.
+- **Model lists**, with no prompt: each Open WebUI connection's list of the
+  models its provider serves, asked through Open WebUI with the key it
+  already holds, once a day and on Discover's Refresh lists.
 - **Sign-ins**, only when you choose one: the provider's own sign-in page.
 - **Quota reads**, only when you press Refresh on Quota management, with no
   prompt: OpenRouter's key status, and xKiro's and Requesty's usage, each with

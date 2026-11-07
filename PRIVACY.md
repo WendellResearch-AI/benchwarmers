@@ -1,6 +1,6 @@
 # Privacy policy
 
-*Effective 2 November 2026.*
+*Effective 7 November 2026.*
 
 Benchwarmers runs on your own machine or server. It has no account, no
 telemetry and no server of its own, and nothing you do with it reaches
@@ -18,6 +18,11 @@ Wendell Research.
   model list. With an NVIDIA connection on the bench, the public file of rate
   limits build.nvidia.com states, once a day and when you press Refresh on its
   quota tile.
+- **Model lists**, carrying no prompt: each Open WebUI connection's list of the
+  models its provider serves, asked through Open WebUI with the key it already
+  holds for that provider, once a day and when you press Refresh lists on
+  Discover. Only the models' ids, names, context sizes, prices and abilities
+  are kept.
 - **Sign-ins**, only when you choose one: the provider's own sign-in page, in
   your browser, and the provider's token endpoint.
 - **Quota reads**, only when you press Refresh on Quota management, carrying
