@@ -173,14 +173,11 @@ def _watch_price(alias: str, served: str, conn: str, old: dict | None, new: dict
 
 def refresh() -> dict:
     """Rebuild config/model-catalog.json for every registered chat model."""
+    import discover
     import endpoints
     import sources
     from run import _registered_names
-    for name in sources.FEEDS:
-        try:
-            sources.fetch(name)                      # at most once a day; cached copy otherwise
-        except Exception:                            # noqa: BLE001
-            pass
+    discover.refresh()                               # the catalogs and providers' lists, at most once a day
     before = catalog()
     registered = _registered_names()                   # alias -> served name
     try:

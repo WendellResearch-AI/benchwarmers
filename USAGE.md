@@ -232,12 +232,19 @@ are often wrong together.
 ## Discover: finding models to add
 
 **Discover** leads with FreeLLMAPI's catalog of free tiers and fills in from
-models.dev, which alone has prices, paid models and providers' base URLs. One
+models.dev, which alone has prices, paid models and providers' base URLs.
+The catalogs trail the providers by days, so it also reads each Open WebUI
+connection's own model list (through Open WebUI, with the keys it already
+has): a model a provider serves that neither catalog lists yet is a row of its
+own, its price unknown where the provider's list does not say. All of them
+are fetched daily; **Refresh lists** fetches them now. A provider is matched
+to your Open WebUI connection by its API host, or by its name in the
+connection's host (FreeLLMAPI's xKiro is `api.xkiro.com`). One
 list: free models first, then by reach, and within each reach FreeLLMAPI's
 smartest first (the **Rank** column), then what it does not rank, what is new
 this week first and badged. A row opens its popup: what
 the model takes and does, its limits and monthly budget, FreeLLMAPI's known
-quirks for it, links to its freellmapi.co page and models.dev, and every route
+quirks for it, links to its own pages on freellmapi.co and models.dev, and every route
 this install has to it, each with an **Add via this**. Adding through a hub (Open WebUI, LiteLLM, CLI Proxy
 API) puts it in that hub too; adding direct registers it on its own endpoint
 only. Either way the onboarding joins the same queue, with the same

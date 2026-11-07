@@ -766,7 +766,8 @@
   var dd = $('discover-dialog');
   function price(x) {
     var c = x.cost || {};
-    return x.free ? 'free' : (c.input != null ? '$' + c.input + ' in / $' + c.output + ' out per 1M tokens' : 'paid');
+    return x.free ? 'free' : x.free == null ? 'price unknown'
+      : (c.input != null ? '$' + c.input + ' in / $' + c.output + ' out per 1M tokens' : 'paid');
   }
   function limits(l) {
     return Object.keys(l || {}).map(function (k) { return Number(l[k]).toLocaleString() + ' ' + k; }).join(' · ');
@@ -835,13 +836,15 @@
         if (res.errors.length) listErrors($('d-errors'), res.errors);   // a hub that could not be asked
         var r = res.model, p = $('d-profile'), list = $('d-routes');
         $('d-title').textContent = r.name;
-        // Each source a link: FreeLLMAPI's page for the model where its sitemap has one, else its catalog.
+        // Each source a link to its page for the model: FreeLLMAPI's where its sitemap has one, models.dev's by its
+        // canonical id. The provider's own list has no page, only its connection.
         var sv = $('d-served');
         sv.textContent = r.provider_name + ' · ' + r.model + ' · listed by ';
         r.sources.forEach(function (s, i) {
-          var fl = s === 'freellmapi';
           if (i) sv.appendChild(document.createTextNode(' and '));
-          sv.appendChild(el('a', {href: fl ? r.page || 'https://freellmapi.co/models' : 'https://models.dev/',
+          if (s === 'provider') { sv.appendChild(document.createTextNode(r.provider_name + '\'s own list (' + r.connection + ' connection)')); return; }
+          var fl = s === 'freellmapi';
+          sv.appendChild(el('a', {href: fl ? r.page || 'https://freellmapi.co/models' : r.md_page || 'https://models.dev/',
                                   target: '_blank', rel: 'noopener'}, fl ? 'FreeLLMAPI' : 'models.dev'));
         });
         if (r.on_bench_as) sv.appendChild(document.createTextNode(' · on the bench as ' + r.on_bench_as));
@@ -905,6 +908,16 @@
     e.preventDefault(); openDiscover(row.dataset.provider, row.dataset.model);
   });
   $('d-close').addEventListener('click', function () { dd.close(); });
+  // Refresh lists: every list fetched now (serve.discover_refresh), then the page with them.
+  var dr = $('d-refresh');
+  if (dr) dr.addEventListener('click', function () {
+    var said = $('d-refreshed');
+    dr.disabled = true; dr.textContent = 'Fetching…'; said.textContent = 'about half a minute';
+    post('/api/discover/refresh', {}).then(function (res) {
+      said.textContent = (res.errors.length ? res.errors.join(' · ') + ' · ' : '') + 'Reloading…';
+      setTimeout(function () { location.reload(); }, res.errors.length ? 4000 : 500);
+    }).catch(function (err) { said.textContent = String(err); dr.disabled = false; dr.textContent = 'Refresh lists'; });
+  });
   function follow(log, title, before) {
     runView(title, before + 'Running in the background; closing this does not stop it. Log: runs/' + log);
     timer = setInterval(function () {

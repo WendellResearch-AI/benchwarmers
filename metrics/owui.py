@@ -114,6 +114,32 @@ def connections() -> dict[str, tuple[int, str]]:
     return out
 
 
+def lists() -> tuple[list[dict], dict[str, str]]:
+    """What each connection's provider serves now, by its own /models, which
+    Open WebUI passes through at /openai/models/<index> whatever the
+    connection's Model IDs list allows: [{"names", "base", "models"}], names
+    as connections() has them (the bench's first), and {name: why} for the
+    connections that would not say. Switched-off connections are left out."""
+    names: dict[int, list[str]] = collections.defaultdict(list)
+    for name, (idx, _tag) in connections().items():
+        names[idx].append(name)
+    cfg = _call("/openai/config")
+    bases = cfg.get("OPENAI_API_BASE_URLS") or []
+    out, failed = [], {}
+    for idx, ns in sorted(names.items()):
+        if idx >= len(bases) or (cfg.get("OPENAI_API_CONFIGS") or {}).get(str(idx), {}).get("enable") is False:
+            continue
+        try:
+            r = _call(f"/openai/models/{idx}")
+        except Exception as exc:                       # noqa: BLE001
+            failed[ns[0]] = str(exc)
+            continue
+        data = r.get("data") if isinstance(r, dict) else r
+        out.append({"names": ns, "base": bases[idx],
+                    "models": [m for m in data or [] if isinstance(m, dict) and m.get("id")]})
+    return out, failed
+
+
 def plan(connection: str, model_id: str) -> dict:
     """What adding would change. Raises ValueError when it cannot be done here."""
     release, note = version()

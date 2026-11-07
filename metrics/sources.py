@@ -93,17 +93,30 @@ FREELLMAPI_TO_MODELSDEV = {
 def fetch(name: str, force: bool = False) -> dict:
     """A feed, from the cache when it is under a day old."""
     path = CACHE / f"{name}.json"
-    if not force and path.exists() and time.time() - path.stat().st_mtime < MAX_AGE_S:
+    age = age_s(name)
+    if not force and age is not None and age < MAX_AGE_S:
         return json.loads(path.read_text(encoding="utf-8"))
     req = urllib.request.Request(FEEDS[name], headers={"User-Agent": "benchwarmers"})
     with urllib.request.urlopen(req, timeout=90) as r:
         data = (json.load(r) if not FEEDS[name].endswith(".xml") else
                 {"slugs": sorted(set(re.findall(r"/model/([^<\"/]+)<", r.read().decode("utf-8"))))})
+    store(name, data)
+    return data
+
+
+def store(name: str, data: dict) -> None:
+    """Write one cached list whole, never half."""
     CACHE.mkdir(parents=True, exist_ok=True)
+    path = CACHE / f"{name}.json"
     tmp = path.with_suffix(".part")
     tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
     tmp.replace(path)
-    return data
+
+
+def age_s(name: str) -> float | None:
+    """Seconds since a cached list was written; None if it never was."""
+    path = CACHE / f"{name}.json"
+    return time.time() - path.stat().st_mtime if path.exists() else None
 
 
 def cached(name: str) -> dict:

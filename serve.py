@@ -3138,8 +3138,8 @@ def _discover_rows() -> list[dict]:
     (Settings' free-only-in-their-own-app switches)."""
     import discover
     import sources
-    paths = [sources.CACHE / f"{n}.json" for n in sources.FEEDS] + [endpoints.YAML, endpoints.FILE,
-                                                                     endpoints.CONNECTIONS]
+    paths = [sources.CACHE / f"{n}.json" for n in [*sources.FEEDS, discover.LISTS]] + [
+        endpoints.YAML, endpoints.FILE, endpoints.CONNECTIONS]
     stamp = tuple(p.stat().st_mtime if p.exists() else 0 for p in paths)
     if _DISCOVER.get("stamp") != stamp:
         _DISCOVER.update(stamp=stamp, rows=discover.build())
@@ -3164,6 +3164,17 @@ def discover_model(provider: str, model: str) -> dict:
     return {"ok": True, "errors": errors, "model": row, "routes": routes}
 
 
+def discover_refresh(who: str = "ui") -> dict:
+    """Discover's Refresh: every list fetched now (discover.refresh), for a
+    model too new to have waited for the daily fetch. A list that would not
+    come keeps its last copy and is said; the rest are still used."""
+    import discover
+    said = discover.refresh(force=True)
+    _log_change(datetime.datetime.now().astimezone().isoformat(timespec="seconds"), who, "", "discover-refresh",
+                None, "; ".join(said) or "every list fetched")
+    return {"ok": True, "errors": said}
+
+
 def discover_card() -> str:
     """Models worth adding, from FreeLLMAPI and models.dev (metrics/discover.py),
     deduped. Read from the daily cache, so the page never waits on the network;
@@ -3180,7 +3191,7 @@ def discover_card() -> str:
         caps = [c for c, on in (("tools", r["tools"]), ("vision", r["vision"]),
                                 ("reasons", r["reasoning"])) if on]
         cost = r.get("cost") or {}
-        price = ("free" if r["free"] else
+        price = ("free" if r["free"] else "unknown" if r["free"] is None else
                  f"{cost.get('input', '?')} / {cost.get('output', '?')}" if cost else "paid")
         lim = r.get("limits") or {}
         lim_text = " · ".join([f"{v:,} {k}" for k, v in lim.items()]
@@ -3214,9 +3225,17 @@ def discover_card() -> str:
             f"<td>{add}</td></tr>")
     body.append("</tbody></table>")
     free = sum(1 for r in rows if r["free"])
+    import discover
+    import sources
+    ages = [a for a in map(sources.age_s, [*sources.FEEDS, discover.LISTS]) if a is not None]
     toolbar = ("<div class='toolbar'><input type='search' data-filter placeholder='Filter by model,"
                " provider or reach' aria-label='Filter rows'>"
-               "<label><input type='checkbox' data-paid> Show paid (connected providers)</label></div>")
+               "<label><input type='checkbox' data-paid> Show paid and unpriced (connected providers)</label>"
+               "<button class='btn small' type='button' id='d-refresh' title='Fetch FreeLLMAPI, models.dev and"
+               " every Open WebUI connection&#39;s own model list now, instead of waiting for the daily fetch'>"
+               "Refresh lists</button><span class='muted' id='d-refreshed'>"
+               + ("never fetched" if not ages else f"oldest list {max(ages) / 60:.0f} minutes old" if max(ages) < 5400
+                  else f"oldest list {max(ages) / 3600:.0f} hours old") + "</span></div>")
     key = """<dl>
       <dt>Rank</dt><dd>FreeLLMAPI's smartest-first order (1 is the smartest it lists); within
         each reach the list follows it. Hover for its fastest-first rank and size. A dash where
@@ -3229,7 +3248,8 @@ def discover_card() -> str:
         for its base URL); <em>other</em> a native API or an unvetted reseller.</dd>
       <dt>Price</dt><dd>Free if FreeLLMAPI lists it (a catalog of free tiers) or models.dev
         prices it at 0: models.dev shows the PAID price even where a free tier exists. Otherwise
-        input / output per million tokens.</dd>
+        input / output per million tokens. <em>Unknown</em> where only the provider's own list has
+        the model and it says nothing of price; those are behind <em>Show paid and unpriced</em>.</dd>
       <dt>Limits</dt><dd>The free tier's, from FreeLLMAPI: requests and tokens per minute (rpm,
         tpm) and per day (rpd, tpd), and roughly how many tokens a month that allows.</dd>
       <dt>New</dt><dd>First seen in either list in the last 7 days.</dd>
@@ -3247,11 +3267,13 @@ def discover_card() -> str:
       <dt>Sources</dt><dd>FreeLLMAPI's free catalog first: where it lists a model, its name,
         provider, context, tools, limits, ranks and quirks lead, and the popup links its
         freellmapi.co page. models.dev fills the rest and alone has the paid models, prices,
-        base URLs and modalities. A model one provider offers in both is shown once. Both are
-        refreshed at most daily.</dd>
+        base URLs and modalities; the popup links its page for the model. A model one provider
+        offers in both is shown once. Then each Open WebUI connection's own model list, for
+        what the provider serves that neither catalog has yet. All are fetched daily;
+        <em>Refresh lists</em> fetches them now.</dd>
     </dl>"""
-    return (f"<div class='panel'><h2>Discover</h2><p class='sub'>{free} free models from FreeLLMAPI"
-            f" and models.dev, deduped; {hidden:,} paid models on providers you have no route"
+    return (f"<div class='panel'><h2>Discover</h2><p class='sub'>{free} free models from FreeLLMAPI,"
+            f" models.dev and your providers' own lists, deduped; {hidden:,} paid models on providers you have no route"
             f" to are left out. Click a model for everything known about it and the routes it can be"
             f" added by.</p>{toolbar}"
             f"<div class='scroll'>{''.join(body)}</div>"
@@ -4459,6 +4481,7 @@ class Handler(gateway.Handler):
                "/api/remove": lambda p: remove_model(str(p.get("alias", "")), str(p.get("reason", ""))),
                "/api/restore": lambda p: restore_model(str(p.get("alias", ""))),
                "/api/retry": lambda p: retry_model(str(p.get("alias") or "")),
+               "/api/discover/refresh": lambda p: discover_refresh(),
                "/api/discover/add": lambda p: discover_add(str(p.get("connection") or ""),
                                                            str(p.get("model") or ""),
                                                            endpoint=str(p.get("endpoint") or ""),
