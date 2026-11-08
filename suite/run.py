@@ -714,12 +714,36 @@ PROVIDER_NOTICES = (
 )
 
 
-def provider_notice(output: str) -> str | None:
-    """The notice phrase, if a short reply is a provider's quota/credit notice."""
+# A short reply the phrases miss is put to a decision model only when it LOOKS
+# like a notice: under NOTICE_LIKE_MAX characters (a notice is a sentence or
+# two; the probe's one-word "ready" has none of these words) and speaking of
+# the account: credit, quota, balance, billing, a plan or subscription, an
+# upgrade, a top-up, a limit or allowance used up. A short answer that happens
+# to use those words costs one question, once per shape (decide.notice keeps
+# every answer); any other answer costs nothing, not even a file read.
+NOTICE_LIKE = re.compile(r"\b(credits?|quota|balance|billing|subscription|plan|upgrade|top[ -]?up|limit|"
+                         r"allowance|exhausted|exceeded|insufficient|payment)\b")
+NOTICE_LIKE_MAX = 300
+
+
+def provider_notice(output: str, ask: bool = False) -> str | None:
+    """The notice phrase, if a short reply is a provider's quota/credit notice.
+    When no phrase matches but the reply looks like one (NOTICE_LIKE): what a
+    decision model said of its shape ("decided by <model> at <p>"), read from
+    metrics/decided.json; asked now only with `ask` (the gateway's seats, as
+    the reply comes in), never while a page or a score is worked out."""
     text = output.strip().lower()
     if len(text) > 400:
         return None
-    return next((m for m in PROVIDER_NOTICES if m in text), None)
+    if hit := next((m for m in PROVIDER_NOTICES if m in text), None):
+        return hit
+    if len(text) > NOTICE_LIKE_MAX or not NOTICE_LIKE.search(text):
+        return None
+    try:
+        import decide
+        return decide.notice(output.strip(), ask_now=ask)
+    except Exception:                                  # noqa: BLE001 -- the fallback never fails a reply
+        return None
 
 
 # WAS THE PROVIDER THERE? One call at a time, for the Uptime report (serve.py).
@@ -815,12 +839,17 @@ _RELAY_DOWN = _rx(r"actively refused", r"connection refused", r"no connection co
 _RETRY_AFTER = re.compile(r"retry-after:? *(\d+)|retry after (\d+) ?s")
 
 
-def uptime_class(text: str, status: str = "error", private_endpoint: bool = False) -> tuple[str, str]:
+def uptime_class(text: str, status: str = "error", private_endpoint: bool = False,
+                 decided: bool = True) -> tuple[str, str]:
     """(class, reason) for one call: a class from UPTIME_UP, UPTIME_DOWN or
     UPTIME_OUT. `status` is the call's own (ok, empty, error, timeout, or
     refused: not sent by the bench); `private_endpoint`: the call went to a
     hub on our own network, so a refused connection is that hub, not the
-    provider."""
+    provider. When no rule matches, the class a decision model gave the
+    error's shape, read from metrics/decided.json (decide.classify_errors
+    asks, a few new shapes a day; nothing is asked here), its reason
+    "decided by <model> at <confidence>"; `decided=False` is the rules alone,
+    which the decision benchmark labels with."""
     if status in ("ok", "empty"):
         return status, "answered"
     if status == "refused":
@@ -873,6 +902,13 @@ def uptime_class(text: str, status: str = "error", private_endpoint: bool = Fals
         if private_endpoint and _RELAY_DOWN.search(low):
             return "relay", "our LAN hub refused the connection"
         return "unreachable", "unreachable"
+    if decided:
+        try:
+            import decide
+            if hit := decide.cached_error_class(text):
+                return hit
+        except Exception:                              # noqa: BLE001 -- a broken cache is no decision
+            pass
     return "unrecognised", "nothing matched"
 
 

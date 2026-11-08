@@ -95,8 +95,9 @@ UPTIME = {
     "[WinError 10065] No connection could be made to the host": "relay",
     "ne 12, in handler ... Traceback (most recent call last): ... 'status': 500, 'error code: 500'": "busy",
 }
-bad = [(t[:80], run.uptime_class(t, private_endpoint=True)[0], want) for t, want in UPTIME.items()
-       if run.uptime_class(t, private_endpoint=True)[0] != want]
+# The rules alone (decided=False): what this install's decision models said of a shape is not a rule.
+bad = [(t[:80], run.uptime_class(t, private_endpoint=True, decided=False)[0], want) for t, want in UPTIME.items()
+       if run.uptime_class(t, private_endpoint=True, decided=False)[0] != want]
 assert not bad, bad
 # The call's own status decides first; an error with no text is never an answer.
 assert run.uptime_class("", "ok")[0] == "ok" and run.uptime_class("", "empty")[0] == "empty"
@@ -104,5 +105,7 @@ assert run.uptime_class("", "refused")[0] == "notsent" and run.uptime_class("", 
 assert run.uptime_class("", "error")[0] == "unrecognised"
 # A refused connection is our hub only when the call went to one.
 assert run.uptime_class("Error: client failed: Connection error. (connection refused)")[0] == "unreachable"
-assert set(run.UPTIME_UP + run.UPTIME_DOWN + run.UPTIME_OUT) >= {run.uptime_class(t)[0] for t in UPTIME}
+assert set(run.UPTIME_UP + run.UPTIME_DOWN + run.UPTIME_OUT) >= {run.uptime_class(t, decided=False)[0] for t in UPTIME}
+# A normal answer never reaches the notice fallback (metrics/test_decide.py tests the fallback itself).
+assert not run.NOTICE_LIKE.search("ready") and run.NOTICE_LIKE.search("your credit balance is low")
 print("ok")

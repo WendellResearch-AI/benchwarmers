@@ -1575,7 +1575,7 @@ def collections_view() -> dict:
                     "price": price_of(a, served[a], f), "role": (roles.get("models") or {}).get(a, "general"),
                     "family": route.family_of(a), "provider": provider_label(tag), "connection": tag}
     return {"ok": True, "errors": [], "collections": rows, "settings": s,
-            "shapes": shapes, "models": _chat_aliases(), "served": served, "tag_suggestions": suggestions,
+            "pick": bench_collections.pick_settings(), "confident": decide.CONFIDENT, "shapes": shapes, "models": _chat_aliases(), "served": served, "tag_suggestions": suggestions,
             "facts": facts, "shape_roles": {k: v for k, v in roles["shapes"].items() if k in shapes},
             "long_context": LONG_CONTEXT}
 
@@ -1658,12 +1658,25 @@ def delete_collection(name: str, who: str = "ui") -> dict:
     return {"ok": True, "errors": [], "changed": ["config/collections.json"]}
 
 
-def save_gateway_settings(max_calls, max_explorers, who: str = "ui") -> dict:
+KEEP = object()                                      # a setting the request did not send: left as it is
+
+
+def save_gateway_settings(max_calls, max_explorers, who: str = "ui", pick_collection=KEEP,
+                          pick_confidence=KEEP) -> dict:
+    """The gateway's limits, and the collection pick for a request that names
+    none (bench_collections.pick_settings): `pick_collection` true or false,
+    `pick_confidence` above 0 and at most 1, or None for the default."""
     errors = []
     if not isinstance(max_calls, int) or isinstance(max_calls, bool) or not 1 <= max_calls <= 10:
         errors.append("max calls must be a whole number from 1 to 10")
     if not isinstance(max_explorers, int) or isinstance(max_explorers, bool) or not 0 <= max_explorers <= 2:
         errors.append("max explorers must be 0, 1 or 2 (route.py seats at most two)")
+    if pick_collection is not KEEP and not isinstance(pick_collection, bool):
+        errors.append("choosing a collection must be on or off")
+    if pick_confidence is not KEEP and pick_confidence is not None and not (
+            isinstance(pick_confidence, (int, float)) and not isinstance(pick_confidence, bool)
+            and 0 < pick_confidence <= 1):
+        errors.append(f"the confidence must be above 0 and at most 1, or empty for {decide.CONFIDENT}")
     too_big = [n for n, c in bench_collections.load().items()
                if isinstance(max_calls, int) and len(c.get("members", [])) > max_calls
                and "max_calls" not in bench_collections.own_limits(c)]
@@ -1674,12 +1687,18 @@ def save_gateway_settings(max_calls, max_explorers, who: str = "ui") -> dict:
     if errors:
         return {"ok": False, "errors": errors}
     raw = bench_collections._read(bench_collections.SETTINGS_FILE)
-    old = bench_collections.settings()
+    old = {**bench_collections.settings(), **bench_collections.pick_settings()}
     raw.pop("default_collection", None)
     raw.update({"max_calls": max_calls, "max_explorers": max_explorers})
+    if pick_collection is not KEEP:
+        raw["pick_collection"] = pick_collection
+    if pick_confidence is None:
+        raw.pop("pick_confidence", None)                # empty: the default, decide.CONFIDENT
+    elif pick_confidence is not KEEP:
+        raw["pick_confidence"] = pick_confidence
     _write_atomic(bench_collections.SETTINGS_FILE, _dump(raw))
     _log_change(datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
-                who, "", "gateway settings", old, bench_collections.settings())
+                who, "", "gateway settings", old, {**bench_collections.settings(), **bench_collections.pick_settings()})
     return {"ok": True, "errors": [], "changed": ["config/gateway.json"]}
 
 
@@ -2568,6 +2587,7 @@ def charts_data() -> dict:
                                                              "seeded, whole file", "real bugs"],
             "wrong": bars, "wrongTotals": totals, "kinds": list(wrong.KINDS), "hunt": hunt,
             "work": work_rows(), "vision": vision_rows(), "uptime": uptime_data(), "trend": trend_data(),
+            "decide": decision_data(),
             **perf_charts()}
 
 
@@ -3098,9 +3118,41 @@ def _ledger_calls(since_month: str) -> tuple[list, dict, dict, float]:
 
 
 @functools.lru_cache(maxsize=8192)
-def _uptime_class(text: str, status: str, private: bool) -> tuple[str, str]:
+def _uptime_class(text: str, status: str, private: bool, decided: tuple = ()) -> tuple[str, str]:
+    """`decided`: metrics/decided.json's stat, so a new decision about a
+    shape (decide.classify_errors) is read on the next render, not the next start."""
     from run import uptime_class
     return uptime_class(text, status, private)
+
+
+def _down(kind: str) -> bool:
+    """A kind of failure counted down: its class, before any "(decided by ...)"."""
+    from run import UPTIME_DOWN
+    return kind.split(" (decided by ")[0] in UPTIME_DOWN
+
+
+_decide_seen: dict = {"mark": {}, "rows": []}
+_decide_lock = threading.Lock()
+
+
+def _decision_calls() -> list[tuple]:
+    """Every decision call (metrics/decisions.jsonl, decide.call): (at, alias,
+    served, via, status, error, seconds). New lines only, as the ledger is read."""
+    with _decide_lock:
+        fresh, lines = locked.appended(decide.LOG, _decide_seen["mark"])
+        if fresh:
+            _decide_seen["rows"] = []
+        for raw in lines:
+            try:
+                r = json.loads(raw)
+            except ValueError:
+                continue
+            if isinstance(r, dict) and r.get("at") and r.get("alias"):
+                # Answered unless it failed: a reply without the asked answer is still the provider there.
+                status = "error" if r.get("error") else "ok"
+                _decide_seen["rows"].append((r["at"], r["alias"], r.get("served") or "", r.get("via") or "",
+                                             status, r.get("error") or "", r.get("seconds")))
+        return list(_decide_seen["rows"])
 
 
 def _shape(text: str) -> str:
@@ -3166,6 +3218,14 @@ def _uptime_rows() -> dict:
 
     agg: dict[tuple, list] = {}           # (day, alias, connection, class, why) -> [calls, answered seconds, last at]
     odd: list[list] = []
+    try:
+        st = decide.DECIDED.stat()
+        stamp = (st.st_mtime_ns, st.st_size)
+    except OSError:
+        stamp = ()
+
+    def classify(text: str, status: str, private: bool) -> tuple[str, str]:
+        return _uptime_class(text, status, private, stamp)
 
     def count(at: str, alias: str, c: str, cls: str, why: str, n: int = 1, seconds=(), text: str = "") -> None:
         day = index.get(at[:10])
@@ -3178,8 +3238,10 @@ def _uptime_rows() -> dict:
         if cls == "ok":
             a[1] += seconds
         a[2] = max(a[2], at)
-        if cls == "unrecognised":
-            odd.append([day, at, c, n, _shape(text) if text else f"({why})"])
+        # No rule knows it: listed, with what a decision model said of it when one did.
+        if cls == "unrecognised" or why.startswith("decided by"):
+            odd.append([day, at, c, n, _shape(text) if text else f"({why})",
+                        f"{cls}, {why}" if why.startswith("decided by") else ""])
 
     for r in perf_rows():                                  # the probe: counts per row, one text per row
         at, alias = r.get("timestamp") or "", r["model"]
@@ -3197,24 +3259,42 @@ def _uptime_rows() -> dict:
                 # classes after it (empty, other) that kept no text.
                 cls, why = "unrecognised", "no text kept; the probe's text was its timeout's"
             elif r.get("detail"):
-                cls, why = _uptime_class(r["detail"], "error", lan(alias))
+                cls, why = classify(r["detail"], "error", lan(alias))
             else:
                 cls, why = _OLD_CLASS.get(old, "unrecognised"), f"no text kept; the probe said {old or 'nothing'}"
             count(at, alias, c, cls, why, num("error"), text=r.get("detail") if old != "timeout" else "")
     for (_day, alias, status, error), (n, seconds, last) in _seat_counts(since).items():
         alias = now(alias)
-        cls, why = _uptime_class(error, status, lan(alias))
+        cls, why = classify(error, status, lan(alias))
         count(last, alias, conn(alias), cls, why, n, seconds, error)
     for t, at, alias, c, status, error, seconds in calls:   # the suite's and the rest, once text is kept
         if t <= mute or at[:10] < since:
             continue
         alias = now(alias)
-        cls, why = _uptime_class(error, status, lan(alias))
+        cls, why = classify(error, status, lan(alias))
         count(at, alias, c or conn(alias), cls, why, 1, [float(seconds)] if seconds else [], error)
+    # Decision models: every call decide.call logged, on the connection behind its served name
+    # (provider tags: OpenRouter for the :free ones), its hub's address deciding the relay.
+    tags = load_json(DATA / "config" / "provider-tags.json")
+    for at, alias, served, via, status, error, seconds in _decision_calls():
+        if at[:10] < since:
+            continue
+        alias = now(alias)                             # a renamed decision model keeps its calls
+        hub = urllib.parse.urlsplit(data.get(via, {}).get("base") or "").hostname or ""
+        try:
+            private_hub = ipaddress.ip_address(hub).is_private
+        except ValueError:
+            private_hub = hub == "localhost"
+        cls, why = classify(error, status, private_hub)
+        c = str(tags.get(served) or "").split("/")[0] or via or "unknown"
+        conns.setdefault(alias, c)
+        count(at, alias, c, cls, why, 1, [float(seconds)] if seconds and cls == "ok" else [], error)
     providers: dict[str, list] = {}
     models: dict[str, list] = {}
     for (day, alias, c, cls, why), (n, seconds, last) in agg.items():
         kind = f"setup: {why}" if cls == "setup" else _OUT_LABEL.get(cls, cls)
+        if why.startswith("decided by") and cls != "setup":
+            kind += f" ({why})"                        # the hover says a model, not a rule, said so
         for table, key in ((providers, c), (models, alias)):
             cells = table.setdefault(key, [None] * len(days))
             b = cells[day] = cells[day] or [0, 0, 0, {}, [], ""]
@@ -3264,10 +3344,10 @@ def _why(kinds: dict, which) -> str:
 
 
 def uptime_data() -> dict:
-    """For bench.js: each row's 30 days, a day as [up, down, left out, why] or 0."""
-    from run import UPTIME_DOWN
+    """For bench.js: each row's 30 days, a day as [up, down, left out, why] or 0.
+    Models on the bench now, decision models included."""
     u = uptime_rows()
-    live = on_bench()
+    live = on_bench() | set(decide.load())
 
     def row(name: str, cells: list) -> dict:
         out = []
@@ -3275,8 +3355,8 @@ def uptime_data() -> dict:
             if not b:
                 out.append(0)
                 continue
-            down = _why(b[3], lambda k: k in UPTIME_DOWN)
-            left = _why(b[3], lambda k: k not in UPTIME_DOWN)
+            down = _why(b[3], _down)
+            left = _why(b[3], lambda k: not _down(k))
             out.append([b[0], b[1], b[2], "; ".join(filter(None, [down and "down: " + down,
                                                                   left and "left out: " + left]))])
         return {"name": name, "cells": out}
@@ -3288,7 +3368,6 @@ def uptime_data() -> dict:
 def uptime_card() -> str:
     """Was the provider there when the bench called it: a cell a day, by
     provider then by model; 7 days, or 30 on choice (bench.js swaps them)."""
-    from run import UPTIME_DOWN
     u = uptime_rows()
     first, gone, names = UPTIME_DAYS[0], retired(), {}
 
@@ -3312,8 +3391,8 @@ def uptime_card() -> str:
                          f" style='width:{max(4, round(pct * 100))}%'></span></span>"
                          f"<span class='mono'>{pct * 100:.1f}%</span></span>" if pct is not None
                          else "<span class='muted'>no counted calls</span>")
-                down = _why(t["kinds"], lambda kind: kind in UPTIME_DOWN)
-                left = _why(t["kinds"], lambda kind: kind not in UPTIME_DOWN)
+                down = _why(t["kinds"], _down)
+                left = _why(t["kinds"], lambda kind: not _down(kind))
                 body.append(
                     (name(k) if models else f"<tr><td>{esc(k)}</td>")
                     + f"<td data-sort='{-1 if pct is None else round(pct, 4)}'>{meter}</td>"
@@ -3332,9 +3411,10 @@ def uptime_card() -> str:
 
     def odd(w: int) -> str:
         shapes: dict[str, list] = {}
-        for day, at, conn, n, shape in u["odd"]:
+        for day, at, conn, n, shape, said in u["odd"]:
             if day >= len(u["days"]) - w:
-                s = shapes.setdefault(shape, [0, set(), at, at])
+                # By shape and what was decided of it: two texts this shape joins may not share a decision.
+                s = shapes.setdefault((shape, said), [0, set(), at, at, said])
                 s[0] += n
                 s[1].add(conn)
                 s[2], s[3] = min(s[2], at), max(s[3], at)
@@ -3342,12 +3422,19 @@ def uptime_card() -> str:
             return ""
         items = "".join(
             f"<li><span class='mono'>{n}×</span> {esc(shape)} <span class='muted'>· {esc(', '.join(sorted(conns)))},"
-            f" {esc(a[5:10])}{'' if a[:10] == b[:10] else ' to ' + esc(b[5:10])}</span></li>"
-            for shape, (n, conns, a, b) in sorted(shapes.items(), key=lambda kv: -kv[1][0])[:12])
+            f" {esc(a[5:10])}{'' if a[:10] == b[:10] else ' to ' + esc(b[5:10])}</span>"
+            + (" {} <span class='muted'>{}</span>".format(
+                chip(said.partition(", ")[0], "warn", "no rule knows it; counted as " + said),
+                esc(said.partition(", ")[2])) if said else "") + "</li>"
+            for (shape, _), (n, conns, a, b, said) in sorted(shapes.items(), key=lambda kv: -kv[1][0])[:12])
+        decided, total = sum(s[0] for s in shapes.values() if s[4]), sum(s[0] for s in shapes.values())
         return (f"<div data-uptime-window='{w}'{'' if w == first else ' hidden'}>"
-                f"<h3 class='chart-head'>Not recognised: {sum(s[0] for s in shapes.values())} calls</h3>"
+                f"<h3 class='chart-head'>Not recognised by a rule: {total} call{'s' * (total != 1)}"
+                + (f", {decided} of them classed by a decision model" if decided else "") + "</h3>"
                 "<p class='hint'>Counted as down until a rule in <code>suite/run.py</code>"
-                " (<code>uptime_class</code>) says what they are.</p>"
+                " (<code>uptime_class</code>) says what they are, unless a decision model was asked about the"
+                " shape (the scheduler's <code>decisions</code> job, a few new shapes a day): then counted as it"
+                " said, marked here and in the hovers with the model and how sure it was.</p>"
                 f"<ul class='links'>{items}</ul></div>")
 
     legend = ("<div class='q-legend'><span><i style='background:var(--ok)'></i>all answered</span>"
@@ -3360,7 +3447,9 @@ def uptime_card() -> str:
     key = """<dl>
       <dt>Down</dt><dd>The provider was busy or overloaded (a 5xx, high demand, a shared pool's
         429), unreachable (a broken stream, no reply), timed out (the gateway's 420 s included), or
-        failed in a way no rule recognises yet, listed under the chart so a rule can be added.</dd>
+        failed in a way no rule recognises yet, listed under the chart so a rule can be added. A
+        shape a decision model was asked about counts as it said, marked "decided by" with the model
+        and how sure it was (at 0.6 or more; below that it stays unrecognised).</dd>
       <dt>Left out</dt><dd>Neither up nor down, since it says nothing about the provider: our own
         quota or allowance used up (a day, a month, credits), our own per-minute or concurrency
         limit, a call the bench's pacing never sent, our client failing, our LAN hub refusing the
@@ -3371,9 +3460,10 @@ def uptime_card() -> str:
       <dt>The % and (n)</dt><dd>Answered of counted over the days shown, and how many were counted:
         weighted by calls, so a provider's row is every call to any of its models.</dd>
       <dt>What is counted</dt><dd>Only calls the bench makes anyway: the daily probe, every gateway
-        seat, and the suite's own calls once the client's ledger keeps their error text
-        (2026-11-08 on). Each is classified from its error text when this is drawn, so a better
-        rule changes the past too. It is shown only: nothing is routed or retired by it.</dd>
+        seat, the suite's own calls once the client's ledger keeps their error text
+        (2026-11-08 on), and every decision model call (<code>metrics/decisions.jsonl</code>), on the
+        connection behind its served name. Each is classified from its error text when this is drawn,
+        so a better rule changes the past too. It is shown only: nothing is routed or retired by it.</dd>
     </dl>"""
     return chart_card("Uptime", "Whether the provider was there when the bench called it: the daily probe"
                       " and every real call, one cell a day. Busy, unreachable and timed out count as down;"
@@ -3383,6 +3473,129 @@ def uptime_card() -> str:
                                    "<div class='chart' id='chart-uptime-providers'></div>"
                                    "<h3 class='chart-head'>By model</h3>",
                       after="".join(odd(w) for w in UPTIME_DAYS))
+
+
+# ---- Decision models: how well each answers the bench's typed questions -----
+#
+# metrics/decide.py's benchmark (the scheduler's `decisions` job) writes
+# metrics/decide-bench.json; this shows it, and which model each use goes to
+# now (decide.choose), never asking one.
+
+DECIDE_USES = {"shape": "The shape of a request (gateway)", "collection": "A collection for a request that names none",
+               "notice": "A short reply that may be a provider's notice (gateway seats)",
+               "errors": "Error shapes no uptime rule knows (daily job)", "role": "A new chat model's role (onboarding)"}
+DECIDE_SETS = {"errors": "Error classes", "collection": "Collections", "useful": "Useful answers"}
+
+
+def decision_data() -> dict:
+    """For bench.js: each model's calibration bins per set, [said, right, n]."""
+    res = decide.results()
+    return {"sets": [[s, DECIDE_SETS[s]] for s in decide.SETS], "cutoff": decide.CONFIDENT,
+            "points": [{"model": a, "set": s, "said": b["said"], "right": b["right"], "n": b["n"]}
+                       for a, by in sorted((res.get("models") or {}).items()) for s, r in by.items()
+                       if s in decide.SETS for b in r.get("calibration") or []]}
+
+
+def _pct(x) -> str:
+    return "—" if x is None else f"{x * 100:.0f}%"
+
+
+def decision_card() -> str:
+    """Per decision model and set: right of asked, Brier, calibration, the
+    cutoff's coverage and accuracy, seconds, failures; and who each use asks."""
+    res = decide.results()
+    measured, onboarded, low = res.get("models") or {}, decide.load(), decide.MIN_ITEMS
+    uses = []
+    for u in decide.USES:
+        who, why = decide.choose(u, measured)
+        uses.append(f"<li>{esc(DECIDE_USES[u])}"
+                    + (" <span class='muted'>· per request</span>" if u in decide.PER_REQUEST else "") + ": "
+                    + (f"<b>{esc(who)}</b>" if who else "<span class='muted'>nobody</span>")
+                    + f" <span class='muted'>· {esc(why)}</span></li>")
+    tables = []
+    for s, title in DECIDE_SETS.items():
+        info = (res.get("sets") or {}).get(s) or {}
+        rows = {a: by[s] for a, by in measured.items() if isinstance(by.get(s), dict)}
+        ranked = sorted((a for a, r in rows.items() if r["asked"] >= low and a in onboarded),
+                        key=lambda a: -(rows[a]["correct"] + 1) / (rows[a]["asked"] + 2))
+        body = ["<table><thead><tr>", th("Model"), th("Rank"), th("Right of asked", True), th("Accuracy", True),
+                th("Brier", True), th("Calibration gap", True), th(f"At {decide.CONFIDENT}"), th("Seconds", True),
+                th("Failures"), th("Last asked"), "</tr></thead><tbody>"]
+        for a in sorted(rows, key=lambda a: (a not in ranked, ranked.index(a) if a in ranked else 0, a)):
+            r, n = rows[a], rows[a].get("answered", 0)
+            rank = (chip(f"{ranked.index(a) + 1} of {len(ranked)}", "ok" if ranked.index(a) == 0 else "",
+                         f"ranked on {r['asked']} items asked") if a in ranked
+                    else chip(f"below {low} items", "", f"{r['asked']} asked; a model is ranked from {low}")
+                    if a in onboarded else chip("not onboarded", "", "no longer in config/decision-models.json"))
+            acc = (f"{_pct(r.get('accuracy'))} <span class='muted'>of {n}</span>"
+                   + (f" <span class='muted'>· F1 {r['macro_f1']:.2f}</span>" if r.get("macro_f1") is not None else "")
+                   if n else "<span class='muted'>no answer</span>")
+            sure = r.get("confident") or {}
+            cut = (f"{_pct(sure.get('coverage'))} <span class='muted'>of {n} sure</span>, {_pct(sure.get('accuracy'))}"
+                   f" <span class='muted'>of {round(sure['coverage'] * n)} right</span>"
+                   if n and sure.get("coverage") is not None else "—")
+            fails = sum((r.get("failures") or {}).values())
+            body.append(
+                f"<tr><td>{named(a)}</td><td>{rank}</td>"
+                f"<td class='num' data-sort='{r['correct']}'>{r['correct']}/{r['asked']}</td>"
+                f"<td class='num' data-sort='{r.get('accuracy') if n else -1}'>{acc}</td>"
+                + (f"<td class='num' data-sort='{r['brier']}'>{r['brier']:.3f}</td>"
+                   f"<td class='num' data-sort='{r['ece']}'>{r['ece']:.2f}</td>" if n else
+                   "<td class='num muted' data-sort='9'>—</td><td class='num muted' data-sort='9'>—</td>")
+                + f"<td class='why'>{cut}</td>"
+                + (f"<td class='num'>{r['seconds']:.2f}</td>" if r.get("seconds") is not None
+                   else "<td class='num muted'>—</td>")
+                + f"<td class='why' data-sort='{fails}'>{fails}"
+                + (f" <span class='muted'>· {esc(_why(r['failures'], lambda k: True))}</span>" if fails else "")
+                + f"</td><td class='mono'>{esc((r.get('last') or '')[5:16].replace('T', ' '))}</td></tr>")
+        if not rows:
+            body.append("<tr><td colspan='10' class='muted'>No model asked yet.</td></tr>")
+        body.append("</tbody></table>")
+        labels = ", ".join(f"{k} {v}" for k, v in (info.get("labels") or {}).items())
+        tables.append(f"<h3 class='chart-head'>{title}: {info.get('size', '?')} items"
+                      f" <span class='muted'>({esc(DECIDE_KIND[s])}{'; ' + esc(labels) if labels else ''})</span></h3>"
+                      + "".join(body))
+    when = res.get("updated", "")
+    extra = (f"<h3 class='chart-head'>Who each use asks now</h3><ul class='links'>{''.join(uses)}</ul>"
+             f"<p class='hint'>{'Measured up to ' + esc(when[:16].replace('T', ' ')) + '.' if when else 'Not measured yet.'}"
+             " The scheduler's <code>decisions</code> job asks each model one question a set a day;"
+             " <code>python metrics/decide.py bench</code> runs a pass by hand.</p>"
+             "<h3 class='chart-head'>Calibration: said against right</h3>")
+    key = f"""<dl>
+      <dt>The sets</dt><dd>Questions with known answers, built from the bench's own data, no hand labelling.
+        <b>Error classes</b>: failed calls' error text (redacted: no keys, ids or emails) and the class the
+        uptime rules give it. <b>Collections</b>: gateway requests and the collection the caller named (not
+        ones a decision model chose). <b>Useful answers</b>: seat answers you judged, with their request,
+        a yes/no question.</dd>
+      <dt>Right of asked</dt><dd>Each item's latest answer; a failed call counts as asked and not right.
+        <b>Accuracy</b> is of the answers given; F1 is the mean over the options of how well each was
+        picked, so always saying the commonest option scores low.</dd>
+      <dt>Brier</dt><dd>How far its probabilities sat from the truth: 0 is perfect; for a choice it is
+        summed over the options, so up to 2. Lower is better, and a sure wrong answer costs most.</dd>
+      <dt>Calibration</dt><dd>The chart: answers grouped by the probability the model gave its answer
+        (x), against how often those answers were right (y). On the diagonal, its 80% answers come true
+        80% of the time; under it, it is surer than it should be. A bigger dot is more answers. The gap is
+        the average distance from the diagonal, weighted by answers.</dd>
+      <dt>At {decide.CONFIDENT}</dt><dd>The gateway acts on a choice only when the model is this sure: how
+        many answers were that sure, and how many of those were right.</dd>
+      <dt>Rank</dt><dd>Among models with {low} or more items asked on the set, by right answers
+        smoothed for sample size ((right + 1) / (asked + 2)). Below {low} a model is shown but not ranked,
+        and a use keeps its default (the first onboarded model that takes the question).</dd>
+      <dt>Who each use asks</dt><dd>The shape of a request and a new model's role are ranked on the
+        collection set (one described option of several, for a text), the notice check on useful answers
+        (the only yes/no set). A use asked per request never goes to a <code>:free</code> model while
+        another can answer: their calls come out of OpenRouter's free daily budget, which the suite and
+        the probe share.</dd>
+      <dt>Failures</dt><dd>Calls that came back with no answer, by the uptime classes (setup: no such
+        model, or paywalled). The pass stops a model at its first failure.</dd>
+    </dl>"""
+    return chart_card("Decision models", "The models that answer typed questions (a choice, a yes or no) with"
+                      " a probability: how often they are right on the bench's own labelled questions, how far"
+                      " to trust their probabilities, and which one each use asks.",
+                      "chart-decide", "".join(tables), key, extra=extra, retired=False)
+
+
+DECIDE_KIND = {"errors": "choice of 6", "collection": "choice of the collections", "useful": "yes or no"}
 
 
 def bughunt_card() -> str:
@@ -3557,7 +3770,7 @@ def benchmarks_tab() -> str:
     data = json.dumps(charts_data(), ensure_ascii=False).replace("</", "<\\/")
     # Trend, Uptime and Performance side by side: what moves over time, in one stretch.
     return (overview_card() + bughunt_card() + work_card() + wrong_card() + suite_card() + vision_card()
-            + trend_card() + uptime_card() + perf_card() + external_card()
+            + trend_card() + uptime_card() + perf_card() + decision_card() + external_card()
             + f"<script type='application/json' id='charts-data'>{data}</script>")
 
 
@@ -4091,9 +4304,16 @@ def collections_tab() -> str:
         "</div>"
         "<p class='rules'>Explorers = min(max explorers, max calls − members): with 5 and 2, a"
         " 2- or 3-model collection gets 2, a 4-model one 1, a 5-model one none. These apply to"
-        " every collection that does not set its own in its dialog. A request that"
-        " names no collection is refused with each one's description and tags, so the caller"
-        " can choose.</p>"
+        " every collection that does not set its own in its dialog.</p>"
+        "<label class='check'><input type='checkbox' id='g-pick'> Choose a collection for a request that"
+        " names none</label>"
+        "<div class='settings'><div><label class='field' for='g-pick-conf'>Only when the model is at least"
+        "</label><input id='g-pick-conf' type='number' min='0.05' max='1' step='0.05'></div></div>"
+        "<p class='rules'>A decision model (the one Benchmarks › Decision models says the collection pick"
+        " asks) chooses from the collections' descriptions and tags, and the reply says which and why"
+        " (<code>bench.picked</code>, <code>X-Bench-Picked</code>). Less sure than this, or switched off,"
+        " the request is refused with each collection's description and tags, so the caller can choose."
+        " A name that is not a collection is always refused.</p>"
         "<div class='errors' id='g-errors' role='alert'></div><div class='done' id='g-done'></div>"
         "<div class='actions'>"
         "<button class='btn primary' id='g-save'>Save settings</button></div>"
@@ -4876,8 +5096,10 @@ def directory_json() -> str:
     directory = model_directory()
     facts = {a: catalog.info(a) for a, d in directory.items() if d.get("kind") != "decision"}
     options = {a: o for a, o in load_json(OPTIONS_PATH).items() if a in facts and isinstance(o, dict)}
+    # A decision model's role suggestion from onboarding (decide.suggest_role): shown, never applied.
+    suggested = {a: s for a, s in (locked.read_json(decide.DECIDED).get("roles") or {}).items() if isinstance(s, dict)}
     return json.dumps({"models": directory, "facts": facts, "options": options, "roles": model_roles.load()["roles"],
-                       "retired": retired(), "onboard": onboard_issues(), "stamp": data_stamp()},
+                       "suggested": suggested, "retired": retired(), "onboard": onboard_issues(), "stamp": data_stamp()},
                       ensure_ascii=False).replace("</", "<\\/")
 
 
@@ -4896,6 +5118,7 @@ def editor() -> str:
         " history and run notes keep following this model.</p>"
         "<label class='field' for='m-role'>Role</label><select id='m-role'></select>"
         "<p class='rules' id='m-role-why'></p>"
+        "<p class='note' id='m-role-hint' hidden></p>"
         "<fieldset id='m-qtypes' hidden><legend class='field'>Question types</legend>"
         "<label class='check'><input type='checkbox' value='noul'> yes/no"
         " <span class='muted'>(noul: a probability that the answer is yes)</span></label>"
@@ -5305,7 +5528,8 @@ class Handler(gateway.Handler):
                                                         str(p.get("note") or ""), p.get("real"),
                                                         p.get("false")),
                "/api/gateway-settings": lambda p: save_gateway_settings(
-                   p.get("max_calls"), p.get("max_explorers")),
+                   p.get("max_calls"), p.get("max_explorers"), pick_collection=p.get("pick_collection", KEEP),
+                   pick_confidence=p.get("pick_confidence", KEEP)),
                "/api/gateway-key": lambda p: make_gateway_key(str(p.get("name") or ""), p.get("collections"),
                                                               p.get("rpm")),
                "/api/gateway-key/remove": lambda p: revoke_gateway_key(str(p.get("name") or "")),

@@ -3,7 +3,8 @@
     config/collections.json   {"core": {"members": [...], "shape": "",
                                          "description": "...", "tags": ["general"],
                                          "reply": "all", "merger": ""}}
-    config/gateway.json       {"max_calls": 5, "max_explorers": 2}
+    config/gateway.json       {"max_calls": 5, "max_explorers": 2,
+                               "pick_collection": true, "pick_confidence": 0.6}
 
 A request for `bench/core` runs every member, plus explorer seats that
 `route.py` fills by staleness so the roster keeps getting evidence even when
@@ -76,6 +77,17 @@ def settings() -> dict:
     return {**DEFAULTS, **{k: v for k, v in _read(SETTINGS_FILE).items() if k in DEFAULTS}}
 
 
+def pick_settings() -> dict:
+    """gateway.json's `pick_collection` (on unless false: a request that names
+    no collection gets one a decision model chooses, gateway.pick_collection)
+    and `pick_confidence` (above 0, at most 1; None means decide.CONFIDENT).
+    Kept beside the limits, which save_gateway_settings leaves alone."""
+    raw = _read(SETTINGS_FILE)
+    on, at = raw.get("pick_collection"), raw.get("pick_confidence")
+    return {"pick_collection": on is not False,
+            "pick_confidence": at if isinstance(at, (int, float)) and not isinstance(at, bool) and 0 < at <= 1 else None}
+
+
 def limit_ok(key: str, value) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and BOUNDS[key][0] <= value <= BOUNDS[key][1]
 
@@ -117,8 +129,10 @@ def described(name: str, c: dict, s: dict | None = None) -> dict:
 
 def resolve(model: str | None) -> str | None:
     """The collection a request's `model` names: `bench/core` or `core`; None
-    when it names nothing here. There is no default: a caller that did not
-    choose is told what each collection is for and asked to choose."""
+    when it names nothing here. There is no default: a request with no model
+    gets one a decision model chooses when it is sure (gateway.pick_collection,
+    pick_settings), and is otherwise told what each collection is for and
+    asked to choose, as is one naming a collection that does not exist."""
     name = (model or "").strip().removeprefix(PREFIX)   # "bench/" alone names nothing
     return name if name and name in load() else None
 
@@ -165,6 +179,16 @@ if __name__ == "__main__":
     assert split_reply("bench/core:merged") == ("bench/core", "merged") and split_reply("core:all") == ("core", "all")
     assert split_reply("bench/core:route") == ("bench/core", "route")
     assert split_reply("bench/core") == ("bench/core", "") and split_reply("bench/core:x") == ("bench/core:x", "")
+    import tempfile
+    real = SETTINGS_FILE
+    with tempfile.TemporaryDirectory() as tmp:
+        SETTINGS_FILE = pathlib.Path(tmp) / "gateway.json"
+        assert pick_settings() == {"pick_collection": True, "pick_confidence": None}           # on by default
+        SETTINGS_FILE.write_text('{"pick_collection": false, "pick_confidence": 0.8}', encoding="utf-8")
+        assert pick_settings() == {"pick_collection": False, "pick_confidence": 0.8}
+        SETTINGS_FILE.write_text('{"pick_confidence": 2}', encoding="utf-8")                   # out of range: unset
+        assert pick_settings() == {"pick_collection": True, "pick_confidence": None}
+    SETTINGS_FILE = real
     assert not reply_errors("merged", "", []) and not reply_errors("all", "m", ["m"])
     assert len(reply_errors("", "m", [])) == 2
     print("ok")

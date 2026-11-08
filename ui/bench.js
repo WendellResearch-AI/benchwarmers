@@ -250,7 +250,7 @@
            danger: $('m-danger'), errors: $('m-errors'), done: $('m-done'), save: $('m-save'),
            restore: $('m-restore'), close: $('m-close'), removeBox: $('m-remove-box'),
            reason: $('m-reason'), remove: $('m-remove'), onboard: $('m-onboard'),
-           qtypes: $('m-qtypes'), aliasWhy: $('m-alias-why')};
+           qtypes: $('m-qtypes'), aliasWhy: $('m-alias-why'), roleHint: $('m-role-hint')};
   m.aliasWhy.dataset.chat = m.aliasWhy.textContent;
   var editing = null;
 
@@ -293,6 +293,12 @@
         o.disabled = model.kind !== 'decision' && o.value === 'decision';
       });
       m.adhoc.checked = !!model.ad_hoc;
+      // A decision model's suggestion from onboarding (decide.suggest_role): said, never applied.
+      var hint = !decision && (D.suggested || {})[alias];
+      m.roleHint.hidden = !hint;
+      m.roleHint.textContent = hint ? 'Suggested when it was onboarded: ' + hint.role + ', '
+        + Math.round(hint.confidence * 100) + '% sure (' + hint.by + ', from its catalog facts and description, '
+        + (hint.at || '').slice(0, 10) + '). Only a suggestion: the role is the one you pick above.' : '';
       m.save.disabled = false; m.save.textContent = 'Save';
       m.reason.value = ''; m.removeBox.open = false; m.remove.disabled = false; refresh();
     }
@@ -1507,6 +1513,7 @@
     c = {list: $('c-list'), name: $('c-name'), members: $('c-members'), count: $('c-count'),
          shape: $('c-shape'), desc: $('c-desc'), tags: $('c-tags'), errors: $('c-errors'), done: $('c-done'),
          head: $('c-form-head'), maxCalls: $('g-max-calls'), maxExp: $('g-max-explorers'),
+         pick: $('g-pick'), pickConf: $('g-pick-conf'),
          gErrors: $('g-errors'), gDone: $('g-done'), form: $('c-form'), status: $('c-status'),
          del: $('c-delete'), reply: $('c-reply'), merger: $('c-merger'), find: $('c-member-filter'),
          seats: $('c-seats'), prov: $('c-member-provider'), adHoc: $('c-ad-hoc'),
@@ -1794,6 +1801,10 @@
       });
       if (!res.collections.length) c.list.appendChild(el('p', {class: 'empty'}, 'No collections yet.'));
       c.maxCalls.value = res.settings.max_calls; c.maxExp.value = res.settings.max_explorers;
+      // The collection pick (serve.save_gateway_settings): empty confidence is the default.
+      c.pick.checked = res.pick.pick_collection; c.pickConf.placeholder = res.confident;
+      c.pickConf.value = res.pick.pick_confidence == null ? '' : res.pick.pick_confidence;
+      c.pickConf.disabled = !c.pick.checked;
       if (!keep) closeForm();
     });
   }
@@ -1828,10 +1839,12 @@
       finished('Saved bench/' + name + '.');
     }).catch(function (err) { c.errors.textContent = String(err); });
   });
+  on('change', 'g-pick', function () { c.pickConf.disabled = !c.pick.checked; });
   on('click', 'g-save', function () {
     c.gErrors.textContent = ''; c.gDone.textContent = '';
     post('/api/gateway-settings', {max_calls: parseInt(c.maxCalls.value, 10),
-                                   max_explorers: parseInt(c.maxExp.value, 10)}).then(function (r) {
+                                   max_explorers: parseInt(c.maxExp.value, 10), pick_collection: c.pick.checked,
+                                   pick_confidence: c.pickConf.value === '' ? null : Number(c.pickConf.value)}).then(function (r) {
       if (!r.ok) { listErrors(c.gErrors, r.errors); return; }
       c.gDone.textContent = 'Settings saved.'; loadCollections(true);
     }).catch(function (err) { c.gErrors.textContent = String(err); });
@@ -2427,6 +2440,45 @@
       put('chart-uptime-models', function (w) { return uptime(U.models, w); });
     }
     if (part === 'uptime') return;
+    // Decision models: each model's answers grouped by the probability it gave
+    // them (x) against how often they were right (y), a panel per set
+    // (serve.decision_data). On the diagonal, its 80% answers come true 80% of
+    // the time; under it, it is surer than it should be. Panels stack on a phone.
+    var DC = C.decide;
+    if (DC) put('chart-decide', function (w) {
+      if (!DC.points.length) return el('p', {class: 'hint'}, 'No decision model has answered a benchmark question yet.');
+      var names = {};
+      DC.sets.forEach(function (s) { names[s[0]] = s[1]; });
+      var panels = DC.sets.map(function (s) { return s[1]; });
+      var pts = DC.points.map(function (p) { return Object.assign({panel: names[p.set]}, p); })
+        .sort(function (a, b) { return a.said - b.said; });
+      var models = pts.map(function (p) { return p.model; })
+        .filter(function (m, i, all) { return all.indexOf(m) === i; }).sort();
+      var diag = [];
+      panels.forEach(function (s) { diag.push({panel: s, x: 0, y: 0}, {panel: s, x: 1, y: 1}); });
+      function tip(p) {
+        return p.model + ' · ' + names[p.set] + '\n' + p.n + ' answer' + (p.n === 1 ? '' : 's') + ' it was about '
+          + Math.round(p.said * 100) + '% sure of\n' + Math.round(p.right * 100) + '% of them right';
+      }
+      var narrow = w < 700, f = narrow ? 'fy' : 'fx', opts = {}, by = {};
+      opts[f] = {domain: panels, label: null};
+      by[f] = 'panel';
+      return Plot.plot(Object.assign(opts, {
+        width: narrow ? Math.min(w, 520) : w, height: narrow ? 3 * 230 + 70 : 320, style: style,
+        marginLeft: 52, marginRight: narrow ? 90 : 20, marginBottom: 44, marginTop: 28,
+        x: {domain: [0, 1], label: 'Probability it gave its answer →', tickFormat: '.0%', ticks: 5, grid: true},
+        y: {domain: [0, 1], label: '↑ Share right', tickFormat: '.0%', ticks: 5, grid: true},
+        r: {range: [3, 13]},
+        color: {legend: true, domain: models, range: [sky, good, signal, warn, muted, ink, err]},
+        marks: [
+          Plot.frame({stroke: line}),
+          Plot.line(diag, Object.assign({x: 'x', y: 'y', z: 'panel', stroke: muted, strokeDasharray: '4 3'}, by)),
+          Plot.line(pts, Object.assign({x: 'said', y: 'right', z: 'model', stroke: 'model', strokeOpacity: 0.55}, by)),
+          Plot.dot(pts, Object.assign({x: 'said', y: 'right', r: 'n', fill: 'model', stroke: ink, strokeWidth: 0.5,
+                                       title: tip}, by))
+        ]
+      }));
+    });
     // Who to trust: finds real bugs (right) vs makes things up (up = less).
     put('chart-overview', function (w) {
       if (!C.overview.length) return el('p', {class: 'hint'}, 'No model has both suite scores and answers yet.');

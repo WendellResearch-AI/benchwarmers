@@ -6,7 +6,8 @@
 RELEASE-PLAN.md Phase 3. The checks used to exist only as Windows scheduled
 tasks (scripts/schedule.ps1), which macOS, Linux and Docker do not have. serve.py
 starts this in a background thread; the jobs below are the same seven, at the
-same times, with the same arguments (schedule.ps1 explains each choice).
+same times, with the same arguments (schedule.ps1 explains each choice), and
+since 2026-11-08 the decision benchmark, which has no Windows task.
 
 MODE, from config/scheduler.json:
   absent / "off"   nothing runs. A fresh install spends no model calls until
@@ -55,6 +56,11 @@ JOBS = {
     "perf": (["perf/run.py", "-n", "3", "--timeout", "90", "--client", "builtin"], [(0, "07:00")]),
     "capabilities": (["metrics/probe_caps.py", "--gap", "30"], [(6, "07:00")]),
     "suite": (["suite/run.py", "--next"], [(None, t) for t in ("03:00", "09:00", "15:00", "21:00")]),
+    # Not in schedule.ps1 (2026-11-08). One question per model per set, 30 s
+    # apart round-robin: most decision models are OpenRouter `:free`, whose
+    # daily budget the suite and the probe share (metrics/decide.py).
+    "decisions": (["metrics/decide.py", "bench", "--per", "1", "--gap", "30", "--new-errors", "3"],
+                  [(None, "04:30")]),
 }
 # Each mode as the Settings page names and explains it (the docstring above).
 MODES = {"off": ("Off", "Nothing runs. A fresh install spends no model calls until someone opts in."),
@@ -77,6 +83,9 @@ ABOUT = {
                     " per model, spaced out.",
     "suite": "Scores one paid model on the review suite every six hours: up to six tasks it has not"
              " answered yet. These scores are what the router ranks by.",
+    "decisions": "Measures the decision models: one labelled question per model on each set (error classes,"
+                 " collections, shapes, verdicts), 30 s apart, stopping a model at its first failure; and asks"
+                 " about up to three new unrecognised error shapes. The gateway's picks ask the best one.",
 }
 
 
@@ -213,6 +222,7 @@ def _selftest() -> None:
     assert next_due(JOBS["perf"][1], mon) == dt.datetime(2026, 10, 19, 7, 0)
     assert next_due(JOBS["perf"][1], mon.replace(hour=8)) == dt.datetime(2026, 10, 26, 7, 0)
     assert next_due(JOBS["capabilities"][1], mon) == dt.datetime(2026, 10, 25, 7, 0)
+    assert next_due(JOBS["decisions"][1], mon) == dt.datetime(2026, 10, 19, 4, 30) and set(ABOUT) == set(JOBS)
     conf = {"mode": "log-only", "jobs": {n: n == "availability" for n in JOBS}}
     state: dict = {}
     global _log

@@ -704,6 +704,73 @@ def main() -> int:
     print(("ok   " if ok else "FAIL ") + "uptime counts each call once, the new ones only"
           + ("" if ok else f" -> {first} {again['models']['m1'][-1]}"))
     failures += 0 if ok else 1
+
+    # Decision models in Uptime, from their own log; and an error no rule knows, counted as a
+    # decision model said, marked so in the hover and the list (never asked here).
+    real_decide = decide.FILE, decide.LOG, decide.DECIDED, decide.RESULTS
+    decide.FILE, decide.LOG = home / "config" / "decision-models.json", home / "metrics" / "decisions.jsonl"
+    decide.DECIDED, decide.RESULTS = home / "metrics" / "decided.json", home / "metrics" / "decide-bench.json"
+    decide.FILE.write_text(json.dumps({"dmA": {"served": "dmA", "endpoint": "e", "via": "e",
+                                               "question_types": ["choice", "noul"]},
+                                       "dmB": {"served": "v/dmB:free", "endpoint": "e", "via": "e",
+                                               "question_types": ["choice"]}}),
+                           encoding="utf-8")
+    decide.LOG.write_text(
+        json.dumps({"at": at, "alias": "dmB", "served": "v/dmB:free", "via": "e", "answers": {"q": {}}, "error": "",
+                    "seconds": 0.4}) + "\n"
+        + json.dumps({"at": at, "alias": "dmB", "served": "v/dmB:free", "via": "e", "answers": None,
+                      "error": "404 No endpoints found for v/dmB:free.", "seconds": 0.1}) + "\n", encoding="utf-8")
+    odd_error = "Error: the gremlins ate it"
+    decide.DECIDED.write_text(json.dumps({"errors": {decide.shape(odd_error): {"class": "busy", "confidence": 0.81,
+                                                                                "by": "dmA"}},
+                                          "roles": {"m1": {"role": "code", "confidence": 0.7, "by": "dmA"}}}),
+                              encoding="utf-8")
+    with calls.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps({**panel, "seats": [{**seat, "status": "error", "answer": "", "error": odd_error}]}) + "\n")
+    u = serve._uptime_rows()
+    marked = "busy (decided by dmA at 0.81)"
+    ok = (u["models"]["dmB"][-1][:4] == [1, 0, 1, {"setup: not found": 1}]
+          and u["models"]["m1"][-1][3].get(marked) == 1 and serve._down(marked)
+          and [o[4:] for o in u["odd"]] == [[serve._shape(odd_error), "busy, decided by dmA at 0.81"]]
+          and any(r["name"] == "dmB" for r in serve.uptime_data()["models"])
+          and "decided by dmA at 0.81" in serve.uptime_card())
+    print(("ok   " if ok else "FAIL ") + "uptime: decision models' calls, and decided shapes marked"
+          + ("" if ok else f" -> {u['models'].get('dmB')} {u['models']['m1'][-1]} {u['odd']}"))
+    failures += 0 if ok else 1
+
+    # The Decision models card: ranked from MIN_ITEMS items, said so below that; the role
+    # suggestion reaches the popup's data, and the collection pick is saved beside the limits.
+    cal = [{"from": 0.8, "n": 8, "said": 0.9, "right": 0.875}]
+    decide.RESULTS.write_text(json.dumps({"updated": at, "models": {
+        "dmA": {"errors": {"asked": 8, "answered": 8, "correct": 7, "accuracy": 0.875, "macro_f1": 0.8, "brier": 0.1,
+                           "ece": 0.03, "calibration": cal, "confident": {"cutoff": 0.6, "coverage": 1.0, "accuracy": 0.875},
+                           "seconds": 0.3, "failures": {}, "last": at}},
+        "dmB": {"errors": {"asked": 1, "answered": 0, "correct": 0, "failures": {"setup": 1}, "seconds": 0.1,
+                           "last": at}}}}), encoding="utf-8")
+    html = serve.decision_card()
+    data = serve.decision_data()
+    ok = ("1 of 1" in html and "below 8 items" in html and "7/8" in html and "88% <span class='muted'>of 8"
+          in html and data["points"] == [{"model": "dmA", "set": "errors", "said": 0.9, "right": 0.875, "n": 8}]
+          and "best of 1 ranked on the errors set: 7 right of 8 asked" in html
+          and json.loads(serve.directory_json())["suggested"]["m1"]["role"] == "code")
+    print(("ok   " if ok else "FAIL ") + "decision card: ranks, below the floor, uses, role suggestion"
+          + ("" if ok else f" -> {data}"))
+    failures += 0 if ok else 1
+    gw = serve.bench_collections.SETTINGS_FILE
+    saved = [serve.save_gateway_settings(5, 2, pick_collection=False, pick_confidence=0.8),
+             serve.save_gateway_settings(5, 2)]                       # not sent: left as they are
+    kept = serve.bench_collections.pick_settings()
+    saved.append(serve.save_gateway_settings(5, 2, pick_collection=True, pick_confidence=None))
+    bad = [serve.save_gateway_settings(5, 2, pick_collection="yes"), serve.save_gateway_settings(5, 2, pick_confidence=0),
+           serve.save_gateway_settings(5, 2, pick_confidence=True)]
+    ok = (all(r["ok"] for r in saved) and not any(r["ok"] for r in bad)
+          and kept == {"pick_collection": False, "pick_confidence": 0.8}
+          and json.loads(gw.read_text(encoding="utf-8")).get("pick_collection") is True
+          and "pick_confidence" not in json.loads(gw.read_text(encoding="utf-8")))
+    print(("ok   " if ok else "FAIL ") + "gateway settings: the collection pick, on, off and its confidence"
+          + ("" if ok else f" -> {saved} {bad} {kept}"))
+    failures += 0 if ok else 1
+    decide.FILE, decide.LOG, decide.DECIDED, decide.RESULTS = real_decide
     shutil.rmtree(tmp, ignore_errors=True)
     print("\nall rules hold" if not failures else f"\n{failures} FAILED")
     return 1 if failures else 0

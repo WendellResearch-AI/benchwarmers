@@ -565,6 +565,45 @@ def gateway_routes() -> None:
         assert n == {"totalTokens": F.estimate("x" * 400)}, n
         assert not seats.asked
 
+        # NO COLLECTION NAMED: a decision model sure enough picks one (not ad hoc, one the key may
+        # call), and the reply says which and why; unsure, or switched off, it is refused as before.
+        real_pick, asked_pick = gateway.decide.pick, []
+
+        def pick(name, state, options, use, answer=None):
+            asked_pick.append((name, state, set(options), use))
+            return answer or {"choice": "other", "confidence": 0.9}, "dm", ""
+        gateway.decide.pick = pick
+        unnamed = {"messages": [{"role": "system", "content": "Be brief."}, {"role": "user", "content": "pick for me"}]}
+        try:
+            text, h = ok("/v1/chat/completions", unnamed)
+            r = json.loads(text)
+            assert r["model"] == "bench/other" and r["bench"]["picked"]["collection"] == "bench/other", r
+            assert h["X-Bench-Picked"] == "bench/other; dm, 0.90", h
+            assert "Collection bench/other chosen for this request: no collection was named, so dm chose it" \
+                in r["choices"][0]["message"]["content"], r
+            name, state, options, use = asked_pick[-1]
+            assert (name, state, use) == ("collection", "Be brief.\n\npick for me", "pick_collection"), asked_pick
+            assert "other" in options and "core" in options and "dear" not in options, options
+            logged = json.loads((TMP / "runs" / "gateway" / "calls.jsonl").read_text(encoding="utf-8").splitlines()[-1])
+            assert logged["picked"]["by"] == "dm", logged                      # the benchmark never learns from it
+            status, h, text, _ = call("/v1/chat/completions", {**unnamed, "stream": True})
+            assert status == 200 and h["X-Bench-Picked"].startswith("bench/other;") and "picked" in text, (h, text)
+            text, h = ok("/v1/messages", {"max_tokens": 8, "messages": [{"role": "user", "content": "pick for me"}]})
+            assert json.loads(text)["model"] == "bench/other" and h["X-Bench-Picked"], text
+            gateway.decide.pick = lambda *a: pick(*a, answer={"choice": "other", "confidence": 0.5})
+            status, h, text, _ = call("/v1/chat/completions", unnamed)
+            assert status == 400 and "No collection was named" in text and "X-Bench-Picked" not in h, text
+            write("gateway.json", {"max_calls": 3, "max_explorers": 0, "pick_confidence": 0.4})   # its own cutoff
+            assert call("/v1/chat/completions", unnamed)[0] == 200
+            write("gateway.json", {"max_calls": 3, "max_explorers": 0, "pick_collection": False})
+            asked_pick.clear()
+            assert call("/v1/chat/completions", unnamed)[0] == 400 and not asked_pick   # off: not even asked
+            assert call("/v1/chat/completions", {**unnamed, "model": "bench/nope"})[0] == 404 and not asked_pick
+        finally:
+            gateway.decide.pick = real_pick
+            write("gateway.json", {"max_calls": 3, "max_explorers": 0})
+        seats.asked.clear()
+
         # The dashboard's port answers Ollama's /api/ routes as the gateway's, beside its own.
         text, _ = ok("/api/tags", on=dash.server_port)
         assert "bench/core" in text
