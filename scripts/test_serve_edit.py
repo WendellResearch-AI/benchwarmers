@@ -4,8 +4,9 @@
 
 Each rule the popup enforces is tried once and must refuse; then a role change
 and a rename are applied to the copy and checked. The llm sync is not run:
-serve.ROOT points at the copy, which has no scripts/sync_config.py, so the
-sync reports that it could not run. Alerts and endpoints point at copies too,
+with the built-in client it is skipped, and with the llm CLI serve.ROOT points
+at the copy, which has no scripts/sync_config.py, so the sync reports that it
+could not run. Alerts and endpoints point at copies too,
 because removing a model clears its alerts and a regressed endpoint check
 would write the endpoint file.
 """
@@ -255,7 +256,7 @@ def main() -> int:
 
     # Call options: max_tokens set, refused above the model's max output or as
     # a fraction or for no model, then cleared; the llm CLI's copy is stubbed.
-    told, real_info = [], serve.catalog.info
+    told, real_info, llm_option = [], serve.catalog.info, serve._llm_option
     serve._llm_option = lambda alias, name, value: told.append((alias, name, value)) or "stub"
     serve.catalog.info = lambda a: {**real_info(a), "max_output": 50_000}
     chat = next(a for a, m in sorted(serve.model_directory().items()) if m.get("kind") != "decision")
@@ -290,6 +291,7 @@ def main() -> int:
     import client as model_client
     model_client.CHOICE = cfg / "client.json"
     env, real_which = os.environ.pop("BENCH_CLIENT", None), shutil.which
+    ran, real_run = [], serve.subprocess.run
     try:
         shutil.which = lambda name: "/usr/bin/" + name                 # llm installed: still built-in
         first = model_client.chosen()
@@ -305,14 +307,26 @@ def main() -> int:
         no_llm = serve.save_client("llm")["ok"]
         shutil.which = real_which
         unknown = serve.save_client("curl")["ok"]
+        # With the built-in client nothing is mirrored into the llm CLI (5-6 s
+        # a save); choosing the llm CLI syncs it once.
+        serve.subprocess.run = lambda args, **kw: ran.append(args) or serve.subprocess.CompletedProcess(args, 0, "", "")
+        quiet = (serve._sync_cli(), llm_option(chat, "max_tokens", 5), list(ran))
+        shutil.which = lambda name: "/usr/bin/" + name
+        switched, again = serve.save_client("llm"), serve.save_client("llm")
     finally:
-        shutil.which = real_which
+        serve.subprocess.run, shutil.which = real_run, real_which
         os.environ.pop("BENCH_CLIENT", None)
         if env is not None:
             os.environ["BENCH_CLIENT"] = env
     ok = (first == ("builtin", "default") and bare == ("builtin", "default") and made["ok"] and picked == (("builtin", "settings"), "builtin")
           and pinned == (("llm", "environment"), False) and not no_llm and not unknown)
     print(("ok   " if ok else "FAIL ") + "model client choice" + ("" if ok else f" -> {first} {made} {picked} {pinned}"))
+    failures += 0 if ok else 1
+    # Saving it again syncs again: the way to retry a failed sync.
+    ok = (quiet == (serve.NOT_SYNCED, serve.NOT_SYNCED, []) and switched["sync"] == "synced to the llm CLI"
+          and again["sync"] == "synced to the llm CLI" and len(ran) == 2
+          and all(str(r[-1]).endswith("sync_config.py") for r in ran))
+    print(("ok   " if ok else "FAIL ") + "llm CLI synced only when it is the client" + ("" if ok else f" -> {quiet} {switched} {ran}"))
     failures += 0 if ok else 1
 
     # Free only in their own app: only what differs from the built-in is written; bad input refused.
@@ -552,6 +566,59 @@ def main() -> int:
           and real_collections == ((DATA / "config" / "collections.json").read_bytes()
                                    if (DATA / "config" / "collections.json").exists() else None))
     print(("ok   " if ok else "FAIL ") + "the real alerts, endpoints and collections were not touched")
+    failures += 0 if ok else 1
+
+    # The Logs page reads a log from its end, and still gets whole lines.
+    log = cfg / "big.log"
+    lines = [f"{i} " + "x" * 2000 for i in range(400)]
+    log.write_text("\n".join(lines) + "\n\n", encoding="utf-8")
+    ok = (serve._log_rows(log) == lines[::-1][:200] and serve._log_rows(log, 100) == lines[::-1][:100]
+          and serve._log_rows(log.with_name("none.log")) == [] and list(serve._from_end(log)) == lines[::-1])
+    print(("ok   " if ok else "FAIL ") + "a log's last lines, read from its end")
+    failures += 0 if ok else 1
+
+    # Confidently wrong is scored again when a task or a saved answer changes.
+    answer = cfg / "tasks" / "t" / "output" / "m.md"
+    answer.parent.mkdir(parents=True)
+    (cfg / "tasks" / "t" / "task.json").write_text("{}", encoding="utf-8")
+    answer.write_text("a", encoding="utf-8")
+    before = serve._tasks_key(cfg / "tasks")
+    answer.write_text("ab", encoding="utf-8")
+    ok = len(before) == 2 and serve._tasks_key(cfg / "tasks") != before and serve._tasks_key(cfg / "none") == ()
+    print(("ok   " if ok else "FAIL ") + "a changed answer changes the scoring's key")
+    failures += 0 if ok else 1
+
+    # Suite scores and statuses are worked out once a render; what one pane
+    # changes in its copy, the next does not see.
+    (serve.DATA / "runs" / "suite-2026-01-01.md").write_text("| t1 | `m1` | 1/2 | — | 3.0 |\n", encoding="utf-8")
+    with serve.locked.snapshot():
+        serve.model_status().clear()
+        for v in serve.suite_scores().values():
+            v.clear()
+        ok = (serve.model_status() == serve._model_status() and serve._suite_scores()
+              and serve.suite_scores() == serve._suite_scores())
+    print(("ok   " if ok else "FAIL ") + "suite scores and statuses once a render, a copy each")
+    failures += 0 if ok else 1
+
+    # gzip for a caller off this machine that takes it; never over loopback.
+    import gzip
+
+    class Reply:
+        def __init__(self, address, accept):
+            self.headers, self.client_address, self.sent = {"Accept-Encoding": accept}, (address, 1), {}
+
+        def send_header(self, k, v):
+            self.sent[k] = v
+    body = b"<p>a page</p>" * 500
+    far, near, plain = Reply("203.0.113.20", "gzip, deflate, br"), Reply("::ffff:127.0.0.1", "gzip"), Reply("10.0.0.2", "")
+    refused, other = Reply("10.0.0.3", "gzip;q=0, identity"), Reply("10.0.0.4", "x-gzip-not")
+    ok = (gzip.decompress(serve.Handler._length(far, body)) == body and far.sent["Content-Encoding"] == "gzip"
+          and int(far.sent["Content-Length"]) < len(body) and serve.Handler._length(near, body) == body
+          and serve.Handler._length(plain, body) == body and serve.Handler._length(refused, body) == body
+          and serve.Handler._length(other, body) == body
+          and "Content-Encoding" not in {**near.sent, **plain.sent, **refused.sent, **other.sent}
+          and plain.sent["Content-Length"] == str(len(body)))
+    print(("ok   " if ok else "FAIL ") + "gzip off this machine only" + ("" if ok else f" -> {far.sent} {near.sent}"))
     failures += 0 if ok else 1
     shutil.rmtree(tmp, ignore_errors=True)
     print("\nall rules hold" if not failures else f"\n{failures} FAILED")

@@ -131,8 +131,9 @@ def load() -> dict[str, dict]:
     else's machine is a timeout with no explanation. Whatever needs an
     endpoint asks default() (base, key, models and yaml_block all do), and
     that refuses, so a job run before any endpoint exists says what to do."""
+    import locked
     try:
-        data = json.loads(FILE.read_text(encoding="utf-8"))
+        data = json.loads(locked.read_text(FILE))      # inside a render, from its snapshot
     except FileNotFoundError:
         return {}
     except (OSError, ValueError) as exc:
@@ -147,11 +148,8 @@ def connections() -> dict:
     ties, names for bare-IP hosts, models.dev ids, providers whose free tier
     works only in their own client. {} when absent: a fresh
     install has no such facts, and none are assumed."""
-    try:
-        data = json.loads(CONNECTIONS.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    return data if isinstance(data, dict) else {}
+    import locked
+    return locked.read_json(CONNECTIONS)               # inside a render, from its snapshot
 
 
 _default: tuple = (None, "")

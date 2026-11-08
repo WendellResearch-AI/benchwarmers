@@ -12,11 +12,28 @@
     return e;
   }
   function store(k, v) { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { return null; } }
+  // Every reload says it is under way (bench.css .leaving) while the server
+  // renders, so no action needs its own wait before reloading.
+  addEventListener('beforeunload', function () { document.body.classList.add('leaving'); });
+  addEventListener('pageshow', function () { document.body.classList.remove('leaving'); });   // back, from the cache
   function post(url, body) {
     return fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'},
                        body: JSON.stringify(body)}).then(function (r) { return r.json(); });
   }
   function listErrors(node, errors) { node.textContent = errors.map(function (x) { return '• ' + x; }).join('\n'); node.style.whiteSpace = 'pre-line'; }
+  // A control inside a page, by its id, on the document: pages arrive after
+  // load (load), and again after a change, as new elements each time.
+  var handlers = {};
+  function on(type, id, f) {
+    if (!handlers[type]) {
+      handlers[type] = {};
+      document.addEventListener(type, function (ev) {
+        var t = ev.target.closest && ev.target.closest('[id]'), g = t && handlers[type][t.id];
+        if (g) g.call(t, ev);
+      }, type === 'close');              // a popup's close does not bubble: caught on its way down
+    }
+    handlers[type][id] = f;
+  }
   // The page's own confirm, a Promise of true/false: window.confirm is
   // silently false where a browser blocks dialogs. Opens over any open popup.
   var askD = $('ask-dialog'), askDone = null;
@@ -36,9 +53,8 @@
   askD.addEventListener('close', function () { answer(false); });   // Escape
 
   // ---- restart (serve.restart): the page reloads once the new one answers ----
-  var rs = $('restart');
   function restart(force) {
-    var out = $('restart-out');
+    var rs = $('restart'), out = $('restart-out');
     rs.disabled = true; out.textContent = 'Restarting…';
     post('/api/restart', {force: force}).then(function (res) {
       if (res.ok) return back(Date.now());
@@ -58,23 +74,78 @@
         });
     }, 1500);
   }
-  if (rs) rs.addEventListener('click', function () {
+  on('click', 'restart', function () {
     ask('Restart Benchwarmers? The dashboard and the gateway on this port stop for a few seconds.', 'Restart')
       .then(function (yes) { if (yes) restart(false); });
   });
 
   // ---- tabs, remembered per browser ----------------------------------
+  // The server renders only the one shown (serve.tabs, told by the bench_tab
+  // cookie set here); the others are fetched when first opened (GET
+  // /api/pane), and again after a change to them (refreshPanes).
   var tabs = document.querySelectorAll('.tabs button[data-tab]');      // not the sidebar's own toggle
   var onShow = {};                     // a page's loader, run each time it is shown
+  var onLoad = {};                     // a page's set-up, run each time its HTML arrives
+  var shown = null, fetching = {}, ready = {}, marks = 0;
   function show(id) {
+    shown = id;
     tabs.forEach(function (b) { b.setAttribute('aria-selected', String(b.dataset.tab === id)); });
     document.querySelectorAll('.tab').forEach(function (s) { s.classList.toggle('active', s.id === 'tab-' + id); });
     store('bench.tab', id);
-    if (onShow[id]) onShow[id]();
+    document.cookie = 'bench_tab=' + id + '; path=/; max-age=31536000; samesite=strict';
+    return load(id).then(function () { if (onShow[id] && shown === id) onShow[id](); });
+  }
+  // A page in place and set up: fetched if it has no HTML yet, or only old HTML
+  // (data-lazy), which stays on screen until the new arrives.
+  function load(id) {
+    var s = $('tab-' + id);
+    if (!s.hasAttribute('data-lazy')) return ready[id] || Promise.resolve();
+    if (!fetching[id]) {
+      var asked = s.getAttribute('data-lazy');
+      document.body.classList.add('loading');
+      fetching[id] = fetch('/api/pane?tab=' + id, {cache: 'no-store'}).then(function (r) {
+        if (!r.ok) throw new Error(r.status);
+        return r.json();
+      }).catch(function (err) { location.reload(); throw err; })         // could not ask: the old way
+        .then(function (p) {
+          delete fetching[id];
+          if (!Object.keys(fetching).length) document.body.classList.remove('loading');
+          // Marked again (refreshPanes) or swapped in (refreshNeeds) while this
+          // was on its way: its HTML is older than the page wanted now.
+          if (s.getAttribute('data-lazy') !== asked) return load(id);
+          // A popup open in the old page (Collections' editor, Quotas' Models
+          // list) is not pulled away: the page is fetched again once it closes.
+          var held = s.querySelector('dialog[open]');
+          if (held) return new Promise(function (done) { held.addEventListener('close', function () { done(load(id)); }, {once: true}); });
+          return swap(id, p.html);
+        });
+    }
+    return fetching[id];
+  }
+  // New HTML for a page, keeping what its filter boxes and facets say.
+  function swap(id, html) {
+    var s = $('tab-' + id), boxes = 'input[data-filter], select[data-facet]', old = s.querySelectorAll(boxes);
+    var kept = Array.prototype.map.call(old, function (c) { return c.value; });
+    var typing = Array.prototype.indexOf.call(old, document.activeElement);     // a box being typed in keeps the keys
+    s.innerHTML = html; s.removeAttribute('data-lazy');
+    s.querySelectorAll(boxes).forEach(function (c, i) {
+      // A facet value no longer offered (its last model gone) is "any", not a blank select.
+      if (kept[i]) { c.value = kept[i]; if (c.selectedIndex === -1) c.value = ''; applyFilter(scopeOf(c)); }
+      if (i === typing) c.focus();
+    });
+    return setUp(id);
+  }
+  function setUp(id) {
+    applyRetired(); applyPaid();
+    return (ready[id] = Promise.resolve(onLoad[id] && onLoad[id]()));
   }
   tabs.forEach(function (b) { b.addEventListener('click', function () { show(b.dataset.tab); }); });
-  var wanted = store('bench.tab');
-  show(wanted && $('tab-' + wanted) ? wanted : 'glance');
+  // The page the server rendered is set up as a fetched one is, once every
+  // onLoad below is defined.
+  var rendered = document.querySelector('.tab:not([data-lazy])');
+  Promise.resolve().then(function () { if (rendered) setUp(rendered.id.slice(4)); });
+  var wanted = store('bench.tab');            // else the one rendered: storage blocked or cleared, the cookie kept
+  show(wanted && $('tab-' + wanted) ? wanted : rendered ? rendered.id.slice(4) : 'glance');
 
   // ---- sortable tables -------------------------------------------------
   function key(cell) {
@@ -82,24 +153,29 @@
     var n = parseFloat(raw);
     return isNaN(n) || !/^-?[\d.]+/.test(raw) ? raw.toLowerCase() : n;
   }
-  document.querySelectorAll('th[data-sortable]').forEach(function (th) {
-    th.tabIndex = 0;
-    function sort() {
-      var table = th.closest('table'), body = table.tBodies[0];
-      var idx = Array.prototype.indexOf.call(th.parentNode.children, th);
-      var dir = th.getAttribute('aria-sort') === 'descending' ? 'ascending' : 'descending';
-      table.querySelectorAll('th[aria-sort]').forEach(function (o) { o.removeAttribute('aria-sort'); });
-      th.setAttribute('aria-sort', dir);
-      var rows = Array.prototype.slice.call(body.rows);
-      rows.sort(function (a, b) {
-        var x = key(a.cells[idx]), y = key(b.cells[idx]);
-        var c = (typeof x === typeof y) ? (x < y ? -1 : x > y ? 1 : 0) : (typeof x === 'number' ? -1 : 1);
-        return dir === 'ascending' ? c : -c;
-      });
-      rows.forEach(function (r) { body.appendChild(r); });
-    }
-    th.addEventListener('click', sort);
-    th.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); sort(); } });
+  function sort(th) {
+    var table = th.closest('table'), body = table.tBodies[0];
+    var idx = Array.prototype.indexOf.call(th.parentNode.children, th);
+    var dir = th.getAttribute('aria-sort') === 'descending' ? 'ascending' : 'descending';
+    table.querySelectorAll('th[aria-sort]').forEach(function (o) { o.removeAttribute('aria-sort'); });
+    th.setAttribute('aria-sort', dir);
+    var rows = Array.prototype.slice.call(body.rows);
+    rows.sort(function (a, b) {
+      var x = key(a.cells[idx]), y = key(b.cells[idx]);
+      var c = (typeof x === typeof y) ? (x < y ? -1 : x > y ? 1 : 0) : (typeof x === 'number' ? -1 : 1);
+      return dir === 'ascending' ? c : -c;
+    });
+    rows.forEach(function (r) { body.appendChild(r); });
+  }
+  // On the document, not each header: a part of the page swapped in after an
+  // action (refreshNeeds) sorts too.
+  document.addEventListener('click', function (e) {
+    var th = e.target.closest('th[data-sortable]');
+    if (th) sort(th);
+  });
+  document.addEventListener('keydown', function (e) {
+    var th = e.target.closest && e.target.closest('th[data-sortable]');
+    if (th && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); sort(th); }
   });
 
   // ---- filter boxes: one per panel (or the whole page: data-filter="page"),
@@ -117,15 +193,17 @@
       if (d.querySelector('tbody tr:not([hidden])')) d.open = true;
     });
   }
-  document.querySelectorAll('input[data-filter], select[data-facet]').forEach(function (c) {
+  function scopeOf(c) {
     var box = c.closest('.toolbar') ? c.closest('.toolbar').querySelector('input[data-filter]') : c;
-    var scope = box && box.dataset.filter === 'page' ? c.closest('.tab') : c.closest('.panel');
-    c.addEventListener(c.tagName === 'SELECT' ? 'change' : 'input', function () { applyFilter(scope); });
-  });
+    return box && box.dataset.filter === 'page' ? c.closest('.tab') : c.closest('.panel');
+  }
+  document.addEventListener('input', function (ev) { if (ev.target.matches('input[data-filter]')) applyFilter(scopeOf(ev.target)); });
+  document.addEventListener('change', function (ev) { if (ev.target.matches('select[data-facet]')) applyFilter(scopeOf(ev.target)); });
 
   // ---- a link to another page (At a glance's line to Action needed) ----
-  document.querySelectorAll('[data-go]').forEach(function (b) {
-    b.addEventListener('click', function () { show(b.dataset.go); scrollTo(0, 0); });
+  document.addEventListener('click', function (e) {
+    var b = e.target.closest('[data-go]');
+    if (b) { show(b.dataset.go); scrollTo(0, 0); }
   });
 
   // ---- retired rows: hidden unless asked for ---------------------------
@@ -134,8 +212,9 @@
     document.body.classList.toggle('show-retired', showRetired);
     document.querySelectorAll('input[data-retired]').forEach(function (c) { c.checked = showRetired; });
   }
-  document.querySelectorAll('input[data-retired]').forEach(function (c) {
-    c.addEventListener('change', function () { showRetired = c.checked; store('bench.retired', showRetired ? '1' : '0'); applyRetired(); });
+  document.addEventListener('change', function (ev) {
+    var c = ev.target;
+    if (c.matches('input[data-retired]')) { showRetired = c.checked; store('bench.retired', showRetired ? '1' : '0'); applyRetired(); }
   });
   applyRetired();
 
@@ -145,8 +224,9 @@
     document.body.classList.toggle('show-paid', showPaid);
     document.querySelectorAll('input[data-paid]').forEach(function (c) { c.checked = showPaid; });
   }
-  document.querySelectorAll('input[data-paid]').forEach(function (c) {
-    c.addEventListener('change', function () { showPaid = c.checked; store('bench.paid', showPaid ? '1' : '0'); applyPaid(); });
+  document.addEventListener('change', function (ev) {
+    var c = ev.target;
+    if (c.matches('input[data-paid]')) { showPaid = c.checked; store('bench.paid', showPaid ? '1' : '0'); applyPaid(); }
   });
   applyPaid();
 
@@ -161,7 +241,7 @@
       if (s.stamp > D.stamp + 0.5) fresh.hidden = false;
     }).catch(function () {});
   }, 15000);
-  fresh.addEventListener('click', function () { location.reload(); });
+  fresh.addEventListener('click', function () { fresh.hidden = true; refreshPanes(); });
 
   // ---- the model dialog ------------------------------------------------
   var md = $('model-dialog');
@@ -190,7 +270,7 @@
       m.gone.appendChild(el('p', {style: 'margin:.3rem 0'}, gone.why || ''));
       m.gone.appendChild(el('p', {class: 'muted', style: 'margin:0'},
         'Its evidence is untouched. Restore puts back the same alias, role and endpoint; failures recorded before the restore are ignored.'));
-      m.restore.dataset.alias = alias; m.restore.disabled = false;
+      m.restore.dataset.alias = alias; m.restore.disabled = false; m.restore.textContent = 'Restore';
     } else {
       m.served.textContent = 'serves ' + model.served + (model.tag ? ' · ' + model.tag : '');
       m.alias.value = alias;
@@ -216,7 +296,7 @@
       m.save.disabled = false; m.save.textContent = 'Save';
       m.reason.value = ''; m.removeBox.open = false; m.remove.disabled = false; refresh();
     }
-    md.showModal();
+    if (!md.open) md.showModal();      // open already: shown again as it now is (shownAgain)
   }
   // How its onboarding stopped (serve.onboard_issues): only while it has not
   // answered a probe since. The error as the provider gave it, and the log.
@@ -306,9 +386,11 @@
     if ($('f-knowledge_cutoff').value.trim()) facts.knowledge_cutoff = $('f-knowledge_cutoff').value.trim();
     document.querySelectorAll('#f-limits input').forEach(function (b) { if (b.value) facts.limits[b.dataset.k] = parseInt(b.value, 10); });
     $('f-errors').textContent = ''; $('f-done').textContent = '';
-    post('/api/model-facts', {alias: editing, facts: facts}).then(function (r) {
+    var alias = editing;
+    post('/api/model-facts', {alias: alias, facts: facts}).then(function (r) {
       if (!r.ok) { listErrors($('f-errors'), r.errors); return; }
-      $('f-done').textContent = 'Saved. Reloading…'; setTimeout(function () { location.reload(); }, 700);
+      // The tables that show facts (At a glance, Models, Quotas) wait for New results.
+      shownAgain(alias, 'f-done', 'Saved. The tables show it after New results.');
     });
   });
   // ---- call options: how the bench asks this model (serve.save_model_options)
@@ -322,11 +404,12 @@
   $('co-save').addEventListener('click', function () {
     if (!editing) return;
     var v = $('co-max').value.trim();
-    $('co-errors').textContent = ''; $('co-done').textContent = '';
-    post('/api/model-options', {alias: editing, max_tokens: v ? Number(v) : null}).then(function (r) {
-      if (!r.ok) { listErrors($('co-errors'), r.errors); return; }
-      $('co-done').textContent = 'Saved' + (r.note ? '; ' + r.note : '') + '. Reloading…';
-      setTimeout(function () { location.reload(); }, 900);
+    $('co-errors').textContent = ''; $('co-done').textContent = 'Saving…';   // the llm CLI is told too: seconds
+    var alias = editing;
+    post('/api/model-options', {alias: alias, max_tokens: v ? Number(v) : null}).then(function (r) {
+      if (!r.ok) { $('co-done').textContent = ''; listErrors($('co-errors'), r.errors); return; }
+      ownChange();                         // only this popup shows them
+      shownAgain(alias, 'co-done', 'Saved' + (r.note ? '; ' + r.note : '') + '.');
     });
   });
 
@@ -342,16 +425,26 @@
   m.alias.addEventListener('input', refresh);
   m.role.addEventListener('change', refresh);
 
-  // A success is said, left up for two seconds, then the popup closes and
-  // the page reloads with the change in it.
-  function closeAndReload(dialog) {
-    setTimeout(function () { dialog.close(); location.reload(); }, 2000);
+  // A finished onboarding is said, left up for two seconds, then the popup
+  // closes and the pages are fetched again with the model in them.
+  function closeAndRefresh(dialog) {
+    setTimeout(function () { dialog.close(); refreshPanes(); }, 2000);
   }
-  function after(node, button, label) {
+  // A saved change: the popup shows the model as it now is, with what was
+  // done said in `node`, if it is still open on that model.
+  function shownAgain(alias, node, text) {
+    directory().then(function () {
+      if (!md.open || m.title.textContent !== alias) return;
+      openModel(alias); $(node).textContent = text;
+    }, function () { location.reload(); });
+  }
+  function done(res) { return 'Done: ' + (res.changed || []).join(', ') + (res.sync ? ' · ' + res.sync : '') + '.'; }
+  // The tables (a role, an ad-hoc mark) wait for New results. A rename
+  // fetches every page again: every row is keyed by the old alias.
+  function after(button, label, then) {
     return function (res) {
-      if (!res.ok) { listErrors(node, res.errors); if (button) { button.disabled = false; button.textContent = label; } return; }
-      m.done.textContent = 'Done: ' + (res.changed || []).join(', ') + (res.sync ? ' · ' + res.sync : '') + '. Closing…';
-      closeAndReload(md);
+      if (!res.ok) { listErrors(m.errors, res.errors); button.disabled = false; button.textContent = label; return; }
+      then(res);
     };
   }
   m.save.addEventListener('click', function () {
@@ -366,11 +459,14 @@
     ).then(function (yes) {
       if (!yes) return;
       m.save.disabled = true; m.save.textContent = 'Saving…'; m.errors.textContent = '';
-      post('/api/model', body).then(after(m.errors, m.save, 'Save')).catch(function (err) { m.errors.textContent = String(err); m.save.disabled = false; m.save.textContent = 'Save'; });
+      post('/api/model', body).then(after(m.save, 'Save', function (res) {
+        if (body.new_alias !== body.alias) { m.title.textContent = body.new_alias; refreshPanes(); }
+        shownAgain(body.new_alias, 'm-done', done(res));
+      })).catch(function (err) { m.errors.textContent = String(err); m.save.disabled = false; m.save.textContent = 'Save'; });
     });
   });
   // The confirm is the last word: the popup closes at once and the page
-  // reloads when the retirement is done. A refusal reopens it with the reason.
+  // shows the model retired when it is done. A refusal reopens it with the reason.
   m.remove.addEventListener('click', function () {
     if (!editing) return;
     var alias = editing;
@@ -380,25 +476,89 @@
         m.remove.disabled = true; m.errors.textContent = ''; md.close();
         function refused(errors) { md.showModal(); listErrors(m.errors, errors); m.remove.disabled = false; }
         post('/api/remove', {alias: alias, reason: m.reason.value}).then(function (res) {
-          if (res.ok) location.reload(); else refused(res.errors);
+          if (!res.ok) { refused(res.errors); return; }
+          m.remove.disabled = false; markRetired([alias], true); refreshNeeds();
         }).catch(function (err) { refused([String(err)]); });
       });
   });
   m.restore.addEventListener('click', function () {
+    var alias = m.restore.dataset.alias;
     m.restore.disabled = true; m.restore.textContent = 'Restoring…';
-    post('/api/restore', {alias: m.restore.dataset.alias}).then(after(m.errors, m.restore, 'Restore')).catch(function (err) { m.errors.textContent = String(err); });
+    // As Restore on Action needed, and the popup turns into the model's editor.
+    post('/api/restore', {alias: alias}).then(after(m.restore, 'Restore', function (res) {
+      markRetired([alias], false); refreshNeeds(); shownAgain(alias, 'm-done', done(res));
+    })).catch(function (err) { m.errors.textContent = String(err); });
   });
 
+  // ---- after an action: the part it changed, not the whole page ----------
+  // Action needed's page, its count in the sidebar and At a glance's line
+  // about it, from the server (GET /api/needs, a few ms): a page reload
+  // renders every tab, seconds.
+  var needsAsked = 0;
+  function refreshNeeds() {
+    var mine = ++needsAsked;
+    return fetch('/api/needs', {cache: 'no-store'}).then(function (r) { return r.json(); }).then(function (n) {
+      if (mine !== needsAsked) return;               // two actions close together: only the later answer is current
+      swap('needs', n.html);
+      var tab = document.querySelector('.tabs [data-tab=needs]'), count = tab.querySelector('.n');
+      if (!n.count) { if (count) count.remove(); tab.removeAttribute('aria-label'); }
+      else {
+        if (!count) { count = document.createElement('span'); count.className = 'n'; count.setAttribute('aria-hidden', 'true'); tab.appendChild(count); }
+        count.textContent = n.count;
+        tab.setAttribute('aria-label', tab.firstChild.textContent + ', ' + n.count + ' open');
+      }
+      var line = document.querySelector('#tab-glance > .a-line');
+      if (line) line.remove();
+      // Not into a page not fetched yet: it says Loading… while empty, and comes with its line.
+      if (n.line && $('tab-glance').firstChild) $('tab-glance').insertAdjacentHTML('afterbegin', n.line);
+    }).catch(function () { location.reload(); });          // could not ask: the old way
+  }
+  // A retired model's rows grey out and hide behind Show retired, as the
+  // server draws them (serve.tr); a restored one's come back. The popup's
+  // list of models (window.BENCH) is fetched again; the rest of the page
+  // waits for the New results button.
+  function markRetired(aliases, gone) {
+    document.querySelectorAll('a.model').forEach(function (a) {
+      var row = aliases.indexOf(a.dataset.alias) !== -1 && a.closest('tr');
+      if (row && !row.closest('#tab-needs')) row.classList.toggle('retired', gone);
+    });
+    directory().catch(function () {});
+  }
+  function directory() {
+    return fetch('/api/directory', {cache: 'no-store'}).then(function (r) { return r.json(); }).then(function (d) {
+      var stamp = D.stamp; Object.assign(D, d); D.stamp = stamp;
+    });
+  }
+  // After a change: the pages it changed (`ids`, else every one, with Action
+  // needed's count, At a glance's line and the popup's models) are fetched
+  // again, the one shown now and the rest when next opened. What a reload
+  // did, at the cost of one page.
+  function refreshPanes(ids) {
+    (ids || Array.prototype.map.call(tabs, function (b) { return b.dataset.tab; })).forEach(function (id) {
+      if (ids || id !== 'needs') $('tab-' + id).setAttribute('data-lazy', ++marks);   // a new mark: load drops an older answer
+    });
+    if (!ids) { refreshNeeds(); directory().catch(function () {}); }
+    ownChange();
+    return show(shown);
+  }
+  // An action shown in place is not "new results" to offer a reload for.
+  // ponytail: a change by something else in the same second is swallowed too.
+  function ownChange() {
+    fetch('/api/stamp').then(function (r) { return r.json(); }).then(function (s) { D.stamp = s.stamp; }).catch(function () {});
+  }
+
   // ---- problem actions ---------------------------------------------------
-  document.querySelectorAll('[data-act]').forEach(function (b) {
-    b.addEventListener('click', function () {
+  // On the document: refreshNeeds swaps these buttons for new ones.
+  document.addEventListener('click', function (e) {
+      var b = e.target.closest('[data-act]');
+      if (!b) return;
       var act = b.dataset.act, aliases = (b.dataset.aliases || b.dataset.alias || '').split(' ').filter(Boolean);
       var status = b.closest('[data-row]').querySelector('.why');   // a model's line, or its group's head
       if (act === 'dismiss') {               // a notice: gone once seen
         b.disabled = true;
         post('/api/alerts/dismiss', {key: b.dataset.key}).then(function (res) {
           if (!res.ok) { status.textContent = res.errors.join('; '); status.classList.add('err'); b.disabled = false; return; }
-          location.reload();
+          refreshNeeds(); ownChange();
         }).catch(function (err) { status.textContent = String(err); b.disabled = false; });
         return;
       }
@@ -416,7 +576,7 @@
           var told = aliases.length > 1 ? said.length + ' of ' + aliases.length + ' answered' : said.concat(failed).join(' · ');
           status.title = failed.join('\n');
           if (!said.length) { status.textContent = told; status.classList.add('err'); b.disabled = false; b.textContent = label; return; }
-          status.textContent = told + '. Reloading…'; setTimeout(function () { location.reload(); }, 900);
+          status.textContent = told + '.'; refreshNeeds();
         }).catch(function (err) { status.textContent = String(err); b.disabled = false; b.textContent = label; });
         return;
       }
@@ -435,10 +595,10 @@
         });
         chain.then(function (errs) {
           if (errs.length) { status.textContent = errs.join('; '); status.classList.add('err'); b.disabled = false; b.textContent = verb; return; }
-          status.textContent = 'Done. Reloading…'; setTimeout(function () { location.reload(); }, 700);
+          markRetired(aliases, act !== 'restore');
+          status.textContent = 'Done.'; refreshNeeds();
         });
       });
-    });
   });
 
   // ---- onboarding --------------------------------------------------------
@@ -909,13 +1069,14 @@
   });
   $('d-close').addEventListener('click', function () { dd.close(); });
   // Refresh lists: every list fetched now (serve.discover_refresh), then the page with them.
-  var dr = $('d-refresh');
-  if (dr) dr.addEventListener('click', function () {
-    var said = $('d-refreshed');
+  on('click', 'd-refresh', function () {
+    var dr = this, said = $('d-refreshed');
     dr.disabled = true; dr.textContent = 'Fetching…'; said.textContent = 'about half a minute';
     post('/api/discover/refresh', {}).then(function (res) {
-      said.textContent = (res.errors.length ? res.errors.join(' · ') + ' · ' : '') + 'Reloading…';
-      setTimeout(function () { location.reload(); }, res.errors.length ? 4000 : 500);
+      // Fetched now even if you went to another page meanwhile, so its errors are there when you come back.
+      refreshPanes(['discover']); load('discover').then(function () {          // any errors beside the new page's list age
+        if (res.errors.length) $('d-refreshed').textContent = res.errors.join(' · ') + ' · ' + $('d-refreshed').textContent;
+      });
     }).catch(function (err) { said.textContent = String(err); dr.disabled = false; dr.textContent = 'Refresh lists'; });
   });
   function follow(log, title, before) {
@@ -933,7 +1094,7 @@
           if (s.exit === 0) {
             o.result.textContent = 'Finished. ' + (alias ? alias + ' is on the bench. ' : '') + 'The suite scores are in the dated suite note; whether to route work there is your call. Closing…';
             o.result.className = 'done';
-            closeAndReload(od);
+            closeAndRefresh(od);
           } else {
             o.result.textContent = 'Stopped with exit ' + s.exit + '. The last lines of the log say why.';
             fresh.hidden = false;
@@ -947,21 +1108,20 @@
   // Every theme's colours are on the page (serve.brand_css), keyed by the
   // data-theme on <html>, so switching is one attribute: no reload. The
   // charts read their colours when drawn, so they are drawn again.
-  document.querySelectorAll('#themes input[name=theme]').forEach(function (input) {
-    input.addEventListener('change', function () {
-      document.documentElement.setAttribute('data-theme', input.value);
-      $('t-errors').textContent = ''; $('t-done').textContent = '';
-      if (typeof drawCharts === 'function') drawCharts();
-      post('/api/theme', {theme: input.value}).then(function (r) {
-        if (!r.ok) { listErrors($('t-errors'), r.errors); return; }
-        $('t-done').textContent = 'Saved: ' + input.value + ' is the theme from now on.';
-        if (location.search.indexOf('theme=') !== -1) history.replaceState(null, '', '/');   // drop a ?theme preview
-      });
+  on('change', 'themes', function (ev) {
+    var input = ev.target;
+    document.documentElement.setAttribute('data-theme', input.value);
+    $('t-errors').textContent = ''; $('t-done').textContent = '';
+    if (typeof drawCharts === 'function') drawCharts();
+    post('/api/theme', {theme: input.value}).then(function (r) {
+      if (!r.ok) { listErrors($('t-errors'), r.errors); return; }
+      $('t-done').textContent = 'Saved: ' + input.value + ' is the theme from now on.';
+      if (location.search.indexOf('theme=') !== -1) history.replaceState(null, '', '/');   // drop a ?theme preview
     });
   });
 
   // ---- gateway keys: shown once, then only their names ---------------------
-  if ($('k-make')) $('k-make').addEventListener('click', function () {
+  on('click', 'k-make', function () {
     $('k-errors').textContent = '';
     var scope = Array.prototype.map.call(document.querySelectorAll('input[name=k-scope]:checked'),
                                          function (c) { return c.value; });
@@ -973,25 +1133,26 @@
       $('k-make').disabled = true;               // reload to see it listed; the value is gone then
     });
   });
-  document.querySelectorAll('[data-revoke-key]').forEach(function (b) {
-    b.addEventListener('click', function () {
-      var name = b.dataset.revokeKey;
-      ask('Revoke the gateway key ' + name + '? Anything using it is refused from now on.', 'Revoke', true).then(function (yes) {
-        if (!yes) return;
-        post('/api/gateway-key/remove', {name: name}).then(function (r) {
-          if (!r.ok) { listErrors($('k-errors'), r.errors); return; }
-          location.reload();
-        });
+  document.addEventListener('click', function (ev) {
+    var b = ev.target.closest('[data-revoke-key]');
+    if (!b) return;
+    var name = b.dataset.revokeKey;
+    ask('Revoke the gateway key ' + name + '? Anything using it is refused from now on.', 'Revoke', true).then(function (yes) {
+      if (!yes) return;
+      post('/api/gateway-key/remove', {name: name}).then(function (r) {
+        if (!r.ok) { listErrors($('k-errors'), r.errors); return; }
+        var body = b.closest('tbody');
+        b.closest('tr').remove(); ownChange();
+        if (!body.rows.length) body.innerHTML = '<tr><td colspan=6 class=muted>No keys yet.</td></tr>';   // as serve.gateway_keys_card
       });
     });
   });
 
   // ---- scheduler: its mode and jobs (serve.save_scheduler) -----------------
-  var sMode = $('s-mode');
-  function modeWhy() { $('s-mode-why').textContent = sMode.selectedOptions[0].dataset.why; }
-  sMode.addEventListener('change', modeWhy); modeWhy();
-  $('s-save').addEventListener('click', function () {
-    var jobs = {};
+  function modeWhy() { $('s-mode-why').textContent = $('s-mode').selectedOptions[0].dataset.why; }
+  on('change', 's-mode', modeWhy); onLoad.settings = modeWhy;
+  on('click', 's-save', function () {
+    var sMode = $('s-mode'), jobs = {};
     document.querySelectorAll('input[name=s-job]').forEach(function (c) { jobs[c.value] = c.checked; });
     (sMode.value === 'run' && sMode.dataset.was !== 'run'
       ? ask('Run the jobs for real? They make model calls on their own schedule. If something else'
@@ -1007,44 +1168,46 @@
   });
 
   // ---- model client (serve.save_client): the next call uses it -------------
-  $('mc-save').addEventListener('click', function () {
-    $('mc-errors').textContent = ''; $('mc-done').textContent = '';
+  on('click', 'mc-save', function () {
+    $('mc-errors').textContent = ''; $('mc-done').textContent = 'Saving…';   // llm: its registry synced too, seconds
     post('/api/client', {client: $('mc-client').value}).then(function (r) {
-      if (!r.ok) { listErrors($('mc-errors'), r.errors); return; }
-      $('mc-done').textContent = 'Saved. The next model call uses it.';
+      if (!r.ok) { $('mc-done').textContent = ''; listErrors($('mc-errors'), r.errors); return; }
+      $('mc-done').textContent = 'Saved' + (r.sync ? ' · ' + r.sync : '') + '. The next model call uses it.';
     });
   });
 
   // ---- free only in their own app (serve.save_own_client_free) -------------
-  if ($('oc-save')) $('oc-save').addEventListener('click', function () {
+  on('click', 'oc-save', function () {
     var providers = {}, add = $('oc-add').value.trim().toLowerCase();
     document.querySelectorAll('input[name=oc-prov]').forEach(function (c) { providers[c.value] = c.checked; });
     if (add) providers[add] = true;
     $('oc-errors').textContent = ''; $('oc-done').textContent = '';
     post('/api/own-client-free', {providers: providers}).then(function (r) {
       if (!r.ok) { listErrors($('oc-errors'), r.errors); return; }
-      if (add) { location.reload(); return; }                 // the new provider gets its row
-      $('oc-done').textContent = 'Saved. Discover uses it on its next load.';
+      // A new provider gets its row here; Discover's prices follow it when next opened.
+      refreshPanes(add ? ['settings', 'discover'] : ['discover']).then(function () {
+        $('oc-done').textContent = 'Saved. Discover uses it on its next load.';
+      });
     });
   });
 
   // ---- endpoints: keys go in, never come back out -------------------------
   // The Endpoints page lists them (serve.endpoints_page, each row's data in
-  // data-ep); Add an endpoint and Change key are one dialog. The page is
-  // drawn by the server, so a change reloads it, as the model popup does.
+  // data-ep); Add an endpoint and Change key are one dialog. The pages are
+  // drawn by the server, so a change fetches them again (refreshPanes): an
+  // endpoint's models are on most of them.
   var ed = $('endpoint-dialog');
   var e = {name: $('e-name'), base: $('e-base'), key: $('e-key'),
            kind: $('e-kind'), hub: $('e-hub'), admin: $('e-admin'),
-           errors: $('e-errors'), done: $('e-done'), test: $('e-test'), save: $('e-save'),
-           listErrors: $('el-errors'), listDone: $('el-done'), changed: false};
+           errors: $('e-errors'), done: $('e-done'), test: $('e-test'), save: $('e-save'), changed: false};
   e.kind.addEventListener('change', function () {
     $('e-hub-row').hidden = $('e-admin-row').hidden = e.kind.value !== 'hub';
   });
   ed.querySelectorAll('[data-close]').forEach(function (b) { b.addEventListener('click', function () { ed.close(); }); });
-  ed.addEventListener('close', function () { if (e.changed) location.reload(); });
-  function reloadSoon(message) {
-    e.listErrors.textContent = ''; e.listDone.textContent = message + ' Reloading…';
-    setTimeout(function () { location.reload(); }, 900);
+  ed.addEventListener('close', function () { if (e.changed) { e.changed = false; refreshPanes(); } });
+  function refreshSaying(message) {
+    $('el-errors').textContent = ''; $('el-done').textContent = message;
+    refreshPanes().then(function () { $('el-done').textContent = message; });     // on the new page too
   }
   var rowActs = {
     change: function (x) { openEndpoint('change', x); },
@@ -1057,8 +1220,8 @@
           + ' to be when nothing says otherwise, and the one endpoint that cannot be removed.', 'Make default').then(function (yes) {
         if (!yes) return;
         post('/api/endpoint/default', {name: x.name}).then(function (r) {
-          if (!r.ok) { listErrors(e.listErrors, r.errors); return; }
-          reloadSoon(r.note + '.');
+          if (!r.ok) { listErrors($('el-errors'), r.errors); return; }
+          refreshSaying(r.note + '.');
         });
       });
     },
@@ -1072,8 +1235,8 @@
             : 'Remove the ' + x.name + ' endpoint?', 'Remove', true).then(function (yes) {
         if (!yes) return;
         post('/api/endpoint/remove', {name: x.name, with_models: n > 0}).then(function (r) {
-          if (!r.ok) { listErrors(e.listErrors, r.errors); return; }
-          reloadSoon('Removed ' + x.name + '; ' + r.note + '.');
+          if (!r.ok) { listErrors($('el-errors'), r.errors); return; }
+          refreshSaying('Removed ' + x.name + '; ' + r.note + '.');
         });
       });
     }
@@ -1174,7 +1337,7 @@
     }
     return body;
   }
-  $('e-add').addEventListener('click', function () { openEndpoint('add'); });
+  on('click', 'e-add', function () { openEndpoint('add'); });
   e.test.addEventListener('click', function () {
     e.errors.textContent = ''; e.done.textContent = ''; untested();
     e.test.disabled = true; e.test.textContent = 'Testing…';
@@ -1205,13 +1368,13 @@
     cn.list.hidden = $('e-blurb').hidden = cn.wait.hidden = true; $('e-after').hidden = false;
     e.done.textContent = message;
     if (endpoint) e.done.appendChild(onboardFrom(endpoint));
-    e.changed = true;              // the page reloads when the dialog closes
+    e.changed = true;              // the pages are fetched again when the dialog closes
   }
 
   // ---- connect: sign in on the provider's page (metrics/connect.py) --------
   // `run` counts the dialog's openings: a sign-in still finishing after the
   // dialog was closed or opened again reports on the Endpoints page instead,
-  // and reloads it once nothing is open over it.
+  // and fetches the pages again once nothing is open over it.
   var cn = {list: $('cn-list'), wait: $('cn-wait'), msg: $('cn-msg'), timer: null, run: 0};
   // Reached from another machine (a hosted install): a callback to this
   // machine's 127.0.0.1 could not arrive, so sign-ins go by code instead.
@@ -1220,9 +1383,9 @@
     clearInterval(cn.timer); cn.timer = null;
     var said = r.ok && r.label + ' is connected as ' + r.endpoint + ': it lists ' + r.served + ' models. ' + (r.note || '');
     if (!ed.open || run !== cn.run) {
-      if (!r.ok) listErrors(e.listErrors, r.errors);
-      else if (ed.open) { e.listDone.textContent = said; e.changed = true; }
-      else reloadSoon(said);
+      if (!r.ok) listErrors($('el-errors'), r.errors);
+      else if (ed.open) { $('el-done').textContent = said; e.changed = true; }
+      else refreshSaying(said);
       return;
     }
     cn.wait.hidden = true;
@@ -1324,14 +1487,13 @@
     return row;
   }
 
-  if ($('tab-endpoints').classList.contains('active')) onShow.endpoints();   // the page opened on it
-
   // ---- first run: no endpoint yet, no model, no collection (serve.first_run) -
+  // Each waits for its page: it may not have arrived yet.
   var first = $('first-run');
   function firstStep() {
     if (first.dataset.step === 'onboard') { $('onboard-open').click(); return; }
-    if (first.dataset.step === 'collection') { show('collections'); $('c-new').click(); return; }
-    show('endpoints'); openEndpoint('add');
+    if (first.dataset.step === 'collection') { show('collections').then(function () { $('c-new').click(); }); return; }
+    show('endpoints').then(function () { openEndpoint('add'); });
   }
   if (first) {
     $('first-go').addEventListener('click', firstStep);
@@ -1339,13 +1501,18 @@
   }
 
   // ---- collections: what the bench gateway runs together (its own tab) -----
-  var c = {list: $('c-list'), name: $('c-name'), members: $('c-members'), count: $('c-count'),
-           shape: $('c-shape'), desc: $('c-desc'), tags: $('c-tags'), errors: $('c-errors'), done: $('c-done'),
-           head: $('c-form-head'), maxCalls: $('g-max-calls'), maxExp: $('g-max-explorers'),
-           gErrors: $('g-errors'), gDone: $('g-done'), form: $('c-form'), status: $('c-status'),
-           del: $('c-delete'), reply: $('c-reply'), merger: $('c-merger'), find: $('c-member-filter'),
-           seats: $('c-seats'), prov: $('c-member-provider'), adHoc: $('c-ad-hoc'),
-           ownCalls: $('c-max-calls'), ownExp: $('c-max-explorers')};
+  // Its elements, the popup's too, are in the page: found again each time it arrives.
+  var c = {};
+  onLoad.collections = function () {
+    c = {list: $('c-list'), name: $('c-name'), members: $('c-members'), count: $('c-count'),
+         shape: $('c-shape'), desc: $('c-desc'), tags: $('c-tags'), errors: $('c-errors'), done: $('c-done'),
+         head: $('c-form-head'), maxCalls: $('g-max-calls'), maxExp: $('g-max-explorers'),
+         gErrors: $('g-errors'), gDone: $('g-done'), form: $('c-form'), status: $('c-status'),
+         del: $('c-delete'), reply: $('c-reply'), merger: $('c-merger'), find: $('c-member-filter'),
+         seats: $('c-seats'), prov: $('c-member-provider'), adHoc: $('c-ad-hoc'),
+         ownCalls: $('c-max-calls'), ownExp: $('c-max-explorers')};
+    return loadCollections();
+  };
   var C = null, open = null;         // the collection whose details are showing
   // What the dialog's two limits come to: empty follows the gateway settings.
   function limit(input, fallback) { return input.value === '' ? fallback : parseInt(input.value, 10); }
@@ -1471,10 +1638,10 @@
     });
     recount();
   }
-  c.find.addEventListener('input', filterMembers);
-  c.prov.addEventListener('change', filterMembers);
+  on('input', 'c-member-filter', filterMembers);
+  on('change', 'c-member-provider', filterMembers);
   // Escape in a box with text clears it; only an empty box lets Escape close the popup.
-  c.find.addEventListener('keydown', function (e) {
+  on('keydown', 'c-member-filter', function (e) {
     if (e.key === 'Escape' && c.find.value) { e.preventDefault(); e.stopPropagation(); c.find.value = ''; filterMembers(); }
   });
   // Suggested tags under the field: a click adds or removes one, and the
@@ -1496,19 +1663,19 @@
       box.appendChild(b);
     });
   }
-  c.tags.addEventListener('input', function () { drawTagPicks(); applyTags(); });
+  on('input', 'c-tags', function () { drawTagPicks(); applyTags(); });
   function showMerger() { $('c-merger-row').hidden = c.reply.value !== 'merged'; }
-  c.reply.addEventListener('change', showMerger);
-  c.shape.addEventListener('change', recount);          // the explorer seats say their shape
-  c.ownCalls.addEventListener('input', recount);
-  c.ownExp.addEventListener('input', recount);
+  on('change', 'c-reply', showMerger);
+  on('change', 'c-shape', recount);          // the explorer seats say their shape
+  on('input', 'c-max-calls', recount);
+  on('input', 'c-max-explorers', recount);
   // A collection opens in a popup, as every other edit on the dashboard does:
   // the one clicked, or a new one from New collection.
   function closeForm() {
     if (c.form.open) c.form.close();
     open = null;
   }
-  c.form.addEventListener('close', function () { open = null; });
+  on('close', 'c-form', function () { open = null; });
   function fillForm(row) {
     c.errors.textContent = ''; c.done.textContent = ''; c.status.textContent = '';
     open = row ? row.name : null; c.del.hidden = !row;
@@ -1579,7 +1746,7 @@
                         : Math.floor(n / 1000).toLocaleString() + 'k';
   }
   function loadCollections(keep) {
-    fetch('/api/collections').then(function (r) { return r.json(); }).then(function (res) {
+    return fetch('/api/collections').then(function (r) { return r.json(); }).then(function (res) {
       C = res; c.list.textContent = '';
       res.collections.forEach(function (row) {
         // The whole row opens the collection: no tight button pair on it.
@@ -1630,16 +1797,15 @@
       if (!keep) closeForm();
     });
   }
-  loadCollections();
-  $('c-new').addEventListener('click', function () { fillForm(null); c.name.focus(); });
-  $('c-close').addEventListener('click', closeForm);
+  on('click', 'c-new', function () { fillForm(null); c.name.focus(); });
+  on('click', 'c-close', closeForm);
   // Done: say so in the popup, close it a moment later, and keep the message
   // above the list, as onboarding and retiring do.
   function finished(message) {
     c.done.textContent = message; c.status.textContent = message; loadCollections(true);
     setTimeout(closeForm, 1200);
   }
-  c.del.addEventListener('click', function () {
+  on('click', 'c-delete', function () {
     var name = open;
     if (!name) return;
     ask('Delete bench/' + name + '? Callers asking for it will get an error.', 'Delete', true).then(function (yes) {
@@ -1650,7 +1816,7 @@
       });
     });
   });
-  $('c-save').addEventListener('click', function () {
+  on('click', 'c-save', function () {
     c.errors.textContent = ''; c.done.textContent = '';
     var name = c.name.value.trim().replace(/^bench\//, '');
     post('/api/collection', {name: name, members: picked(), shape: c.shape.value, description: c.desc.value,
@@ -1662,7 +1828,7 @@
       finished('Saved bench/' + name + '.');
     }).catch(function (err) { c.errors.textContent = String(err); });
   });
-  $('g-save').addEventListener('click', function () {
+  on('click', 'g-save', function () {
     c.gErrors.textContent = ''; c.gDone.textContent = '';
     post('/api/gateway-settings', {max_calls: parseInt(c.maxCalls.value, 10),
                                    max_explorers: parseInt(c.maxExp.value, 10)}).then(function (r) {
@@ -1673,16 +1839,17 @@
 
   // ---- a click on the backdrop closes a popup, as its Close button does ----
   // Pressed AND released outside: a text selection dragged out of an input
-  // must not throw the form away.
-  document.querySelectorAll('dialog').forEach(function (d) {
-    var downOutside = false;
-    function outside(e) {
-      var r = d.getBoundingClientRect();
-      return e.target === d && (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom);
-    }
-    d.addEventListener('pointerdown', function (e) { downOutside = outside(e); });
-    d.addEventListener('click', function (e) { if (downOutside && outside(e)) d.close(); downOutside = false; });
-  });
+  // must not throw the form away. On the document: two popups are inside
+  // pages that arrive later (Collections', Quotas').
+  var downOutside = false;
+  function outside(e) {
+    var d = e.target;
+    if (d.tagName !== 'DIALOG') return false;
+    var r = d.getBoundingClientRect();
+    return e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom;
+  }
+  document.addEventListener('pointerdown', function (e) { downOutside = outside(e); });
+  document.addEventListener('click', function (e) { if (downOutside && outside(e)) e.target.close(); downOutside = false; });
 
   // ---- verdict on one gateway seat --------------------------------------
   var vd = $('verdict-dialog'), vcall = null;
@@ -1709,11 +1876,23 @@
   $('v-save').addEventListener('click', function () {
     var pick = document.querySelector('input[name=v-useful]:checked');
     $('v-errors').textContent = ''; $('v-done').textContent = '';
-    post('/api/verdict', {call: vcall, useful: pick ? pick.value === 'yes' : null, note: $('v-note').value,
+    var useful = pick ? pick.value === 'yes' : null, call = vcall;
+    post('/api/verdict', {call: call, useful: useful, note: $('v-note').value,
                           real: lines('v-real'), false: lines('v-false')}).then(function (r) {
       if (!r.ok) { listErrors($('v-errors'), r.errors); return; }
-      $('v-done').textContent = 'Recorded: ' + r.changed.join(', ') + '. Reloading…';
-      setTimeout(function () { location.reload(); }, 700);
+      // The seat's chip as serve.gateway_card draws it: ✓ useful, ✗ not, no mark still owed.
+      var said = {true: ['useful', ' ✓'], false: ['not useful', ' ✗'], null: ['verdict owed', '']}[useful];
+      document.querySelectorAll('button.seat').forEach(function (chip) {
+        if (chip.dataset.call !== call) return;
+        var owed = $('g-owed'), was = / [✓✗]$/.test(chip.textContent);
+        chip.textContent = chip.textContent.replace(/ [✓✗]$/, '') + said[1];
+        chip.title = chip.title.replace(/(useful|not useful|verdict owed)( · [^·]*)$/, said[0] + '$2');
+        if (owed && was !== (useful !== null)) {
+          var n = Number(owed.dataset.n) + (was ? 1 : -1);
+          owed.dataset.n = n; owed.textContent = n + ' verdict' + (n === 1 ? '' : 's') + ' owed';
+        }
+      });
+      vd.close(); ownChange();
     }).catch(function (err) { $('v-errors').textContent = String(err); });
   });
 
@@ -1722,8 +1901,7 @@
   // weekly limit boxed together), one pool (OpenRouter's free requests a day,
   // a bar per key) or, where nothing is stated, each model's last day. A
   // meter is ten segments filled like a bar: 85% is eight and a half.
-  var QD = $('quota-data') ? JSON.parse($('quota-data').textContent) : null;
-  var qBox = $('q-tiles');
+  var QD = null, qBox = null;          // the page's data and tiles, once it arrives (onLoad.quotas)
   function qWhen(iso) {
     if (!iso) return '';
     var d = new Date(iso), s = (d - Date.now()) / 1000;
@@ -1949,7 +2127,9 @@
       $('q-done').textContent = r.ok ? 'Order kept.' : ''; $('q-errors').textContent = r.ok ? '' : r.errors.join('; ');
     });
   }
-  if (QD && qBox) {
+  // Run each time the page arrives: its elements are new, so bound here.
+  onLoad.quotas = function () {
+    QD = JSON.parse($('quota-data').textContent); qBox = $('q-tiles');
     qDraw();
     $('q-models-close').addEventListener('click', function () { $('q-models').close(); });
     var dragged = null;
@@ -1997,7 +2177,8 @@
         });
       }, Promise.resolve()).then(function () { $('q-done').textContent = 'Refreshed ' + live.length + '.'; });
     });
-  }
+    drawCharts('quotas');
+  };
 
   // The Quota page's two charts, in the theme's colours like the Benchmarks ones.
   function drawQuotaCharts(tok, style, width) {
@@ -2067,11 +2248,10 @@
   }
 
   // ---- Benchmarks charts: Observable Plot, data from serve.charts_data ------
-  // A function, not run once: a theme switched on Settings redraws them in its colours.
-  function drawCharts() {
+  // A function, not run once: a theme switched on Settings redraws them in its
+  // colours. `part` ('suite' or 'quotas'): only that page's, as it arrives.
+  function drawCharts(part) {
     var holder = $('charts-data');
-    if (!holder) return;
-    var C = JSON.parse(holder.textContent);
     var css = getComputedStyle(document.documentElement);
     function tok(name, fallback) { return (css.getPropertyValue(name) || '').trim() || fallback; }
     // `good` is the theme's OK colour, not its brand: in a theme whose brand is
@@ -2088,7 +2268,9 @@
       var col = document.querySelector('.panes') || document.querySelector('main');
       return Math.max(520, (col.clientWidth || 900) - 50);
     }
-    drawQuotaCharts(tok, style, width);
+    if (part !== 'suite') drawQuotaCharts(tok, style, width);
+    if (!holder || part === 'quotas') return;
+    var C = JSON.parse(holder.textContent);
     function put(id, make) {
       var box = $(id);
       if (!box) return;
@@ -2355,5 +2537,5 @@
     });
 
   }
-  drawCharts();
+  onLoad.suite = function () { drawCharts('suite'); };
 })();

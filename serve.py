@@ -12,7 +12,8 @@ It writes three kinds of thing, each behind a popup and each logged to
 `config/changes.jsonl`. A model's ROLE or ALIAS (click its name): rules from
 the bench itself — a role the config defines; an alias in the standing form,
 unused, never a retired name — written atomically, the rename recorded in
-`config/alias-history.json`, the `llm` registry re-synced. A model's REMOVAL
+`config/alias-history.json`, the `llm` registry re-synced while it is the
+client. A model's REMOVAL
 (same popup, confirmed, reason optional): deregistered, taken
 out of every collection, and recorded in `config/retired.json`; no evidence
 is deleted. And ONBOARDING
@@ -129,7 +130,7 @@ ASSETS = {"mascot.png": "image/png"}
 
 def read(path: pathlib.Path) -> str:
     try:
-        return path.read_text(encoding="utf-8")
+        return locked.read_text(path)          # inside a render, from its snapshot
     except OSError:
         return ""
 
@@ -172,7 +173,13 @@ def suite_scores() -> dict:
     had that role stay in the notes, uncounted. Real work, perf and reviews
     still count it. Nor the vision tasks (vision-*): the Vision panel reads
     those (vision_rows).
+
+    Read once a render (four panes ask), each caller given its own copy.
     """
+    return {k: dict(v) for k, v in locked.once(("suite_scores",), _suite_scores).items()}
+
+
+def _suite_scores() -> dict:
     from run import images_only
     row = re.compile(r"^\|\s*([\w-]+)\s*\|\s*`([^`]+)`\s*\|\s*([^|]+?)\s*\|"
                      r"\s*([^|]*?)\s*\|\s*([\d.]+)\s*\|")
@@ -491,17 +498,7 @@ def change_model(alias: str, new_alias: str | None, new_role: str | None,
         if is_decision:
             return {"ok": True, "errors": [], "changed": changed, "sync": ""}
         # 4. push the registry to where the CLI reads it
-        try:
-            result = subprocess.run(
-                [sys.executable, str(ROOT / "scripts" / "sync_config.py")],
-                cwd=str(ROOT), capture_output=True, text=True, timeout=120,
-                encoding="utf-8", errors="replace")
-            sync_report = ("synced to the llm CLI" if result.returncode == 0
-                           else f"sync_config.py exited {result.returncode}:"
-                                f" {(result.stderr or result.stdout).strip()[:300]}"
-                                " — run it by hand")
-        except (OSError, subprocess.SubprocessError) as exc:
-            sync_report = f"could not run scripts/sync_config.py ({exc}); run it by hand"
+        sync_report = _sync_cli()
 
     return {"ok": True, "errors": [], "changed": changed, "sync": sync_report}
 
@@ -574,7 +571,19 @@ def _return_to_collections(alias: str, was: dict, stamp: str, who: str) -> list[
     return back
 
 
+# The llm CLI keeps its own copy of the registry and the options, which only
+# it reads: the built-in client reads the data folder's. So the copy is kept
+# in step only while the llm CLI is the client (it cost 5-6 s a save), and
+# save_client syncs it whole when it becomes the client.
+# ponytail: BENCH_CLIENT=llm set at a restart is not a switch anyone sees here;
+# run scripts/sync_config.py once then, or sync at startup if that becomes usual.
+NOT_SYNCED = "not synced: the built-in client is in use; synced when you switch to the llm CLI"
+
+
 def _sync_cli() -> str:
+    import client as model_client
+    if model_client.chosen()[0] != "llm":
+        return NOT_SYNCED
     try:
         result = subprocess.run(
             [sys.executable, str(ROOT / "scripts" / "sync_config.py")],
@@ -593,7 +602,8 @@ def remove_model(alias: str, reason: str = "", who: str = "ui") -> dict:
 
     The daily check (`scripts/check_deprecations.py`, via `auto_retire.py`)
     calls this too, with `who="auto"`, when a model is clearly gone; this is
-    also the button for a person who knows sooner. It deregisters the alias from the llm registry (and re-syncs),
+    also the button for a person who knows sooner. It deregisters the alias from the llm registry (and
+    re-syncs the llm CLI while it is the client),
     drops it from the role and direct-endpoint configs and from every
     collection (members and merger), records it in
     `config/retired.json` — so the alias is never reused, and onboarding the
@@ -1385,9 +1395,13 @@ def save_model_facts(alias: str, facts: dict, who: str = "ui") -> dict:
 
 def _llm_option(alias: str, name: str, value) -> str:
     """The llm CLI keeps its own copy of a model's options (sync_config.py
-    sets them from the file), so a change here is made there too; None clears
-    it. The built-in client reads the file itself."""
+    sets them from the file), so a change here is made there too while it is
+    the client (NOT_SYNCED); None clears it. The built-in client reads the
+    file itself."""
     import shutil
+    import client as model_client
+    if model_client.chosen()[0] != "llm":
+        return NOT_SYNCED
     if not shutil.which("llm"):            # found the way every llm call here finds it
         return "no llm CLI on this machine's PATH, so only the built-in client uses it"
     # `--`: whatever follows is an argument, never a flag, whatever the alias.
@@ -1899,7 +1913,7 @@ def card(title: str, subtitle: str, body: str, key: str, facets: str = "") -> st
 
 
 def th(label: str, num: bool = False) -> str:
-    return f"<th data-sortable{' class=num' if num else ''}>{label}</th>"
+    return f"<th data-sortable tabindex='0'{' class=num' if num else ''}>{label}</th>"
 
 
 STATUS = {
@@ -1919,7 +1933,12 @@ def model_status() -> dict[str, tuple[str, str, str]]:
     """alias -> (label, chip class, why), for every registered or retired model.
 
     One vocabulary for the whole page, so the roster, the problems and the
-    editor never describe the same model two ways."""
+    editor never describe the same model two ways. Worked out once a render
+    (four panes ask), each caller given its own copy (the values are tuples)."""
+    return dict(locked.once(("model_status",), _model_status))
+
+
+def _model_status() -> dict[str, tuple[str, str, str]]:
     alerts = load_json(DATA / "metrics" / "alerts.json")
     pending = {a.get("alias"): a for k, a in alerts.items()
                if k.startswith("model:pending:")}
@@ -2409,24 +2428,52 @@ def _family(task: str) -> str:
     return "hand-built"
 
 
-_wrong: tuple = (0.0, {})
+_wrong: tuple = (None, {})                          # (key, wrong.scores())
+_wrong_table: tuple = (None, {})                    # (key, wrong.table())
+
+
+def _tasks_key(tasks: pathlib.Path) -> tuple:
+    """(path, mtime, size) of every file in each task's folder and its output
+    folder: what scoring reads. The listings carry the stats on Windows."""
+    key = []
+    for task in (os.scandir(tasks) if tasks.is_dir() else ()):
+        for folder in (task.path, os.path.join(task.path, "output")):
+            try:
+                key += [(e.path, e.stat().st_mtime_ns, e.stat().st_size) for e in os.scandir(folder) if e.is_file()]
+            except OSError:                                  # not a folder, or no output yet
+                pass
+    return tuple(key)
 
 
 def wrong_table() -> dict:
-    """wrong.table(), shared by the three cards of one render: it scores every
-    suite answer, and asking three times was a second of each reload."""
-    global _wrong
+    """wrong.table(). The suite answers are scored again only when an answer,
+    a task, a rename or a model's role changes (it reads them all: asked three
+    times a render, then kept 5 seconds, it was 0.7 s of each reload); the
+    reviews are counted again when the offloads change."""
+    global _wrong, _wrong_table
+    import aliases
+    import offload
     import wrong
     from run import images_only
-    seen = _wrong
-    if time.monotonic() - seen[0] > 5:
-        table = wrong.table()
+    vision = images_only()
+    key = (locked.once(("tasks key",), lambda: _tasks_key(wrong.TASKS)), aliases.history(), vision)
+    scored = _wrong
+    if scored[0] != key:
+        s = wrong.scores()
         # A vision or image model keeps its reviews (real work, judged) but not
         # its code-task answers: the suite is not what it is for (suite_scores).
-        for alias in images_only() & set(table):
-            r = table[alias]
-            r.update(answers=0, wrong=0, by={k: [0, 0] for k in r["by"]}, hunt=dict.fromkeys(r["hunt"], 0))
-        seen = _wrong = (time.monotonic(), table)    # stamped once scored, not before
+        for alias in vision & set(s):
+            s[alias].update(answers=0, wrong=0, by={k: [0, 0] for k in s[alias]["by"]},
+                            hunt=dict.fromkeys(s[alias]["hunt"], 0))
+        scored = _wrong = (key, s)                   # keyed before scoring: a change meanwhile scores again
+    try:
+        st = offload.LOG.stat()
+        log = st.st_mtime_ns, st.st_size
+    except OSError:
+        log = None
+    seen = _wrong_table
+    if seen[0] != (key, log):
+        seen = _wrong_table = ((key, log), wrong.table(scored[1]))
     return seen[1]
 
 
@@ -2547,6 +2594,30 @@ def _vision_family(spec: dict) -> str:
     return next((name for prefix, name in VISION_FAMILIES if spec["id"].startswith(prefix)), "own")
 
 
+_vision_seats: dict = {"mark": {}, "seats": []}
+_vision_lock = threading.Lock()
+
+
+def _vision_seat_list(calls: pathlib.Path) -> list[tuple]:
+    """Every seat of the gateway's vision panels, oldest first: (alias, call,
+    answered, seconds). Only the lines added since the last call are parsed:
+    the log runs to 50 MB, and the gateway adds to it on every call."""
+    with _vision_lock:
+        fresh, lines = locked.appended(calls, _vision_seats["mark"])
+        if fresh:
+            _vision_seats["seats"] = []
+        for raw in lines:
+            try:
+                panel = json.loads(raw)
+            except ValueError:
+                continue
+            if panel.get("shape") == "vision":
+                _vision_seats["seats"] += [(s.get("alias", ""), s.get("call"),
+                                            s.get("status") == "ok" and bool((s.get("answer") or "").strip()),
+                                            s.get("seconds")) for s in panel.get("seats", [])]
+        return list(_vision_seats["seats"])
+
+
 def _vision_work_rows(live: set[str]) -> dict:
     """alias -> {seat kind: count, claims right, claims wrong, seconds}; read
     again only when the gateway's log or the verdicts change (5 MB a render)."""
@@ -2561,32 +2632,25 @@ def _vision_work_rows(live: set[str]) -> dict:
     from offload import entries
     judged = {e["call"]: e for e in entries() if e.get("call") and e.get("useful") is not None}
     out: dict[str, dict] = {}
-    for raw in read(calls).splitlines():
-        try:
-            panel = json.loads(raw)
-        except ValueError:
+    for alias, call, answered, seconds in _vision_seat_list(calls):
+        alias = current_alias(alias)
+        if alias not in live:
             continue
-        if panel.get("shape") != "vision":
-            continue
-        for s in panel.get("seats", []):
-            alias = current_alias(s.get("alias", ""))
-            if alias not in live:
-                continue
-            r = out.setdefault(alias, {**dict.fromkeys(VISION_SEATS, 0), "real": 0, "false": 0, "seconds": []})
-            v = judged.get(s.get("call"))
-            if s.get("status") != "ok" or not (s.get("answer") or "").strip():
-                kind = "no answer"
-            elif v is None:
-                kind = "not judged"
-            elif v.get("real") or v.get("false"):
-                kind = "checked, helped" if v["useful"] else "checked, did not help"
-                r["real"] += len(v.get("real") or [])
-                r["false"] += len(v.get("false") or [])
-            else:
-                kind = "useful, no claims" if v["useful"] else "no use, no claims"
-            r[kind] += 1
-            if kind != "no answer" and s.get("seconds"):
-                r["seconds"].append(float(s["seconds"]))
+        r = out.setdefault(alias, {**dict.fromkeys(VISION_SEATS, 0), "real": 0, "false": 0, "seconds": []})
+        v = judged.get(call)
+        if not answered:
+            kind = "no answer"
+        elif v is None:
+            kind = "not judged"
+        elif v.get("real") or v.get("false"):
+            kind = "checked, helped" if v["useful"] else "checked, did not help"
+            r["real"] += len(v.get("real") or [])
+            r["false"] += len(v.get("false") or [])
+        else:
+            kind = "useful, no claims" if v["useful"] else "no use, no claims"
+        r[kind] += 1
+        if kind != "no answer" and seconds:
+            r["seconds"].append(float(seconds))
     for r in out.values():
         secs = sorted(r.pop("seconds"))
         r["seconds"] = secs[len(secs) // 2] if secs else None
@@ -2922,7 +2986,12 @@ def favicon(theme: str) -> str:
     return f"<link rel='icon' type='image/svg+xml' href='data:image/svg+xml,{quote(svg)}'>"
 
 
-def render(theme: str | None = None) -> str:
+def render(theme: str | None = None, shown: str = "glance") -> str:
+    with locked.snapshot():                    # each file read once a render (metrics/locked.py)
+        return _page(theme, shown)
+
+
+def _page(theme: str | None, shown: str = "glance") -> str:
     theme = theme if theme in themes() else saved_theme()      # a ?theme preview, else the saved one
     return (
         f"<!doctype html><html lang='en' data-theme='{esc(theme)}'><meta charset='utf-8'>"
@@ -2946,7 +3015,7 @@ def render(theme: str | None = None) -> str:
         "<button class='btn primary' id='onboard-open'>Onboard a model</button></div></header>"
         # What needs a person first, then the pages; endpoints are managed from
         # Connections now (the header button moved there).
-        f"<main>{first_run()}<div class='layout'>{tabs()}</div></main>{editor()}"
+        f"<main>{first_run()}<div class='layout'>{tabs(shown)}</div></main>{editor()}"
         f"<script>window.BENCH={directory_json()};</script>"
         # Observable Plot (on d3) draws the Benchmarks charts. Pinned versions from
         # jsDelivr; without a network the tables under each chart still work.
@@ -2959,9 +3028,8 @@ def gateway_card(limit: int = 30) -> str:
     """Recent bench-gateway requests: who sat, how each seat went, and which
     verdicts are still owed. A verdict owed is evidence the router is waiting
     for; this is where it shows."""
-    lines = read(DATA / "runs" / "gateway" / "calls.jsonl").splitlines()
     records = []
-    for line in reversed(lines):
+    for line in _log_rows(DATA / "runs" / "gateway" / "calls.jsonl"):     # newest first, from its end
         try:
             records.append(json.loads(line))
         except ValueError:
@@ -3034,7 +3102,7 @@ def gateway_card(limit: int = 30) -> str:
         how it was chosen (set on the collection, or a decision model's label).</dd>
     </dl>"""
     return card("Gateway", f"The last {len(records)} bench-gateway requests:"
-                f" {seats_total} seats, {owed} verdict{'s' * (owed != 1)} owed.",
+                f" {seats_total} seats, <span id='g-owed' data-n='{owed}'>{owed} verdict{'s' * (owed != 1)} owed</span>.",
                 "".join(body) + route_table(judged), key)
 
 
@@ -3082,9 +3150,10 @@ def route_table(judged: dict, limit: int = 30) -> str:
 
 def gateway_seat(call: str) -> dict:
     """One seat of a logged gateway request, with its latest verdict, for the
-    verdict dialog."""
+    verdict dialog. Searched from the log's end, where a recent seat is: the
+    log runs to 50 MB, read whole each time the dialog opened."""
     panel = call.rsplit(".", 1)[0]
-    for line in reversed(read(DATA / "runs" / "gateway" / "calls.jsonl").splitlines()):
+    for line in _from_end(DATA / "runs" / "gateway" / "calls.jsonl"):
         if not panel or f'"{panel}"' not in line:           # skip without parsing
             continue
         try:
@@ -3402,12 +3471,23 @@ def collections_and_gateway() -> str:
     return collections_tab() + gateway_card()
 
 
-def tabs() -> str:
-    # Read once a render: Action needed's page, its count in the sidebar and
-    # At a glance's line about it.
-    groups, auto = open_actions()
-    count = {"needs": open_count(groups)}
-    page = {"needs": lambda: actions_page(groups, auto), "glance": lambda: actions_line(groups) + roster()}
+def pane(key: str, actions: tuple | None = None) -> str:
+    """One tab's page, as its section holds it. The page renders the tab shown
+    (tabs); bench.js fetches the others from GET /api/pane when first opened."""
+    if key in ("needs", "glance"):
+        groups, auto = actions or open_actions()
+        return actions_page(groups, auto) if key == "needs" else actions_line(groups) + roster()
+    return globals()[next(fn for k, _, fn in TABS if k == key)]()
+
+
+def tabs(shown: str = "glance") -> str:
+    # Read once a render: Action needed's count in the sidebar, and its page or
+    # At a glance's line about it when one of those is shown. Only the tab
+    # shown is rendered (the bench_tab cookie, set by bench.js): rendering every
+    # one took seconds. The rest are empty until opened (data-lazy).
+    actions = open_actions()
+    count = {"needs": open_count(actions[0])}
+    shown = shown if any(k == shown for k, _, _ in TABS) else "glance"
 
     def button(key: str, label: str) -> str:
         n = count.get(key)
@@ -3417,8 +3497,8 @@ def tabs() -> str:
     nav = "".join(f"<div class='group'><h2>{esc(group)}</h2>"
                   + "".join(button(key, label) for key, label, _ in pages) + "</div>"
                   for group, pages in SECTIONS)
-    panes = "".join(f"<section class='tab' id='tab-{key}'>{page[key]() if key in page else globals()[fn]()}</section>"
-                    for key, _, fn in TABS)
+    panes = "".join(f"<section class='tab' id='tab-{key}'>{pane(key, actions)}</section>" if key == shown
+                    else f"<section class='tab' id='tab-{key}' data-lazy></section>" for key, _, _ in TABS)
     return f"<nav class='tabs' role='tablist' aria-label='Pages'>{nav}</nav><div class='panes'>{panes}</div>"
 
 
@@ -3664,7 +3744,9 @@ def save_client(name: str, who: str = "ui") -> dict:
     locked.update(model_client.CHOICE, lambda d: d.update(client=name))
     _log_change(datetime.datetime.now().astimezone().isoformat(timespec="seconds"), who, "",
                 "model client", old, name)
-    return {"ok": True, "errors": []}
+    # Not kept in step while it was not the client (_sync_cli): brought up to
+    # date now, and on every save of it, so saving it again retries a failed sync.
+    return {"ok": True, "errors": [], "sync": _sync_cli() if name == "llm" else ""}
 
 
 def client_card() -> str:
@@ -4022,8 +4104,32 @@ def quotas_page() -> str:
         f"<script type='application/json' id='quota-data'>{data}</script>")
 
 
+def _from_end(path: pathlib.Path):
+    """A log's lines that hold something, newest first, read from its end in
+    growing chunks, so a caller that stops early never reads the rest: the
+    gateway's log runs to 50 MB. Nothing when it cannot be read."""
+    try:
+        fh = open(path, "rb")
+    except OSError:
+        return
+    with fh:
+        end, back, cut = fh.seek(0, os.SEEK_END), 1 << 18, b""
+        while end:
+            start = max(end - back, 0)
+            fh.seek(start)
+            lines = (fh.read(end - start) + cut).split(b"\n")
+            cut = lines.pop(0) if start else b""        # may be cut: finished by the chunk before it
+            for line in reversed(lines):
+                if line.strip():
+                    yield line.decode("utf-8", "replace").rstrip("\r")
+            end, back = start, back * 4
+
+
 def _log_rows(path: pathlib.Path, limit: int = 200) -> list[str]:
-    return [line for line in reversed(read(path).splitlines()) if line.strip()][:limit]
+    """The last `limit` lines that hold something, newest first. Read from the
+    end: the gateway's log runs to 50 MB, and was read whole for 200 lines."""
+    from itertools import islice
+    return list(islice(_from_end(path), limit))
 
 
 def logs_page() -> str:
@@ -4366,6 +4472,29 @@ class Handler(gateway.Handler):
         if self.path == "/api/onboard-queue":
             self._json(200, onboard_queue())
             return
+        if self.path == "/api/needs":                  # after an action there: that page, not the whole one
+            with locked.snapshot():
+                groups, auto = open_actions()
+                self._json(200, {"html": actions_page(groups, auto), "line": actions_line(groups),
+                                 "count": open_count(groups)})
+            return
+        if path == "/api/pane":                        # a tab's page, when first opened (bench.js load)
+            from urllib.parse import parse_qs, urlparse
+            key = parse_qs(urlparse(self.path).query).get("tab", [""])[0]
+            if not any(k == key for k, _, _ in TABS):
+                self._json(404, {"ok": False, "errors": [f"no tab {key!r}"]})
+                return
+            with locked.snapshot():
+                try:
+                    page = pane(key)
+                except RuntimeError as exc:            # endpoints.json unreadable: say which and why, as the page does
+                    page = f"<p>{esc(exc)}</p>"
+            self._json(200, {"ok": True, "html": page})
+            return
+        if self.path == "/api/directory":              # window.BENCH again, after a retire or restore
+            with locked.snapshot():
+                self._json(200, json.loads(directory_json()))
+            return
         if self.path == "/api/endpoints":
             self._json(200, endpoint_list())
             return
@@ -4445,16 +4574,12 @@ class Handler(gateway.Handler):
             return
         from urllib.parse import parse_qs, urlparse
         theme = parse_qs(urlparse(self.path).query).get("theme", [None])[0]   # a preview; else the saved one
+        shown = re.search(r"(?:^|;)\s*bench_tab=(\w+)", self.headers.get("Cookie") or "")   # the tab last shown
         try:
-            body = render(theme).encode("utf-8")
+            page = render(theme, shown.group(1) if shown else "glance")
         except RuntimeError as exc:                    # endpoints.json unreadable: say which and why
-            body = f"<!doctype html><meta charset='utf-8'><title>Benchwarmers</title><p>{esc(exc)}</p>".encode()
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        self.wfile.write(body)
+            page = f"<!doctype html><meta charset='utf-8'><title>Benchwarmers</title><p>{esc(exc)}</p>"
+        self._page(page)                               # gzipped beyond this machine (_length)
 
     def do_POST(self):                                   # noqa: N802
         """One endpoint, one operation: change a model's role or alias.
@@ -4597,11 +4722,29 @@ class Handler(gateway.Handler):
         self.send_header("Content-Length", "0")
         self.end_headers()
 
+    def _length(self, body: bytes) -> bytes:
+        """Content-Length, gzipped first when the caller takes gzip and is not
+        on this machine: the page is 2.1 MB, 185 KB gzipped, which a network
+        feels and loopback does not (there it only costs CPU). Returns the
+        bytes to write."""
+        import gzip
+        import ipaddress
+        # gzip as a token, not refused with q=0 ("gzip;q=0" is a no).
+        takes = any(name.strip().lower() == "gzip" and not re.fullmatch(r"\s*q\s*=\s*0(\.0*)?\s*", q)
+                    for name, _, q in (p.partition(";") for p in (self.headers.get("Accept-Encoding") or "").split(",")))
+        if (len(body) > 1024 and takes
+                and not ipaddress.ip_address(self.client_address[0].removeprefix("::ffff:")).is_loopback):
+            body = gzip.compress(body, 6)
+            self.send_header("Content-Encoding", "gzip")
+            self.send_header("Vary", "Accept-Encoding")
+        self.send_header("Content-Length", str(len(body)))
+        return body
+
     def _page(self, html_text: str) -> None:
         body = html_text.encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
+        body = self._length(body)
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)
@@ -4610,7 +4753,7 @@ class Handler(gateway.Handler):
         body = json.dumps(data).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
+        body = self._length(body)
         self.send_header("Cache-Control", "no-store")
         if cookie:
             self.send_header("Set-Cookie", cookie)

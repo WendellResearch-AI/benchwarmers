@@ -49,8 +49,10 @@ from __future__ import annotations
 import csv
 import datetime as dt
 import json
+import os
 import pathlib
 import sys
+import threading
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "metrics"))
@@ -201,11 +203,30 @@ def _current(alias: str, history: dict[str, str]) -> str:
     return alias
 
 
-def evidence() -> tuple[list[dict], dict[str, dt.date], dict[str, dt.date]]:
-    """(perf rows, last non-perf answer per alias, restore date per alias)."""
-    history = locked.read_json(DATA / "config" / "alias-history.json")     # {} until a rename
+# evidence() runs on every dashboard render, and re-read 13 MB of offloads and
+# 1,900 saved answers each time: 1.2 s on the owner's data. Each part is read
+# again only when its file changes.
+_memo: dict[str, tuple] = {}            # part -> (key, what it read)
+_outputs: dict[str, tuple] = {}         # saved answer's path -> ((mtime, size), day it answered or None)
+
+
+def _stat(path: pathlib.Path) -> tuple:
+    try:
+        st = path.stat()
+    except OSError:
+        return (str(path),)
+    return str(path), st.st_mtime_ns, st.st_size
+
+
+def _memo_on(part: str, key: tuple, read):
+    hit = _memo.get(part)
+    if hit is None or hit[0] != key:
+        hit = _memo[part] = (key, read())
+    return hit[1]
+
+
+def _perf_rows(path: pathlib.Path, history: dict[str, str]) -> list[dict]:
     rows = []
-    path = DATA / "perf" / "history.csv"
     if path.exists():
         with path.open(encoding="utf-8", newline="") as fh:
             for r in csv.DictReader(fh):
@@ -215,27 +236,70 @@ def evidence() -> tuple[list[dict], dict[str, dt.date], dict[str, dt.date]]:
                              "failure": r.get("failure") or "",
                              "detail": r.get("detail") or ""})
     rows.sort(key=lambda r: r["date"])
+    return rows
 
-    answers: dict[str, dt.date] = {}
 
-    def saw(alias: str, day: dt.date) -> None:
+_useful_lock = threading.Lock()
+_useful_seen: dict = {"mark": {}, "history": None, "days": {}}
+
+
+def _useful(path: pathlib.Path, history: dict[str, str]) -> dict[str, dt.date]:
+    """alias -> the last day a useful offload says it answered. Only the lines
+    added since the last call are read (the gateway adds some on every call),
+    all of them again after a rename."""
+    with _useful_lock:
+        s = _useful_seen
+        if s["history"] != history:
+            s.update(mark={}, history=history)
+        fresh, lines = locked.appended(path, s["mark"])
+        if fresh:
+            s["days"] = {}
+        days = s["days"]
+        for line in lines:
+            try:
+                o = json.loads(line)
+            except ValueError:
+                continue
+            if o.get("useful"):
+                alias, day = _current(o["model"], history), dt.date.fromisoformat(o["date"])
+                days[alias] = max(days.get(alias, day), day)
+        return dict(days)
+
+
+def _saved_answers():
+    """(model, day) for each saved answer that was a real answer. The listing
+    brings each file's stat (free on Windows); a file is read again only when
+    it changes."""
+    from run import outcome
+    for folder in DATA.glob("suite/tasks/*/output"):     # the saved answers are the install's data
+        try:
+            listing = list(os.scandir(folder))
+        except OSError:
+            continue
+        for e in listing:
+            if not e.name.endswith(".md"):
+                continue
+            st = e.stat()
+            hit = _outputs.get(e.path)
+            if hit is None or hit[0] != (st.st_mtime_ns, st.st_size):
+                text = pathlib.Path(e.path).read_text(encoding="utf-8", errors="replace")
+                hit = _outputs[e.path] = ((st.st_mtime_ns, st.st_size),
+                                          dt.date.fromtimestamp(st.st_mtime) if outcome(text) is None else None)
+            if hit[1]:
+                yield e.name[:-3], hit[1]
+
+
+def evidence() -> tuple[list[dict], dict[str, dt.date], dict[str, dt.date]]:
+    """(perf rows, last non-perf answer per alias, restore date per alias).
+    The rows are shared between calls: read them, never change them."""
+    history = locked.read_json(DATA / "config" / "alias-history.json")     # {} until a rename
+    path = DATA / "perf" / "history.csv"
+    rows = _memo_on("perf", (history, _stat(path)), lambda: _perf_rows(path, history))
+    offloads = DATA / "metrics" / "offloads.jsonl"
+    answers = _useful(offloads, history)
+    for alias, day in _saved_answers():
         alias = _current(alias, history)
         answers[alias] = max(answers.get(alias, day), day)
-
-    offloads = DATA / "metrics" / "offloads.jsonl"
-    for line in (offloads.read_text(encoding="utf-8").splitlines()
-                 if offloads.exists() else []):
-        try:
-            o = json.loads(line)
-        except ValueError:
-            continue
-        if o.get("useful"):
-            saw(o["model"], dt.date.fromisoformat(o["date"]))
-
-    from run import outcome
-    for out in DATA.glob("suite/tasks/*/output/*.md"):    # the saved answers are the install's data
-        if outcome(out.read_text(encoding="utf-8", errors="replace")) is None:
-            saw(out.stem, dt.date.fromtimestamp(out.stat().st_mtime))
 
     restored: dict[str, dt.date] = {}
     changes = DATA / "config" / "changes.jsonl"
@@ -403,6 +467,21 @@ def _selfcheck() -> None:
     refused = [row("pk", n, "signin") for n in (9, 5, 0)]
     p = plan(d, {"pk": "v/pk"}, {"v/pk"}, {}, refused, {}, {}, {"v/pk": "v"})
     assert not p["retire"] and not p["confirm"] and not p["pending"], p
+    # evidence() reads a file again when it changes, and only then
+    global DATA
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        DATA = pathlib.Path(tmp)
+        out = DATA / "suite" / "tasks" / "t" / "output" / "m.md"
+        out.parent.mkdir(parents=True)
+        out.write_text("a real answer, long enough to count as one: " * 2, encoding="utf-8")
+        log = DATA / "metrics" / "offloads.jsonl"
+        log.parent.mkdir()
+        log.write_text('{"model": "o", "date": "2026-10-01", "useful": true}\n', encoding="utf-8")
+        assert set(evidence()[1]) == {"m", "o"}
+        out.write_text("<<timed out>>", encoding="utf-8")
+        log.write_text("", encoding="utf-8")
+        assert evidence()[1] == {}
     print("auto_retire: rules hold")
 
 

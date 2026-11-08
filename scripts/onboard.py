@@ -305,7 +305,13 @@ def main() -> None:
                       lambda roles: roles.setdefault("models", {}).__setitem__(alias, "vision"),
                       ensure_ascii=False)
         print("        role vision: a seat only for requests that carry images")
-    run("scripts/sync_config.py", timeout=300)
+    # The llm CLI's copy of the registry, only while it is the client: the
+    # built-in client reads the data folder's, and choosing the llm CLI on
+    # Settings syncs it whole (serve.save_client).
+    import client as model_client
+    synced = model_client.chosen()[0] == "llm"
+    if synced:
+        run("scripts/sync_config.py", timeout=300)
     # Open WebUI's tags name the connection behind the hub; without a hub the
     # endpoint is the connection, and route.connection_of needs no tags.
     if endpoints.find_hub("openwebui"):
@@ -319,7 +325,8 @@ def main() -> None:
     catalog = run("metrics/catalog.py", timeout=300)
     details = ("details from the catalog" if catalog.returncode == 0
                else f"catalog refresh failed (exit {catalog.returncode}); details at its next run")
-    print(f"  [3/5] synced; connection is {connection}; {details}")
+    print(f"  [3/5] {'synced to the llm CLI' if synced else 'the llm CLI not synced (the built-in client is in use)'};"
+          f" connection is {connection}; {details}")
 
     # An image generator: role image, which no chat shape admits, so it never
     # fills a seat or a collection; a chat probe and the suite would only

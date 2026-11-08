@@ -78,8 +78,9 @@ PATHS = ("decisions", "systemone")
 
 
 def load() -> dict[str, dict]:
+    import locked
     try:
-        return json.loads(FILE.read_text(encoding="utf-8"))
+        return json.loads(locked.read_text(FILE))      # inside a render, from its snapshot
     except (OSError, ValueError):
         return {}
 
