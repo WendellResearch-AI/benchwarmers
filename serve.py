@@ -142,10 +142,11 @@ def load_json(path: pathlib.Path) -> dict:
 
 def data_stamp() -> float:
     """Newest change to anything the page renders from. The page polls this
-    and offers a reload when it moves, rather than reloading under you."""
+    and, when it moves, fetches the page shown again (bench.js, "live")."""
     paths = [*DATA.glob("config/*.json*"), *DATA.glob("config/*.yaml"),
-             *DATA.glob("metrics/*.json*"), DATA / "perf" / "history.csv",
-             *DATA.glob("runs/*.md")]
+             *DATA.glob("metrics/*.json*"), *DATA.glob("metrics/usage/*.jsonl"),
+             DATA / "perf" / "history.csv", *DATA.glob("runs/*.md"),
+             *DATA.glob("runs/gateway/*.jsonl"), DATA / "runs" / "scheduler.log"]
     paths = [p for p in paths if p.name != UI_CONFIG.name]     # a theme switch is already on the page
     return max((p.stat().st_mtime for p in paths if p.exists()), default=0.0)
 
@@ -3869,7 +3870,7 @@ def _page(theme: str | None, shown: str = "glance") -> str:
         # The credit is fixed, not a setting (RELEASE-PLAN decision 7).
         "<p class='sub'>by <a href='https://wendellresearch.ai' target='_blank' rel='noopener'>Wendell Research</a></p>"
         "<div class='head-actions'>"
-        "<button class='btn fresh' id='fresh' hidden>New results · Reload</button>"
+        "<button class='btn fresh' id='fresh' hidden>New results · Show</button>"
         # The onboarding queue's progress (bench.js fills it from /api/onboard-queue).
         "<div class='oq' id='oq' hidden role='status'>"
         "<span class='oq-chip' id='oq-chip'><span id='oq-text'></span></span>"

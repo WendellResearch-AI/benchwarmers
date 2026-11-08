@@ -86,7 +86,8 @@
   var tabs = document.querySelectorAll('.tabs button[data-tab]');      // not the sidebar's own toggle
   var onShow = {};                     // a page's loader, run each time it is shown
   var onLoad = {};                     // a page's set-up, run each time its HTML arrives
-  var shown = null, fetching = {}, ready = {}, marks = 0;
+  var shown = null, fetching = {}, ready = {}, marks = 0, last = {}, edited = {};
+  var KEPT = 'input[data-filter], select[data-facet], input[data-retired], input[data-paid]';    // controls a swap keeps
   function show(id) {
     shown = id;
     tabs.forEach(function (b) { b.setAttribute('aria-selected', String(b.dataset.tab === id)); });
@@ -102,7 +103,7 @@
     if (!s.hasAttribute('data-lazy')) return ready[id] || Promise.resolve();
     if (!fetching[id]) {
       var asked = s.getAttribute('data-lazy');
-      document.body.classList.add('loading');
+      if (!/^live/.test(asked)) document.body.classList.add('loading');     // a live refresh shows only what changed
       fetching[id] = fetch('/api/pane?tab=' + id, {cache: 'no-store'}).then(function (r) {
         if (!r.ok) throw new Error(r.status);
         return r.json();
@@ -117,17 +118,36 @@
           // list) is not pulled away: the page is fetched again once it closes.
           var held = s.querySelector('dialog[open]');
           if (held) return new Promise(function (done) { held.addEventListener('close', function () { done(load(id)); }, {once: true}); });
-          return swap(id, p.html);
+          return swap(id, p.html, /^live/.test(asked));
         });
     }
     return fetching[id];
   }
-  // New HTML for a page, keeping what its filter boxes and facets say.
-  function swap(id, html) {
+  // New HTML for a page, keeping what its filter boxes and facets say, which
+  // sections are open and which column each table is sorted by. `live` (the
+  // data moved, nobody acted): the same HTML as last time is left alone, and
+  // so is a page someone is at work on (busy), with New results offered.
+  function swap(id, html, live) {
     var s = $('tab-' + id), boxes = 'input[data-filter], select[data-facet]', old = s.querySelectorAll(boxes);
+    if (live && (html === last[id] || (s.hasChildNodes() && busy(s)))) {
+      if (html !== last[id]) fresh.hidden = false;
+      s.removeAttribute('data-lazy');
+      return ready[id] || setUp(id);
+    }
     var kept = Array.prototype.map.call(old, function (c) { return c.value; });
     var typing = Array.prototype.indexOf.call(old, document.activeElement);     // a box being typed in keeps the keys
-    s.innerHTML = html; s.removeAttribute('data-lazy');
+    var folds = {}, sorts = {};
+    named(s.querySelectorAll('details'), foldKey).forEach(function (p) { folds[p[0]] = p[1].open; });
+    named(s.querySelectorAll('thead tr'), headKey).forEach(function (p) {
+      var th = p[1].querySelector('th[aria-sort]');
+      if (th) sorts[p[0]] = [Array.prototype.indexOf.call(p[1].children, th), th.getAttribute('aria-sort')];
+    });
+    s.innerHTML = last[id] = html; s.removeAttribute('data-lazy');
+    named(s.querySelectorAll('details'), foldKey).forEach(function (p) { if (p[0] in folds) p[1].open = folds[p[0]]; });
+    named(s.querySelectorAll('thead tr'), headKey).forEach(function (p) {
+      var k = sorts[p[0]], th = k && p[1].children[k[0]];
+      if (th && th.hasAttribute('data-sortable')) sort(th, k[1]);
+    });
     s.querySelectorAll(boxes).forEach(function (c, i) {
       // A facet value no longer offered (its last model gone) is "any", not a blank select.
       if (kept[i]) { c.value = kept[i]; if (c.selectedIndex === -1) c.value = ''; applyFilter(scopeOf(c)); }
@@ -135,7 +155,19 @@
     });
     return setUp(id);
   }
+  // Each node with a key to find it again in new HTML: what it says, numbers
+  // aside (counts and times move), and its place among those saying the same.
+  function named(nodes, text) {
+    var seen = {};
+    return Array.prototype.map.call(nodes, function (n) {
+      var k = text(n).replace(/\d[\d.,:%]*/g, '#');
+      return [k + '|' + (seen[k] = (seen[k] || 0) + 1), n];
+    });
+  }
+  function foldKey(d) { var sm = d.querySelector('summary'); return d.className + ' ' + (sm ? sm.textContent : ''); }
+  function headKey(tr) { return tr.textContent; }
   function setUp(id) {
+    delete edited['tab-' + id];
     applyRetired(); applyPaid();
     return (ready[id] = Promise.resolve(onLoad[id] && onLoad[id]()));
   }
@@ -153,10 +185,10 @@
     var n = parseFloat(raw);
     return isNaN(n) || !/^-?[\d.]+/.test(raw) ? raw.toLowerCase() : n;
   }
-  function sort(th) {
+  function sort(th, dir) {
     var table = th.closest('table'), body = table.tBodies[0];
     var idx = Array.prototype.indexOf.call(th.parentNode.children, th);
-    var dir = th.getAttribute('aria-sort') === 'descending' ? 'ascending' : 'descending';
+    dir = dir || (th.getAttribute('aria-sort') === 'descending' ? 'ascending' : 'descending');
     table.querySelectorAll('th[aria-sort]').forEach(function (o) { o.removeAttribute('aria-sort'); });
     th.setAttribute('aria-sort', dir);
     var rows = Array.prototype.slice.call(body.rows);
@@ -230,17 +262,38 @@
   });
   applyPaid();
 
-  // ---- fresh results: offered, never forced ----------------------------
-  // Not while an onboarding batch runs: each model's probe writes results, so
-  // it would be offered after every model. The first poll after the batch
-  // ends offers it once.
-  var fresh = $('fresh'), batchRunning = false;
-  setInterval(function () {
-    if (document.hidden || !fresh.hidden || batchRunning) return;
-    fetch('/api/stamp').then(function (r) { return r.json(); }).then(function (s) {
-      if (s.stamp > D.stamp + 0.5) fresh.hidden = false;
+  // ---- live: the page follows the data ---------------------------------
+  // The data's stamp (serve.data_stamp) is asked every 10 s while the page is
+  // in view; when it moves, every page is marked to fetch again and the one
+  // shown is swapped in place (swap keeps filters, folds and sorting). Never
+  // under your hands: while a popup is open, a form on the page has input not
+  // saved or the focus, text on it is selected or a chart is hovered, it
+  // waits, and New results offers it. A page left with input not saved is
+  // not swapped when shown again either (swap).
+  var fresh = $('fresh');
+  function typed(ev) {
+    var t = ev.target, tab = t.closest && t.closest('.tab');
+    if (tab && !t.matches(KEPT)) edited[tab.id] = true;
+  }
+  document.addEventListener('input', typed);
+  document.addEventListener('change', typed);
+  function busy(s) {
+    var a = document.activeElement, sel = getSelection();
+    return !!(edited[s.id] || (s.contains(a) && a.matches('input, textarea, select') && !a.matches(KEPT))
+      || (sel && String(sel) && sel.containsNode(s, true)) || s.querySelector('svg:hover'));
+  }
+  function held() { return !!document.querySelector('dialog[open]') || busy($('tab-' + shown)); }
+  function poll() {
+    if (document.hidden || fetching[shown]) return;          // one at a time: a slow page is not asked again meanwhile
+    fetch('/api/stamp', {cache: 'no-store'}).then(function (r) { return r.json(); }).then(function (s) {
+      if (!(s.stamp > D.stamp + 0.5)) return;
+      if (held()) { fresh.hidden = false; return; }
+      fresh.hidden = true; D.stamp = s.stamp;
+      refreshPanes(null, true);
     }).catch(function () {});
-  }, 15000);
+  }
+  setInterval(poll, 10000);
+  document.addEventListener('visibilitychange', poll);
   fresh.addEventListener('click', function () { fresh.hidden = true; refreshPanes(); });
 
   // ---- the model dialog ------------------------------------------------
@@ -395,8 +448,8 @@
     var alias = editing;
     post('/api/model-facts', {alias: alias, facts: facts}).then(function (r) {
       if (!r.ok) { listErrors($('f-errors'), r.errors); return; }
-      // The tables that show facts (At a glance, Models, Quotas) wait for New results.
-      shownAgain(alias, 'f-done', 'Saved. The tables show it after New results.');
+      // The tables that show facts (At a glance, Models, Quotas) follow once the popup closes (live).
+      shownAgain(alias, 'f-done', 'Saved. The tables show it once this closes.');
     });
   });
   // ---- call options: how the bench asks this model (serve.save_model_options)
@@ -445,7 +498,7 @@
     }, function () { location.reload(); });
   }
   function done(res) { return 'Done: ' + (res.changed || []).join(', ') + (res.sync ? ' · ' + res.sync : '') + '.'; }
-  // The tables (a role, an ad-hoc mark) wait for New results. A rename
+  // The tables (a role, an ad-hoc mark) follow once the popup closes (live). A rename
   // fetches every page again: every row is keyed by the old alias.
   function after(button, label, then) {
     return function (res) {
@@ -501,11 +554,11 @@
   // about it, from the server (GET /api/needs, a few ms): a page reload
   // renders every tab, seconds.
   var needsAsked = 0;
-  function refreshNeeds() {
+  function refreshNeeds(live) {
     var mine = ++needsAsked;
     return fetch('/api/needs', {cache: 'no-store'}).then(function (r) { return r.json(); }).then(function (n) {
       if (mine !== needsAsked) return;               // two actions close together: only the later answer is current
-      swap('needs', n.html);
+      swap('needs', n.html, live);
       var tab = document.querySelector('.tabs [data-tab=needs]'), count = tab.querySelector('.n');
       if (!n.count) { if (count) count.remove(); tab.removeAttribute('aria-label'); }
       else {
@@ -522,7 +575,7 @@
   // A retired model's rows grey out and hide behind Show retired, as the
   // server draws them (serve.tr); a restored one's come back. The popup's
   // list of models (window.BENCH) is fetched again; the rest of the page
-  // waits for the New results button.
+  // follows once the popup closes (live).
   function markRetired(aliases, gone) {
     document.querySelectorAll('a.model').forEach(function (a) {
       var row = aliases.indexOf(a.dataset.alias) !== -1 && a.closest('tr');
@@ -538,19 +591,21 @@
   // After a change: the pages it changed (`ids`, else every one, with Action
   // needed's count, At a glance's line and the popup's models) are fetched
   // again, the one shown now and the rest when next opened. What a reload
-  // did, at the cost of one page.
-  function refreshPanes(ids) {
+  // did, at the cost of one page. `live`: the data moved (swap).
+  function refreshPanes(ids, live) {
     (ids || Array.prototype.map.call(tabs, function (b) { return b.dataset.tab; })).forEach(function (id) {
-      if (ids || id !== 'needs') $('tab-' + id).setAttribute('data-lazy', ++marks);   // a new mark: load drops an older answer
+      if (ids || id !== 'needs') $('tab-' + id).setAttribute('data-lazy', (live ? 'live' : '') + ++marks);   // a new mark: load drops an older answer
     });
-    if (!ids) { refreshNeeds(); directory().catch(function () {}); }
-    ownChange();
-    return show(shown);
+    if (!ids) { refreshNeeds(live); directory().catch(function () {}); }
+    if (!live) { ownChange(); return show(shown); }
+    // The stamp is the poll's; the page's own loader (onShow) runs only on new HTML.
+    var id = shown, before = last[id];
+    return load(id).then(function () { if (last[id] !== before && onShow[id] && shown === id) onShow[id](); });
   }
   // An action shown in place is not "new results" to offer a reload for.
   // ponytail: a change by something else in the same second is swallowed too.
   function ownChange() {
-    fetch('/api/stamp').then(function (r) { return r.json(); }).then(function (s) { D.stamp = s.stamp; }).catch(function () {});
+    fetch('/api/stamp', {cache: 'no-store'}).then(function (r) { return r.json(); }).then(function (s) { D.stamp = s.stamp; }).catch(function () {});
   }
 
   // ---- problem actions ---------------------------------------------------
@@ -836,7 +891,7 @@
   function oqCount(q, state) { return q.items.filter(function (i) { return i.state === state; }).length; }
   function oqRender(q) {
     var n = q.items.length;
-    oq.box.hidden = !n; batchRunning = !!q.running;
+    oq.box.hidden = !n;
     var now = q.items.filter(function (i) { return i.state === 'running'; })[0];
     var finished = n - oqCount(q, 'queued') - (now ? 1 : 0);
     // The chip fills as models finish, and by fifths of the running one as its
@@ -1405,8 +1460,8 @@
   function onboardFrom(endpoint) {
     var go = el('button', {class: 'btn small', type: 'button', style: 'margin-left:.6rem'}, 'Onboard a model from it');
     go.addEventListener('click', function () {
-      // No reload on the way: onboarding opens over the page, and the page's
-      // fresh-results button offers the reload once the files have changed.
+      // No reload on the way: onboarding opens over the page, which follows
+      // the files once it closes (live).
       e.changed = false; ed.close(); $('onboard-open').click(); o.find.value = endpoint;   // the picker filters on it once loaded
     });
     return go;
