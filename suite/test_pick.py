@@ -44,6 +44,21 @@ def main() -> None:
         (tasks[3]["dir"] / "output" / "m.md").write_text("<<TIMED OUT after 300s>>", encoding="utf-8")
         assert [t["id"] for t in pick_tasks(tasks, "m")] == ["t2"], pick_tasks(tasks, "m")
         assert [t["id"] for t in pick_tasks(tasks, "other", n=2)] == ["t0", "t1"]   # per model
+
+    # Every answer is also kept, by its run's start, and never replaced: two runs
+    # that started in the same second keep both.
+    import datetime as dt
+    import run
+    with tempfile.TemporaryDirectory() as tmp:
+        kept, run.ANSWERS = run.ANSWERS, pathlib.Path(tmp)
+        try:
+            at = dt.datetime(2026, 11, 8, 9, 30, 5)
+            a, b = run.keep_answer("t", "m", at, "first"), run.keep_answer("t", "m", at, "second")
+            assert (a.relative_to(tmp).as_posix(), b.name) == ("t/m/2026-11-08T093005.md", "2026-11-08T093005_2.md"), (a, b)
+            assert sorted(a.parent.iterdir()) == [a, b]                          # by name is in order
+            assert (a.read_text(encoding="utf-8"), b.read_text(encoding="utf-8")) == ("first", "second")
+        finally:
+            run.ANSWERS = kept
     print("ok")
 
 

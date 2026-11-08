@@ -29,6 +29,9 @@ sys.path.insert(0, str(ROOT / "metrics"))
 from paths import DATA  # noqa: E402  -- the install's data folder (metrics/paths.py)
 TASKS = DATA / "suite" / "tasks"
 RUNS = DATA / "runs"
+# Every answer, kept: output/<model>.md is replaced by the next run, so a
+# score in an old run note had no answer left behind it (before 2026-11-08).
+ANSWERS = RUNS / "answers"
 
 # THE CODEBASES THIS BENCHMARK IS DRAWN FROM.
 #
@@ -1218,7 +1221,8 @@ def main() -> int:
         return 0
 
     RUNS.mkdir(exist_ok=True)
-    stamp = dt.datetime.now().strftime("%Y-%m-%d")
+    started = dt.datetime.now()
+    stamp = started.strftime("%Y-%m-%d")
     report = RUNS / f"suite-{stamp}.md"
     rows = []
 
@@ -1278,10 +1282,35 @@ def main() -> int:
                       f"  {seconds:6.1f}s{tries}{flag}")
             (spec["dir"] / "output").mkdir(exist_ok=True)
             (spec["dir"] / "output" / f"{model}.md").write_text(body, encoding="utf-8")
+            keep_answer(spec["id"], model, started, body)
 
     _write_report(report, stamp, rows)
     print(f"\nwritten: {report}")
     return 0
+
+
+def keep_answer(task: str, model: str, started: dt.datetime, body: str) -> pathlib.Path | None:
+    """A copy of the answer that the next run cannot replace:
+    runs/answers/<task>/<model>/<run start>.md. The run's start ties it to its
+    score, a row of that run's section in runs/suite-<its date>.md (the
+    sections are in start order); the file's own time is when it was saved.
+    No reader of the saved answers looks there (they read suite/tasks/*/output).
+    A copy that cannot be written costs the copy, not the run's note."""
+    folder = ANSWERS / task / model
+    name = started.strftime("%Y-%m-%dT%H%M%S")
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+        for n in range(1, 100):                         # two runs started in the same second ("_" sorts after ".")
+            path = folder / (f"{name}.md" if n == 1 else f"{name}_{n}.md")
+            try:
+                with path.open("x", encoding="utf-8") as fh:
+                    fh.write(body)
+                return path
+            except FileExistsError:
+                continue
+    except OSError as exc:
+        print(f"   (answer not kept: {exc})")
+    return None
 
 
 def _learn(model: str, body: str, where: str) -> None:

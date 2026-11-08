@@ -182,21 +182,75 @@ def suite_scores() -> dict:
 
 def _suite_scores() -> dict:
     from run import images_only
-    row = re.compile(r"^\|\s*([\w-]+)\s*\|\s*`([^`]+)`\s*\|\s*([^|]+?)\s*\|"
-                     r"\s*([^|]*?)\s*\|\s*([\d.]+)\s*\|")
     scores: dict[tuple[str, str], dict] = {}
     skip = images_only()
-    for path in sorted(DATA.glob("runs/suite-*.md")):
-        for line in read(path).splitlines():
-            if (m := row.match(line.strip())):
-                task, model, found, invented, seconds = m.groups()
-                model = current_alias(model)
-                if model in skip or task.startswith("vision-"):
-                    continue
-                scores[(task, model)] = {
-                    "found": found, "invented": invented.strip(" —-"),
-                    "seconds": float(seconds)}
+    for _day, _run, task, model, found, invented, seconds in note_rows():
+        model = current_alias(model)
+        if model in skip or task.startswith("vision-"):
+            continue
+        scores[(task, model)] = {
+            "found": found, "invented": invented.strip(" —-"),
+            "seconds": float(seconds)}
     return scores
+
+
+# A row of a run note's table (suite/run._write_report). The seconds may carry
+# the call's attempts, "3.2 (x3)": such rows were skipped before 2026-11-08.
+_NOTE_ROW = re.compile(r"^\|\s*([\w-]+)\s*\|\s*`([^`]+)`\s*\|\s*([^|]+?)\s*\|"
+                       r"\s*([^|]*?)\s*\|\s*([\d.]+)(?:\s*\(x\d+\))?\s*\|")
+_notes: dict = {}                                   # path -> ((mtime_ns, size), rows)
+_notes_all: tuple = (None, [])                      # (the listing's stats, every row)
+
+
+def note_rows() -> list[tuple]:
+    """Every table row of the run notes (runs/suite-*.md), in order, as
+    written: (day, run, task, alias, found, invented, seconds). `run` counts
+    the note's "## Suite run" sections (one per run, in start order); `day` is
+    "" for a note not named by its date. Shared: read it, never change it."""
+    return _note_table()[1]
+
+
+def _note_table() -> tuple:
+    """(the notes' stats, note_rows()). A note is parsed again only when its
+    listing's stat changes: only today's does."""
+    global _notes_all
+    listing = []
+    try:
+        for e in os.scandir(DATA / "runs"):
+            if e.name.startswith("suite-") and e.name.endswith(".md"):
+                try:
+                    listing.append((e.path, e.name, e.stat()))
+                except OSError:                         # gone since the listing: the rest still count
+                    pass
+    except OSError:
+        pass
+    listing.sort(key=lambda e: e[1])
+    key = tuple((path, st.st_mtime_ns, st.st_size) for path, _name, st in listing)
+    seen = _notes_all
+    if seen[0] == key:
+        return seen
+    out: list[tuple] = []
+    for path, name, st in listing:
+        hit = _notes.get(path)
+        if hit is None or hit[0] != (st.st_mtime_ns, st.st_size):
+            day = name[6:-3] if re.fullmatch(r"\d{4}-\d\d-\d\d", name[6:-3]) else ""
+            # From disk, not the render's copy (read): a note appended since this
+            # render first read it would be kept as it was, under its new stat.
+            try:
+                text = pathlib.Path(path).read_text(encoding="utf-8")
+            except OSError:                             # this time only: kept under no key, read again next time
+                key = None
+                continue
+            rows, run = [], 0
+            for line in text.splitlines():
+                if line.startswith("## Suite run"):
+                    run += 1
+                elif (m := _NOTE_ROW.match(line.strip())):
+                    rows.append((day, run, *m.groups()))
+            hit = _notes[path] = ((st.st_mtime_ns, st.st_size), rows)
+        out += hit[1]
+    _notes_all = (key, out)
+    return _notes_all
 
 
 def perf_rows() -> list[dict]:
@@ -2513,7 +2567,8 @@ def charts_data() -> dict:
     return {"overview": overview, "heat": heat, "families": ["hand-built", "claims", "seeded, function",
                                                              "seeded, whole file", "real bugs"],
             "wrong": bars, "wrongTotals": totals, "kinds": list(wrong.KINDS), "hunt": hunt,
-            "work": work_rows(), "vision": vision_rows(), "uptime": uptime_data(), **perf_charts()}
+            "work": work_rows(), "vision": vision_rows(), "uptime": uptime_data(), "trend": trend_data(),
+            **perf_charts()}
 
 
 def work_rows() -> list[dict]:
@@ -2785,6 +2840,190 @@ def perf_charts() -> dict:
              for m, s in sorted(seconds.items()) if recall.get(m) and recall[m][1]]
     return {"reliability": [{"model": m, "outcome": o, "count": n} for (m, o), n in sorted(outcomes.items())],
             "speed": speed}
+
+
+# ---- Trend: does a model score lower, or higher, than it used to? ----------
+#
+# From the run notes, a model against itself, task by task: a run asks up to
+# six tasks and tasks differ in size, so run totals are never compared. A score
+# is a share of the task's findings; a task whose count of findings changed
+# (its answer key did) starts again. Not a score (timeout, error, refused): left
+# out, as uptime counts those. Shown only: it routes and retires nothing.
+
+TREND_DAYS = (30, 60)          # the window's choices, the first by default
+TREND_MOVE = 0.10              # a move of 10 points of a task's findings, on average
+TREND_STATES = ("lower", "higher", "steady", "too little")
+
+
+_trend_seen: tuple = (None, {})                     # (notes' stats, renames, today), _trend_rows()
+
+
+def trend_rows() -> dict:
+    """The trend, worked out again only when a note, a rename or the day
+    changes. Shared: read it, never change it."""
+    global _trend_seen
+    stats, rows = _note_table()
+    key, seen = (stats, aliases.history(), datetime.date.today()), _trend_seen
+    if stats is None:                                   # a note could not be read: not kept
+        return _trend_rows(rows, key[2])
+    if seen[0] != key:
+        seen = _trend_seen = (key, _trend_rows(rows, key[2]))
+    return seen[1]
+
+
+def _trend_rows(rows: list[tuple], today: datetime.date) -> dict:
+    """{"first": the first day with a score, "models": alias -> {"runs": [[day,
+    change, tasks compared, hover]], "last": day, "windows": {days: summary}}}.
+    A run's change is against the model's scores on the same tasks on earlier
+    days (None when it had none); a window's summary is the scores in the
+    window against those before it. A task asked twice in a day counts once
+    that day, as the mean of its scores."""
+    by: dict[str, dict[tuple, dict]] = {}               # alias -> (task, of) -> day -> [found], oldest first
+    first = ""
+    for day, _run, task, alias, found, _inv, _s in rows:
+        hit = re.fullmatch(r"(\d+)/(\d+)", found)
+        if not day or not hit or not int(hit[2]):
+            continue
+        first = min(first or day, day)
+        by.setdefault(current_alias(alias), {}).setdefault((task, int(hit[2])), {}).setdefault(day, []).append(int(hit[1]))
+
+    def mean(xs):
+        return sum(xs) / len(xs)
+    models = {}
+    for alias, found_by_task in by.items():
+        runs: dict[str, list] = {}                      # day -> [[change or None, hover line]]
+        tasks: dict[tuple, list] = {}                   # (task, of) -> [(day, share)], oldest first
+        for (task, of), days in found_by_task.items():
+            scores = tasks[(task, of)] = [(d, mean(f) / of) for d, f in days.items()]
+            for i, (day, share) in enumerate(scores):
+                before = [s for _d, s in scores[:i]]
+                runs.setdefault(day, []).append(
+                    [share - mean(before) if before else None,
+                     f"{task} {', '.join(f'{n}/{of}' for n in days[day])}"
+                     + (f", before {mean(before) * of:.3g}/{of} over {len(before)} run{'s' * (len(before) != 1)}"
+                        if before else ", its first score")])
+        windows = {}
+        for w in TREND_DAYS:
+            since = (today - datetime.timedelta(days=w - 1)).isoformat()
+            moves, recent, earlier = [], {}, set()      # per task; day -> [moves]; days before
+            for scores in tasks.values():
+                old = [s for d, s in scores if d < since]
+                new = [(d, s) for d, s in scores if d >= since]
+                if not old or not new:
+                    continue
+                base = mean(old)
+                moves.append(mean([s for _d, s in new]) - base)
+                earlier |= {d for d, _s in scores if d < since}
+                for d, s in new:
+                    recent.setdefault(d, []).append(s - base)
+            down, up = sum(m < -1e-9 for m in moves), sum(m > 1e-9 for m in moves)
+            change = mean(moves) if moves else 0.0
+            runs_down = sum(mean(v) < -1e-9 for v in recent.values())
+            runs_up = sum(mean(v) > 1e-9 for v in recent.values())
+            if len(moves) < 3 or len(recent) < 2 or len(earlier) < 2:     # one run on either side is not a trend
+                state = "too little"
+            elif change <= -TREND_MOVE + 1e-9 and down >= 2 and down >= 2 * up and runs_down >= 2:
+                state = "lower"
+            elif change >= TREND_MOVE - 1e-9 and up >= 2 and up >= 2 * down and runs_up >= 2:
+                state = "higher"
+            else:
+                state = "steady"
+            windows[w] = {"state": state, "change": change, "tasks": len(moves), "down": down, "up": up,
+                          "runs": len(recent), "runsDown": runs_down, "runsUp": runs_up, "before": len(earlier)}
+        models[alias] = {
+            "runs": [[d, mean(c) if (c := [x[0] for x in v if x[0] is not None]) else None, len(c),
+                      "\n".join(x[1] for x in v)] for d, v in sorted(runs.items())],
+            "last": max(runs), "windows": windows}
+    return {"first": first, "models": models}
+
+
+def _trend_says(s: dict) -> str:
+    """A window's summary in words, as the chart and the table say it."""
+    if not s["tasks"]:
+        return "no task scored both in the window and before it"
+    head = {"too little": "too little to say", "steady": "steady"}.get(s["state"], s["state"])
+    return (f"{head}: {s['change'] * 100:+.0f} pts on {s['tasks']} task{'s' * (s['tasks'] != 1)}"
+            f" ({s['down']} down, {s['up']} up), {s['runs']} run{'s' * (s['runs'] != 1)}"
+            f" against {s['before']} before")
+
+
+def trend_data() -> dict:
+    """For bench.js: registered models with a run to compare, each run as
+    [day, change or None, tasks compared, hover], each window's flag."""
+    t, live = trend_rows(), on_bench()
+    return {"first": t["first"], "today": datetime.date.today().isoformat(), "choices": list(TREND_DAYS),
+            "move": TREND_MOVE,
+            "models": [{"name": m, "runs": v["runs"],
+                        "w": {str(w): {**s, "says": _trend_says(s)} for w, s in v["windows"].items()}}
+                       for m, v in sorted(t["models"].items())
+                       if m in live and any(r[1] is not None for r in v["runs"])]}
+
+
+def trend_card() -> str:
+    """Each model against its own history: a dot per run, and a flag when its
+    scores in the window sit below (or above) its scores before it."""
+    t, live, first, names = trend_rows(), current(), TREND_DAYS[0], {}
+
+    def name(model: str) -> str:                       # each window's table shows it: worked out once
+        if model not in names:
+            names[model] = f"{tr(model)}<td>{named(model)}</td>"
+        return names[model]
+
+    css = {"lower": "err", "higher": "ok", "steady": "", "too little": ""}
+
+    def window(w: int) -> str:
+        rows = {m: v["windows"][w] for m, v in t["models"].items() if m in live and v["windows"][w]["tasks"]}
+        body = ["<table><thead><tr>", th("Model"), th("Trend"), th("Change", True), th("Tasks compared", True),
+                th("Down", True), th("Up", True), th("Runs in window", True), th("Runs before", True),
+                th("Last scored"), "</tr></thead><tbody>"]
+        for m in sorted(rows, key=lambda m: (TREND_STATES.index(rows[m]["state"]), rows[m]["change"], m)):
+            s = rows[m]
+            body.append(
+                name(m) + f"<td data-sort='{TREND_STATES.index(s['state'])}'>"
+                + chip(s["state"], css[s["state"]], _trend_says(s)) + "</td>"
+                f"<td class='num' data-sort='{s['change']:.4f}'>{s['change'] * 100:+.0f} pts</td>"
+                f"<td class='num'>{s['tasks']}</td><td class='num'>{s['down']}</td><td class='num'>{s['up']}</td>"
+                f"<td class='num' data-sort='{s['runs']}'>{s['runs']}"
+                f" <span class='muted'>({s['runsDown']} below, {s['runsUp']} above)</span></td>"
+                f"<td class='num'>{s['before']}</td><td class='mono'>{esc(t['models'][m]['last'])}</td></tr>")
+        if not rows:
+            body.append(f"<tr><td colspan='9' class='muted'>No model was scored on the same task both in the last"
+                        f" {w} days and before them.</td></tr>")
+        body.append("</tbody></table>")
+        return f"<div data-trend-window='{w}'{'' if w == first else ' hidden'}>" + "".join(body) + "</div>"
+
+    legend = ("<div class='q-legend'><span><i style='background:var(--err)'></i>10 pts or more below its earlier"
+              " scores on the same tasks</span><span><i style='background:var(--muted)'></i>within 10 pts</span>"
+              "<span><i style='background:var(--ok)'></i>10 pts or more above</span><span><i style='background:none;"
+              "border:1px solid var(--muted)'></i>first scores on these tasks</span></div>")
+    pick = ("<div class='toolbar'><label>Window <select data-trend-days>"
+            + "".join(f"<option value='{w}'>last {w} days</option>" for w in TREND_DAYS)
+            + f"</select></label></div>{legend}")
+    key = f"""<dl>
+      <dt>A dot</dt><dd>One day a model was scored on our tasks, against its own earlier scores on the same
+        tasks: each task as a share of its findings, so a 1-finding claim and an 11-finding file count the same,
+        then averaged over the tasks it had been asked before. Bigger when more tasks were compared. Hover for
+        each task's score and what it scored before.</dd>
+      <dt>The flag</dt><dd>The scores in the window against the scores before it, on the tasks scored in
+        both. <b>Lower</b> (or <b>higher</b>) when, on average, they moved 10 points or more, on at least two
+        tasks and twice as many as moved the other way, in at least two separate runs. <b>Too little</b> when
+        fewer than three tasks can be compared, or fewer than two runs in the window or before it; <b>steady</b>
+        otherwise. One bad run, or one task, is never a trend, and nor is one run to compare against.</dd>
+      <dt>The window</dt><dd>{first} days by default: a paid model is scored about once a week and a free one
+        about every 15 days, six tasks a run, so 7 days holds one run at most and could only say what one
+        afternoon did. {first} days holds 2 to 4 runs. Longer windows hold more runs but leave less before them
+        to compare with (the scores start {esc(t['first'] or 'with the first run')}).</dd>
+      <dt>Runs</dt><dd>Days a model was scored (a task asked twice in a day counts once, as the mean of its
+        scores). In the window, how many sat below or above its earlier scores.</dd>
+      <dt>What is counted</dt><dd>Scores as the run notes recorded them (<code>runs/suite-*.md</code>), under
+        each model's current name; timeouts, errors and refusals are not scores and are left out (Uptime counts
+        them). A task whose number of findings changed starts again. The answers behind the scores are kept
+        from 2026-11-08 in <code>runs/answers/&lt;task&gt;/&lt;model&gt;/</code>; older ones were replaced by
+        the next run and are gone.</dd>
+    </dl>"""
+    return chart_card("Trend", "Does a model score lower, or higher, than it used to? Each model against its own"
+                      " earlier scores, task by task; flagged only when the move holds over several tasks and runs.",
+                      "chart-trend", "".join(window(w) for w in TREND_DAYS), key, extra=pick)
 
 
 # ---- Uptime: was the provider there when the bench called it? --------------
@@ -3316,8 +3555,9 @@ def wrong_card() -> str:
 
 def benchmarks_tab() -> str:
     data = json.dumps(charts_data(), ensure_ascii=False).replace("</", "<\\/")
+    # Trend, Uptime and Performance side by side: what moves over time, in one stretch.
     return (overview_card() + bughunt_card() + work_card() + wrong_card() + suite_card() + vision_card()
-            + uptime_card() + perf_card() + external_card()
+            + trend_card() + uptime_card() + perf_card() + external_card()
             + f"<script type='application/json' id='charts-data'>{data}</script>")
 
 

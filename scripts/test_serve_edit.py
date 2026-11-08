@@ -600,6 +600,49 @@ def main() -> int:
     print(("ok   " if ok else "FAIL ") + "suite scores and statuses once a render, a copy each")
     failures += 0 if ok else 1
 
+    # Trend: a model against itself, task by task. A drop in two runs is a trend;
+    # the same drop in one run, or against one earlier run, is not. A retried row
+    # ("2.0 (x2)") is a score, and a renamed alias goes by its current name.
+    import datetime as dt
+    hist = json.loads(serve.HISTORY_PATH.read_text(encoding="utf-8"))
+    serve.HISTORY_PATH.write_text(json.dumps({**hist, "tr-old": "tr-down"}), encoding="utf-8")
+    aliases.forget()
+    today = dt.date.today()
+
+    def note(ago, rows):
+        day = (today - dt.timedelta(days=ago)).isoformat()
+        with (serve.DATA / "runs" / f"suite-{day}.md").open("a", encoding="utf-8") as fh:
+            fh.write(f"\n## Suite run {day}\n\n| Task | Model | Found | Invented | Seconds |\n| --- | --- | --- | --- | --- |\n"
+                     + "".join(f"| {t} | `{m}` | {f} | — | 2.0 (x2) |\n" for t, m, f in rows))
+    three = ("ta", "tb", "tc")
+    note(50, [(t, m, "5/5") for m in ("tr-old", "tr-once", "tr-thin") for t in three] + [("ta", "tr-twice", "0/1")])
+    note(50, [("ta", "tr-twice", "1/1")])               # the same task again that day: one score, the mean
+    note(40, [(t, m, "5/5") for m in ("tr-old", "tr-once") for t in three] + [("ta", "tr-down", "timeout")])
+    note(10, [("ta", "tr-down", "3/5"), ("tb", "tr-down", "2/5"), ("ta", "tr-thin", "2/5"), ("tb", "tr-thin", "2/5")]
+         + [(t, "tr-once", "5/5") for t in three])
+    note(3, [("tc", "tr-down", "3/5"), ("tc", "tr-thin", "2/5")] + [(t, "tr-once", "1/5") for t in three])
+    note(10, [("ta", "tr-twice", "1/1")])
+    # A note appended in the middle of a render is read from disk, not from that render's copy.
+    with serve.locked.snapshot():
+        serve.note_rows()
+        note(0, [("ta", "tr-late", "1/1")])
+        late = any(r[3] == "tr-late" for r in serve.note_rows())
+    t = serve.trend_rows()["models"]
+    w = {m: t[m]["windows"][serve.TREND_DAYS[0]] for m in ("tr-down", "tr-once", "tr-thin")}
+    run10 = [r for r in t["tr-down"]["runs"] if r[0] == (today - dt.timedelta(days=10)).isoformat()]
+    twice = [r[:3] for r in t["tr-twice"]["runs"]]
+    late = late and "tr-late" in t
+    ok = ({m: s["state"] for m, s in w.items()} == {"tr-down": "lower", "tr-once": "steady", "tr-thin": "too little"}
+          and (w["tr-down"]["tasks"], w["tr-down"]["down"], w["tr-down"]["runs"], w["tr-down"]["before"]) == (3, 3, 2, 2)
+          and abs(w["tr-down"]["change"] + 1.4 / 3) < 1e-9 and w["tr-once"]["runsDown"] == 1
+          and "tr-old" not in t and len(run10) == 1 and abs(run10[0][1] + 0.5) < 1e-9 and run10[0][2] == 2
+          and ("ta", "tr-down") in serve._suite_scores() and serve.trend_rows() is serve.trend_rows()
+          and late and twice == [[(today - dt.timedelta(days=50)).isoformat(), None, 0],
+                                 [(today - dt.timedelta(days=10)).isoformat(), 0.5, 1]])
+    print(("ok   " if ok else "FAIL ") + "trend: a model against itself, two runs to be a trend"
+          + ("" if ok else f" -> {w} {run10} {twice} late {late}"))
+    failures += 0 if ok else 1
+
     # gzip for a caller off this machine that takes it; never over loopback.
     import gzip
 

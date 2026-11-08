@@ -2268,7 +2268,7 @@
       var col = document.querySelector('.panes') || document.querySelector('main');
       return Math.max(520, (col.clientWidth || 900) - 50);
     }
-    if (part !== 'suite' && part !== 'uptime') drawQuotaCharts(tok, style, width);
+    if (part !== 'suite' && part !== 'uptime' && part !== 'trend') drawQuotaCharts(tok, style, width);
     if (!holder || part === 'quotas') return;
     var C = JSON.parse(holder.textContent);
     function put(id, make) {
@@ -2299,6 +2299,73 @@
       });
     }
     function rows(n) { return 20 * n + 80; }
+
+    // Trend: a dot per day a model was scored, against its own earlier scores on
+    // the same tasks (serve.trend_data: a run is [day, change or null, tasks
+    // compared, hover]); beside each name, its flag for the window the card's select says.
+    var T = C.trend, tpick = document.querySelector('select[data-trend-days]');
+    if (T && part !== 'uptime') put('chart-trend', function (w) {
+      if (!T.models.length) return el('p', {class: 'hint'}, 'No model has been scored twice on the same task yet.');
+      var win = tpick ? tpick.value : String(T.choices[0]);
+      var day = function (s) { return new Date(s + 'T12:00:00'); };
+      var since = new Date(day(T.today).getTime() - (win - 1) * 864e5);
+      var rank = {lower: 0, higher: 1, steady: 2, 'too little': 3};
+      function order(s) { return s.tasks ? rank[s.state] : 4; }      // nothing to compare: last
+      var R = T.models.slice().sort(function (a, b) {
+        var x = a.w[win], y = b.w[win];
+        return order(x) - order(y) || x.change - y.change || (a.name < b.name ? -1 : 1);
+      });
+      var dots = [];
+      R.forEach(function (m) {
+        m.runs.forEach(function (r) { dots.push({name: m.name, d: r[0], at: day(r[0]), change: r[1], n: r[2], tip: r[3]}); });
+      });
+      function pts(c) { return (c >= 0 ? '+' : '') + Math.round(c * 100) + ' pts'; }
+      function tip(d) {
+        return d.name + '\n' + d.at.toLocaleDateString(undefined, {weekday: 'short', day: 'numeric', month: 'short'}) + '\n'
+          + (d.change == null ? 'first scores on these tasks' : pts(d.change) + ' against its earlier scores, '
+             + d.n + ' task' + (d.n === 1 ? '' : 's') + ' compared') + '\n' + d.tip;
+      }
+      function says(m) {
+        var s = m.w[win];
+        function n(k, what) { return k + ' ' + what + (k === 1 ? '' : 's'); }
+        return s.tasks ? s.state + ' ' + pts(s.change) + ' · ' + n(s.tasks, 'task') + ', ' + n(s.runs, 'run') : 'no task to compare';
+      }
+      // The name, then the flag, then the days. Room for the longest name at about
+      // 7 px a character, up to 260 px (a longer one loses its middle; its hover
+      // keeps it whole), and about 205 px for the flag. The days get 360 px at
+      // least: in a narrower column the chart scrolls sideways, names and flags first.
+      var flagW = 205, nameW = Math.min(260, Math.max(140, 7 * Math.max.apply(null, R.map(function (m) { return m.name.length; })) + 10));
+      var left = nameW + flagW, right = 20, fits = Math.floor((nameW - 10) / 7);
+      w = Math.max(w, left + right + 360);
+      return Plot.plot({
+        width: w, height: 22 * R.length + 70, style: Object.assign({}, style, {maxWidth: 'none'}),
+        marginLeft: left, marginRight: right, marginTop: 30, marginBottom: 30,
+        // From the window's start when the scores begin later (a young install).
+        x: {type: 'time', domain: [new Date(Math.min(day(T.first), since)), day(T.today)], axis: 'top', label: null, grid: true,
+            ticks: Math.max(2, Math.floor((w - left - right) / 90)),
+            tickFormat: function (d) { return d.toLocaleDateString(undefined, {day: 'numeric', month: 'short'}); }},
+        y: {domain: R.map(function (m) { return m.name; }), label: null, tickSize: 0, tickPadding: flagW + 6, tickFormat: function (m) {
+          var cut = m.length - fits;
+          return cut <= 0 ? m : m.slice(0, Math.ceil((m.length - cut - 1) / 2)) + '…' + m.slice(m.length - Math.floor((m.length - cut - 1) / 2));
+        }},
+        r: {type: 'identity'},
+        marks: [
+          Plot.ruleY(R.map(function (m) { return m.name; }), {stroke: line, strokeOpacity: 0.6}),
+          Plot.ruleX([since], {stroke: ink, strokeOpacity: 0.55, strokeDasharray: '4 3'}),
+          Plot.text([since], {x: function (d) { return d; }, frameAnchor: 'bottom', dy: 16, dx: 4, textAnchor: 'start',
+            fill: muted, text: function () { return 'last ' + win + ' days →'; }}),
+          // First scores on a task have nothing to be against: hollow.
+          Plot.dot(dots.filter(function (d) { return d.change == null; }), {x: 'at', y: 'name', r: 3, fill: 'none',
+            stroke: muted, title: tip}),
+          Plot.dot(dots.filter(function (d) { return d.change != null; }), {x: 'at', y: 'name', title: tip,
+            r: function (d) { return 3 + Math.min(d.n, 6) * 0.6; }, stroke: ink, strokeWidth: 0.5,
+            fill: function (d) { return d.change <= -T.move + 1e-9 ? err : d.change >= T.move - 1e-9 ? good : muted; }}),
+          Plot.text(R, {frameAnchor: 'left', y: 'name', textAnchor: 'start', dx: -flagW, fontSize: 12, text: says,
+            fill: function (m) { return m.w[win].state === 'lower' ? err : ink; }, title: function (m) { return m.w[win].says; }})
+        ]
+      });
+    });
+    if (part === 'trend') return;
 
     // Uptime: a cell a day per provider, then per model, worst first, over the
     // days the card's select says (serve.uptime_data). A day is [up, down, left out, why] or 0.
@@ -2607,5 +2674,14 @@
       d.hidden = d.getAttribute('data-uptime-window') !== s.value;
     });
     drawCharts('uptime');
+  });
+  // Trend's window: that window's table shown, its chart drawn again.
+  document.addEventListener('change', function (ev) {
+    var s = ev.target;
+    if (!s.matches('select[data-trend-days]')) return;
+    s.closest('.panel').querySelectorAll('[data-trend-window]').forEach(function (d) {
+      d.hidden = d.getAttribute('data-trend-window') !== s.value;
+    });
+    drawCharts('trend');
   });
 })();
