@@ -2268,7 +2268,7 @@
       var col = document.querySelector('.panes') || document.querySelector('main');
       return Math.max(520, (col.clientWidth || 900) - 50);
     }
-    if (part !== 'suite') drawQuotaCharts(tok, style, width);
+    if (part !== 'suite' && part !== 'uptime') drawQuotaCharts(tok, style, width);
     if (!holder || part === 'quotas') return;
     var C = JSON.parse(holder.textContent);
     function put(id, make) {
@@ -2299,6 +2299,67 @@
       });
     }
     function rows(n) { return 20 * n + 80; }
+
+    // Uptime: a cell a day per provider, then per model, worst first, over the
+    // days the card's select says (serve.uptime_data). A day is [up, down, left out, why] or 0.
+    var U = C.uptime, pick = document.querySelector('select[data-uptime-days]');
+    if (U) {
+      var win = pick ? +pick.value : U.choices[0], days = U.days.slice(-win);
+      var day = function (s) { return new Date(s + 'T12:00:00'); };
+      var uptime = function (list, w) {
+        var R = [], cells = [], by = {};
+        list.forEach(function (r) {
+          var c = r.cells.slice(-win), up = 0, n = 0;
+          c.forEach(function (d) { if (d) { up += d[0]; n += d[0] + d[1]; } });
+          if (!n) return;                          // nothing counted in these days: no row
+          R.push(by[r.name] = {name: r.name, n: n, pct: up / n});
+          c.forEach(function (d, i) { cells.push({name: r.name, day: days[i], d: d}); });
+        });
+        if (!R.length) return el('p', {class: 'hint'}, 'No counted calls in the last ' + win + ' days.');
+        R.sort(function (a, b) { return a.pct - b.pct || (a.name < b.name ? -1 : 1); });
+        function counted(c) { return c.d && c.d[0] + c.d[1] > 0; }
+        function tip(c) {
+          var head = c.name + '\n' + day(c.day).toLocaleDateString(undefined, {weekday: 'short', day: 'numeric', month: 'short'});
+          if (!c.d) return head + '\nno calls';
+          var n = c.d[0] + c.d[1];
+          return head + '\n' + (n ? c.d[0] + ' of ' + n + ' answered' : 'no counted calls')
+            + (c.d[3] ? '\n' + c.d[3].split('; ').join('\n') : '');
+        }
+        // Room for the longest "name  (n)" at about 7 px a character, up to 300 px; a
+        // longer name loses its middle (its hover keeps it whole).
+        function label(r) { return r.name + '  (' + r.n + ')'; }
+        var left = Math.min(300, Math.max(160, 7 * Math.max.apply(null, R.map(function (r) { return label(r).length; })) + 10));
+        var right = 70, cellW = (w - left - right) / win, fits = Math.floor((left - 10) / 7);
+        return Plot.plot({
+          width: w, height: 22 * R.length + 50, style: style, marginLeft: left, marginRight: right, marginTop: 28,
+          padding: 0.12,
+          x: {domain: days, axis: 'top', label: null, tickSize: 0, tickFormat: function (d) {
+            var i = days.indexOf(d);           // 30 days: every fifth, counted back from today
+            return win > 7 && (win - 1 - i) % 5 ? '' : day(d).toLocaleDateString(undefined,
+              win > 7 ? {day: 'numeric', month: 'short'} : cellW < 48 ? {day: 'numeric'} : {weekday: 'short', day: 'numeric'});
+          }},
+          y: {domain: R.map(function (r) { return r.name; }), label: null, tickSize: 0, tickFormat: function (m) {
+            var s = label(by[m]), cut = s.length - fits;
+            return cut <= 0 ? s : m.slice(0, Math.ceil((m.length - cut - 1) / 2)) + '…'
+              + m.slice(m.length - Math.floor((m.length - cut - 1) / 2)) + '  (' + by[m].n + ')';
+          }},
+          marks: [
+            // A day with nothing counted is hollow: absent, not failing.
+            Plot.cell(cells.filter(function (c) { return !counted(c); }), {x: 'day', y: 'name', fill: 'none',
+              stroke: line, inset: 1, title: tip}),
+            Plot.cell(cells.filter(counted), {x: 'day', y: 'name', title: tip, fill: function (c) {
+              var p = c.d[0] / (c.d[0] + c.d[1]);
+              return p === 1 ? good : p >= 0.8 ? signal : err;
+            }}),
+            Plot.text(R, {x: function () { return days[days.length - 1]; }, y: 'name', textAnchor: 'start', fill: ink,
+              dx: (w - left - right) / win / 2 + 6, text: function (r) { return (r.pct * 100).toFixed(1) + '%'; }})
+          ]
+        });
+      };
+      put('chart-uptime-providers', function (w) { return uptime(U.providers, w); });
+      put('chart-uptime-models', function (w) { return uptime(U.models, w); });
+    }
+    if (part === 'uptime') return;
     // Who to trust: finds real bugs (right) vs makes things up (up = less).
     put('chart-overview', function (w) {
       if (!C.overview.length) return el('p', {class: 'hint'}, 'No model has both suite scores and answers yet.');
@@ -2538,4 +2599,13 @@
 
   }
   onLoad.suite = function () { drawCharts('suite'); };
+  // Uptime's days: the tables and the list for that window shown, its charts drawn again.
+  document.addEventListener('change', function (ev) {
+    var s = ev.target;
+    if (!s.matches('select[data-uptime-days]')) return;
+    s.closest('.panel').querySelectorAll('[data-uptime-window]').forEach(function (d) {
+      d.hidden = d.getAttribute('data-uptime-window') !== s.value;
+    });
+    drawCharts('uptime');
+  });
 })();

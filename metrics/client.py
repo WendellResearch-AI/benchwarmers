@@ -57,7 +57,7 @@ down sets.
 WHAT EVERY CALL LEAVES BEHIND (2b)
 ----------------------------------
 - a ledger line (metrics/ledger.py): tokens in and out, seconds, status,
-  attempts, caller;
+  attempts, caller, and a failed call's error (`clip`: its start and end);
 - quota records from the reply's rate-limit headers and any 429 body
   (metrics/quota.py);
 - a silent-swap note when the reply names another model than the one
@@ -119,6 +119,7 @@ import json
 import os
 import pathlib
 import random
+import re
 import sys
 import threading
 import time
@@ -852,6 +853,11 @@ def _record(alias: str, res: dict, ctx: dict, t0: float, purpose: str) -> None:
             row["swap"] = True
         if res.get("budget_retry"):
             row["budget_retry"] = res["budget_retry"]
+        if status == "error":
+            # What failed, so the uptime report can tell our quota from the
+            # provider being down for calls no other log keeps (the suite's).
+            # Redacted first: an upstream may echo the request, images and all.
+            row["error"] = clip(redact(res["error"] or ""))
         ledger.append(row)
     except Exception as e:                             # noqa: BLE001
         # The slot stays taken until it expires (the call's deadline and a
@@ -906,6 +912,45 @@ def output(res: dict, timeout: float) -> str:
     return res["error"] or (res["text"] + "\n" if res["text"] else "")
 
 
+DATA_URLS = re.compile(r"data:[\w/.+-]*;base64,[A-Za-z0-9+/=_\\-]*", re.I)
+URLS = re.compile(r"https?://[^\s\"'<>\\]+", re.I)
+BASE64 = re.compile(r"[A-Za-z0-9+/]{100,}={0,2}")
+
+
+def placeholder(url: str) -> str:
+    """How an image is written down (the call log, offloads, the dashboard,
+    error text, the merger's copy of the request), never its bytes: a data
+    URL by its size, an http URL without its query (a signed URL's signature
+    is a credential) or a user:password."""
+    if url[:5].lower() == "data:":
+        return f"[image: data URL, {(len(url) * 3 // 4 + 999) // 1000:,} KB]"
+    u = urllib.parse.urlsplit(url)
+    return f"[image: {u.scheme}://{u.netloc.rpartition('@')[2]}{u.path[:200]}{'?...' if u.query else ''}]"
+
+
+def redact(text: str) -> str:
+    """`text` with each inline image as its placeholder, every http(s) URL
+    without its query or user:password, and any other long base64 run as its
+    size: an upstream may echo the request in an error, in whatever form, and
+    errors are logged, shown and learned from."""
+    def bare(m):
+        try:
+            u = urllib.parse.urlsplit(m.group())
+        except ValueError:                             # an unparseable netloc, such as "[::1"
+            return "[url]"
+        return f"{u.scheme}://{u.netloc.rpartition('@')[2]}{u.path}{'?...' if u.query else ''}"
+    text = URLS.sub(bare, DATA_URLS.sub(lambda m: placeholder(m.group()), text))
+    return BASE64.sub(lambda m: f"[base64, {(len(m.group()) * 3 // 4 + 999) // 1000:,} KB]", text)
+
+
+def clip(text: str, head: int = 200, tail: int = 300) -> str:
+    """An error kept short for a log, its start AND its end: the start says the
+    HTTP status (`Error: Error code: 429 - ...`), the end what a long body
+    (headers, a traceback, an HTML page) finally said. The uptime report
+    (suite/run.uptime_class) classifies from it."""
+    return text if len(text) <= head + tail else f"{text[:head]} … {text[-tail:]}"
+
+
 LOG_LOCKED = "sqlite3.OperationalError: database is locked"
 
 
@@ -930,6 +975,11 @@ def _selftest() -> None:
     assert not llm_log_failed_only("", tb)                                  # locked before the call
     assert not llm_log_failed_only("half an ans", "openai.APIError: stream cut\n")
     assert not llm_log_failed_only("pong", tb + "Error: something after\n")
+    # A long error keeps its status (the start) and its last words (the end), and no image.
+    long = "Error: Error code: 429 - " + "x" * 900 + " retry later"
+    assert clip(long).startswith("Error: Error code: 429") and clip(long).endswith("retry later")
+    assert len(clip(long)) == 503 and clip("short") == "short"
+    assert "AAAA" not in clip(redact("Error code: 400 - data:image/png;base64," + "A" * 900))
     ok = (b'event: x\ndata: {"type":"response.output_text.delta","delta":"re"}\n\n'
           b'data: {"type":"response.completed","response":{"model":"m","usage":{"total_tokens":3},'
           b'"output":[{"type":"reasoning"},{"type":"message","content":[{"type":"output_text","text":"ready"}]}]}}\n')

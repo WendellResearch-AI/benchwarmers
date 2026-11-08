@@ -177,9 +177,9 @@ TOO_BIG = (" Send images as http(s) URLs, or smaller ones: models scale a photo 
            " 1,500-2,000 pixels on its long side anyway.")
 IMAGE_TOKENS = 2_500   # per image, in the size check (estimate_tokens says why)
 IMAGE_URL = re.compile(r"(https?://[^\s/?#]+|data:image/[\w.+-]+;base64,)", re.I)
-DATA_URLS = re.compile(r"data:[\w/.+-]*;base64,[A-Za-z0-9+/=_\\-]*", re.I)
-URLS = re.compile(r"https?://[^\s\"'<>\\]+", re.I)
-BASE64 = re.compile(r"[A-Za-z0-9+/]{100,}={0,2}")
+# How an image or a URL is written down: in metrics/client.py, which writes a
+# failed call's error to the ledger and so redacts it too.
+from client import BASE64, DATA_URLS, URLS, placeholder, redact  # noqa: E402,F401
 HEADER_NAMES = re.compile(r"[A-Za-z0-9-]{1,64}(\s*,\s*[A-Za-z0-9-]{1,64}){0,31}")
 SEAT_KEYS = ("call", "seat", "alias", "status", "seconds", "answer", "error")
 QUERY_KEY = re.compile(r"([?&](?:key|api_key|access_token)=)[^&\s'\"]*", re.I)
@@ -241,32 +241,6 @@ def images(messages: list[dict]) -> list[str]:
                                      f" not {placeholder(url) if url else 'empty'}")
                 urls.append(url)
     return urls
-
-
-def placeholder(url: str) -> str:
-    """How an image is written down (the call log, offloads, the dashboard,
-    error text, the merger's copy of the request), never its bytes: a data
-    URL by its size, an http URL without its query (a signed URL's signature
-    is a credential) or a user:password."""
-    if url[:5].lower() == "data:":
-        return f"[image: data URL, {(len(url) * 3 // 4 + 999) // 1000:,} KB]"
-    u = urllib.parse.urlsplit(url)
-    return f"[image: {u.scheme}://{u.netloc.rpartition('@')[2]}{u.path[:200]}{'?...' if u.query else ''}]"
-
-
-def redact(text: str) -> str:
-    """`text` with each inline image as its placeholder, every http(s) URL
-    without its query or user:password, and any other long base64 run as its
-    size: an upstream may echo the request in an error, in whatever form, and
-    errors are logged, shown and learned from."""
-    def bare(m):
-        try:
-            u = urllib.parse.urlsplit(m.group())
-        except ValueError:                             # an unparseable netloc, such as "[::1"
-            return "[url]"
-        return f"{u.scheme}://{u.netloc.rpartition('@')[2]}{u.path}{'?...' if u.query else ''}"
-    text = URLS.sub(bare, DATA_URLS.sub(lambda m: placeholder(m.group()), text))
-    return BASE64.sub(lambda m: f"[base64, {(len(m.group()) * 3 // 4 + 999) // 1000:,} KB]", text)
 
 
 def cannot_see(alias: str) -> str:
@@ -407,7 +381,8 @@ def ask_seat(alias: str, system: str, prompt: str, messages: list[dict] | None =
         except Exception:                              # noqa: BLE001
             pass
     status = "error" if error else ("empty" if not answer else "ok")
-    return {"status": status, "answer": answer, "error": error[-500:],
+    # Its start and end: the start holds the HTTP status a long body's tail lost.
+    return {"status": status, "answer": answer, "error": client.clip(error),
             "seconds": round(time.monotonic() - started, 1)}
 
 

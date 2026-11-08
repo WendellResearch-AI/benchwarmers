@@ -647,8 +647,9 @@ CAPACITY = (
 # than a wrong class: `check_deprecations` skips blank failures and keeps
 # whatever it saw last, so two retired models silently kept their old
 # classification. Imported rather than repeated, so the next class added
-# cannot reintroduce this.
-FAILURE_CLASSES = ("structural", "paywalled", "entitlement", "capacity",
+# cannot reintroduce this. `signin` was missing until 2026-11-08 (the same
+# blank failure); it leads, as it does in `failure_class`.
+FAILURE_CLASSES = ("signin", "structural", "paywalled", "entitlement", "capacity",
                    "timeout", "empty", "other")
 
 
@@ -716,6 +717,160 @@ def provider_notice(output: str) -> str | None:
     if len(text) > 400:
         return None
     return next((m for m in PROVIDER_NOTICES if m in text), None)
+
+
+# WAS THE PROVIDER THERE? One call at a time, for the Uptime report (serve.py).
+#
+# `failure_class` asks what to do about a MODEL; this asks something narrower
+# about one CALL: the provider failed us (down), it answered (up), or the call
+# failed for a reason that is ours and says nothing about the provider (left
+# out): our own quota or rate allowance, our pacer, our client, our LAN hub,
+# or a setup problem (sign-in, no such model, no access, our own request).
+# The owner's rules, 2026-11-08. Read from the stored error text every time,
+# so a better rule reclassifies the past too. Generic first (status codes,
+# standard codes and phrases), so a provider the bench does not use yet is
+# classified; first match wins. Shapes and cases: suite/test_score.py.
+UPTIME_UP = ("ok", "empty")                       # an empty reply is still an answer
+UPTIME_DOWN = ("busy", "timeout", "unreachable", "unrecognised")
+UPTIME_OUT = ("quota", "rate", "setup", "notsent", "client", "relay")
+
+
+def _rx(*parts: str) -> re.Pattern:
+    return re.compile("|".join(parts))
+
+
+_NOTSENT = _rx(r"\(not sent;", r"paced by the bench", r"free-tier guard")
+_CLIENT = _rx(r"no model is registered", r"no key named", r"endpoint base must be", r"codec can't (en|de)code",
+              r"traceback \(most recent", r"database is locked", r"sqlite3?\.")
+_TIMEOUT = _rx(r"<<timed out", r"no answer in \d+s", r"\btimed? ?out\b", r"read timeout", r"deadline[ _]exceeded",
+               r"gateway time-?out", r"request_timeout", r"timeout_error", r"stream_timeout",
+               r"error code: (408|504|524)\b")
+_SIGNIN = _rx(r"error code: 401\b", r"['\"](code|status)['\"]: ?['\"]?401\b", r"invalid[ _]api[ _]key",
+              r"incorrect api key", r"unauthenticated", r"authentication[ _](error|failed)", r"sign in again",
+              r"token (has )?expired", r"invalid credentials", r"sharing_usage_unavailable", r"api key not valid",
+              r"api_key_invalid", r"invalid username or password", r"(didn'?t|did not) provide an api key",
+              r"missing api key")
+_UPSTREAM_WRAP = _rx(r"provider returned error", r"upstream error", r"upstream provider")
+_PAYWALLED = _rx(*map(re.escape, PAYWALLED))
+_NOTFOUND = _rx(r"error code: 404\b", r"model_not_found", r"model not found", r"no endpoints found",
+                r"does not exist", r"unknown model", r"invalid model", r"no model found", r"no such model",
+                r"not_found_error", r"unavailable_model", r"decommissioned", r"has been deprecated",
+                r"model '[^']*' not found", r"try pulling it first", r"model identifier is invalid")
+_ENTITLEMENT = _rx(r"error code: 40[23]\b", r"payment required", r"insufficient[ _]balance", r"insufficient[ _]credit",
+                   r"not available in your subscription", r"permission[ _]denied", r"not authori[sz]ed",
+                   r"unauthori[sz]ed", r"no access to model", r"only available on", r"consent_required",
+                   r"needs your consent", r"paid model", r"credits required", r"zero balance",
+                   r"failed_precondition", r"not available in your (country|region)",
+                   r"user location is not supported", r"accessdeniedexception",
+                   r"(don'?t|do not|does not) have (access|permission)", r"not allowed to access")
+# A request the provider refused as OURS: wins over busy words ("capacity",
+# "upstream") in the same text, so a wrapped "prompt is too long" is setup.
+_REQUEST = _rx(r"request[ _]too[ _]large", r"context[ _]length", r"maximum context", r"too many tokens(?! (per|in the last))",
+               r"prompt is too long", r"payload too large", r"invalid_argument", r"invalid_request_error",
+               r"content_filter", r"content management policy", r"input validation error",
+               r"must have less than \d+ tokens", r"extra inputs are not permitted", r"validationexception",
+               r"malformed input", r"error code: 413\b")
+_REQUEST_STATUS = _rx(r"error code: (400|422)\b", r"['\"]status['\"]: ?['\"]?(400|422)\b")
+# Our own LONG-window allowance used up: per day, month or hour, credits.
+_QUOTA = _rx(r"insufficient_quota", r"quota[ _]?exceeded", r"exceeded your (current|service) quota",
+             r"quota has been exhausted", r"free usage quota", r"usage_limit_(exceeded|reached)",
+             r"usage limit has been reached", r"free-models-per-day", r"per[ -](day|month|hour)\b",
+             r"(\d|calls?|requests?|tokens?) ?/ ?(day|month|hour)\b", r"\brpd\b", r"\btpd\b", r"(requests?|tokens?|calls?)[ _]?per[ _]?day",
+             r"allowance renews", r"(?<!nothing is )(?<!not )(?<!n't )\bused up\b", r"out of credits",
+             r"no credits", r"add (\d+ )?credits", r"credit balance", r"spend(ing)? limit", r"budget exceeded",
+             r"limit_source[\"': ]+\w*(daily|monthly)", r"for the hour")
+# Words that mean quota only beside a limit word ("daily maintenance window" is not one).
+_QUOTA_WEAK = _rx(r"\bdaily\b", r"\bmonthly\b", r"\bweekly\b", r"\bhourly\b", r"today'?s")
+_LIMIT_WORD = _rx(r"quota", r"limit", r"allowance", r"(?<!connection )\breset", r"exceeded", r"reached", r"\bused\b")
+# Our own SHORT-window allowance: per account, key or org, per minute, concurrency.
+_RATE = _rx(r"per account", r"per key", r"per[ -]user\b", r"limit for (this|the) user",
+            r"(your|this) (account|organi[sz]ation).{0,80}(limit|\brate\b|concurrent|per[ -])",
+            r"in organi[sz]ation", r"account per-minute", r"per[ -](second|minute|min)\b", r"free-models-per-min",
+            r"\b(rpm|tpm|itpm|qpm|qps|rps)\b", r"(requests?|tokens?|queries|calls)[ _]?per[ _]?(minute|second)",
+            r"(calls|requests) ?/ ?(min|minute|sec|second)\b", r"limit:? *\d+, *used:? *\d+",
+            r"allows \d+ requests?(\(s\))? every", r"concurrent requests", r"rate limit for free users",
+            r"to unlock higher limits")
+# A pool shared with other people: its 429 is the provider busy, not our allowance.
+_SHARED = _rx(r"shared_capacity", r"rate-limited upstream", r"shared pool", r"all providers", r"no upstreams")
+_BUSY = _rx(r"overloaded", r"high demand", r"\bbusy\b", r"capacity", r"temporarily", r"upstream", r"saturated",
+            r"try again (later|shortly|in a)", r"retry shortly", r"service[ _]unavailable", r"\bunavailable\b",
+            r"resource_?exhausted", r"request limit reached", r"queue is full", r"max connections",
+            r"rate[ _-]?limit", r"rate exceeded", r"too many requests", r"throttl", r"provider returned error",
+            r"internal server error", r"server[ _]error", r"internal_error", r"bad[ _]gateway",
+            r"failed to generate", r"provider_unavailable", r"get_channel_failed", r"model_cooldown",
+            r"modelnotreadyexception", r"not ready for inference", r"currently loading",
+            r"error code: (429|50\d|529)\b", r"['\"](code|status)['\"]: ?['\"]?(429|50\d|529)\b",
+            r"status code '?(429|50\d|529)\b")
+_UNREACHABLE = _rx(r"connection error", r"connection refused", r"actively refused", r"no connection could be made",
+                   r"connection reset",
+                   r"forcibly closed", r"connection aborted", r"remote end closed", r"getaddrinfo",
+                   r"name resolution", r"\bssl\b", r"certificate", r"eof occurred", r"broke off", r"had no choices",
+                   r"was not json", r"stream failed", r"cloudflare", r"cf-footer", r"<html", r"<!doctype",
+                   r"protocol violation", r"network (connection lost|is unreachable)", r"no route to host",
+                   r"error code: 52[0-8]\b")
+_RELAY_DOWN = _rx(r"actively refused", r"connection refused", r"no connection could be made", r"getaddrinfo")
+_RETRY_AFTER = re.compile(r"retry-after:? *(\d+)|retry after (\d+) ?s")
+
+
+def uptime_class(text: str, status: str = "error", private_endpoint: bool = False) -> tuple[str, str]:
+    """(class, reason) for one call: a class from UPTIME_UP, UPTIME_DOWN or
+    UPTIME_OUT. `status` is the call's own (ok, empty, error, timeout, or
+    refused: not sent by the bench); `private_endpoint`: the call went to a
+    hub on our own network, so a refused connection is that hub, not the
+    provider."""
+    if status in ("ok", "empty"):
+        return status, "answered"
+    if status == "refused":
+        return "notsent", "not sent by the bench"
+    if status == "timeout":
+        return "timeout", "no answer in time"
+    low = " ".join((text or "").lower().split())
+    if not low:
+        return "unrecognised", "no error text"
+    if _NOTSENT.search(low):
+        return "notsent", "the bench's own pacing"
+    # Not a provider's own crash sent back with its status (a 500 carrying a traceback).
+    if _CLIENT.search(low) and not re.search(r"error code: \d{3}\b", low):
+        return "client", "our client failed"
+    if _TIMEOUT.search(low):
+        return "timeout", "timed out"
+    if _SIGNIN.search(low):
+        # A router relaying ITS upstream's refused key: not our key, the provider's problem.
+        return ("busy", "upstream's own key refused") if _UPSTREAM_WRAP.search(low) else ("setup", "sign-in")
+    if _PAYWALLED.search(low) and not re.search(r"high demand|overloaded|temporarily", low):
+        return "setup", "paywalled"
+    if _NOTFOUND.search(low) and not re.search(r"temporarily|overloaded|high demand|capacity|saturated", low):
+        return "setup", "not found"
+    if _REQUEST.search(low):
+        return "setup", "our request"
+    if not _SHARED.search(low) or "free usage quota" in low:
+        # A weak word ("daily limit") beside the provider's own trouble is its advice, not our quota.
+        weak = (_QUOTA_WEAK.search(low) and _LIMIT_WORD.search(low)
+                and not re.search(r"high demand|overloaded|temporarily", low))
+        if _QUOTA.search(low) or weak:
+            if "credits required" in low:
+                return "setup", "no access"
+            return "quota", "our quota"
+        if _RATE.search(low):
+            return "rate", "our rate limit"
+    if _ENTITLEMENT.search(low):
+        # As with sign-in: a router relaying its upstream's refused key is the provider's problem.
+        if _UPSTREAM_WRAP.search(low) and re.search(r"unauthori[sz]ed|permission[ _]denied", low):
+            return "busy", "upstream's own key refused"
+        return "setup", "no access"
+    if _REQUEST_STATUS.search(low) and not _BUSY.search(low):
+        return "setup", "our request"
+    # An otherwise silent 429 that asks for an hour or more is a long window: ours.
+    if ((m := _RETRY_AFTER.search(low)) and int(m.group(1) or m.group(2)) >= 3600
+            and re.search(r"\b429\b", low) and not _SHARED.search(low)):
+        return "quota", "our quota (a wait of an hour or more)"
+    if _BUSY.search(low):
+        return "busy", "busy"
+    if _UNREACHABLE.search(low):
+        if private_endpoint and _RELAY_DOWN.search(low):
+            return "relay", "our LAN hub refused the connection"
+        return "unreachable", "unreachable"
+    return "unrecognised", "nothing matched"
 
 
 def outcome(output: str, min_length: int = 40) -> tuple[str, str] | None:

@@ -620,6 +620,47 @@ def main() -> int:
           and plain.sent["Content-Length"] == str(len(body)))
     print(("ok   " if ok else "FAIL ") + "gzip off this machine only" + ("" if ok else f" -> {far.sent} {near.sent}"))
     failures += 0 if ok else 1
+
+    # Uptime counts each call once: a gateway seat from its log, a probe from its
+    # row, the suite's calls from the ledger only after its last failure kept
+    # without text; the ledger's own lines for the gateway and the probe are skipped.
+    import datetime as dt
+    import ledger
+    import time
+    home = serve.DATA                                   # `tmp` names another folder by now
+    ledger.DIR = home / "usage"
+    ledger.DIR.mkdir()
+    now = time.time()
+    at = dt.datetime.fromtimestamp(now).astimezone().isoformat(timespec="seconds")
+    (home / "runs" / "gateway").mkdir(parents=True, exist_ok=True)
+    seat = {"call": "p.member1", "seat": "member", "alias": "m1", "status": "ok", "answer": "yes", "error": "", "seconds": 2}
+    panel = {"at": at, "shape": "design", "seats": [
+        seat, {**seat, "status": "error", "answer": "", "error": "Error: Error code: 503 - high demand"},
+        {**seat, "status": "error", "answer": "", "error": "Error: Error code: 429 - Daily token quota exceeded."}]}
+    calls = home / "runs" / "gateway" / "calls.jsonl"
+    calls.write_text(json.dumps(panel) + "\n", encoding="utf-8")
+    (home / "perf").mkdir(exist_ok=True)
+    (home / "perf" / "history.csv").write_text(
+        "timestamp,model,prompt,n,p50_s,p95_s,min_s,max_s,chars_per_s,answered,refused,error,timeout,failure,detail\n"
+        f"{at[:19]},m1,tiny,1,1.5,1.5,1.5,1.5,0,1,0,0,0,,\n", encoding="utf-8")
+
+    def line(dt_s, caller, status, **more):
+        return json.dumps({"t": now + dt_s, "at": at, "alias": "m1", "connection": "c1", "endpoint": "e",
+                           "served": "m1", "status": status, "attempts": 1, "seconds": 3.0, "caller": caller,
+                           "purpose": "", **more}, separators=(",", ":")) + "\n"
+    ledger._file(now).write_text(
+        line(-30, "serve", "ok") + line(-20, "suite/run", "ok") + line(-10, "suite/run", "error")
+        + line(10, "suite/run", "ok") + line(20, "suite/run", "error", error="Error: Error code: 503 - overloaded"),
+        encoding="utf-8")
+    first = serve._uptime_rows()["models"]["m1"][-1]
+    with calls.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps({**panel, "seats": [seat]}) + "\n")
+    again = serve._uptime_rows()
+    ok = (first[:3] == [3, 2, 1] and again["models"]["m1"][-1][:3] == [4, 2, 1]
+          and again["providers"]["c1"][-1][:3] == [4, 2, 1] and first[3] == {"busy": 2, "our quota": 1})
+    print(("ok   " if ok else "FAIL ") + "uptime counts each call once, the new ones only"
+          + ("" if ok else f" -> {first} {again['models']['m1'][-1]}"))
+    failures += 0 if ok else 1
     shutil.rmtree(tmp, ignore_errors=True)
     print("\nall rules hold" if not failures else f"\n{failures} FAILED")
     return 1 if failures else 0

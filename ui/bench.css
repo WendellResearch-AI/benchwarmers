@@ -306,6 +306,7 @@ button.chip:hover { outline: 1px solid currentColor; }
 .meter { width: 4.5rem; height: .5rem; background: var(--band); border-radius: 999px; overflow: hidden; }
 .meter span { display: block; height: 100%; background: var(--brand); }
 .meter span.low { background: var(--err); }
+td.why { white-space: nowrap; }                     /* Uptime's down / left out, with their reasons */
 
 /* ---- dialogs -------------------------------------------------------- */
 dialog { border: 1px solid var(--ink); border-radius: var(--radius); padding: 1.25rem 1.4rem;
