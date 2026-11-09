@@ -591,14 +591,13 @@ dialog .pick { display: flex; gap: 1.5rem; }
 /* A reload under way (bench.js marks the page as it goes), or a page being
    fetched (.loading): a bar sweeping the top, over an open popup too, so the
    seconds the server takes to render never look like a frozen page. */
-body.leaving, body.loading { cursor: progress; }
-body.leaving::before, body.leaving dialog[open]::before, body.loading::before, body.loading dialog[open]::before {
+body:is(.leaving, .loading) { cursor: progress; }
+body:is(.leaving, .loading)::before, body:is(.leaving, .loading) dialog[open]::before {
   content: ""; position: fixed; inset: 0 0 auto; height: 3px; z-index: 1000; pointer-events: none;
   background: linear-gradient(90deg, transparent, var(--brand), transparent) 0 0 / 40% 100% no-repeat;
   animation: leaving 1.1s ease-in-out infinite; }
 @keyframes leaving { from { background-position: -70% 0; } to { background-position: 170% 0; } }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }
-  body.leaving::before, body.leaving dialog[open]::before,
-  body.loading::before, body.loading dialog[open]::before { animation: none; background: var(--brand); }
+  body:is(.leaving, .loading)::before, body:is(.leaving, .loading) dialog[open]::before { animation: none; background: var(--brand); }
 }

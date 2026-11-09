@@ -206,7 +206,7 @@ def _current(alias: str, history: dict[str, str]) -> str:
 # evidence() runs on every dashboard render, and re-read 13 MB of offloads and
 # 1,900 saved answers each time: 1.2 s on the owner's data. Each part is read
 # again only when its file changes.
-_memo: dict[str, tuple] = {}            # part -> (key, what it read)
+_perf: tuple = (None, [])               # ((alias history, history.csv's stat), its rows)
 _outputs: dict[str, tuple] = {}         # saved answer's path -> ((mtime, size), day it answered or None)
 
 
@@ -216,13 +216,6 @@ def _stat(path: pathlib.Path) -> tuple:
     except OSError:
         return (str(path),)
     return str(path), st.st_mtime_ns, st.st_size
-
-
-def _memo_on(part: str, key: tuple, read):
-    hit = _memo.get(part)
-    if hit is None or hit[0] != key:
-        hit = _memo[part] = (key, read())
-    return hit[1]
 
 
 def _perf_rows(path: pathlib.Path, history: dict[str, str]) -> list[dict]:
@@ -292,9 +285,12 @@ def _saved_answers():
 def evidence() -> tuple[list[dict], dict[str, dt.date], dict[str, dt.date]]:
     """(perf rows, last non-perf answer per alias, restore date per alias).
     The rows are shared between calls: read them, never change them."""
+    global _perf
     history = locked.read_json(DATA / "config" / "alias-history.json")     # {} until a rename
     path = DATA / "perf" / "history.csv"
-    rows = _memo_on("perf", (history, _stat(path)), lambda: _perf_rows(path, history))
+    if _perf[0] != (key := (history, _stat(path))):
+        _perf = (key, _perf_rows(path, history))
+    rows = _perf[1]
     offloads = DATA / "metrics" / "offloads.jsonl"
     answers = _useful(offloads, history)
     for alias, day in _saved_answers():

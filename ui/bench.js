@@ -20,6 +20,8 @@
     return fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'},
                        body: JSON.stringify(body)}).then(function (r) { return r.json(); });
   }
+  function get(url) { return fetch(url, {cache: 'no-store'}).then(function (r) { return r.json(); }); }
+  function plural(n, word) { return n + ' ' + word + (n === 1 ? '' : 's'); }
   function listErrors(node, errors) { node.textContent = errors.map(function (x) { return '• ' + x; }).join('\n'); node.style.whiteSpace = 'pre-line'; }
   // A control inside a page, by its id, on the document: pages arrive after
   // load (load), and again after a change, as new elements each time.
@@ -95,7 +97,7 @@
     fetch('/api/import' + (apply ? '?apply=1' : ''), {method: 'POST', headers: {'Content-Type': 'application/zip'}, body: f})
       .then(function (r) { return r.json(); }).then(function (r) {
         if (!r.ok) { what.textContent = ''; listErrors(errs, r.errors); return; }
-        var keys = r.keys ? ', and ' + r.keys + ' API key' + (r.keys === 1 ? '' : 's') : '';
+        var keys = r.keys ? ', and ' + plural(r.keys, 'API key') : '';
         if (apply) {
           what.textContent = 'Imported ' + r.files + ' files' + keys + '. This install\'s own are in ' + r.backup
             + '. Restart now so every part reads them.';
@@ -389,9 +391,7 @@
   }
   function saveFile(blob, name) {
     var a = el('a', {href: URL.createObjectURL(blob), download: name});
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
+    a.click();                                 // not in the page, as Export's link
     setTimeout(function () { URL.revokeObjectURL(a.href); }, 5000);
   }
   // Where a post opens: the text and the project's link; the image is pasted in.
@@ -409,7 +409,7 @@
     var now = new Date(), title = panel.querySelector('h2').textContent.trim();
     var day = now.getFullYear() + '-' + ('0' + (now.getMonth() + 1)).slice(-2) + '-' + ('0' + now.getDate()).slice(-2);
     var name = 'benchwarmers-' + title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') + '-' + day;
-    var credit = title + ' · Benchwarmers, ' + D.repo.replace(/^https:\/\//, '') + ' · ' + day;
+    var byline = D.repo.replace(/^https:\/\//, '') + ' · ' + day, credit = title + ' · Benchwarmers, ' + byline;
     menu.open = false;
     function said(text) { sm.textContent = text; setTimeout(function () { sm.textContent = 'Share'; }, 3500); }
     function failed(e) { if (!e || e.name !== 'AbortError') said('Share failed: ' + ((e && e.message) || e)); }
@@ -418,7 +418,7 @@
       return;
     }
     if (what === 'csv') { saveFile(new Blob([csv(shareRows(panel))], {type: 'text/csv'}), name + '.csv'); said('Table saved'); return; }
-    var png = shareImage(panel, D.repo.replace(/^https:\/\//, '') + ' · ' + day), post = POST[what];
+    var png = shareImage(panel, byline), post = POST[what];
     if (what === 'png') { png.then(function (blob) { saveFile(blob, name + '.png'); said('Image saved'); }, failed); return; }
     if (what === 'native') {
       png.then(function (blob) {
@@ -470,7 +470,7 @@
   function held() { return !!document.querySelector('dialog[open]') || busy($('tab-' + shown)); }
   function poll() {
     if (document.hidden || fetching[shown]) return;          // one at a time: a slow page is not asked again meanwhile
-    fetch('/api/stamp', {cache: 'no-store'}).then(function (r) { return r.json(); }).then(function (s) {
+    get('/api/stamp').then(function (s) {
       if (!(s.stamp > D.stamp + 0.5)) return;
       if (held()) { fresh.hidden = false; return; }
       fresh.hidden = true; D.stamp = s.stamp;
@@ -566,8 +566,7 @@
       d.appendChild(pre);
       d.addEventListener('toggle', function () {
         if (!d.open || pre.textContent) return;
-        fetch('/api/onboard?log=' + encodeURIComponent(x.log)).then(function (r) { return r.json(); })
-          .then(function (s) { pre.textContent = s.ok ? (s.tail || '(empty)') : s.errors.join(' '); });
+        get('/api/onboard?log=' + encodeURIComponent(x.log)).then(function (s) { pre.textContent = s.ok ? (s.tail || '(empty)') : s.errors.join(' '); });
       });
       m.onboard.appendChild(d);
     }
@@ -741,7 +740,7 @@
   var needsAsked = 0;
   function refreshNeeds(live) {
     var mine = ++needsAsked;
-    return fetch('/api/needs', {cache: 'no-store'}).then(function (r) { return r.json(); }).then(function (n) {
+    return get('/api/needs').then(function (n) {
       if (mine !== needsAsked) return;               // two actions close together: only the later answer is current
       swap('needs', n.html, live);
       var tab = document.querySelector('.tabs [data-tab=needs]'), count = tab.querySelector('.n');
@@ -769,7 +768,7 @@
     directory().catch(function () {});
   }
   function directory() {
-    return fetch('/api/directory', {cache: 'no-store'}).then(function (r) { return r.json(); }).then(function (d) {
+    return get('/api/directory').then(function (d) {
       var stamp = D.stamp; Object.assign(D, d); D.stamp = stamp;
     });
   }
@@ -790,7 +789,7 @@
   // An action shown in place is not "new results" to offer a reload for.
   // ponytail: a change by something else in the same second is swallowed too.
   function ownChange() {
-    fetch('/api/stamp', {cache: 'no-store'}).then(function (r) { return r.json(); }).then(function (s) { D.stamp = s.stamp; }).catch(function () {});
+    get('/api/stamp').then(function (s) { D.stamp = s.stamp; }).catch(function () {});
   }
 
   // ---- problem actions ---------------------------------------------------
@@ -961,7 +960,7 @@
     // Typing before the list arrives is lost, or lands on a row; the mode waits with it.
     o.find.readOnly = true; $('o-mode').disabled = $('o-vision').disabled = true;
     function ready() { o.find.readOnly = false; $('o-mode').disabled = $('o-vision').disabled = false; }
-    fetch('/api/candidates' + (fresh ? '?fresh=1' : '')).then(function (r) { return r.json(); }).then(function (res) {
+    get('/api/candidates' + (fresh ? '?fresh=1' : '')).then(function (res) {
       ready(); o.find.focus();
       if (!res.ok) { o.picker.textContent = ''; listErrors(o.errors, res.errors); return; }
       if (res.errors.length) listErrors(o.errors, res.errors);   // one endpoint down; the rest listed
@@ -1056,7 +1055,7 @@
   // unless the popup was closed or reopened meanwhile (the header has it then).
   function waitAndFollow(one, at, title, before, token, tries) {
     if (token !== waitToken || !od.open) return;
-    fetch('/api/onboard-queue').then(function (r) { return r.json(); }).then(function (q) {
+    get('/api/onboard-queue').then(function (q) {
       if (!q.ok || token !== waitToken || !od.open) return;
       var it = q.items[at];
       if (!it || it.served !== one.served || it.endpoint !== one.endpoint) { showQueue(q); return; }
@@ -1135,7 +1134,7 @@
   }
   var oqLive = null, oqFolded = {};
   function oqTail(log, pre) {
-    fetch('/api/onboard?log=' + encodeURIComponent(log)).then(function (r) { return r.json(); }).then(function (s) {
+    get('/api/onboard?log=' + encodeURIComponent(log)).then(function (s) {
       var end = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 24;   // at the bottom: stay there
       pre.textContent = s.ok ? (s.tail || '(no output yet)') : s.errors.join(' ');
       if (end) pre.scrollTop = pre.scrollHeight;
@@ -1150,7 +1149,7 @@
     oqLast = ''; oqRender(q);
   }
   function oqPoll() {
-    fetch('/api/onboard-queue').then(function (r) { return r.json(); }).then(function (q) {
+    get('/api/onboard-queue').then(function (q) {
       if (!q.ok) return;
       oqRender(q);
       if (q.running && !oqTimer) oqTimer = setInterval(oqPoll, 3000);
@@ -1161,7 +1160,7 @@
     post(path, {}).then(function (r) { if (r.ok) oqRender(r); else oq.text.textContent = r.errors.join(' '); });
   }
   $('oq-open').addEventListener('click', function () {
-    fetch('/api/onboard-queue').then(function (r) { return r.json(); }).then(function (q) { showQueue(q); oqPoll(); });
+    get('/api/onboard-queue').then(function (q) { showQueue(q); oqPoll(); });
   });
   oq.stop.addEventListener('click', function () { oqAct('/api/onboard-queue/stop'); });
   oq.clear.addEventListener('click', function () { oqAct('/api/onboard-queue/clear'); if (!oq.view.hidden) od.close(); });
@@ -1236,8 +1235,8 @@
   }
   function openDiscover(provider, model) {
     $('d-errors').textContent = '';
-    fetch('/api/discover-model?provider=' + encodeURIComponent(provider) + '&model=' + encodeURIComponent(model))
-      .then(function (r) { return r.json(); }).then(function (res) {
+    get('/api/discover-model?provider=' + encodeURIComponent(provider) + '&model=' + encodeURIComponent(model))
+      .then(function (res) {
         if (!res.ok) { listErrors($('d-errors'), res.errors); dd.showModal(); return; }
         if (res.errors.length) listErrors($('d-errors'), res.errors);   // a hub that could not be asked
         var r = res.model, p = $('d-profile'), list = $('d-routes');
@@ -1328,7 +1327,7 @@
   function follow(log, title, before) {
     runView(title, before + 'Running in the background; closing this does not stop it. Log: runs/' + log);
     timer = setInterval(function () {
-      fetch('/api/onboard?log=' + encodeURIComponent(log)).then(function (r) { return r.json(); }).then(function (s) {
+      get('/api/onboard?log=' + encodeURIComponent(log)).then(function (s) {
         if (!s.ok) return;
         o.log.textContent = s.tail || '(no output yet)';
         // Open the log the first time it has something in it; after that the user decides.
@@ -1512,7 +1511,7 @@
     // Its models go with it, after saying how many: each is retired as by
     // hand (evidence kept, restorable once the endpoint is back).
     remove: function (x) {
-      var n = x.models, them = n + ' model' + (n === 1 ? '' : 's');
+      var n = x.models, them = plural(n, 'model');
       ask(n ? 'Remove the ' + x.name + ' endpoint and the ' + them + ' on the bench through it?\n\n'
               + 'The ' + them + ' will be retired too. Their results and history are kept, and'
               + ' Restore brings them back if an endpoint named ' + x.name + ' is added again.'
@@ -1531,7 +1530,7 @@
   });
   function loadLimits() {
     var list = $('l-list');
-    fetch('/api/connections').then(function (r) { return r.json(); }).then(function (res) {
+    get('/api/connections').then(function (res) {
       list.textContent = '';
       res.connections.forEach(function (c) {
         var row = el('div', {class: 'endpoint'});
@@ -1570,7 +1569,7 @@
   // (serve.connect_local): asked each time the page is shown, since a look
   // takes up to a second; nothing shows when there is none.
   function loadFound() {
-    fetch('/api/connect/local', {cache: 'no-store'}).then(function (r) { return r.json(); }).then(function (res) {
+    get('/api/connect/local').then(function (res) {
       var list = $('e-found-list');
       if (!list) return;
       list.textContent = '';
@@ -1578,7 +1577,7 @@
         var row = el('div', {class: 'endpoint'}), left = el('div'), acts = el('div', {class: 'acts'});
         left.appendChild(el('div', {class: 'what'}, f.label + ' on :' + f.port));
         left.appendChild(el('div', {class: 'base'}, (f.key ? 'lists its models only with a key'
-          : f.models + ' model' + (f.models === 1 ? '' : 's')) + ' · ' + f.base));
+          : plural(f.models, 'model')) + ' · ' + f.base));
         var add = el('button', {class: 'btn small', type: 'button', 'aria-label': 'Add ' + f.label + ' on :' + f.port}, 'Add');
         add.addEventListener('click', function () { addFound(f); });
         acts.appendChild(add); row.appendChild(left); row.appendChild(acts);
@@ -1759,7 +1758,7 @@
   // The dialog's choices (API key, then each provider) and the Manage page's
   // own-app rows, from one listing.
   function loadProviders() {
-    return fetch('/api/connect').then(function (r) { return r.json(); }).then(function (res) {
+    return get('/api/connect').then(function (res) {
       cn.list.textContent = ''; $('cn-apps').textContent = '';
       choice('key', 'API key', '').addEventListener('click', function () { choose('key'); e.name.focus(); });
       res.providers.forEach(function (p) {
@@ -1854,7 +1853,7 @@
     var greyed = c.members.querySelectorAll('label.check.blocked:not(.clash):not([hidden])').length;
     var clash = c.members.querySelectorAll('label.check.clash').length;
     var paid = c.members.querySelectorAll('label.check[data-paid="1"][hidden]').length;
-    c.count.textContent = n + ' member' + (n === 1 ? '' : 's') + ' + ' + ex + ' explorer' + (ex === 1 ? '' : 's') +
+    c.count.textContent = plural(n, 'member') + ' + ' + plural(ex, 'explorer') +
       ' = ' + (n + ex) + ' calls per request' + (n && (n < 2 || n > 4) ? ' · two to four members is recommended' : '') +
       (shown.length < rows.length ? ' · showing ' + shown.length + ' of ' + rows.length + ' models' : '') +
       (paid ? ' (' + paid + ' paid hidden by the free tag)' : '') +
@@ -2070,7 +2069,7 @@
                         : Math.floor(n / 1000).toLocaleString() + 'k';
   }
   function loadCollections(keep) {
-    return fetch('/api/collections').then(function (r) { return r.json(); }).then(function (res) {
+    return get('/api/collections').then(function (res) {
       C = res; c.list.textContent = '';
       res.collections.forEach(function (row) {
         // The whole row opens the collection: no tight button pair on it.
@@ -2103,7 +2102,7 @@
           var lim = Object.keys(t.limits || {}).filter(function (k) { return t.limits[k]; })
             .map(function (k) { return t.limits[k].toLocaleString() + ' ' + k; });
           var can = t.capabilities.map(function (k) { return CAN[k] || k; });
-          var n = t.connections.length + ' connection' + (t.connections.length === 1 ? '' : 's');
+          var n = plural(t.connections.length, 'connection');
           left.appendChild(el('p', {class: 'together'},
             (t.context_window ? 'Prompts up to ' + tokens(t.context_window) + ' tokens' : 'Context window unknown') +
             (t.context_unknown.length ? ' (unknown for ' + t.context_unknown.join(', ') + '). ' : '. ') +
@@ -2189,7 +2188,7 @@
     if (!b) return;
     vcall = b.dataset.call;
     $('v-errors').textContent = ''; $('v-done').textContent = '';
-    fetch('/api/gateway-seat?call=' + encodeURIComponent(vcall)).then(function (r) { return r.json(); }).then(function (s) {
+    get('/api/gateway-seat?call=' + encodeURIComponent(vcall)).then(function (s) {
       if (!s.ok) { listErrors($('v-errors'), s.errors); vd.showModal(); return; }
       $('v-title').textContent = s.alias + ' · ' + s.seat;
       $('v-meta').textContent = s.model + ' · ' + s.status + ' in ' + s.seconds + 's · ' + s.at.slice(0, 16).replace('T', ' ') + ' · ' + s.call;
@@ -2219,7 +2218,7 @@
         chip.title = chip.title.replace(/(useful|not useful|verdict owed)( · [^·]*)$/, said[0] + '$2');
         if (owed && was !== (useful !== null)) {
           var n = Number(owed.dataset.n) + (was ? 1 : -1);
-          owed.dataset.n = n; owed.textContent = n + ' verdict' + (n === 1 ? '' : 's') + ' owed';
+          owed.dataset.n = n; owed.textContent = plural(n, 'verdict') + ' owed';
         }
       });
       vd.close(); ownChange();
@@ -2629,6 +2628,12 @@
       });
     }
     function rows(n) { return 20 * n + 80; }
+    // A name too long for its margin: `over` characters, and one for the …, out
+    // of its middle (Trend, Uptime); its hover keeps it whole.
+    function middle(s, over) {
+      var keep = s.length - over - 1;
+      return over <= 0 ? s : s.slice(0, Math.ceil(keep / 2)) + '…' + s.slice(s.length - Math.floor(keep / 2));
+    }
 
     // Trend: who moved, which way, by how much and how sure (serve.trend_data),
     // in the window the card's select says. A row per model with a task to
@@ -2640,7 +2645,6 @@
       if (!T.models.length) return el('p', {class: 'hint'}, 'No model has been scored twice on the same task yet.');
       var win = tpick ? tpick.value : String(T.choices[0]);
       function pts(c) { return (c >= 0 ? '+' : '') + Math.round(c * 100); }
-      function n(k, what) { return k + ' ' + what + (k === 1 ? '' : 's'); }
       var keys = [], heads = [], M = [];               // the rows in order; a group's heading; a model's row
       [['lower', 'Lower', err, err], ['higher', 'Higher', good, good], ['steady', 'Steady', ink, muted],
        ['too little', 'Too little to say', muted, null]].forEach(function (g) {
@@ -2661,13 +2665,13 @@
       function change(r) { return r.s.change; }
       function tip(r) {
         var s = r.s;
-        return r.key + ' · last ' + win + ' days\n' + s.says + '\nIn the window: ' + s.runsDown + ' of ' + n(s.runs, 'run')
+        return r.key + ' · last ' + win + ' days\n' + s.says + '\nIn the window: ' + s.runsDown + ' of ' + plural(s.runs, 'run')
           + ' below its earlier scores, ' + s.runsUp + ' above\nEach task, in the window against before:\n'
           + s.per.map(function (p) { return '  ' + p[0] + '  ' + pts(p[1]) + ' pts'; }).join('\n') + '\nLast scored ' + r.m.last;
       }
       function evidence(r) {
         var s = r.s;
-        return n(s.tasks, 'task') + ': ' + s.down + ' down, ' + s.up + ' up · ' + n(s.runs, 'run') + ' vs ' + s.before + ' before';
+        return plural(s.tasks, 'task') + ': ' + s.down + ' down, ' + s.up + ' up · ' + plural(s.runs, 'run') + ' vs ' + s.before + ' before';
       }
       // The name (at about 7 px a character, up to 260 px: a longer one loses its
       // middle, its hover keeps it whole), the bars (260 px at least), the
@@ -2678,10 +2682,6 @@
       w = $('chart-trend').clientWidth || w;          // its own box: a phone's is narrower than width()'s 520
       if (w < nameW + evW + 260) { evW = 0; nameW = Math.min(nameW, 130); }
       var fits = Math.floor((nameW - 24) / 7), right = evW || 20, wide = w < nameW + right + 140;
-      function cut(m) {
-        var k = m.length - fits;
-        return k <= 0 ? m : m.slice(0, Math.ceil((m.length - k - 1) / 2)) + '…' + m.slice(m.length - Math.floor((m.length - k - 1) / 2));
-      }
       w = Math.max(w, nameW + right + 140);
       // Symmetric, to the biggest bar and room for its number; 20 pts at least.
       var top = Math.max(0.2, Math.ceil((Math.max.apply(null, [0].concat(B.map(function (r) { return Math.abs(r.s.change); }))) + 0.05) * 10) / 10);
@@ -2703,7 +2703,7 @@
             textAnchor: 'start', dx: 4, fill: ink}),
           Plot.text(heads, {y: 'key', frameAnchor: 'left', dx: -nameW, textAnchor: 'start', fontWeight: 700, fill: 'c', text: 'text'}),
           Plot.text(M, {y: 'key', frameAnchor: 'left', dx: -nameW + 12, textAnchor: 'start', fill: quiet, title: tip,
-            text: function (r) { return cut(r.key); }}),
+            text: function (r) { return middle(r.key, r.key.length - fits); }}),
           evW ? Plot.text(M, {y: 'key', frameAnchor: 'right', dx: 12, textAnchor: 'start', fontSize: 12, fill: quiet, title: tip,
             text: evidence}) : null
         ]
@@ -2756,9 +2756,8 @@
               win > 7 ? {day: 'numeric', month: 'short'} : cellW < 48 ? {day: 'numeric'} : {weekday: 'short', day: 'numeric'});
           }},
           y: {domain: R.map(function (r) { return r.name; }), label: null, tickSize: 0, tickFormat: function (m) {
-            var s = label(by[m]), cut = s.length - fits;
-            return cut <= 0 ? s : m.slice(0, Math.ceil((m.length - cut - 1) / 2)) + '…'
-              + m.slice(m.length - Math.floor((m.length - cut - 1) / 2)) + '  (' + by[m].n + ')';
+            var s = label(by[m]), over = s.length - fits;
+            return over <= 0 ? s : middle(m, over) + '  (' + by[m].n + ')';
           }},
           marks: [
             // A day with nothing counted is hollow: absent, not failing.
@@ -2794,7 +2793,7 @@
       var diag = [];
       panels.forEach(function (s) { diag.push({panel: s, x: 0, y: 0}, {panel: s, x: 1, y: 1}); });
       function tip(p) {
-        return p.model + ' · ' + names[p.set] + '\n' + p.n + ' answer' + (p.n === 1 ? '' : 's') + ' it was about '
+        return p.model + ' · ' + names[p.set] + '\n' + plural(p.n, 'answer') + ' it was about '
           + Math.round(p.said * 100) + '% sure of\n' + Math.round(p.right * 100) + '% of them right';
       }
       var narrow = w < 700, f = narrow ? 'fy' : 'fx', opts = {}, by = {};
@@ -3055,22 +3054,13 @@
 
   }
   onLoad.suite = function () { drawCharts('suite'); };
-  // Uptime's days: the tables and the list for that window shown, its charts drawn again.
+  // Uptime's or Trend's window: that window's tables (and Uptime's list) shown, its charts drawn again.
   document.addEventListener('change', function (ev) {
-    var s = ev.target;
-    if (!s.matches('select[data-uptime-days]')) return;
-    s.closest('.panel').querySelectorAll('[data-uptime-window]').forEach(function (d) {
-      d.hidden = d.getAttribute('data-uptime-window') !== s.value;
+    var s = ev.target, part = s.matches('select[data-uptime-days]') ? 'uptime' : s.matches('select[data-trend-days]') ? 'trend' : '';
+    if (!part) return;
+    s.closest('.panel').querySelectorAll('[data-' + part + '-window]').forEach(function (d) {
+      d.hidden = d.getAttribute('data-' + part + '-window') !== s.value;
     });
-    drawCharts('uptime');
-  });
-  // Trend's window: that window's table shown, its chart drawn again.
-  document.addEventListener('change', function (ev) {
-    var s = ev.target;
-    if (!s.matches('select[data-trend-days]')) return;
-    s.closest('.panel').querySelectorAll('[data-trend-window]').forEach(function (d) {
-      d.hidden = d.getAttribute('data-trend-window') !== s.value;
-    });
-    drawCharts('trend');
+    drawCharts(part);
   });
 })();
