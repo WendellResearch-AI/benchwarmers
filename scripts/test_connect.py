@@ -7,8 +7,9 @@ serve.py does with them: the callback route on the real handler, saving the
 endpoint by save_endpoint's rules (an owner's headers kept), the refresh token
 beside the key, a device sign-in finished by polling, Ollama's local add,
 models on a renewing endpoint routed to the built-in client, and model servers
-found on this machine (local_servers). Endpoints, keys, the change log and
-connect.json all point at a temp folder.
+found on this machine and what they say of their models for the catalog
+(local_servers). Endpoints, keys, the change log and connect.json all point at
+a temp folder.
 """
 
 from __future__ import annotations
@@ -85,6 +86,10 @@ class Server(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(raw)
 
+    def do_POST(self):                           # noqa: N802 -- Ollama's /api/show: one answer whatever is asked
+        self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        self.do_GET()
+
     def log_message(self, *_a):
         pass
 
@@ -102,8 +107,16 @@ def local_servers() -> None:
                                                 for i, o in enumerate(owners)]}
     refused, version = (401, {"error": "Missing API key"}), (200, {"version": "1.0"})
     shapes = {
-        "ollama": {"/v1/models": listing("library"), "/api/version": version},
-        "lmstudio": {"/v1/models": listing(None, None, None), "/api/v1/models": (200, {"models": [{"key": "m0"}]})},
+        "ollama": {"/v1/models": listing("library"), "/api/version": version, "/api/show": (200, {
+            "capabilities": ["completion", "tools"], "model_info": {
+                "general.architecture": "qwen35", "qwen35.context_length": 262144,
+                "qwen35.rope.scaling.original_context_length": 16384}})},
+        "lmstudio": {"/v1/models": listing(None, None, None), "/api/v1/models": (200, {"models": [
+            {"key": "pub/m0", "max_context_length": 32768, "variants": ["pub/m0@q4_k_m"],
+             "capabilities": {"vision": True, "trained_for_tool_use": False},
+             "loaded_instances": [{"id": "pub/m0:2", "config": {"context_length": 4096}}]},
+            {"key": "m1", "max_context_length": 8192, "loaded_instances": [],
+             "capabilities": {"vision": False, "trained_for_tool_use": True, "reasoning": {"default": "on"}}}]})},
         "jan": {"/v1/models": refused},
         "llamacpp": {"/v1/models": listing("llamacpp")},
         "localai": {"/v1/models": listing(None, None), "/version": version},
@@ -156,6 +169,20 @@ def local_servers() -> None:
         listed = {f["id"]: f for f in serve.connect_local()["found"]}
         assert not {"lmstudio", "jan"} & set(listed) and "ollama" in listed, listed
         assert listed["ollama"]["name"] == "ollama" and listed["litellm"]["name"] == "litellm", listed
+        # What each says of its own models, for the catalog: LM Studio's listing by every id a
+        # request can name, Ollama's /api/show a model at a time, and nothing from anything else.
+        import catalog
+        connect.locked.update(connect.endpoints.FILE, lambda d: d.update(
+            olla={"base": f"http://127.0.0.1:{port['ollama']}/v1", "key": "olla"},
+            vl={"base": f"http://127.0.0.1:{port['vllm']}/v1/", "key": "vl"}))
+        said, facts = catalog._native("mine", ["ignored"])
+        seen = {"context_window": 4096, "vision": True, "tools": False, "reasoning": False}
+        assert said == "lmstudio /api/v1/models" and facts["pub/m0"] == facts["pub/m0@q4_k_m"] == \
+            facts["pub/m0:2"] == seen, facts
+        assert facts["m1"] == {"context_window": 8192, "vision": False, "tools": True, "reasoning": True}, facts
+        assert catalog._native("olla", ["q:2b"]) == ("ollama /api/show", {"q:2b": {
+            "context_window": 262144, "vision": False, "tools": True, "reasoning": False}})
+        assert catalog._native("vl", ["m0"]) == ("", {})
     finally:
         connect.LOCAL.clear()
         connect.LOCAL.update(saved)

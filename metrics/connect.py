@@ -226,15 +226,36 @@ LOCAL: dict[str, dict] = {
 }
 
 
+def look(url: str, timeout: float = 0.5, body: dict | None = None, headers: dict | None = None) -> tuple[int, object]:
+    """(status, the answer as JSON or text); (0, None) when nothing usable
+    answers. A GET, or a POST of `body` as JSON. Never through a proxy or a
+    redirect: it reaches `url`'s own host or nothing, a key in `headers` too."""
+    import client                                # its no-redirect handler
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), client._NoRedirect)
+    sent = {**UA, **({"Content-Type": "application/json"} if body else {}), **(headers or {})}
+    try:
+        try:
+            with opener.open(urllib.request.Request(url, json.dumps(body).encode() if body else None, sent),
+                             timeout=timeout) as r:
+                status, raw = r.status, r.read(1 << 20)
+        except urllib.error.HTTPError as e:
+            status, raw = e.code, e.read(1 << 16)
+    except Exception:                            # noqa: BLE001 -- refused, timed out, or not HTTP at all
+        return 0, None
+    try:
+        return status, json.loads(raw)
+    except ValueError:
+        return status, raw.decode("utf-8", "replace")
+
+
 def detect(skip=(), timeout: float = 0.5) -> list[dict]:
     """The LOCAL servers answering on this machine, but none on a port in
     `skip` (this install's own) or already an endpoint. Each: id, label, port,
     base, kind, hub, provider (Ollama's Connect flow), models (None when the
     list needs a key) and key. Every port at once, so a look takes about
-    `timeout`, a server that hangs included."""
-    import client                                # its no-redirect handler: a GET here never leaves this machine
+    `timeout`, a server that hangs included. Loopback only, so a GET here
+    never leaves this machine."""
     from concurrent.futures import ThreadPoolExecutor
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), client._NoRedirect)
     taken = set(skip) | _endpoint_ports()
     by_port: dict[int, list[str]] = {}
     for sid, s in LOCAL.items():
@@ -242,24 +263,8 @@ def detect(skip=(), timeout: float = 0.5) -> list[dict]:
             if port not in taken:
                 by_port.setdefault(port, []).append(sid)
 
-    def look(port: int, path: str) -> tuple[int, object]:
-        """(status, the answer as JSON or text); (0, None) when nothing usable answers."""
-        try:
-            try:
-                with opener.open(urllib.request.Request(f"http://127.0.0.1:{port}{path}", headers=UA),
-                                 timeout=timeout) as r:
-                    status, raw = r.status, r.read(1 << 20)
-            except urllib.error.HTTPError as e:
-                status, raw = e.code, e.read(1 << 16)
-        except Exception:                        # noqa: BLE001 -- refused, timed out, or not HTTP at all
-            return 0, None
-        try:
-            return status, json.loads(raw)
-        except ValueError:
-            return status, raw.decode("utf-8", "replace")
-
     def identify(port: int, ids: list[str]) -> dict | None:
-        got = {"/v1/models": look(port, "/v1/models")}
+        got = {"/v1/models": look(f"http://127.0.0.1:{port}/v1/models", timeout)}
         status, data = got["/v1/models"]
         keyed = status in (401, 403)
         if not keyed and not (status == 200 and isinstance(data, dict) and isinstance(data.get("data"), list)):
@@ -268,7 +273,7 @@ def detect(skip=(), timeout: float = 0.5) -> list[dict]:
             s = LOCAL[sid]
             path, test = s.get("sign") or ("/v1/models", None)
             if path not in got:
-                got[path] = look(port, path)
+                got[path] = look(f"http://127.0.0.1:{port}{path}", timeout)
             if test is None or test(*got[path]):
                 return {"id": sid, "label": s["label"], "port": port, "kind": s["kind"], "hub": s.get("hub", ""),
                         "provider": s.get("provider", ""), "docs": s["docs"],
