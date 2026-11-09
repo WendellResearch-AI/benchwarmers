@@ -450,6 +450,11 @@ the caller sees would wait for or change because of them. Not built.
 
 ### Pointing agents at a collection
 
+The dashboard's **Clients** page has each app's set-up filled in from the
+install (opencode, VS Code chat, Codex, Zed, Continue, Cline and Kilo Code,
+Claude Code, goose, chat apps), each written from that app's docs on the date
+it shows. By hand:
+
 The base URL is the server: `http://127.0.0.1:8122` (the dashboard's port)
 or `:8123` (`gateway.py`). On this machine any key text works; elsewhere,
 or where keys are required, use a gateway key from Settings.
@@ -477,7 +482,7 @@ over past a member's 429 on the first turn and staying on one model after.
 "http://127.0.0.1:8122/v1"`, `wire_api = "responses"`, the model
 `bench/core:route`, and the gateway key as its API key. Function and custom
 tools work; hosted tools (`web_search`, `local_shell`) are refused, so turn
-them off. Nothing is stored: `previous_response_id` is refused, so the
+them off (Codex: `web_search = "disabled"`). Nothing is stored: `previous_response_id` is refused, so the
 client must send the whole conversation every turn.
 Not checked against a real Codex yet.
 
@@ -552,14 +557,14 @@ key limited to its collection and a rate, or keep the key on the app's server.
 | Formats | `metrics/formats.py`: Anthropic Messages, Responses, legacy completions, Ollama and Gemini, each translated to and from OpenAI messages (Other API formats); the outbound half is for the built-in client to call those APIs natively, not wired yet. |
 | Collections | `metrics/bench_collections.py` reads the two config files and computes explorer seats. |
 | Seat router | `route.panel(members=…, explorers=n)` fills explorer seats by staleness for the shape. |
-| Shape picker | Optional decision model (above). |
+| Decision models | `metrics/decide.py`: the shape picker and the collection pick (above), each asking the model best on the decision benchmark; every call in `metrics/decisions.jsonl`. Benchmarks › Decision models shows the benchmark and who each use asks (BENCHMARKS.md). |
 | Call log | `runs/gateway/calls.jsonl`, gitignored: every seat's answer, status, timing and call id. |
 | Evidence | Each seat is recorded in `metrics/offloads.jsonl` as an unjudged offload when it answers; `offload.py verdict <call id>` or `POST /bench/verdict` replaces it. |
 | Collections tab | The collections, each drawn as its panel sits, and their form (one row per model, a chip per provider). Then the gateway's recent requests: every seat's status and verdict, how long the caller waited (Time), and how many verdicts are owed. Clicking a seat opens its answer and the verdict form. |
 | Catalog | `metrics/catalog.py`: context window, output limit, rate limits and capabilities per model, refreshed daily by the built-in scheduler; a free model whose price goes above zero raises a "went paid" alert. |
 | Discover tab | `metrics/discover.py`: FreeLLMAPI (leading), models.dev and each Open WebUI connection's own model list merged into one list of models worth adding, free first, FreeLLMAPI's smartest first, marked by whether you can already reach the provider (matched to a connection by API host or name) and whether the model is on the bench (on another provider counts as "also on bench"). Fetched daily with the catalog; Refresh lists fetches them now. |
 | Merged replies | Opt-in: one merger answer as `content`, every seat still in `bench` (The reply). |
-| MCP server | `mcp_server.py`: the same three routes as MCP tools for agents, `list_collections`, `ask` and `verdict`. Two transports for one `answer()`: `POST /mcp` (or `/v1/mcp`) on either port, streamable HTTP with a JSON reply per request, its tools calling the server's own routes over loopback with the caller's credential and Host; and stdio (`benchwarmers mcp`), a caller like any other over HTTP (`BENCHWARMERS_URL`, `BENCHWARMERS_KEY`). The Claude Code plugin in `plugin/` connects to `/mcp` and adds a command, a skill and a `Stop` hook (`plugin/hooks/hooks.json`, an `mcp_tool` hook) that calls `pending_verdicts` with the session's `transcript_path`: the call ids in the transcript (Claude Code keeps no `Mcp-Session-Id`, so the transcript is the record of whose panels they were), of which the call log says which are answered seats with no verdict (`POST /bench/pending`), returned once as `additionalContext`. A server on another machine cannot read the transcript, so there the hook says nothing. A tool call answers as SSE with progress notifications, which reset Claude Code's 300-second idle limit. |
+| MCP server | `mcp_server.py`: the gateway's routes as four MCP tools for agents, `list_collections`, `ask`, `verdict` and `pending_verdicts`. Two transports for one `answer()`: `POST /mcp` (or `/v1/mcp`) on either port, streamable HTTP with a JSON reply per request, its tools calling the server's own routes over loopback with the caller's credential and Host; and stdio (`benchwarmers mcp`), a caller like any other over HTTP (`BENCHWARMERS_URL`, `BENCHWARMERS_KEY`). The Claude Code plugin in `plugin/` connects to `/mcp` and adds a command, a skill and a `Stop` hook (`plugin/hooks/hooks.json`, an `mcp_tool` hook) that calls `pending_verdicts` with the session's `transcript_path`: the call ids in the transcript (Claude Code keeps no `Mcp-Session-Id`, so the transcript is the record of whose panels they were), of which the call log says which are answered seats with no verdict (`POST /bench/pending`), returned once as `additionalContext`. A server on another machine cannot read the transcript, so there the hook says nothing. A tool call answers as SSE with progress notifications, which reset Claude Code's 300-second idle limit. |
 
 ## Rules
 
@@ -601,7 +606,9 @@ copy of the alias table and a plugin to write bench evidence.
   UIs: merged replies, opt-in, with every seat still called, recorded and
   returned in `bench`, and the merge told to keep who said what.)
 - **Collections replace `bench/panel`.** Every request names a collection;
-  the bench adds the explorers.
+  the bench adds the explorers. (Since 2026-11-08 a request that names none
+  can be given one by a confident decision model, never silently: "No default
+  collection".)
 - **No single-model routes**, which also dropped the shadow worker and judge
   model from the first draft: they learned from single-model traffic that no
   longer passes through the bench.

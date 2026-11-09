@@ -171,6 +171,50 @@ def main() -> int:
     ok = (set(view["served"]) == set(view["models"]) and victim not in view["served"]
           and view["served"].get(other) == d3[other]["served"])
     print(("ok   " if ok else "FAIL ") + "collection view: served name for every member choice"); failures += 0 if ok else 1
+    # Clients: every snippet parses in its format, names each collection, sets the
+    # timeouts a panel needs, and a made key goes only into a shell line or a field.
+    import tomllib
+    try:
+        import yaml                                     # comes with the llm CLI; the built-in client's venv may lack it
+        load_yaml = yaml.safe_load
+    except ImportError:
+        load_yaml = None
+    bad = []
+    for keys in (False, True):
+        setups = {c["id"]: c for c in serve.client_setups("http://127.0.0.1:8122", [("core", 200_000, False),
+                                                                                    ("fast", None, True)], keys)}
+        parsed = {}
+        for c in setups.values():
+            for b in c["blocks"]:
+                parse = {"json": json.loads, "toml": tomllib.loads, "yaml": load_yaml}.get(b["lang"])
+                try:
+                    parsed[c["id"], b["label"]] = parse(b["text"]) if parse else b["text"]
+                except Exception as exc:                # noqa: BLE001
+                    bad.append(f"{c['id']} {b['label']} does not parse: {exc}")
+                if b["key"] and b["lang"] not in ("sh", "bat", "text"):
+                    bad.append(f"{c['id']} {b['label']}: a key would go into a file")
+            alltext = "\n".join(b["text"] for b in c["blocks"])
+            want = ("bench/core:merged", "bench/fast:merged") if c["id"] == "chat" else \
+                ("bench/core:route", "bench/fast:route") if c["id"] != "codex" else ("bench/core:route",)
+            bad += [f"{c['id']} lacks {w}" for w in want if w not in alltext]
+        oc, cx = parsed.get(("opencode", "opencode.json")), parsed.get(("codex", "config.toml"))
+        if oc and cx:
+            p = oc["provider"]["benchwarmers"]
+            if (oc["mcp"]["benchwarmers"]["timeout"] != 900_000 or cx["mcp_servers"]["benchwarmers"]["tool_timeout_sec"] != 900
+                    or cx["model_providers"]["benchwarmers"]["wire_api"] != "responses" or cx["web_search"] != "disabled"
+                    or p["models"]["bench/fast:route"]["limit"]["context"] != serve.UNKNOWN_CONTEXT
+                    or ("apiKey" in p["options"]) != keys or ("env_key" in cx["model_providers"]["benchwarmers"]) != keys):
+                bad.append(f"opencode or Codex settings wrong (keys={keys})")
+        if parsed.get(("cline", "Cline: cline_mcp_settings.json"), {}).get("mcpServers", {}).get("benchwarmers", {}).get("timeout") != 900:
+            bad.append("Cline's MCP timeout is not 900 s")
+        if not all(m["toolCalling"] for m in parsed.get(("vscode", "chatLanguageModels.json"), [{}])[0].get("models", [{}])):
+            bad.append("a VS Code model without toolCalling is hidden from the agent picker")
+        if load_yaml and parsed.get(("goose", "config.yaml"), {}).get("extensions", {}).get("benchwarmers", {}).get("timeout") != 900:
+            bad.append("goose's extension timeout is not 900 s")
+    ok = not bad
+    print(("ok   " if ok else "FAIL ") + "client set-ups: JSON, TOML" + (", YAML" if load_yaml else " (YAML unread: no PyYAML)")
+          + " parse, collections named, timeouts set, keys only in shell lines and fields" + ("" if ok else f" -> {bad}"))
+    failures += 0 if ok else 1
     # restore: same alias back, out of retired.json, role and ad hoc kept, and
     # back into the collections that still exist (one deleted, one changed since)
     serve.delete_collection("doomed")
@@ -629,18 +673,22 @@ def main() -> int:
         late = any(r[3] == "tr-late" for r in serve.note_rows())
     t = serve.trend_rows()["models"]
     w = {m: t[m]["windows"][serve.TREND_DAYS[0]] for m in ("tr-down", "tr-once", "tr-thin")}
-    run10 = [r for r in t["tr-down"]["runs"] if r[0] == (today - dt.timedelta(days=10)).isoformat()]
-    twice = [r[:3] for r in t["tr-twice"]["runs"]]
-    late = late and "tr-late" in t
+    twice = t["tr-twice"]
+    late = late and "tr-late" in t and not t["tr-late"]["compared"]
+    # The chart's and the table's order: by flag, the biggest move first; too little by name.
+    flags = {"x": ("higher", 0.1), "y": ("higher", 0.3), "z": ("lower", -0.1), "b": ("too little", 0.1), "a": ("too little", 0.9)}
+    order = sorted(flags, key=lambda m: serve._trend_order(m, dict(zip(("state", "change"), flags[m]))))
     ok = ({m: s["state"] for m, s in w.items()} == {"tr-down": "lower", "tr-once": "steady", "tr-thin": "too little"}
+          and [[k, round(v, 9)] for k, v in w["tr-down"]["per"]] == [["tb", -0.6], ["ta", -0.4], ["tc", -0.4]]
+          and order == ["z", "y", "x", "a", "b"]
           and (w["tr-down"]["tasks"], w["tr-down"]["down"], w["tr-down"]["runs"], w["tr-down"]["before"]) == (3, 3, 2, 2)
           and abs(w["tr-down"]["change"] + 1.4 / 3) < 1e-9 and w["tr-once"]["runsDown"] == 1
-          and "tr-old" not in t and len(run10) == 1 and abs(run10[0][1] + 0.5) < 1e-9 and run10[0][2] == 2
+          and "tr-old" not in t and t["tr-down"]["last"] == (today - dt.timedelta(days=3)).isoformat()
           and ("ta", "tr-down") in serve._suite_scores() and serve.trend_rows() is serve.trend_rows()
-          and late and twice == [[(today - dt.timedelta(days=50)).isoformat(), None, 0],
-                                 [(today - dt.timedelta(days=10)).isoformat(), 0.5, 1]])
+          and late and twice["compared"] and twice["last"] == (today - dt.timedelta(days=10)).isoformat()
+          and abs(twice["windows"][serve.TREND_DAYS[0]]["change"] - 0.5) < 1e-9)   # day 50's two scores: one mean
     print(("ok   " if ok else "FAIL ") + "trend: a model against itself, two runs to be a trend"
-          + ("" if ok else f" -> {w} {run10} {twice} late {late}"))
+          + ("" if ok else f" -> {w} {twice} late {late}"))
     failures += 0 if ok else 1
 
     # gzip for a caller off this machine that takes it; never over loopback.
@@ -769,6 +817,44 @@ def main() -> int:
           and "pick_confidence" not in json.loads(gw.read_text(encoding="utf-8")))
     print(("ok   " if ok else "FAIL ") + "gateway settings: the collection pick, on, off and its confidence"
           + ("" if ok else f" -> {saved} {bad} {kept}"))
+    failures += 0 if ok else 1
+    # Export and import: the settings and the endpoints' keys out of this copy, into
+    # an empty install; a preview writes nothing; a name outside the scope is refused whole.
+    import io
+    import zipfile
+    real_llm, there = serve.endpoints.LLM_DIR, serve.DATA
+    serve.endpoints.LLM_DIR = there
+    ep = next(e for e in serve.endpoints.load().values() if e.get("key"))
+    (there / "keys.json").write_text(json.dumps({ep["key"]: "k-1", "unrelated": "k-2"}), encoding="utf-8")
+    (cfg / "x.json.lock").write_text("", encoding="utf-8")
+    plain, with_keys, evil = io.BytesIO(), io.BytesIO(), io.BytesIO()
+    serve.export_zip("settings", False, plain)
+    made = serve.export_zip("settings", True, with_keys)
+    names = zipfile.ZipFile(plain).namelist()
+    carried = json.loads(zipfile.ZipFile(with_keys).read("keys.json"))
+    other = there / "other"
+    other.mkdir()
+    serve.DATA = serve.endpoints.LLM_DIR = other
+    with_keys.seek(0)
+    look = serve.import_zip(with_keys, apply=False)
+    wrote_nothing = not (other / "config").exists()
+    with_keys.seek(0)
+    done = serve.import_zip(with_keys, apply=True)
+    with zipfile.ZipFile(evil, "w") as z:
+        z.writestr("manifest.json", json.dumps({"benchwarmers_export": 1, "scope": "settings"}))
+        z.writestr("config/../../outside.txt", "x")
+    evil.seek(0)
+    refused = serve.import_zip(evil, apply=True)
+    ok = ("manifest.json" in names and "keys.json" not in names and "config/endpoints.json" in names
+          and not any(n.endswith(".lock") for n in names) and carried == {ep["key"]: "k-1"} and made["keys"] == 1
+          and look["ok"] and look["replaces"] == 0 and look["keys"] == 1 and wrote_nothing
+          and done["ok"] and (other / done["backup"]).is_file()
+          and (other / "config" / "endpoints.json").read_bytes() == (cfg / "endpoints.json").read_bytes()
+          and json.loads((other / "keys.json").read_text(encoding="utf-8")) == {ep["key"]: "k-1"}
+          and not refused["ok"] and not (there / "outside.txt").exists() and not (there.parent / "outside.txt").exists())
+    serve.DATA, serve.endpoints.LLM_DIR = there, real_llm
+    print(("ok   " if ok else "FAIL ") + "export and import: settings and keys out, into an empty install, nothing outside"
+          + ("" if ok else f" -> {names[:5]} {carried} {look} {done} {refused}"))
     failures += 0 if ok else 1
     decide.FILE, decide.LOG, decide.DECIDED, decide.RESULTS = real_decide
     shutil.rmtree(tmp, ignore_errors=True)

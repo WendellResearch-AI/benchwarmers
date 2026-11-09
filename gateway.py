@@ -175,7 +175,7 @@ IMAGE_TOKENS = 2_500   # per image, in the size check (estimate_tokens says why)
 IMAGE_URL = re.compile(r"(https?://[^\s/?#]+|data:image/[\w.+-]+;base64,)", re.I)
 # How an image or a URL is written down: in metrics/client.py, which writes a
 # failed call's error to the ledger and so redacts it too.
-from client import BASE64, DATA_URLS, URLS, placeholder, redact  # noqa: E402,F401
+from client import placeholder, redact  # noqa: E402
 HEADER_NAMES = re.compile(r"[A-Za-z0-9-]{1,64}(\s*,\s*[A-Za-z0-9-]{1,64}){0,31}")
 SEAT_KEYS = ("call", "seat", "alias", "status", "seconds", "answer", "error")
 QUERY_KEY = re.compile(r"([?&](?:key|api_key|access_token)=)[^&\s'\"]*", re.I)
@@ -285,7 +285,7 @@ def pick_collection(messages: list[dict], who: str) -> tuple[str | None, dict]:
     if not s["pick_collection"] or not cols:
         return None, {}
     system, prompt = flatten(messages)
-    whole = f"{system}\n\n{prompt}".strip()
+    whole = decide.request_text({"system": system, "prompt": prompt})       # as the benchmark asks it
     if not whole:
         return None, {}
     answer, by, why = decide.pick("collection", whole, decide.collection_options(cols), "pick_collection")

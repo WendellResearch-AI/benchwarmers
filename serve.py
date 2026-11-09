@@ -127,6 +127,9 @@ def font_file(name: str) -> pathlib.Path | None:
 # Images a theme may draw (Hardwood's centre court): named here, served from
 # ui/ with a fixed type, so the route cannot be walked to other files.
 ASSETS = {"mascot.png": "image/png"}
+# The logo, header and byline in one, for a shared report's image (bench.js
+# "share"): the repository's own, at /ui/<name>; light and dark grounds.
+LOGOS = {"logo.svg": ROOT / ".github" / "logo.svg", "logo-dark.svg": ROOT / ".github" / "logo-dark.svg"}
 
 
 def read(path: pathlib.Path) -> str:
@@ -1316,6 +1319,17 @@ def connect_list_suggest(provider: str) -> str:
     return provider if local and _signed_in_as(provider, provider) else free_name(provider)
 
 
+def connect_local() -> dict:
+    """Model servers running on this machine at their usual ports that are not
+    endpoints yet (connect.detect), each with the name it would be added under.
+    Asked when the Endpoints page is shown, never in its render: a look takes
+    up to a second. Never this install's ports, nor another one's defaults."""
+    found = connect.detect(skip={PORT, gateway.PORT, 8122, 8123})
+    for f in found:
+        f["name"] = connect_list_suggest(f["provider"]) if f["provider"] else free_name(f["id"])
+    return {"ok": True, "errors": [], "found": found}
+
+
 def connect_app(provider: str, client_id: str) -> dict:
     """Use your own app: this install's client id for a provider that needs a
     registration, instead of the one Benchwarmers ships. Empty goes back to it."""
@@ -1997,6 +2011,10 @@ def th(label: str, num: bool = False) -> str:
     return f"<th data-sortable tabindex='0'{' class=num' if num else ''}>{label}</th>"
 
 
+def ext_link(url: str, text: str) -> str:
+    return f"<a href='{esc(url)}' target='_blank' rel='noopener'>{esc(text)}</a>"
+
+
 STATUS = {
     # failure class -> (chip label, chip class, plain reading)
     "capacity": ("throttled", "warn", "rate limit or quota"),
@@ -2238,7 +2256,7 @@ def actions_page(groups: dict, auto: list) -> str:
         if not url:
             return ""
         shown = re.sub(r"^https?://", "", url).split("?")[0]
-        return f" <a href='{esc(url)}' target='_blank' rel='noopener'>{esc(shown)} ↗</a>"
+        return " " + ext_link(url, shown + " ↗")
 
     def why(text: str, url: str, title: str) -> str:
         return (f"<td class='why' title='{esc(title)}'><div class='said-line'><span class='said'>{esc(text)}</span>"
@@ -2492,12 +2510,24 @@ def on_bench() -> set[str]:
     return set(registered().values())
 
 
+# Every report with a chart shares the same way (bench.js "share"): its charts as
+# an image, its table as Markdown or CSV, or a post with the image on the clipboard.
+SHARE = ("<details class='share'><summary>Share</summary><div class='share-menu'>"
+         + "".join(f"<button type='button' class='linkish' data-share='{k}'>{label}</button>" for k, label in (
+             ("copy", "Copy image"), ("png", "Download image"), ("md", "Copy table as Markdown"),
+             ("csv", "Download table as CSV"), ("native", "Share…")))
+         + "<span class='share-to'>Post on " + ", ".join(
+             f"<button type='button' class='linkish' data-share='{k}'>{label}</button>" for k, label in (
+                 ("x", "X"), ("bsky", "Bluesky"), ("linkedin", "LinkedIn"), ("reddit", "Reddit")))
+         + "</span></div></details>")
+
+
 def chart_card(title: str, sub: str, chart_id: str, table: str, key: str, extra: str = "",
                retired: bool = True, after: str = "") -> str:
     """A Benchmarks panel: the chart first (drawn by bench.js with Observable
     Plot), the table folded under it, the key under that. `extra` goes above
     the chart, `after` right under it."""
-    return (f"<div class='panel'><h2>{title}</h2><p class='sub'>{sub}</p>{extra}"
+    return (f"<div class='panel'>{SHARE}<h2>{title}</h2><p class='sub'>{sub}</p>{extra}"
             f"<div class='chart' id='{chart_id}'></div>{after}"
             "<details class='key'><summary>Table</summary><div class='toolbar'><input type='search'"
             " data-filter placeholder='Filter by model or connection' aria-label='Filter rows'>"
@@ -2829,7 +2859,7 @@ def vision_card() -> str:
     held = (f"<p class='hint'>The vision tasks wait until {esc(v['held'])}: no run picks them before then"
             " (<code>vision_from</code> in <code>config/suite.json</code>; remove it to start them now).</p>"
             if v["held"] else "")
-    return ("<div class='panel'><h2>Vision</h2><p class='sub'>Reading images: fields read right on pictures with"
+    return (f"<div class='panel'>{SHARE}<h2>Vision</h2><p class='sub'>Reading images: fields read right on pictures with"
             " a known answer, then real work on images and how much of it was actually checked.</p>" + held +
             "<h3 class='chart-head'>On the vision tasks, field by field</h3><div class='chart' id='chart-vision-fields'></div>"
             "<h3 class='chart-head'>On real work with images, by how each seat was judged</h3>"
@@ -2893,12 +2923,11 @@ def trend_rows() -> dict:
 
 
 def _trend_rows(rows: list[tuple], today: datetime.date) -> dict:
-    """{"first": the first day with a score, "models": alias -> {"runs": [[day,
-    change, tasks compared, hover]], "last": day, "windows": {days: summary}}}.
-    A run's change is against the model's scores on the same tasks on earlier
-    days (None when it had none); a window's summary is the scores in the
-    window against those before it. A task asked twice in a day counts once
-    that day, as the mean of its scores."""
+    """{"first": the first day with a score, "models": alias -> {"last": day,
+    "compared": a task scored on two days or more, "windows": {days:
+    summary}}}. A window's summary is the scores in the window against those
+    before it. A task asked twice in a day counts once that day, as the mean
+    of its scores."""
     by: dict[str, dict[tuple, dict]] = {}               # alias -> (task, of) -> day -> [found], oldest first
     first = ""
     for day, _run, task, alias, found, _inv, _s in rows:
@@ -2912,28 +2941,20 @@ def _trend_rows(rows: list[tuple], today: datetime.date) -> dict:
         return sum(xs) / len(xs)
     models = {}
     for alias, found_by_task in by.items():
-        runs: dict[str, list] = {}                      # day -> [[change or None, hover line]]
-        tasks: dict[tuple, list] = {}                   # (task, of) -> [(day, share)], oldest first
-        for (task, of), days in found_by_task.items():
-            scores = tasks[(task, of)] = [(d, mean(f) / of) for d, f in days.items()]
-            for i, (day, share) in enumerate(scores):
-                before = [s for _d, s in scores[:i]]
-                runs.setdefault(day, []).append(
-                    [share - mean(before) if before else None,
-                     f"{task} {', '.join(f'{n}/{of}' for n in days[day])}"
-                     + (f", before {mean(before) * of:.3g}/{of} over {len(before)} run{'s' * (len(before) != 1)}"
-                        if before else ", its first score")])
+        tasks = {(task, of): [(d, mean(f) / of) for d, f in days.items()]     # [(day, share)], oldest first
+                 for (task, of), days in found_by_task.items()}
         windows = {}
         for w in TREND_DAYS:
             since = (today - datetime.timedelta(days=w - 1)).isoformat()
-            moves, recent, earlier = [], {}, set()      # per task; day -> [moves]; days before
-            for scores in tasks.values():
+            moves, recent, earlier, per = [], {}, set(), []     # per task; day -> [moves]; days before; [task, move]
+            for (task, _of), scores in tasks.items():
                 old = [s for d, s in scores if d < since]
                 new = [(d, s) for d, s in scores if d >= since]
                 if not old or not new:
                     continue
                 base = mean(old)
                 moves.append(mean([s for _d, s in new]) - base)
+                per.append([task, moves[-1]])
                 earlier |= {d for d, _s in scores if d < since}
                 for d, s in new:
                     recent.setdefault(d, []).append(s - base)
@@ -2950,11 +2971,10 @@ def _trend_rows(rows: list[tuple], today: datetime.date) -> dict:
             else:
                 state = "steady"
             windows[w] = {"state": state, "change": change, "tasks": len(moves), "down": down, "up": up,
-                          "runs": len(recent), "runsDown": runs_down, "runsUp": runs_up, "before": len(earlier)}
-        models[alias] = {
-            "runs": [[d, mean(c) if (c := [x[0] for x in v if x[0] is not None]) else None, len(c),
-                      "\n".join(x[1] for x in v)] for d, v in sorted(runs.items())],
-            "last": max(runs), "windows": windows}
+                          "runs": len(recent), "runsDown": runs_down, "runsUp": runs_up, "before": len(earlier),
+                          "per": sorted(per, key=lambda p: p[1])}
+        models[alias] = {"last": max(d for s in tasks.values() for d, _s in s),
+                         "compared": any(len(s) > 1 for s in tasks.values()), "windows": windows}
     return {"first": first, "models": models}
 
 
@@ -2968,21 +2988,25 @@ def _trend_says(s: dict) -> str:
             f" against {s['before']} before")
 
 
+def _trend_order(m: str, s: dict) -> tuple:
+    """The chart's and the table's order: lower, higher, steady, too little;
+    the biggest move first in each (too little: by name, its move means nothing)."""
+    return TREND_STATES.index(s["state"]), 0 if s["state"] == "too little" else -abs(s["change"]), m
+
+
 def trend_data() -> dict:
-    """For bench.js: registered models with a run to compare, each run as
-    [day, change or None, tasks compared, hover], each window's flag."""
+    """For bench.js: registered models with a run to compare, each window's
+    flag, its evidence and each task's move."""
     t, live = trend_rows(), on_bench()
-    return {"first": t["first"], "today": datetime.date.today().isoformat(), "choices": list(TREND_DAYS),
-            "move": TREND_MOVE,
-            "models": [{"name": m, "runs": v["runs"],
+    return {"choices": list(TREND_DAYS), "move": TREND_MOVE,
+            "models": [{"name": m, "last": v["last"],
                         "w": {str(w): {**s, "says": _trend_says(s)} for w, s in v["windows"].items()}}
-                       for m, v in sorted(t["models"].items())
-                       if m in live and any(r[1] is not None for r in v["runs"])]}
+                       for m, v in sorted(t["models"].items()) if m in live and v["compared"]]}
 
 
 def trend_card() -> str:
-    """Each model against its own history: a dot per run, and a flag when its
-    scores in the window sit below (or above) its scores before it."""
+    """Each model against its own history: a bar for how far its scores in the
+    window moved from its scores before it, grouped by the flag, the evidence beside it."""
     t, live, first, names = trend_rows(), current(), TREND_DAYS[0], {}
 
     def name(model: str) -> str:                       # each window's table shows it: worked out once
@@ -2997,7 +3021,7 @@ def trend_card() -> str:
         body = ["<table><thead><tr>", th("Model"), th("Trend"), th("Change", True), th("Tasks compared", True),
                 th("Down", True), th("Up", True), th("Runs in window", True), th("Runs before", True),
                 th("Last scored"), "</tr></thead><tbody>"]
-        for m in sorted(rows, key=lambda m: (TREND_STATES.index(rows[m]["state"]), rows[m]["change"], m)):
+        for m in sorted(rows, key=lambda m: _trend_order(m, rows[m])):
             s = rows[m]
             body.append(
                 name(m) + f"<td data-sort='{TREND_STATES.index(s['state'])}'>"
@@ -3013,23 +3037,27 @@ def trend_card() -> str:
         body.append("</tbody></table>")
         return f"<div data-trend-window='{w}'{'' if w == first else ' hidden'}>" + "".join(body) + "</div>"
 
-    legend = ("<div class='q-legend'><span><i style='background:var(--err)'></i>10 pts or more below its earlier"
-              " scores on the same tasks</span><span><i style='background:var(--muted)'></i>within 10 pts</span>"
-              "<span><i style='background:var(--ok)'></i>10 pts or more above</span><span><i style='background:none;"
-              "border:1px solid var(--muted)'></i>first scores on these tasks</span></div>")
+    legend = ("<div class='q-legend'><span><i style='background:var(--err)'></i>lower than it used to be</span>"
+              "<span><i style='background:var(--ok)'></i>higher</span><span><i style='background:var(--muted);opacity:.6'></i>"
+              "steady</span><span><i style='background:var(--line)'></i>within 10 pts of its earlier scores</span>"
+              "<span>no bar: too little to say</span></div>")
     pick = ("<div class='toolbar'><label>Window <select data-trend-days>"
             + "".join(f"<option value='{w}'>last {w} days</option>" for w in TREND_DAYS)
             + f"</select></label></div>{legend}")
     key = f"""<dl>
-      <dt>A dot</dt><dd>One day a model was scored on our tasks, against its own earlier scores on the same
-        tasks: each task as a share of its findings, so a 1-finding claim and an 11-finding file count the same,
-        then averaged over the tasks it had been asked before. Bigger when more tasks were compared. Hover for
-        each task's score and what it scored before.</dd>
-      <dt>The flag</dt><dd>The scores in the window against the scores before it, on the tasks scored in
-        both. <b>Lower</b> (or <b>higher</b>) when, on average, they moved 10 points or more, on at least two
-        tasks and twice as many as moved the other way, in at least two separate runs. <b>Too little</b> when
-        fewer than three tasks can be compared, or fewer than two runs in the window or before it; <b>steady</b>
-        otherwise. One bad run, or one task, is never a trend, and nor is one run to compare against.</dd>
+      <dt>A bar</dt><dd>How far a model's scores in the window sit from its own scores before it, on the tasks
+        scored in both: each task as a share of its findings, so a 1-finding claim and an 11-finding file count
+        the same, then averaged over those tasks. Left is lower, right is higher; the shaded band is 10 points
+        either side. Hover for each task's move.</dd>
+      <dt>The groups</dt><dd><b>Lower</b> (or <b>higher</b>) when, on average, the scores moved 10 points or
+        more, on at least two tasks and twice as many as moved the other way, in at least two separate runs.
+        <b>Steady</b> otherwise: a steady bar past the band moved on average, but not on enough tasks or runs.
+        <b>Too little to say</b>, with no bar, when fewer than three tasks can be compared, or fewer than two
+        runs in the window or before it. One bad run, or one task, is never a trend, and nor is one run to
+        compare against. Biggest move first in each group.</dd>
+      <dt>Beside the bar</dt><dd>The evidence: the tasks compared and how many went down or up, then the runs
+        in the window against the runs before it. A model with no task scored both in the window and before it
+        is named under the chart.</dd>
       <dt>The window</dt><dd>{first} days by default: a paid model is scored about once a week and a free one
         about every 15 days, six tasks a run, so 7 days holds one run at most and could only say what one
         afternoon did. {first} days holds 2 to 4 runs. Longer windows hold more runs but leave less before them
@@ -3042,8 +3070,8 @@ def trend_card() -> str:
         from 2026-11-08 in <code>runs/answers/&lt;task&gt;/&lt;model&gt;/</code>; older ones were replaced by
         the next run and are gone.</dd>
     </dl>"""
-    return chart_card("Trend", "Does a model score lower, or higher, than it used to? Each model against its own"
-                      " earlier scores, task by task; flagged only when the move holds over several tasks and runs.",
+    return chart_card("Trend", "Who scores lower, or higher, than it used to? Each model against its own earlier"
+                      " scores on the same tasks; flagged only when the move holds over several tasks and runs.",
                       "chart-trend", "".join(window(w) for w in TREND_DAYS), key, extra=pick)
 
 
@@ -3276,17 +3304,14 @@ def _uptime_rows() -> dict:
         count(at, alias, c or conn(alias), cls, why, 1, [float(seconds)] if seconds else [], error)
     # Decision models: every call decide.call logged, on the connection behind its served name
     # (provider tags: OpenRouter for the :free ones), its hub's address deciding the relay.
-    tags = load_json(DATA / "config" / "provider-tags.json")
+    tags, hubs = load_json(DATA / "config" / "provider-tags.json"), {}
     for at, alias, served, via, status, error, seconds in _decision_calls():
         if at[:10] < since:
             continue
         alias = now(alias)                             # a renamed decision model keeps its calls
-        hub = urllib.parse.urlsplit(data.get(via, {}).get("base") or "").hostname or ""
-        try:
-            private_hub = ipaddress.ip_address(hub).is_private
-        except ValueError:
-            private_hub = hub == "localhost"
-        cls, why = classify(error, status, private_hub)
+        if via not in hubs:
+            hubs[via] = decide._private(via)
+        cls, why = classify(error, status, hubs[via])
         c = str(tags.get(served) or "").split("/")[0] or via or "unknown"
         conns.setdefault(alias, c)
         count(at, alias, c, cls, why, 1, [float(seconds)] if seconds and cls == "ok" else [], error)
@@ -3486,12 +3511,13 @@ DECIDE_USES = {"shape": "The shape of a request (gateway)", "collection": "A col
                "notice": "A short reply that may be a provider's notice (gateway seats)",
                "errors": "Error shapes no uptime rule knows (daily job)", "role": "A new chat model's role (onboarding)"}
 DECIDE_SETS = {"errors": "Error classes", "collection": "Collections", "useful": "Useful answers"}
+DECIDE_KIND = {"errors": "choice of 6", "collection": "choice of the collections", "useful": "yes or no"}
 
 
 def decision_data() -> dict:
     """For bench.js: each model's calibration bins per set, [said, right, n]."""
     res = decide.results()
-    return {"sets": [[s, DECIDE_SETS[s]] for s in decide.SETS], "cutoff": decide.CONFIDENT,
+    return {"sets": [[s, DECIDE_SETS[s]] for s in decide.SETS],
             "points": [{"model": a, "set": s, "said": b["said"], "right": b["right"], "n": b["n"]}
                        for a, by in sorted((res.get("models") or {}).items()) for s, r in by.items()
                        if s in decide.SETS for b in r.get("calibration") or []]}
@@ -3596,9 +3622,6 @@ def decision_card() -> str:
                       "chart-decide", "".join(tables), key, extra=extra, retired=False)
 
 
-DECIDE_KIND = {"errors": "choice of 6", "collection": "choice of the collections", "useful": "yes or no"}
-
-
 def bughunt_card() -> str:
     """Seeded and real-bug tasks against their answer keys."""
     rows = {m: r["hunt"] for m, r in wrong_table().items() if m in current() and any(r["hunt"].values())}
@@ -3645,7 +3668,7 @@ def work_card() -> str:
 
 
 def overview_card() -> str:
-    return ("<div class='panel'><h2>Who to trust with a review</h2><p class='sub'>Each dot is a model."
+    return (f"<div class='panel'>{SHARE}<h2>Who to trust with a review</h2><p class='sub'>Each dot is a model."
             " Right: finds more of the real bugs in our own code. Up: makes fewer things up (confidently"
             " wrong on clean code, wrong lines, false claims, traps). Top right is where a reviewer should be.</p>"
             "<div class='chart' id='chart-overview'></div></div>")
@@ -3713,8 +3736,7 @@ EXTERNAL = (("LiveBench", "https://livebench.ai/", "contamination-limited questi
 def external_card() -> str:
     """Links, not scores: the External tab showed FuncBench numbers nobody
     refreshed and was dropped (2026-10-16). Public leaderboards are read there."""
-    rows = "".join(f"<li><a href='{esc(u)}' target='_blank' rel='noopener'>{esc(n)}</a>"
-                   f" <span class='muted'>— {esc(why)}</span></li>" for n, u, why in EXTERNAL)
+    rows = "".join(f"<li>{ext_link(u, n)} <span class='muted'>— {esc(why)}</span></li>" for n, u, why in EXTERNAL)
     return ("<div class='panel'><h2>External</h2><p class='sub'>Public leaderboards, for comparison."
             " The bench does not copy their numbers; its own tests above are what routing uses.</p>"
             f"<ul class='links'>{rows}</ul></div>")
@@ -4332,6 +4354,7 @@ SECTIONS = (("Observe", (("glance", "At a glance", "roster"),
             ("Gateway", (("endpoints", "Endpoints", "endpoints_page"),
                          ("models", "Models", "models_page"),
                          ("collections", "Collections", "collections_and_gateway"),   # starred (bench.css)
+                         ("clients", "Clients", "clients_page"),
                          ("discover", "Discover", "discover_card"))),
             ("Control", (("settings", "Settings", "settings_page"),
                          ("info", "Info", "info_page"))))
@@ -4341,6 +4364,306 @@ UI_CONFIG = DATA / "config" / "ui.json"
 
 def collections_and_gateway() -> str:
     return collections_tab() + gateway_card()
+
+
+# ---- Clients: each app's set-up, filled in from this install ---------------
+# Each format follows the client's own docs as read on CLIENTS_READ (linked on
+# the page); only Claude Code was run against the gateway (GATEWAY.md, "Route
+# mode"). A key made on the page never goes into a file, which may sync: a file
+# names an environment variable, or the app asks, or (an MCP header in Zed,
+# Cline or goose, which take no variable) KEY_HOLDER stays for the reader.
+# Only blocks marked `key` (shell lines, fields typed into an app) get the key
+# made on the page, swapped in for KEY_HOLDER by bench.js.
+KEY_HOLDER = "<your gateway key>"
+KEY_ENV = "BENCHWARMERS_KEY"         # the plugin's and the CLI's name for it too
+CLIENTS_READ = "2026-11-08"
+AGENT_OUT = 16_384                   # the output budget an agent is told; route mode cuts it to the model's own
+UNKNOWN_CONTEXT = 128_000            # for a collection whose members' windows the catalog does not know
+DEFAULT_SERVER = "http://127.0.0.1:8122"
+
+
+def _snip(label: str, lang: str, text: str, key: bool = False) -> dict:
+    return {"label": label, "lang": lang, "text": text, "key": key}
+
+
+def _env_snips(name: str) -> list[dict]:
+    return [_snip("macOS, Linux: in your shell profile", "sh", f"export {name}='{KEY_HOLDER}'", True),
+            _snip("Windows: once, then start the app again", "bat", f'setx {name} "{KEY_HOLDER}"', True)]
+
+
+def _fields(pairs: list) -> str:
+    width = max(len(k) for k, _ in pairs)
+    return "\n".join(f"{k.ljust(width)}  {v}" for k, v in pairs)
+
+
+def client_setups(root: str, cols: list, keys: bool) -> list[dict]:
+    """Every client's panel: what it gets, its snippets (_snip), where they
+    go, the one thing to watch for and the docs they follow. `root`: the
+    server, without /v1; `cols`: (name, context window or None, sees images)
+    for each collection offered, the first being the one a single-model field
+    names; `keys`: whether every call needs a gateway key."""
+    base, mcp, env = root + "/v1", root + "/mcp", KEY_ENV
+    fast = next((n for n, _, _ in cols if n == "fast"), cols[0][0])
+    # (model, collection, context window, output budget, sees images)
+    rows = [(f"bench/{n}:route", n, c or UNKNOWN_CONTEXT, min(AGENT_OUT, (c or UNKNOWN_CONTEXT) // 4), bool(eyes))
+            for n, c, eyes in cols]
+    model, ctx, out = rows[0][0], rows[0][2], rows[0][3]
+    q = json.dumps                       # a quoted string, read the same by JSON, TOML and YAML
+
+    def js(data) -> str:
+        return json.dumps(data, indent=2)
+
+    def lines(*parts) -> str:
+        return "\n".join(p for p in parts if p is not None)
+
+    def when(text: str):
+        return text if keys else None
+
+    opencode = {"$schema": "https://opencode.ai/config.json",
+                "provider": {"benchwarmers": {
+                    "npm": "@ai-sdk/openai-compatible", "name": "Benchwarmers",
+                    "options": {"baseURL": base, **({"apiKey": f"{{env:{env}}}"} if keys else {})},
+                    "models": {m: {"name": f"{n} (route)", "limit": {"context": c, "output": o}}
+                               for m, n, c, o, _ in rows}}},
+                "mcp": {"benchwarmers": {
+                    "type": "remote", "url": mcp, "enabled": True, "oauth": False,
+                    **({"headers": {"Authorization": f"Bearer {{env:{env}}}"}} if keys else {}),
+                    "timeout": 900_000}}}
+    vscode = [{"name": "Benchwarmers", "vendor": "customendpoint", "apiKey": "${input:benchwarmersKey}",
+               "apiType": "chat-completions",
+               "models": [{"id": m, "name": f"{n} (Benchwarmers)", "url": base + "/chat/completions",
+                           "toolCalling": True, "vision": eyes, "maxInputTokens": c - o, "maxOutputTokens": o}
+                          for m, n, c, o, eyes in rows]}]
+    vscode_mcp = {**({"inputs": [{"type": "promptString", "id": "benchwarmers-key",
+                                  "description": "Benchwarmers gateway key", "password": True}]} if keys else {}),
+                  "servers": {"benchwarmers": {"type": "http", "url": mcp, **(
+                      {"headers": {"Authorization": "Bearer ${input:benchwarmers-key}"}} if keys else {})}}}
+    codex = lines(f"model = {q(model)}", 'model_provider = "benchwarmers"', f"model_context_window = {ctx}",
+                  'web_search = "disabled"', "",
+                  "[model_providers.benchwarmers]", 'name = "Benchwarmers"', f"base_url = {q(base)}",
+                  when(f'env_key = "{env}"'), 'wire_api = "responses"', "",
+                  "[mcp_servers.benchwarmers]", f"url = {q(mcp)}", when(f'bearer_token_env_var = "{env}"'),
+                  "tool_timeout_sec = 900")
+    zed = {"language_models": {"openai_compatible": {"benchwarmers": {
+               "api_url": base,
+               "available_models": [{"name": m, "display_name": f"{n} (Benchwarmers)", "max_tokens": c,
+                                     "max_output_tokens": o,
+                                     "capabilities": {"tools": True, "images": eyes, "parallel_tool_calls": False,
+                                                      "prompt_cache_key": False}}
+                                    for m, n, c, o, eyes in rows]}}},
+           "context_servers": {"benchwarmers": {"url": mcp, **(
+               {"headers": {"Authorization": f"Bearer {KEY_HOLDER}"}} if keys else {})}}}
+    secret = f"${{{{ secrets.{env} }}}}"
+    continue_ = lines("name: Benchwarmers", "version: 0.0.1", "schema: v1", "models:",
+                      *(lines(f"  - name: {q(n + ' (Benchwarmers)')}", "    provider: openai", f"    model: {q(m)}",
+                              f"    apiBase: {q(base)}", when(f"    apiKey: {secret}"),
+                              "    roles: [chat, edit, apply]",
+                              f"    capabilities: [tool_use{', image_input' if eyes else ''}]",
+                              "    defaultCompletionOptions:", f"      contextLength: {c}", f"      maxTokens: {o}")
+                        for m, n, c, o, eyes in rows),
+                      "mcpServers:", "  - name: benchwarmers", "    type: streamable-http", f"    url: {q(mcp)}",
+                      when("    requestOptions:"), when("      headers:"),
+                      when(f"        Authorization: Bearer {secret}"))
+    cline_mcp = {"mcpServers": {"benchwarmers": {"type": "streamableHttp", "url": mcp, **(
+        {"headers": {"Authorization": f"Bearer {KEY_HOLDER}"}} if keys else {}), "timeout": 900}}}
+    librechat = lines("endpoints:", "  custom:", '    - name: "Benchwarmers"',
+                      f'      apiKey: "{"${" + env + "}" if keys else "local"}"', f"      baseURL: {q(base)}",
+                      "      models:", f"        default: [{', '.join(q(f'bench/{n}:merged') for n, _, _ in cols)}]",
+                      "        fetch: true", "      titleConvo: false", '      modelDisplayLabel: "Benchwarmers"')
+    goose = {"name": "benchwarmers", "engine": "openai", "display_name": "Benchwarmers",
+             "description": "Benchwarmers collections, one model per conversation (route mode)",
+             "api_key_env": env, "base_url": base + "/chat/completions",
+             "models": [{"name": m, "context_limit": c} for m, _, c, _, _ in rows],
+             "supports_streaming": True, "requires_auth": keys}
+    goose_ext = lines("extensions:", "  benchwarmers:", "    type: streamable_http", "    name: benchwarmers",
+                      "    enabled: true", f"    uri: {q(mcp)}",
+                      f"    headers: {{Authorization: {q('Bearer ' + KEY_HOLDER)}}}" if keys else "    headers: {}",
+                      "    timeout: 900")
+    plugin_at = ("" if root == DEFAULT_SERVER else f", so set it to <code>{esc(root)}</code>")
+    any_text = "" if keys else " Keys are not asked for here, so any text works."
+    return [
+        {"id": "opencode", "name": "opencode",
+         "gets": "An agent with its tools on any collection (route mode), and the panel's ask and verdict as MCP tools.",
+         "where": "<code>~/.config/opencode/opencode.json</code>, or <code>opencode.json</code> in a project; merge"
+                  " into what is there. Pick a model with <code>/models</code>"
+                  f" (<code>benchwarmers/{esc(model)}</code>)."
+                  + (f" The key comes from <code>{env}</code>." if keys else ""),
+         "blocks": [_snip("opencode.json", "json", js(opencode))],
+         "watch": "<code>timeout</code> is in milliseconds and covers each MCP call: without it opencode stops"
+                  " waiting long before a panel answers.",
+         "docs": [("https://github.com/anomalyco/opencode/blob/v1.19.5/packages/web/src/content/docs/providers.mdx",
+                   "v1.19.5's providers"),
+                  ("https://github.com/anomalyco/opencode/blob/v1.19.5/packages/web/src/content/docs/mcp-servers.mdx",
+                   "MCP servers")],
+         "docs_note": "the current release's own docs. opencode.ai already shows the next config"
+                      " (<code>providers</code>, <code>mcp.servers</code>), which v1.19.5 does not read."},
+        {"id": "vscode", "name": "VS Code chat (Custom Endpoint)",
+         "gets": "Copilot chat's agent on a collection (route mode), with your own key, and the panel as MCP tools.",
+         "where": "<code>chatLanguageModels.json</code>: in the chat's model picker, Manage Models, Add Models,"
+                  " Custom Endpoint; add the object to the list there. <code>mcp.json</code>: the command"
+                  " <b>MCP: Open User Configuration</b>. VS Code asks for the key once and keeps it." + any_text,
+         "blocks": [_snip("chatLanguageModels.json", "json", js(vscode)), _snip("mcp.json", "json", js(vscode_mcp))],
+         "watch": "Keep <code>toolCalling: true</code>: VS Code hides a model without it from the agent picker."
+                  " Restart VS Code if the models do not appear.",
+         "docs": [("https://code.visualstudio.com/docs/copilot/customization/language-models", "language models"),
+                  ("https://code.visualstudio.com/docs/agents/reference/mcp-configuration", "MCP configuration")]},
+        {"id": "codex", "name": "Codex CLI",
+         "gets": "Codex on a collection over the Responses API (route mode), and the panel as MCP tools.",
+         "where": "<code>~/.codex/config.toml</code> (<code>%USERPROFILE%\\.codex\\config.toml</code> on Windows)."
+                  " The first four lines go above the file's first <code>[table]</code>."
+                  + (f" The key comes from <code>{env}</code>." if keys else ""),
+         "blocks": [_snip("config.toml", "toml", codex)],
+         "watch": "<code>web_search = \"disabled\"</code>: left on, Codex sends OpenAI's hosted search, which the"
+                  " gateway refuses (no other model can run it), and every turn fails.",
+         "docs": [("https://learn.chatgpt.com/docs/config-file/config-reference", "configuration reference")]},
+        {"id": "zed", "name": "Zed",
+         "gets": "Zed's agent on a collection (route mode), and the panel as MCP tools.",
+         "where": "<code>settings.json</code>: the command <b>zed: open settings file</b>. Zed reads the key from"
+                  " <code>BENCHWARMERS_API_KEY</code>, named after the provider id, or from the provider's settings"
+                  " screen; never from settings.json." + any_text,
+         "blocks": [_snip("settings.json", "json", js(zed)), *_env_snips("BENCHWARMERS_API_KEY")],
+         "watch": ("settings.json takes no variable, so the MCP header holds the key as text: replace"
+                   f" <code>{esc(KEY_HOLDER)}</code> there yourself, and keep the file out of synced dotfiles."
+                   if keys else "Zed asks for a key even where none is needed: set the variable to any text."),
+         "docs": [("https://zed.dev/docs/ai/use-api-access", "API access"), ("https://zed.dev/docs/ai/mcp", "MCP")]},
+        {"id": "continue", "name": "Continue",
+         "gets": "Continue's chat, edit and agent on a collection (route mode), and the panel as MCP tools.",
+         "where": "<code>~/.continue/config.yaml</code> (<code>%USERPROFILE%\\.continue\\config.yaml</code> on"
+                  " Windows); in a file you have, add the items to its <code>models</code> and"
+                  " <code>mcpServers</code>."
+                  + (f" <code>secrets.{env}</code> is read from <code>~/.continue/.env</code> or the environment."
+                     if keys else ""),
+         "blocks": [_snip("config.yaml", "yaml", continue_)],
+         "watch": "Keep <code>capabilities: [tool_use]</code>: without it Continue offers the model for chat,"
+                  " not agent mode.",
+         "docs": [("https://docs.continue.dev/customize/model-providers/top-level/openai", "OpenAI provider"),
+                  ("https://docs.continue.dev/customize/deep-dives/mcp", "MCP"),
+                  ("https://docs.continue.dev/reference", "config.yaml reference")]},
+        {"id": "cline", "name": "Cline and Kilo Code",
+         "gets": "Their agent on a collection (route mode), set in their own screens; Cline takes the panel as"
+                 " MCP tools too.",
+         "where": "Cline: its settings, API Provider. Kilo Code: Settings, Providers, Custom provider. Cline's MCP:"
+                  " the MCP Servers icon, Configure, Configure MCP Servers." + any_text,
+         "blocks": [_snip("Cline", "text", _fields([("API Provider", "OpenAI Compatible"), ("Base URL", base),
+                                                    ("API Key", KEY_HOLDER), ("Model ID", model),
+                                                    ("Context Window Size", ctx), ("Max Output Tokens", out),
+                                                    ("Image Support", "on" if rows[0][4] else "off")]), True),
+                    _snip("Kilo Code", "text", _fields([("Provider ID", "benchwarmers"),
+                                                        ("Display name", "Benchwarmers"),
+                                                        ("Provider API", "OpenAI Compatible"), ("Base URL", base),
+                                                        ("API key", KEY_HOLDER if keys else "(leave empty)"),
+                                                        ("Models", ", ".join(m for m, *_ in rows))]), True),
+                    _snip("Cline: cline_mcp_settings.json", "json", js(cline_mcp))],
+         "watch": "Keep <code>\"type\": \"streamableHttp\"</code>: without it Cline tries the old SSE transport."
+                  " Its <code>timeout</code> is in seconds (60 unless set).",
+         "docs": [("https://docs.cline.bot/provider-config/openai-compatible", "Cline: OpenAI Compatible"),
+                  ("https://docs.cline.bot/mcp/configuring-mcp-servers", "Cline: MCP servers"),
+                  ("https://kilo.ai/docs/providers/openai-compatible", "Kilo Code: OpenAI Compatible")]},
+        {"id": "claude-code", "name": "Claude Code",
+         "gets": "The panel as MCP tools, with the plugin's <code>/benchwarmers:ask</code>, its skill and its"
+                 " reminder of seats still unjudged; or Claude Code itself on a collection (route mode).",
+         "where": f"The plugin finds the server at <code>BENCHWARMERS_URL</code>, <code>{DEFAULT_SERVER}</code>"
+                  f" unless set{plugin_at}" + (f", and sends <code>{env}</code>." if keys else ".")
+                  + " Route mode: the shell you start <code>claude</code> from." + any_text,
+         "blocks": [_snip("In Claude Code: the plugin", "text",
+                          "/plugin marketplace add WendellResearch-AI/benchwarmers\n"
+                          "/plugin install benchwarmers@benchwarmers"),
+                    _snip("Claude Code on a collection: a shell", "sh",
+                          lines(f"export ANTHROPIC_BASE_URL={root}", f"export ANTHROPIC_API_KEY='{KEY_HOLDER}'",
+                                f"export ANTHROPIC_MODEL={model}",
+                                f"export ANTHROPIC_DEFAULT_HAIKU_MODEL=bench/{fast}:route", "claude"), True)],
+         "watch": "The plugin's Stop hook needs the server on the same machine; with none running, every turn"
+                  " ends with a hook error.",
+         "docs": [("https://github.com/WendellResearch-AI/benchwarmers#from-claude-code-and-other-agents",
+                   "README, From Claude Code and other agents")],
+         "docs_note": "checked end to end with Claude Code 2.1.299 on 2026-10-23 (GATEWAY.md, Route mode)."},
+        {"id": "chat", "name": "Chat apps",
+         "gets": "LobeHub, AnythingLLM, Cherry Studio, Chatbox and LibreChat: a chat window on a collection, one"
+                 " merged answer per question, every seat still called and recorded.",
+         "where": "Each app's settings, as an OpenAI-compatible (custom) provider. LibreChat:"
+                  " <code>librechat.yaml</code>"
+                  + (f", with <code>{env}</code> in its <code>.env</code>." if keys else ".") + any_text,
+         "blocks": [_snip("Any of them", "text", _fields([("Base URL", base), ("API key", KEY_HOLDER),
+                                                          ("Model", f"bench/{cols[0][0]}:merged")]), True),
+                    _snip("LibreChat: librechat.yaml", "yaml", librechat)],
+         "watch": "An app in Docker reaches this machine at another address than 127.0.0.1, and that host:port"
+                  " goes in <code>BENCH_ALLOWED_HOSTS</code>. Turn automatic titles off: each runs a whole panel.",
+         "docs": [("https://www.librechat.ai/docs/configuration/librechat_yaml/object_structure/custom_endpoint",
+                   "LibreChat: custom endpoints")]},
+        {"id": "goose", "name": "goose",
+         "gets": "goose on a collection (route mode), and the panel as an MCP extension.",
+         "where": "The provider: <code>~/.config/goose/custom_providers/benchwarmers.json</code>. The extension:"
+                  " <code>~/.config/goose/config.yaml</code>. On Windows both are under"
+                  " <code>%APPDATA%\\Block\\goose\\config\\</code>."
+                  + (f" goose reads the provider's key from <code>{env}</code>, never from config.yaml." if keys
+                     else ""),
+         "blocks": [_snip("custom_providers/benchwarmers.json", "json", js(goose)),
+                    _snip("config.yaml", "yaml", goose_ext)],
+         "watch": ("The extension's header holds the key as text: replace"
+                   f" <code>{esc(KEY_HOLDER)}</code> there yourself." if keys else
+                   "<code>timeout</code> is in seconds; goose's usual 300 can end a long panel."),
+         "docs": [("https://goose-docs.ai/docs/getting-started/providers", "providers"),
+                  ("https://goose-docs.ai/docs/getting-started/using-extensions", "extensions"),
+                  ("https://goose-docs.ai/docs/guides/config-files", "config files")]},
+    ]
+
+
+def clients_page() -> str:
+    """Clients: a panel per app (client_setups), from this install's address,
+    collections and whether keys are asked for. A key made here is shown once
+    and goes only into this page's blocks marked data-key (bench.js)."""
+    root = gateway_url().removesuffix("/v1")
+    offered = sorted((n, c) for n, c in bench_collections.load().items() if not c.get("ad_hoc"))
+    offered.sort(key=lambda nc: nc[0] != "core")                   # core first, where there is one
+    cols = []
+    for n, c in offered:
+        together = bench_collections.described(n, c).get("together") or {}
+        cols.append((n, together.get("context_window"), "vision" in (together.get("capabilities") or [])))
+    keys = guard.keys_required()
+    head = ("<div class='panel form-panel'><h2>Clients</h2><p class='sub'>A ready set-up for each app, filled in from"
+            " this install: copy it into the file or screen named. Agents get a collection in route mode (one"
+            " member with its tools, <code>bench/&lt;collection&gt;:route</code>); chat windows a merged answer"
+            " (<code>:merged</code>); the MCP server the panel itself, as ask and verdict tools.</p>"
+            f"<p class='where'>Gateway <code>{esc(root)}/v1</code> · MCP server <code>{esc(root)}/mcp</code><br>"
+            f"Collections: {esc(', '.join(n for n, _ in offered)) or 'none yet'}"
+            "<span class='muted'> (ad hoc ones are left out: name one yourself to use it)</span></p>")
+    if not cols:
+        return head + ("<p>No collection yet: make one on <button class='btn' type='button' data-go='collections'>"
+                       "Collections</button>, and the set-ups appear here.</p></div>")
+    if keys:
+        head += ("<h3 class='form-head'>Gateway key</h3><p class='rules'>Every call needs one. Make one for these"
+                 f" apps and it fills in every <code>{esc(KEY_HOLDER)}</code> below that is not in a file, on this"
+                 " page only: it is shown this once and kept as a hash. Or use one you have.</p>"
+                 "<label class='field' for='cl-name'>Name for a new key</label>"
+                 "<input id='cl-name' placeholder='e.g. opencode' autocomplete='off'>"
+                 "<div class='errors' id='cl-errors' role='alert'></div>"
+                 "<div class='done' id='cl-done' hidden>Made: copy what you need now, as it is gone when this page"
+                 " reloads. Settings lists it.</div>"
+                 "<div class='actions'><button class='btn primary' type='button' id='cl-make'>Make a key</button></div>"
+                 f"<p class='rules'>Most snippets read it from <code>{KEY_ENV}</code>:</p>"
+                 + "".join(_snip_html("key", i, s) for i, s in enumerate(_env_snips(KEY_ENV))))
+    else:
+        head += ("<p class='rules'>Keys are not asked for on this machine, so the snippets carry none where an"
+                 f" app allows it; where one wants a key, any text works in place of <code>{esc(KEY_HOLDER)}</code>."
+                 " Set <code>BENCHWARMERS_REQUIRE_KEYS=1</code> (or an admin token) and this page offers to make"
+                 " one.</p>")
+    panels = "".join(
+        f"<div class='panel client' id='client-{c['id']}'><h2>{esc(c['name'])}</h2>"
+        f"<p class='sub'>{c['gets']}</p><p class='where'>{c['where']}</p>"
+        + "".join(_snip_html(c["id"], i, s) for i, s in enumerate(c["blocks"]))
+        + f"<p class='watch'><b>Watch for:</b> {c['watch']}</p>"
+        + "<p class='rules'>Written from " + ", ".join(ext_link(u, t) for u, t in c["docs"])
+        + f", read {CLIENTS_READ}" + (f": {c['docs_note']}" if c.get("docs_note") else ".") + "</p></div>"
+        for c in client_setups(root, cols, keys))
+    return head + "</div>" + panels
+
+
+def _snip_html(group: str, i: int, s: dict) -> str:
+    pid = f"cl-{group}-{i}"
+    return (f"<div class='snip'><div class='snip-head'><span class='mono'>{esc(s['label'])}</span>"
+            f"<button class='btn small' type='button' data-copy='{pid}'>Copy</button></div>"
+            f"<pre class='log' id='{pid}' data-lang='{s['lang']}'{' data-key' if s['key'] else ''}>"
+            f"{esc(s['text'])}</pre></div>")
 
 
 def pane(key: str, actions: tuple | None = None) -> str:
@@ -4478,6 +4801,149 @@ def login_page() -> str:
             "  if (r.ok) location.replace('/');"
             "  else document.getElementById('e').textContent = 'That is not the admin token.'; });"
             "});</script>")
+
+
+# ---- Export and import: this install's settings, or everything, as one zip --
+# Moving an install is a copy of its data folder (metrics/paths.py); this is that
+# copy as a download and an upload. The keys are not in it: they are in the llm
+# key store, and only the endpoints' own travel, only when asked.
+MOVE_SCOPES = {"settings": ("config",), "all": ("config", "metrics", "perf", "runs", "suite")}
+IMPORT_MAX = 2_000_000_000            # bytes; everything on the owner's install is about 90 MB
+_KEY_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
+
+
+def _endpoint_keys() -> dict:
+    """The stored keys the endpoints use: each one's key, admin key and refresh
+    token. Never one from the environment, nor the llm CLI's own others."""
+    names = set()
+    for entry in endpoints.load().values():
+        key = entry.get("key", "")
+        names |= {key, endpoints.admin_name(entry), f"{key}.refresh"}
+    return {n: v for n, v in endpoints._stored().items() if n in names and isinstance(v, str) and v}
+
+
+def export_zip(scope: str, keys: bool, out) -> dict:
+    """Write an export to the binary file `out`: the scope's folders (lock files
+    never), keys.json when `keys`, and manifest.json. Returns the manifest."""
+    import zipfile
+    if scope not in MOVE_SCOPES:
+        raise ValueError(f"scope is one of {', '.join(MOVE_SCOPES)}")
+    made = datetime.datetime.now().astimezone().isoformat(timespec="seconds")
+    manifest = {"benchwarmers_export": 1, "release": RELEASE, "made": made, "scope": scope,
+                "files": 0, "keys": 0, "skipped": []}
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as z:
+        for top in MOVE_SCOPES[scope]:
+            for path in sorted((DATA / top).rglob("*")):
+                if not path.is_file() or path.suffix == ".lock":
+                    continue
+                name = path.relative_to(DATA).as_posix()
+                try:
+                    z.write(path, name)
+                    manifest["files"] += 1
+                except OSError as exc:                 # held open by another process
+                    manifest["skipped"].append(f"{name}: {exc.strerror or exc}")
+        if keys:
+            have = _endpoint_keys()
+            z.writestr("keys.json", json.dumps(have, indent=2))
+            manifest["keys"] = len(have)
+        z.writestr("manifest.json", json.dumps(manifest, indent=2))
+    return manifest
+
+
+def _movable(name: str, tops: tuple) -> bool:
+    """A name an import may write: relative, inside one of the scope's folders,
+    no way out of the data folder, not a lock file."""
+    parts = name.split("/")
+    return (parts[0] in tops and len(parts) > 1 and "\\" not in name and ":" not in name
+            and not any(p in ("", ".", "..") for p in parts) and not name.endswith(".lock"))
+
+
+def import_zip(src, apply: bool) -> dict:
+    """Read an export (`src`, a binary file) and say what is in it. With
+    `apply`: this install's files in its scope go to backups/ first (an export
+    of them), then its files replace this install's of the same name and its
+    keys go to the key store. Files this install has and it does not are left."""
+    import shutil
+    import zipfile
+
+    def refused(why: str) -> dict:
+        return {"ok": False, "errors": [why]}
+    try:
+        z = zipfile.ZipFile(src)
+    except zipfile.BadZipFile:
+        return refused("that is not a zip file")
+    with z:
+        try:
+            m = json.loads(z.read("manifest.json"))
+        except (KeyError, ValueError):
+            return refused("it has no manifest.json: not a Benchwarmers export")
+        if not isinstance(m, dict) or m.get("benchwarmers_export") != 1 or m.get("scope") not in MOVE_SCOPES:
+            return refused("its manifest is not one this version reads")
+        tops = MOVE_SCOPES[m["scope"]]
+        files = [i for i in z.infolist() if not i.is_dir() and i.filename not in ("manifest.json", "keys.json")]
+        bad = [i.filename for i in files if not _movable(i.filename, tops)]
+        if bad:
+            return refused(f"{len(bad)} file(s) in it are outside {', '.join(tops)}, e.g. {bad[0]!r}: nothing imported")
+        try:
+            keys = json.loads(z.read("keys.json")) if "keys.json" in z.namelist() else {}
+        except ValueError:
+            return refused("its keys.json is not JSON")
+        if not (isinstance(keys, dict) and all(isinstance(v, str) and _KEY_NAME.match(k) for k, v in keys.items())):
+            return refused("its keys.json is not a list of key names and keys")
+        out = {"ok": True, "errors": [], "scope": m["scope"], "release": str(m.get("release", "")),
+               "made": str(m.get("made", "")), "files": len(files), "bytes": sum(i.file_size for i in files),
+               "replaces": sum((DATA / i.filename).is_file() for i in files), "keys": len(keys)}
+        if out["bytes"] > 10 * IMPORT_MAX:              # zipfile stops each file at its stated size
+            return refused(f"it unpacks to {out['bytes']:,} bytes: more than any install holds")
+        if not apply:
+            return out
+        stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        backup = DATA / "backups" / f"before-import-{stamp}.zip"
+        backup.parent.mkdir(parents=True, exist_ok=True)
+        with open(backup, "wb") as f:
+            export_zip(m["scope"], bool(keys), f)
+        out["backup"] = backup.relative_to(DATA).as_posix()
+        done = 0
+        try:
+            for i in files:
+                dest = DATA / i.filename
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                part = dest.with_name(f".{dest.name}.{os.getpid()}.part")
+                try:
+                    with z.open(i) as r, open(part, "wb") as w:
+                        shutil.copyfileobj(r, w)
+                    os.replace(part, dest)
+                finally:
+                    part.unlink(missing_ok=True)
+                done += 1
+        except (OSError, zipfile.BadZipFile) as exc:     # a full disk, a file held open, a damaged zip
+            return refused(f"stopped after {done} of {len(files)} files ({exc}); what it replaced is in"
+                           f" {out['backup']}")
+        for name, value in keys.items():
+            endpoints.set_key(name, value)
+        return out
+
+
+def move_card() -> str:
+    """Settings' Export and import (export_zip, import_zip; bench.js)."""
+    return ("<div class='panel form-panel'><h2>Export and import</h2><p class='muted'>Take this install to another"
+            " machine, or keep a copy of it: one .zip file, imported on the other install's Settings page.</p>"
+            "<div class='pick'><label class='check'><input type='radio' name='x-scope' value='settings' checked"
+            " data-kept> <span><b>Settings only</b>: endpoints, collections, roles, model options, the schedule,"
+            " gateway keys, the theme (<code>config/</code>)</span></label>"
+            "<label class='check'><input type='radio' name='x-scope' value='all' data-kept> <span><b>Everything</b>:"
+            " the settings, and every result, history, log and saved answer the bench judges by</span></label></div>"
+            "<label class='check'><input type='checkbox' id='x-keys' data-kept> <span>With the endpoints' API keys."
+            " The file then holds them: keep it like a password, and delete it once imported.</span></label>"
+            "<div class='actions'><button class='btn' type='button' id='x-export'>Download export</button></div>"
+            "<h3 class='form-head'>Import</h3>"
+            "<p class='rules'>Its files replace this install's of the same name; files it does not have are left."
+            " This install's own go to <code>backups/</code> first. Restart afterwards (Server and access, below),"
+            " so every part reads them.</p>"
+            "<input type='file' id='x-file' accept='.zip,application/zip'>"
+            "<div class='done' id='x-what' role='status'></div><div class='errors' id='x-errors' role='alert'></div>"
+            "<div class='actions'><button class='btn primary' type='button' id='x-import' disabled>Import</button>"
+            "</div></div>")
 
 
 def access_card() -> str:
@@ -4728,7 +5194,7 @@ def settings_page() -> str:
         " (cron, Windows Task Scheduler), turn it off in the same step, or every job runs twice.</p>"
         "<div class='errors' id='s-errors' role='alert'></div><div class='done' id='s-done'></div>"
         "<div class='actions'><button class='btn primary' id='s-save'>Save scheduler</button></div></div>"
-        + client_card() + own_client_card() + access_card())
+        + client_card() + own_client_card() + move_card() + access_card())
 
 
 def endpoints_page() -> str:
@@ -4803,6 +5269,8 @@ def endpoints_page() -> str:
         f" check listed{' on ' + esc(checked) if checked else ''}.</p>"
         "<div class='list-actions'><button class='btn primary' id='e-add'>Add an endpoint</button>"
         "<span class='done' id='el-done'></span><span class='errors' id='el-errors' role='alert'></span></div>"
+        # Model servers running here, not endpoints yet: bench.js asks /api/connect/local on show.
+        "<div class='found' id='e-found' hidden><h3>Found on this machine</h3><div id='e-found-list'></div></div>"
         "<div class='toolbar'><input type='search' data-filter placeholder='Find a model on any endpoint'"
         " aria-label='Filter models'></div>"
         f"{''.join(blocks)}</div>"
@@ -5080,11 +5548,9 @@ def on_disk() -> tuple[str, str]:
 def info_page() -> str:
     import scheduler
     import client as model_client
-    def link(url: str, text: str) -> str:
-        return f"<a href='{esc(url)}' target='_blank' rel='noopener'>{esc(text)}</a>"
     # The release this is, or on a branch the one it builds on (0.5.6-dev -> v0.5.6).
-    rows = [("Source", link(connect.REPO, connect.REPO.removeprefix("https://"))),
-            ("Version", link(f"{connect.REPO}/releases/tag/v{RELEASE.split('-')[0]}", RELEASE))]
+    rows = [("Source", ext_link(connect.REPO, connect.REPO.removeprefix("https://"))),
+            ("Version", ext_link(f"{connect.REPO}/releases/tag/v{RELEASE.split('-')[0]}", RELEASE))]
     rows += [(k, esc(v)) for k, v in [
         ("Date", RELEASE_DATE or "unknown"), ("Commit", COMMIT or "unknown"),
         ("Python", f"{sys.version.split()[0]} · {sys.executable}"),
@@ -5106,7 +5572,8 @@ def directory_json() -> str:
     # A decision model's role suggestion from onboarding (decide.suggest_role): shown, never applied.
     suggested = {a: s for a, s in (locked.read_json(decide.DECIDED).get("roles") or {}).items() if isinstance(s, dict)}
     return json.dumps({"models": directory, "facts": facts, "options": options, "roles": model_roles.load()["roles"],
-                       "suggested": suggested, "retired": retired(), "onboard": onboard_issues(), "stamp": data_stamp()},
+                       "suggested": suggested, "retired": retired(), "onboard": onboard_issues(), "stamp": data_stamp(),
+                       "repo": connect.REPO},
                       ensure_ascii=False).replace("</", "<\\/")
 
 
@@ -5342,10 +5809,10 @@ class Handler(gateway.Handler):
         callback = self.path.startswith((connect.CALLBACK + "?", connect.CALLBACK + "/"))
         if not callback and not self._admitted(path):
             return
+        from urllib.parse import parse_qs, urlparse
+        q = parse_qs(urlparse(self.path).query)
         if self.path.startswith("/api/onboard?"):
-            from urllib.parse import parse_qs, urlparse
-            log = parse_qs(urlparse(self.path).query).get("log", [""])[0]
-            self._json(200, onboard_status(log))
+            self._json(200, onboard_status(q.get("log", [""])[0]))
             return
         if self.path in ("/api/candidates", "/api/candidates?fresh=1"):
             self._json(200, onboard_candidates(fresh=self.path.endswith("fresh=1")))
@@ -5360,8 +5827,7 @@ class Handler(gateway.Handler):
                                  "count": open_count(groups)})
             return
         if path == "/api/pane":                        # a tab's page, when first opened (bench.js load)
-            from urllib.parse import parse_qs, urlparse
-            key = parse_qs(urlparse(self.path).query).get("tab", [""])[0]
+            key = q.get("tab", [""])[0]
             if not any(k == key for k, _, _ in TABS):
                 self._json(404, {"ok": False, "errors": [f"no tab {key!r}"]})
                 return
@@ -5382,12 +5848,15 @@ class Handler(gateway.Handler):
         if self.path == "/api/connect":
             self._json(200, connect_list())
             return
+        if self.path == "/api/connect/local":          # Endpoints' "Found on this machine", when it is shown
+            self._json(200, connect_local())
+            return
         if callback:
             # The provider sends the browser back here. A GET that saves, as
             # OAuth callbacks are: the state is single-use and unguessable, and
             # only a sign-in this dashboard started has one. No login cookie:
             # SameSite=Strict keeps it off the provider's cross-site redirect.
-            from urllib.parse import parse_qsl, urlparse
+            from urllib.parse import parse_qsl
             query = dict(parse_qsl(urlparse(self.path).query))
             query["state"] = connect.callback_id(self.path, query)
             try:
@@ -5421,40 +5890,57 @@ class Handler(gateway.Handler):
             self._json(200, connections_view())
             return
         if self.path.startswith("/api/discover-model?"):
-            from urllib.parse import parse_qs, urlparse
-            q = parse_qs(urlparse(self.path).query)
             res = discover_model(q.get("provider", [""])[0], q.get("model", [""])[0])
             self._json(200 if res["ok"] else 404, res)
             return
         if self.path.startswith("/api/gateway-seat?"):
-            from urllib.parse import parse_qs, urlparse
-            call = parse_qs(urlparse(self.path).query).get("call", [""])[0]
-            res = gateway_seat(call)
+            res = gateway_seat(q.get("call", [""])[0])
             self._json(200 if res["ok"] else 404, res)
             return
         if self.path == "/api/stamp":
             self._json(200, {"stamp": data_stamp()})
+            return
+        if path == "/api/export":                      # Settings' Export and import: the zip, as a download
+            scope, keys = q.get("scope", ["settings"])[0], q.get("keys", [""])[0] == "1"
+            if scope not in MOVE_SCOPES or (self.headers.get("Sec-Fetch-Site") or "").lower() == "cross-site":
+                self._json(400, {"ok": False, "errors": ["scope is settings or all, asked from this page"]})
+                return
+            import shutil
+            import tempfile
+            with tempfile.TemporaryFile() as tmp:
+                export_zip(scope, keys, tmp)
+                size = tmp.tell()
+                tmp.seek(0)
+                self.send_response(200)
+                self.send_header("Content-Type", "application/zip")
+                self.send_header("Content-Disposition", f"attachment; filename=\"benchwarmers-{scope}"
+                                 f"{'-with-keys' if keys else ''}-{datetime.date.today()}.zip\"")
+                self.send_header("Content-Length", str(size))
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.end_headers()
+                shutil.copyfileobj(tmp, self.wfile)
             return
         if self.path.startswith(("/fonts/", "/ui/")):
             # Only the named font files and ASSETS; anything else is a 404, so
             # this cannot be walked to other paths.
             name = self.path.split("/", 2)[2]
             path = font_file(name) if self.path.startswith("/fonts/") else \
-                (UI / name if name in ASSETS and (UI / name).exists() else None)
+                (UI / name if name in ASSETS and (UI / name).exists() else
+                 LOGOS[name] if name in LOGOS and LOGOS[name].exists() else None)
             if not path:
                 self.send_error(404)
                 return
             data = path.read_bytes()
             self.send_response(200)
-            self.send_header("Content-Type", ASSETS.get(name, "font/woff2"))
+            self.send_header("Content-Type", ASSETS.get(name) or ("image/svg+xml" if name in LOGOS else "font/woff2"))
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Content-Length", str(len(data)))
             self.send_header("Cache-Control", "max-age=86400")
             self.end_headers()
             self.wfile.write(data)
             return
-        from urllib.parse import parse_qs, urlparse
-        theme = parse_qs(urlparse(self.path).query).get("theme", [None])[0]   # a preview; else the saved one
+        theme = q.get("theme", [None])[0]               # a preview; else the saved one
         shown = re.search(r"(?:^|;)\s*bench_tab=(\w+)", self.headers.get("Cookie") or "")   # the tab last shown
         try:
             page = render(theme, shown.group(1) if shown else "glance")
@@ -5480,6 +5966,25 @@ class Handler(gateway.Handler):
                     _answering[0] -= 1
         if path == "/login":
             return self._login()
+        if path == "/api/import":                      # Settings' Export and import: the zip as the body
+            try:
+                length = guard.check(self.headers, PORT, post=True, max_body=IMPORT_MAX, kind="application/zip")
+            except guard.Refused as r:
+                return self._json(r.status, {"ok": False, "errors": [str(r)]})
+            if not self._admitted(path):
+                return
+            import tempfile
+            with tempfile.TemporaryFile() as tmp:
+                while length > 0:
+                    chunk = self.rfile.read(min(length, 1 << 20))
+                    if not chunk:
+                        break
+                    tmp.write(chunk)
+                    length -= len(chunk)
+                tmp.seek(0)
+                result = import_zip(tmp, apply="apply=1" in self.path) if length == 0 else \
+                    {"ok": False, "errors": ["the upload stopped before its end"]}
+            return self._json(200 if result["ok"] else 400, result)
         ops = {"/api/model": lambda p: change_model(str(p.get("alias", "")),
                                                     p.get("new_alias"), p.get("new_role"),
                                                     new_ad_hoc=p.get("new_ad_hoc"),

@@ -34,8 +34,11 @@ python suite/run.py --model gemini-flash-3.8
 python suite/run.py --dry-run            # print the prompts, call nothing
 ```
 
-Results append to `runs/suite-<date>.md` and print a table. Nothing is
-overwritten — a run is evidence, and evidence accumulates.
+Results append to `runs/suite-<date>.md` and print a table. Each answer is
+also kept at `runs/answers/<task>/<model>/<run start>.md` (since 2026-11-08).
+Nothing there is overwritten — a run is evidence, and evidence accumulates.
+The Benchmarks page's Trend compares each model's scores with its own earlier
+ones ([BENCHMARKS.md](../BENCHMARKS.md)).
 
 ## Claim verification, and tasks mined from real work
 

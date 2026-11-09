@@ -20,6 +20,8 @@
     return fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'},
                        body: JSON.stringify(body)}).then(function (r) { return r.json(); });
   }
+  function get(url) { return fetch(url, {cache: 'no-store'}).then(function (r) { return r.json(); }); }
+  function plural(n, word) { return n + ' ' + word + (n === 1 ? '' : 's'); }
   function listErrors(node, errors) { node.textContent = errors.map(function (x) { return '• ' + x; }).join('\n'); node.style.whiteSpace = 'pre-line'; }
   // A control inside a page, by its id, on the document: pages arrive after
   // load (load), and again after a change, as new elements each time.
@@ -79,6 +81,37 @@
       .then(function (yes) { if (yes) restart(false); });
   });
 
+  // ---- Export and import (serve.export_zip, import_zip) ----------------
+  // A link with download, not location: a page that "leaves" for a download
+  // never comes back (beforeunload's loading state).
+  on('click', 'x-export', function () {
+    var scope = document.querySelector('input[name=x-scope]:checked').value;
+    el('a', {href: '/api/export?scope=' + scope + ($('x-keys').checked ? '&keys=1' : ''), download: ''}).click();
+  });
+  function mb(n) { return n < 1e6 ? Math.max(1, Math.round(n / 1e3)) + ' KB' : (n / 1e6).toFixed(1) + ' MB'; }
+  // Picked: what is in it, asked of the server. Import: the same file again, written.
+  function importZip(apply) {
+    var f = $('x-file').files[0], go = $('x-import'), what = $('x-what'), errs = $('x-errors');
+    errs.textContent = ''; what.textContent = f ? (apply ? 'Importing…' : 'Reading it…') : ''; go.disabled = true;
+    if (!f) return;
+    fetch('/api/import' + (apply ? '?apply=1' : ''), {method: 'POST', headers: {'Content-Type': 'application/zip'}, body: f})
+      .then(function (r) { return r.json(); }).then(function (r) {
+        if (!r.ok) { what.textContent = ''; listErrors(errs, r.errors); return; }
+        var keys = r.keys ? ', and ' + plural(r.keys, 'API key') : '';
+        if (apply) {
+          what.textContent = 'Imported ' + r.files + ' files' + keys + '. This install\'s own are in ' + r.backup
+            + '. Restart now so every part reads them.';
+          return;
+        }
+        what.textContent = (r.scope === 'all' ? 'Everything' : 'Settings only') + ' from Benchwarmers ' + r.release
+          + ', made ' + r.made.slice(0, 16).replace('T', ' ') + ': ' + r.files + ' files (' + mb(r.bytes) + ')' + keys + '. '
+          + (r.replaces ? r.replaces + ' of them replace files here.' : 'None of them is here yet.');
+        go.disabled = false;
+      }).catch(function (e) { what.textContent = ''; listErrors(errs, [String(e)]); });
+  }
+  on('change', 'x-file', function () { importZip(false); });
+  on('click', 'x-import', function () { importZip(true); });
+
   // ---- tabs, remembered per browser ----------------------------------
   // The server renders only the one shown (serve.tabs, told by the bench_tab
   // cookie set here); the others are fetched when first opened (GET
@@ -87,7 +120,7 @@
   var onShow = {};                     // a page's loader, run each time it is shown
   var onLoad = {};                     // a page's set-up, run each time its HTML arrives
   var shown = null, fetching = {}, ready = {}, marks = 0, last = {}, edited = {};
-  var KEPT = 'input[data-filter], select[data-facet], input[data-retired], input[data-paid]';    // controls a swap keeps
+  var KEPT = 'input[data-filter], select[data-facet], input[data-retired], input[data-paid], [data-kept]';    // controls a swap keeps (or may reset)
   function show(id) {
     shown = id;
     tabs.forEach(function (b) { b.setAttribute('aria-selected', String(b.dataset.tab === id)); });
@@ -250,6 +283,158 @@
   });
   applyRetired();
 
+  // ---- Share a report (serve.SHARE): its charts as an image, its table as
+  // Markdown or CSV, or a post with the image on the clipboard. Only what the
+  // report shows travels: the table as filtered, no key, no controls. --------
+  var canClip = !!(window.isSecureContext && navigator.clipboard && window.ClipboardItem);
+  document.documentElement.classList.toggle('no-clip', !canClip);
+  document.documentElement.classList.toggle('no-share', !(navigator.canShare
+    && navigator.canShare({files: [new File([''], 'a.png', {type: 'image/png'})]})));
+  var LOOK = ['display', 'box-sizing', 'width', 'height', 'margin', 'padding', 'border', 'border-radius', 'background-color', 'color',
+              'font-family', 'font-size', 'font-weight', 'font-style', 'line-height', 'letter-spacing', 'text-align',
+              'white-space', 'vertical-align', 'gap', 'flex-wrap', 'align-items', 'opacity'];
+  function ground(n) {           // the colour behind a report: the nearest that is not transparent
+    for (; n; n = n.parentElement) {
+      var bg = getComputedStyle(n).backgroundColor;
+      if (bg && !/^(transparent|rgba\(.*,\s*0\))$/.test(bg)) return bg;
+    }
+    return '#fff';
+  }
+  // The logo (header and byline, serve.LOGOS) for a light or a dark ground: a data
+  // URI and its width at 40 px high, or none where the install has no logo file.
+  var logos = {};
+  function logo(dark) {
+    var name = dark ? 'logo-dark.svg' : 'logo.svg';
+    return logos[name] || (logos[name] = fetch('/ui/' + name).then(function (r) { return r.ok ? r.text() : ''; })
+      .then(function (svg) {
+        var box = (svg.match(/viewBox="([^"]+)"/) || [])[1], v = box ? box.split(/[\s,]+/).map(Number) : [];
+        return svg && v[3] ? {src: 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg), width: Math.round(40 * v[2] / v[3])} : null;
+      }).catch(function () { return null; }));
+  }
+  function dark(colour) {
+    var n = (colour.match(/[\d.]+/g) || [255, 255, 255]).map(Number);
+    return 0.299 * n[0] + 0.587 * n[1] + 0.114 * n[2] < 128;
+  }
+  // The report drawn as a PNG: a copy of it with its look written on each element
+  // (the page's css does not travel), the logo under it, in an SVG foreignObject,
+  // onto a canvas.
+  function shareImage(panel, credit) {
+    var copy = panel.cloneNode(true), from = panel.querySelectorAll('*'), to = copy.querySelectorAll('*');
+    function look(a, b) {
+      var cs = getComputedStyle(a);
+      b.setAttribute('style', LOOK.map(function (p) { return p + ':' + cs.getPropertyValue(p); }).join(';'));
+    }
+    look(panel, copy);
+    for (var i = 0; i < from.length; i++)                      // svg keeps its own attributes and style
+      if (!(from[i] instanceof SVGElement) && !from[i].closest('details')) look(from[i], to[i]);
+    var picks = panel.querySelectorAll('select');
+    copy.querySelectorAll('select').forEach(function (s, k) {   // a window chosen: as words
+      var o = picks[k].options[picks[k].selectedIndex];
+      s.replaceWith(el('span', {style: 'font-weight:700'}, o ? o.text : ''));
+    });
+    copy.querySelectorAll('details, button, input, script').forEach(function (n) { n.remove(); });
+    var pad = parseFloat(getComputedStyle(panel).paddingLeft) + parseFloat(getComputedStyle(panel).paddingRight);
+    var W = Math.ceil(Math.max.apply(null, [panel.clientWidth].concat(Array.prototype.map.call(
+      panel.querySelectorAll('.chart'), function (c) { return c.scrollWidth + pad; }))));
+    var bg = ground(panel), rule = getComputedStyle(document.documentElement).getPropertyValue('--line').trim() || '#ccc';
+    return logo(dark(bg)).then(function (mark) {
+      var band = el('div', {style: 'display:flex;align-items:center;justify-content:space-between;gap:12px 24px;flex-wrap:wrap;'
+        + 'margin:24px 0 0;padding:16px 0 0;border-top:1px solid ' + rule + ';font:13px system-ui,sans-serif'});
+      if (mark) band.appendChild(el('img', {src: mark.src, alt: 'Benchwarmers, by Wendell Research',
+                                            style: 'display:block;height:40px;width:' + mark.width + 'px'}));
+      band.appendChild(el('span', {style: 'opacity:.75'}, (mark ? '' : 'Benchwarmers · ') + credit));
+      copy.appendChild(band);
+      copy.style.cssText += ';width:' + W + 'px;height:auto;box-sizing:border-box;margin:0;border-radius:0;position:fixed;left:-99999px;top:0'
+        + ';background-color:' + bg;
+      document.body.appendChild(copy);
+      var H = Math.ceil(copy.getBoundingClientRect().height);
+      copy.remove();
+      copy.style.position = copy.style.left = copy.style.top = '';
+      return draw('<svg xmlns="http://www.w3.org/2000/svg" width="' + W + '" height="' + H + '">'
+        + '<foreignObject width="100%" height="100%">' + new XMLSerializer().serializeToString(copy) + '</foreignObject></svg>', W, H);
+    });
+  }
+  function draw(svg, W, H) {
+    return new Promise(function (ok, fail) {
+      var img = new Image(), k = Math.min(2, 16000 / Math.max(W, H));
+      img.onload = function () {
+        var c = el('canvas', {width: Math.round(W * k), height: Math.round(H * k)}), g = c.getContext('2d');
+        g.scale(k, k);
+        g.drawImage(img, 0, 0);
+        c.toBlob(function (b) { if (b) ok(b); else fail(new Error('no image')); }, 'image/png');
+      };
+      img.onerror = function () { fail(new Error('the report could not be drawn')); };
+      img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+    });
+  }
+  function shareRows(panel) {     // the rows the table shows: its window, its filter and "Show retired" apply
+    var t = Array.prototype.find.call(panel.querySelectorAll('table'), function (t) { return !t.closest('[hidden]'); });
+    return t ? Array.prototype.filter.call(t.rows, function (r) { return getComputedStyle(r).display !== 'none'; })
+      .map(function (r) {
+        return Array.prototype.map.call(r.cells, function (c) {
+          var k = c.cloneNode(true);                 // a model's connection in brackets, as the key writes it
+          k.querySelectorAll('.conn').forEach(function (n) { n.textContent = ' (' + n.textContent + ')'; });
+          return k.textContent.replace(/\s+/g, ' ').trim();
+        });
+      }) : [];
+  }
+  function markdown(rows) {
+    return rows.map(function (r, i) {
+      var line = '| ' + r.map(function (s) { return s.replace(/\|/g, '\\|'); }).join(' | ') + ' |';
+      return i ? line : line + '\n|' + r.map(function () { return ' --- '; }).join('|') + '|';
+    }).join('\n');
+  }
+  function csv(rows) {           // with a BOM, so a spreadsheet reads it as UTF-8
+    return '﻿' + rows.map(function (r) {
+      return r.map(function (s) { return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }).join(',');
+    }).join('\r\n') + '\r\n';
+  }
+  function saveFile(blob, name) {
+    var a = el('a', {href: URL.createObjectURL(blob), download: name});
+    a.click();                                 // not in the page, as Export's link
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 5000);
+  }
+  // Where a post opens: the text and the project's link; the image is pasted in.
+  var POST = {
+    x: function (t, u) { return 'https://x.com/intent/tweet?text=' + encodeURIComponent(t + ' ' + u); },
+    bsky: function (t, u) { return 'https://bsky.app/intent/compose?text=' + encodeURIComponent(t + ' ' + u); },
+    linkedin: function (t, u) { return 'https://www.linkedin.com/sharing/share-offsite/?url=' + encodeURIComponent(u); },
+    reddit: function (t, u) { return 'https://www.reddit.com/submit?url=' + encodeURIComponent(u) + '&title=' + encodeURIComponent(t); }
+  };
+  document.addEventListener('click', function (ev) {
+    var b = ev.target.closest('[data-share]'), menu = ev.target.closest('details.share');
+    document.querySelectorAll('details.share[open]').forEach(function (d) { if (d !== menu) d.open = false; });
+    if (!b) return;
+    var panel = menu.closest('.panel'), what = b.dataset.share, sm = menu.querySelector('summary');
+    var now = new Date(), title = panel.querySelector('h2').textContent.trim();
+    var day = now.getFullYear() + '-' + ('0' + (now.getMonth() + 1)).slice(-2) + '-' + ('0' + now.getDate()).slice(-2);
+    var name = 'benchwarmers-' + title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') + '-' + day;
+    var byline = D.repo.replace(/^https:\/\//, '') + ' · ' + day, credit = title + ' · Benchwarmers, ' + byline;
+    menu.open = false;
+    function said(text) { sm.textContent = text; setTimeout(function () { sm.textContent = 'Share'; }, 3500); }
+    function failed(e) { if (!e || e.name !== 'AbortError') said('Share failed: ' + ((e && e.message) || e)); }
+    if (what === 'md') {
+      navigator.clipboard.writeText(markdown(shareRows(panel)) + '\n\n' + credit + '\n').then(function () { said('Table copied'); }, failed);
+      return;
+    }
+    if (what === 'csv') { saveFile(new Blob([csv(shareRows(panel))], {type: 'text/csv'}), name + '.csv'); said('Table saved'); return; }
+    var png = shareImage(panel, byline), post = POST[what];
+    if (what === 'png') { png.then(function (blob) { saveFile(blob, name + '.png'); said('Image saved'); }, failed); return; }
+    if (what === 'native') {
+      png.then(function (blob) {
+        return navigator.share({files: [new File([blob], name + '.png', {type: 'image/png'})], title: title, text: credit});
+      }).then(function () { said('Shared'); }, failed);
+      return;
+    }
+    // Copy, or a post: the image on the clipboard (saved where there is none), then the post opened.
+    var put = canClip ? navigator.clipboard.write([new ClipboardItem({'image/png': png})])
+                      : png.then(function (blob) { saveFile(blob, name + '.png'); });
+    put.then(function () {
+      if (post) window.open(post(title + ', from my model bench (Benchwarmers):', D.repo), '_blank', 'noopener');
+      said(!post ? 'Image copied' : canClip ? 'Image copied: paste it into the post' : 'Image saved: attach it to the post');
+    }, failed);
+  });
+
   // ---- Discover: paid models hidden unless asked for -------------------
   var showPaid = store('bench.paid') === '1';
   function applyPaid() {
@@ -285,7 +470,7 @@
   function held() { return !!document.querySelector('dialog[open]') || busy($('tab-' + shown)); }
   function poll() {
     if (document.hidden || fetching[shown]) return;          // one at a time: a slow page is not asked again meanwhile
-    fetch('/api/stamp', {cache: 'no-store'}).then(function (r) { return r.json(); }).then(function (s) {
+    get('/api/stamp').then(function (s) {
       if (!(s.stamp > D.stamp + 0.5)) return;
       if (held()) { fresh.hidden = false; return; }
       fresh.hidden = true; D.stamp = s.stamp;
@@ -381,8 +566,7 @@
       d.appendChild(pre);
       d.addEventListener('toggle', function () {
         if (!d.open || pre.textContent) return;
-        fetch('/api/onboard?log=' + encodeURIComponent(x.log)).then(function (r) { return r.json(); })
-          .then(function (s) { pre.textContent = s.ok ? (s.tail || '(empty)') : s.errors.join(' '); });
+        get('/api/onboard?log=' + encodeURIComponent(x.log)).then(function (s) { pre.textContent = s.ok ? (s.tail || '(empty)') : s.errors.join(' '); });
       });
       m.onboard.appendChild(d);
     }
@@ -556,7 +740,7 @@
   var needsAsked = 0;
   function refreshNeeds(live) {
     var mine = ++needsAsked;
-    return fetch('/api/needs', {cache: 'no-store'}).then(function (r) { return r.json(); }).then(function (n) {
+    return get('/api/needs').then(function (n) {
       if (mine !== needsAsked) return;               // two actions close together: only the later answer is current
       swap('needs', n.html, live);
       var tab = document.querySelector('.tabs [data-tab=needs]'), count = tab.querySelector('.n');
@@ -584,7 +768,7 @@
     directory().catch(function () {});
   }
   function directory() {
-    return fetch('/api/directory', {cache: 'no-store'}).then(function (r) { return r.json(); }).then(function (d) {
+    return get('/api/directory').then(function (d) {
       var stamp = D.stamp; Object.assign(D, d); D.stamp = stamp;
     });
   }
@@ -605,7 +789,7 @@
   // An action shown in place is not "new results" to offer a reload for.
   // ponytail: a change by something else in the same second is swallowed too.
   function ownChange() {
-    fetch('/api/stamp', {cache: 'no-store'}).then(function (r) { return r.json(); }).then(function (s) { D.stamp = s.stamp; }).catch(function () {});
+    get('/api/stamp').then(function (s) { D.stamp = s.stamp; }).catch(function () {});
   }
 
   // ---- problem actions ---------------------------------------------------
@@ -776,7 +960,7 @@
     // Typing before the list arrives is lost, or lands on a row; the mode waits with it.
     o.find.readOnly = true; $('o-mode').disabled = $('o-vision').disabled = true;
     function ready() { o.find.readOnly = false; $('o-mode').disabled = $('o-vision').disabled = false; }
-    fetch('/api/candidates' + (fresh ? '?fresh=1' : '')).then(function (r) { return r.json(); }).then(function (res) {
+    get('/api/candidates' + (fresh ? '?fresh=1' : '')).then(function (res) {
       ready(); o.find.focus();
       if (!res.ok) { o.picker.textContent = ''; listErrors(o.errors, res.errors); return; }
       if (res.errors.length) listErrors(o.errors, res.errors);   // one endpoint down; the rest listed
@@ -871,7 +1055,7 @@
   // unless the popup was closed or reopened meanwhile (the header has it then).
   function waitAndFollow(one, at, title, before, token, tries) {
     if (token !== waitToken || !od.open) return;
-    fetch('/api/onboard-queue').then(function (r) { return r.json(); }).then(function (q) {
+    get('/api/onboard-queue').then(function (q) {
       if (!q.ok || token !== waitToken || !od.open) return;
       var it = q.items[at];
       if (!it || it.served !== one.served || it.endpoint !== one.endpoint) { showQueue(q); return; }
@@ -950,7 +1134,7 @@
   }
   var oqLive = null, oqFolded = {};
   function oqTail(log, pre) {
-    fetch('/api/onboard?log=' + encodeURIComponent(log)).then(function (r) { return r.json(); }).then(function (s) {
+    get('/api/onboard?log=' + encodeURIComponent(log)).then(function (s) {
       var end = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 24;   // at the bottom: stay there
       pre.textContent = s.ok ? (s.tail || '(no output yet)') : s.errors.join(' ');
       if (end) pre.scrollTop = pre.scrollHeight;
@@ -965,7 +1149,7 @@
     oqLast = ''; oqRender(q);
   }
   function oqPoll() {
-    fetch('/api/onboard-queue').then(function (r) { return r.json(); }).then(function (q) {
+    get('/api/onboard-queue').then(function (q) {
       if (!q.ok) return;
       oqRender(q);
       if (q.running && !oqTimer) oqTimer = setInterval(oqPoll, 3000);
@@ -976,7 +1160,7 @@
     post(path, {}).then(function (r) { if (r.ok) oqRender(r); else oq.text.textContent = r.errors.join(' '); });
   }
   $('oq-open').addEventListener('click', function () {
-    fetch('/api/onboard-queue').then(function (r) { return r.json(); }).then(function (q) { showQueue(q); oqPoll(); });
+    get('/api/onboard-queue').then(function (q) { showQueue(q); oqPoll(); });
   });
   oq.stop.addEventListener('click', function () { oqAct('/api/onboard-queue/stop'); });
   oq.clear.addEventListener('click', function () { oqAct('/api/onboard-queue/clear'); if (!oq.view.hidden) od.close(); });
@@ -1051,8 +1235,8 @@
   }
   function openDiscover(provider, model) {
     $('d-errors').textContent = '';
-    fetch('/api/discover-model?provider=' + encodeURIComponent(provider) + '&model=' + encodeURIComponent(model))
-      .then(function (r) { return r.json(); }).then(function (res) {
+    get('/api/discover-model?provider=' + encodeURIComponent(provider) + '&model=' + encodeURIComponent(model))
+      .then(function (res) {
         if (!res.ok) { listErrors($('d-errors'), res.errors); dd.showModal(); return; }
         if (res.errors.length) listErrors($('d-errors'), res.errors);   // a hub that could not be asked
         var r = res.model, p = $('d-profile'), list = $('d-routes');
@@ -1143,7 +1327,7 @@
   function follow(log, title, before) {
     runView(title, before + 'Running in the background; closing this does not stop it. Log: runs/' + log);
     timer = setInterval(function () {
-      fetch('/api/onboard?log=' + encodeURIComponent(log)).then(function (r) { return r.json(); }).then(function (s) {
+      get('/api/onboard?log=' + encodeURIComponent(log)).then(function (s) {
         if (!s.ok) return;
         o.log.textContent = s.tail || '(no output yet)';
         // Open the log the first time it has something in it; after that the user decides.
@@ -1207,6 +1391,44 @@
         if (!body.rows.length) body.innerHTML = '<tr><td colspan=6 class=muted>No keys yet.</td></tr>';   // as serve.gateway_keys_card
       });
     });
+  });
+
+  // ---- Clients (serve.clients_page): a key made there fills the blocks marked
+  // data-key (shell lines, fields typed into an app; never a file that may sync).
+  // Held in memory only, so a page swapped in fresh is filled again, and a reload
+  // forgets it, as Settings' does.
+  var clientKey = null;
+  function fillKey() {
+    if (!clientKey) return;
+    document.querySelectorAll('#tab-clients pre[data-key]').forEach(function (p) {
+      p.textContent = p.textContent.split('<your gateway key>').join(clientKey);      // serve.KEY_HOLDER
+    });
+  }
+  onLoad.clients = fillKey;
+  on('click', 'cl-make', function () {
+    $('cl-errors').textContent = '';
+    post('/api/gateway-key', {name: $('cl-name').value}).then(function (r) {
+      if (!r.ok) { listErrors($('cl-errors'), r.errors); return; }
+      clientKey = r.key; fillKey();
+      $('cl-done').hidden = false; $('cl-make').disabled = true;
+      refreshPanes(['settings']);                // its list of keys, when next opened
+    }).catch(function (e) { listErrors($('cl-errors'), [String(e)]); });
+  });
+  // Copy: the clipboard where the page may write it (https, localhost), else the
+  // old way, else the text left selected for the reader's own Ctrl+C.
+  document.addEventListener('click', function (ev) {
+    var b = ev.target.closest('[data-copy]');
+    if (!b) return;
+    var pre = $(b.dataset.copy);
+    (window.isSecureContext && navigator.clipboard ? navigator.clipboard.writeText(pre.textContent) : Promise.reject())
+      .catch(function () {
+        var sel = getSelection();
+        sel.selectAllChildren(pre);
+        if (!document.execCommand('copy')) throw new Error('no copy');
+        sel.removeAllRanges();
+      })
+      .then(function () { b.textContent = 'Copied'; }, function () { b.textContent = 'Selected: press Ctrl+C'; })
+      .then(function () { setTimeout(function () { b.textContent = 'Copy'; }, 2500); });
   });
 
   // ---- scheduler: its mode and jobs (serve.save_scheduler) -----------------
@@ -1289,7 +1511,7 @@
     // Its models go with it, after saying how many: each is retired as by
     // hand (evidence kept, restorable once the endpoint is back).
     remove: function (x) {
-      var n = x.models, them = n + ' model' + (n === 1 ? '' : 's');
+      var n = x.models, them = plural(n, 'model');
       ask(n ? 'Remove the ' + x.name + ' endpoint and the ' + them + ' on the bench through it?\n\n'
               + 'The ' + them + ' will be retired too. Their results and history are kept, and'
               + ' Restore brings them back if an endpoint named ' + x.name + ' is added again.'
@@ -1308,7 +1530,7 @@
   });
   function loadLimits() {
     var list = $('l-list');
-    fetch('/api/connections').then(function (r) { return r.json(); }).then(function (res) {
+    get('/api/connections').then(function (res) {
       list.textContent = '';
       res.connections.forEach(function (c) {
         var row = el('div', {class: 'endpoint'});
@@ -1339,10 +1561,48 @@
       });
     });
   }
-  onShow.endpoints = function () {             // its own-app and rate-limit sections
+  onShow.endpoints = function () {             // its own-app and rate-limit sections, and what runs here
     $('cn-app-errors').textContent = $('cn-app-done').textContent = '';
-    loadProviders(); loadLimits();
+    loadProviders(); loadLimits(); loadFound();
   };
+  // Model servers running on this machine that are not endpoints yet
+  // (serve.connect_local): asked each time the page is shown, since a look
+  // takes up to a second; nothing shows when there is none.
+  function loadFound() {
+    get('/api/connect/local').then(function (res) {
+      var list = $('e-found-list');
+      if (!list) return;
+      list.textContent = '';
+      (res.found || []).forEach(function (f) {
+        var row = el('div', {class: 'endpoint'}), left = el('div'), acts = el('div', {class: 'acts'});
+        left.appendChild(el('div', {class: 'what'}, f.label + ' on :' + f.port));
+        left.appendChild(el('div', {class: 'base'}, (f.key ? 'lists its models only with a key'
+          : plural(f.models, 'model')) + ' · ' + f.base));
+        var add = el('button', {class: 'btn small', type: 'button', 'aria-label': 'Add ' + f.label + ' on :' + f.port}, 'Add');
+        add.addEventListener('click', function () { addFound(f); });
+        acts.appendChild(add); row.appendChild(left); row.appendChild(acts);
+        list.appendChild(row);
+      });
+      $('e-found').hidden = !list.children.length;
+    }).catch(function () {});
+  }
+  // The Add dialog, filled in: the key form (Test, then Save, as ever), or
+  // for Ollama its own choice, which gives it the stand-in key llm needs.
+  function addFound(f) {
+    var loaded = openEndpoint('add');
+    if (f.provider) {
+      loaded.then(function () {
+        var b = cn.list.querySelector('[data-choice="' + f.provider + '"]');
+        if (b && !b.disabled) b.click();
+      });
+      return;
+    }
+    e.name.value = f.name; e.base.value = f.base; e.kind.value = f.kind;
+    if (f.hub) e.hub.value = f.hub;
+    $('e-hub-row').hidden = $('e-admin-row').hidden = f.kind !== 'hub';
+    e.done.textContent = f.label + ' answers here' + (f.key ? '; it wants a key: paste one, then Test.' : ': Test it, then Save.');
+    (f.key ? e.key : e.test).focus();
+  }
   // The dialog, in one of three modes. add: the choices, API key first, then
   // each provider's sign-in; change: one endpoint's key form; again: a
   // sign-in under way for an endpoint that has one.
@@ -1360,9 +1620,10 @@
       e.name.value = x.name; e.base.value = x.base; e.name.readOnly = true;
       $('e-admin-row').hidden = !x.hub;                     // a hub's admin key changes here too
     }
-    if (e.adding) loadProviders();
+    var loaded = e.adding ? loadProviders() : Promise.resolve();
     if (!ed.open) ed.showModal();
     (mode === 'change' ? e.key : e.name).focus();
+    return loaded;                   // the choices, once listed
   }
   // Which form shows: 'key' (paste an API key), a provider (sign in), or none.
   function choose(p) {
@@ -1497,7 +1758,7 @@
   // The dialog's choices (API key, then each provider) and the Manage page's
   // own-app rows, from one listing.
   function loadProviders() {
-    fetch('/api/connect').then(function (r) { return r.json(); }).then(function (res) {
+    return get('/api/connect').then(function (res) {
       cn.list.textContent = ''; $('cn-apps').textContent = '';
       choice('key', 'API key', '').addEventListener('click', function () { choose('key'); e.name.focus(); });
       res.providers.forEach(function (p) {
@@ -1592,7 +1853,7 @@
     var greyed = c.members.querySelectorAll('label.check.blocked:not(.clash):not([hidden])').length;
     var clash = c.members.querySelectorAll('label.check.clash').length;
     var paid = c.members.querySelectorAll('label.check[data-paid="1"][hidden]').length;
-    c.count.textContent = n + ' member' + (n === 1 ? '' : 's') + ' + ' + ex + ' explorer' + (ex === 1 ? '' : 's') +
+    c.count.textContent = plural(n, 'member') + ' + ' + plural(ex, 'explorer') +
       ' = ' + (n + ex) + ' calls per request' + (n && (n < 2 || n > 4) ? ' · two to four members is recommended' : '') +
       (shown.length < rows.length ? ' · showing ' + shown.length + ' of ' + rows.length + ' models' : '') +
       (paid ? ' (' + paid + ' paid hidden by the free tag)' : '') +
@@ -1808,7 +2069,7 @@
                         : Math.floor(n / 1000).toLocaleString() + 'k';
   }
   function loadCollections(keep) {
-    return fetch('/api/collections').then(function (r) { return r.json(); }).then(function (res) {
+    return get('/api/collections').then(function (res) {
       C = res; c.list.textContent = '';
       res.collections.forEach(function (row) {
         // The whole row opens the collection: no tight button pair on it.
@@ -1841,7 +2102,7 @@
           var lim = Object.keys(t.limits || {}).filter(function (k) { return t.limits[k]; })
             .map(function (k) { return t.limits[k].toLocaleString() + ' ' + k; });
           var can = t.capabilities.map(function (k) { return CAN[k] || k; });
-          var n = t.connections.length + ' connection' + (t.connections.length === 1 ? '' : 's');
+          var n = plural(t.connections.length, 'connection');
           left.appendChild(el('p', {class: 'together'},
             (t.context_window ? 'Prompts up to ' + tokens(t.context_window) + ' tokens' : 'Context window unknown') +
             (t.context_unknown.length ? ' (unknown for ' + t.context_unknown.join(', ') + '). ' : '. ') +
@@ -1927,7 +2188,7 @@
     if (!b) return;
     vcall = b.dataset.call;
     $('v-errors').textContent = ''; $('v-done').textContent = '';
-    fetch('/api/gateway-seat?call=' + encodeURIComponent(vcall)).then(function (r) { return r.json(); }).then(function (s) {
+    get('/api/gateway-seat?call=' + encodeURIComponent(vcall)).then(function (s) {
       if (!s.ok) { listErrors($('v-errors'), s.errors); vd.showModal(); return; }
       $('v-title').textContent = s.alias + ' · ' + s.seat;
       $('v-meta').textContent = s.model + ' · ' + s.status + ' in ' + s.seconds + 's · ' + s.at.slice(0, 16).replace('T', ' ') + ' · ' + s.call;
@@ -1957,7 +2218,7 @@
         chip.title = chip.title.replace(/(useful|not useful|verdict owed)( · [^·]*)$/, said[0] + '$2');
         if (owed && was !== (useful !== null)) {
           var n = Number(owed.dataset.n) + (was ? 1 : -1);
-          owed.dataset.n = n; owed.textContent = n + ' verdict' + (n === 1 ? '' : 's') + ' owed';
+          owed.dataset.n = n; owed.textContent = plural(n, 'verdict') + ' owed';
         }
       });
       vd.close(); ownChange();
@@ -2367,71 +2628,92 @@
       });
     }
     function rows(n) { return 20 * n + 80; }
+    // A name too long for its margin: `over` characters, and one for the …, out
+    // of its middle (Trend, Uptime); its hover keeps it whole.
+    function middle(s, over) {
+      var keep = s.length - over - 1;
+      return over <= 0 ? s : s.slice(0, Math.ceil(keep / 2)) + '…' + s.slice(s.length - Math.floor(keep / 2));
+    }
 
-    // Trend: a dot per day a model was scored, against its own earlier scores on
-    // the same tasks (serve.trend_data: a run is [day, change or null, tasks
-    // compared, hover]); beside each name, its flag for the window the card's select says.
+    // Trend: who moved, which way, by how much and how sure (serve.trend_data),
+    // in the window the card's select says. A row per model with a task to
+    // compare, grouped by its flag, the biggest move first (serve._trend_order,
+    // which the table follows): a bar from 0 to its change, none when there is
+    // too little to say, the evidence beside it, each task's move in its hover.
     var T = C.trend, tpick = document.querySelector('select[data-trend-days]');
     if (T && part !== 'uptime') put('chart-trend', function (w) {
       if (!T.models.length) return el('p', {class: 'hint'}, 'No model has been scored twice on the same task yet.');
       var win = tpick ? tpick.value : String(T.choices[0]);
-      var day = function (s) { return new Date(s + 'T12:00:00'); };
-      var since = new Date(day(T.today).getTime() - (win - 1) * 864e5);
-      var rank = {lower: 0, higher: 1, steady: 2, 'too little': 3};
-      function order(s) { return s.tasks ? rank[s.state] : 4; }      // nothing to compare: last
-      var R = T.models.slice().sort(function (a, b) {
-        var x = a.w[win], y = b.w[win];
-        return order(x) - order(y) || x.change - y.change || (a.name < b.name ? -1 : 1);
+      function pts(c) { return (c >= 0 ? '+' : '') + Math.round(c * 100); }
+      var keys = [], heads = [], M = [];               // the rows in order; a group's heading; a model's row
+      [['lower', 'Lower', err, err], ['higher', 'Higher', good, good], ['steady', 'Steady', ink, muted],
+       ['too little', 'Too little to say', muted, null]].forEach(function (g) {
+        var R = T.models.filter(function (m) { return m.w[win].tasks && m.w[win].state === g[0]; })
+          .map(function (m) { return {key: m.name, m: m, s: m.w[win], bar: g[3]}; })
+          .sort(function (a, b) {
+            return (g[3] ? Math.abs(b.s.change) - Math.abs(a.s.change) : 0) || (a.key < b.key ? -1 : 1);
+          });
+        if (!R.length) return;
+        heads.push({key: '\u0000' + g[0], text: g[1] + ' (' + R.length + ')', c: g[2]});
+        keys.push('\u0000' + g[0]);
+        R.forEach(function (r) { M.push(r); keys.push(r.key); });
       });
-      var dots = [];
-      R.forEach(function (m) {
-        m.runs.forEach(function (r) { dots.push({name: m.name, d: r[0], at: day(r[0]), change: r[1], n: r[2], tip: r[3]}); });
-      });
-      function pts(c) { return (c >= 0 ? '+' : '') + Math.round(c * 100) + ' pts'; }
-      function tip(d) {
-        return d.name + '\n' + d.at.toLocaleDateString(undefined, {weekday: 'short', day: 'numeric', month: 'short'}) + '\n'
-          + (d.change == null ? 'first scores on these tasks' : pts(d.change) + ' against its earlier scores, '
-             + d.n + ' task' + (d.n === 1 ? '' : 's') + ' compared') + '\n' + d.tip;
+      var none = T.models.filter(function (m) { return !m.w[win].tasks; }).map(function (m) { return m.name; });
+      if (!M.length) return el('p', {class: 'hint'}, 'No model was scored on the same task both in the last ' + win
+        + ' days and before them.');
+      var B = M.filter(function (r) { return r.bar; });
+      function change(r) { return r.s.change; }
+      function tip(r) {
+        var s = r.s;
+        return r.key + ' · last ' + win + ' days\n' + s.says + '\nIn the window: ' + s.runsDown + ' of ' + plural(s.runs, 'run')
+          + ' below its earlier scores, ' + s.runsUp + ' above\nEach task, in the window against before:\n'
+          + s.per.map(function (p) { return '  ' + p[0] + '  ' + pts(p[1]) + ' pts'; }).join('\n') + '\nLast scored ' + r.m.last;
       }
-      function says(m) {
-        var s = m.w[win];
-        function n(k, what) { return k + ' ' + what + (k === 1 ? '' : 's'); }
-        return s.tasks ? s.state + ' ' + pts(s.change) + ' · ' + n(s.tasks, 'task') + ', ' + n(s.runs, 'run') : 'no task to compare';
+      function evidence(r) {
+        var s = r.s;
+        return plural(s.tasks, 'task') + ': ' + s.down + ' down, ' + s.up + ' up · ' + plural(s.runs, 'run') + ' vs ' + s.before + ' before';
       }
-      // The name, then the flag, then the days. Room for the longest name at about
-      // 7 px a character, up to 260 px (a longer one loses its middle; its hover
-      // keeps it whole), and about 205 px for the flag. The days get 360 px at
-      // least: in a narrower column the chart scrolls sideways, names and flags first.
-      var flagW = 205, nameW = Math.min(260, Math.max(140, 7 * Math.max.apply(null, R.map(function (m) { return m.name.length; })) + 10));
-      var left = nameW + flagW, right = 20, fits = Math.floor((nameW - 10) / 7);
-      w = Math.max(w, left + right + 360);
-      return Plot.plot({
-        width: w, height: 22 * R.length + 70, style: Object.assign({}, style, {maxWidth: 'none'}),
-        marginLeft: left, marginRight: right, marginTop: 30, marginBottom: 30,
-        // From the window's start when the scores begin later (a young install).
-        x: {type: 'time', domain: [new Date(Math.min(day(T.first), since)), day(T.today)], axis: 'top', label: null, grid: true,
-            ticks: Math.max(2, Math.floor((w - left - right) / 90)),
-            tickFormat: function (d) { return d.toLocaleDateString(undefined, {day: 'numeric', month: 'short'}); }},
-        y: {domain: R.map(function (m) { return m.name; }), label: null, tickSize: 0, tickPadding: flagW + 6, tickFormat: function (m) {
-          var cut = m.length - fits;
-          return cut <= 0 ? m : m.slice(0, Math.ceil((m.length - cut - 1) / 2)) + '…' + m.slice(m.length - Math.floor((m.length - cut - 1) / 2));
-        }},
-        r: {type: 'identity'},
+      // The name (at about 7 px a character, up to 260 px: a longer one loses its
+      // middle, its hover keeps it whole), the bars (260 px at least), the
+      // evidence. On a phone, no evidence (the table has it) and shorter names;
+      // narrower still, the chart scrolls sideways.
+      var nameW = Math.min(260, Math.max(150, 7 * Math.max.apply(null, M.map(function (r) { return r.key.length; })) + 24));
+      var evW = 320;
+      w = $('chart-trend').clientWidth || w;          // its own box: a phone's is narrower than width()'s 520
+      if (w < nameW + evW + 260) { evW = 0; nameW = Math.min(nameW, 130); }
+      var fits = Math.floor((nameW - 24) / 7), right = evW || 20, wide = w < nameW + right + 140;
+      w = Math.max(w, nameW + right + 140);
+      // Symmetric, to the biggest bar and room for its number; 20 pts at least.
+      var top = Math.max(0.2, Math.ceil((Math.max.apply(null, [0].concat(B.map(function (r) { return Math.abs(r.s.change); }))) + 0.05) * 10) / 10);
+      function quiet(r) { return r.bar ? ink : muted; }
+      var plot = Plot.plot({
+        width: w, height: 24 * keys.length + 52, style: wide ? Object.assign({}, style, {maxWidth: 'none'}) : style,
+        marginLeft: nameW, marginRight: right, marginTop: 44, marginBottom: 8,
+        x: {domain: [-top, top], axis: 'top', label: evW ? '← lower · pts against its own earlier scores · higher →' : '← lower · pts · higher →',
+            labelAnchor: 'center', labelArrow: 'none', ticks: Math.max(2, Math.floor((w - nameW - right) / 60)), tickFormat: pts},
+        y: {domain: keys, axis: null},
         marks: [
-          Plot.ruleY(R.map(function (m) { return m.name; }), {stroke: line, strokeOpacity: 0.6}),
-          Plot.ruleX([since], {stroke: ink, strokeOpacity: 0.55, strokeDasharray: '4 3'}),
-          Plot.text([since], {x: function (d) { return d; }, frameAnchor: 'bottom', dy: 16, dx: 4, textAnchor: 'start',
-            fill: muted, text: function () { return 'last ' + win + ' days →'; }}),
-          // First scores on a task have nothing to be against: hollow.
-          Plot.dot(dots.filter(function (d) { return d.change == null; }), {x: 'at', y: 'name', r: 3, fill: 'none',
-            stroke: muted, title: tip}),
-          Plot.dot(dots.filter(function (d) { return d.change != null; }), {x: 'at', y: 'name', title: tip,
-            r: function (d) { return 3 + Math.min(d.n, 6) * 0.6; }, stroke: ink, strokeWidth: 0.5,
-            fill: function (d) { return d.change <= -T.move + 1e-9 ? err : d.change >= T.move - 1e-9 ? good : muted; }}),
-          Plot.text(R, {frameAnchor: 'left', y: 'name', textAnchor: 'start', dx: -flagW, fontSize: 12, text: says,
-            fill: function (m) { return m.w[win].state === 'lower' ? err : ink; }, title: function (m) { return m.w[win].says; }})
+          Plot.barX(B, {x1: -T.move, x2: T.move, y: 'key', fill: line, fillOpacity: 0.6}),     // within 10 pts
+          Plot.ruleX([0], {stroke: ink, strokeOpacity: 0.5}),
+          Plot.barX(B, {x1: 0, x2: change, y: 'key', fill: 'bar', insetTop: 5, insetBottom: 5, title: tip,
+            fillOpacity: function (r) { return r.s.state === 'steady' ? 0.6 : 1; }}),        // a flag stands out first
+          Plot.text(B.filter(function (r) { return r.s.change < 0; }), {x: change, y: 'key', text: function (r) { return pts(r.s.change); },
+            textAnchor: 'end', dx: -4, fill: ink}),
+          Plot.text(B.filter(function (r) { return r.s.change >= 0; }), {x: change, y: 'key', text: function (r) { return pts(r.s.change); },
+            textAnchor: 'start', dx: 4, fill: ink}),
+          Plot.text(heads, {y: 'key', frameAnchor: 'left', dx: -nameW, textAnchor: 'start', fontWeight: 700, fill: 'c', text: 'text'}),
+          Plot.text(M, {y: 'key', frameAnchor: 'left', dx: -nameW + 12, textAnchor: 'start', fill: quiet, title: tip,
+            text: function (r) { return middle(r.key, r.key.length - fits); }}),
+          evW ? Plot.text(M, {y: 'key', frameAnchor: 'right', dx: 12, textAnchor: 'start', fontSize: 12, fill: quiet, title: tip,
+            text: evidence}) : null
         ]
       });
+      if (!none.length) return plot;
+      var box = el('div', {});
+      box.appendChild(plot);
+      box.appendChild(el('p', {class: 'hint'}, 'Nothing to compare in the last ' + win + ' days (no task scored both in them'
+        + ' and before them): ' + none.join(', ') + '.'));
+      return box;
     });
     if (part === 'trend') return;
 
@@ -2474,9 +2756,8 @@
               win > 7 ? {day: 'numeric', month: 'short'} : cellW < 48 ? {day: 'numeric'} : {weekday: 'short', day: 'numeric'});
           }},
           y: {domain: R.map(function (r) { return r.name; }), label: null, tickSize: 0, tickFormat: function (m) {
-            var s = label(by[m]), cut = s.length - fits;
-            return cut <= 0 ? s : m.slice(0, Math.ceil((m.length - cut - 1) / 2)) + '…'
-              + m.slice(m.length - Math.floor((m.length - cut - 1) / 2)) + '  (' + by[m].n + ')';
+            var s = label(by[m]), over = s.length - fits;
+            return over <= 0 ? s : middle(m, over) + '  (' + by[m].n + ')';
           }},
           marks: [
             // A day with nothing counted is hollow: absent, not failing.
@@ -2512,7 +2793,7 @@
       var diag = [];
       panels.forEach(function (s) { diag.push({panel: s, x: 0, y: 0}, {panel: s, x: 1, y: 1}); });
       function tip(p) {
-        return p.model + ' · ' + names[p.set] + '\n' + p.n + ' answer' + (p.n === 1 ? '' : 's') + ' it was about '
+        return p.model + ' · ' + names[p.set] + '\n' + plural(p.n, 'answer') + ' it was about '
           + Math.round(p.said * 100) + '% sure of\n' + Math.round(p.right * 100) + '% of them right';
       }
       var narrow = w < 700, f = narrow ? 'fy' : 'fx', opts = {}, by = {};
@@ -2773,22 +3054,13 @@
 
   }
   onLoad.suite = function () { drawCharts('suite'); };
-  // Uptime's days: the tables and the list for that window shown, its charts drawn again.
+  // Uptime's or Trend's window: that window's tables (and Uptime's list) shown, its charts drawn again.
   document.addEventListener('change', function (ev) {
-    var s = ev.target;
-    if (!s.matches('select[data-uptime-days]')) return;
-    s.closest('.panel').querySelectorAll('[data-uptime-window]').forEach(function (d) {
-      d.hidden = d.getAttribute('data-uptime-window') !== s.value;
+    var s = ev.target, part = s.matches('select[data-uptime-days]') ? 'uptime' : s.matches('select[data-trend-days]') ? 'trend' : '';
+    if (!part) return;
+    s.closest('.panel').querySelectorAll('[data-' + part + '-window]').forEach(function (d) {
+      d.hidden = d.getAttribute('data-' + part + '-window') !== s.value;
     });
-    drawCharts('uptime');
-  });
-  // Trend's window: that window's table shown, its chart drawn again.
-  document.addEventListener('change', function (ev) {
-    var s = ev.target;
-    if (!s.matches('select[data-trend-days]')) return;
-    s.closest('.panel').querySelectorAll('[data-trend-window]').forEach(function (d) {
-      d.hidden = d.getAttribute('data-trend-window') !== s.value;
-    });
-    drawCharts('trend');
+    drawCharts(part);
   });
 })();

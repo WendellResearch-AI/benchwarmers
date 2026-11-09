@@ -60,6 +60,17 @@ ADDING A PROVIDER
 3. Run `python metrics/connect.py --selftest`: it checks every entry's shape,
    and every flow against a fake provider.
 4. Add an endpoint on the Endpoints page, pick the provider and sign in once for real.
+
+FOUND ON THIS MACHINE
+---------------------
+`detect()` looks for model servers running here at their usual ports (LOCAL:
+Ollama, LM Studio, Jan, llama.cpp, LocalAI, vLLM, LiteLLM, CLI Proxy API,
+OmniRoute), so the Endpoints page can offer each one with its address and
+kind filled in. Loopback only, GET only, no key sent, every port at once. A
+port alone is not proof: each answers /v1/models (or refuses it without a
+key), and where something else could sit on its port, a `sign` from its docs
+or source says which it is (llama.cpp and LocalAI share 8080). Adding one is
+the ordinary Add form, test before save and all; Ollama keeps its own flow.
 """
 
 from __future__ import annotations
@@ -163,6 +174,138 @@ PROVIDERS: dict[str, dict] = {
         "docs": "https://docs.ollama.com/openai",
     },
 }
+
+
+def _rows(data) -> list:
+    """An OpenAI /models answer's entries, [] for anything else."""
+    rows = data.get("data") if isinstance(data, dict) else None
+    return [r for r in rows if isinstance(r, dict)] if isinstance(rows, list) else []
+
+
+def _version(status: int, data) -> bool:
+    """{"version": ...}: Ollama's /api/version, vLLM's and LocalAI's /version."""
+    return status == 200 and isinstance(data, dict) and "version" in data
+
+
+# Model servers detect() looks for: their usual ports; `sign`, a key-free GET
+# and a test of its (status, answer) where the port alone could be another
+# server, none where the port is its own; the endpoint each becomes; where that
+# is said, read 2026-11-08. llama.cpp moved its default from 8080 to 9931
+# (README, --port), so both are asked. Order matters on a shared port: the
+# first whose sign holds.
+LOCAL: dict[str, dict] = {
+    "ollama": {"label": "Ollama", "ports": (11434,), "kind": "local", "provider": "ollama",
+               "sign": ("/api/version", _version),
+               "docs": "https://github.com/ollama/ollama/blob/main/docs/api.md#version"},
+    "lmstudio": {"label": "LM Studio", "ports": (1234,), "kind": "local",
+                 # Its own REST API: {"models": [{"key", "capabilities", ...}]}, or a refusal when it wants a token.
+                 "sign": ("/api/v1/models", lambda s, d: s in (401, 403) or (
+                     s == 200 and isinstance(d, dict) and isinstance(d.get("models"), list))),
+                 "docs": "https://lmstudio.ai/docs/developer/rest/list"},
+    "jan": {"label": "Jan", "ports": (1337,), "kind": "local",
+            "docs": "https://docs.jan.ai/desktop/api-server"},
+    "llamacpp": {"label": "llama.cpp server", "ports": (9931, 8080), "kind": "local",
+                 # Its /v1/models is public even with --api-key, each model owned_by "llamacpp".
+                 "sign": ("/v1/models", lambda s, d: any(r.get("owned_by") == "llamacpp" for r in _rows(d))),
+                 "docs": "https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md"},
+    "localai": {"label": "LocalAI", "ports": (8080,), "kind": "local",
+                # No owned_by in its /v1/models (endpoints/openai/list.go); /version has no middleware.
+                "sign": ("/version", _version),
+                "docs": "https://github.com/mudler/LocalAI/blob/master/core/http/routes/localai.go"},
+    "vllm": {"label": "vLLM", "ports": (8000,), "kind": "local",
+             "sign": ("/version", _version),          # --api-key guards /v1 and a few others, not this
+             "docs": "https://docs.vllm.ai/en/latest/cli/serve.html"},
+    "litellm": {"label": "LiteLLM", "ports": (4000,), "kind": "hub", "hub": "litellm",
+                "sign": ("/health/liveliness", lambda s, d: s == 200 and "alive" in str(d)),
+                "docs": "https://docs.litellm.ai/docs/proxy/health"},
+    "cliproxy": {"label": "CLI Proxy API", "ports": (8317,), "kind": "hub", "hub": "cliproxy",
+                 "sign": ("/", lambda s, d: isinstance(d, dict) and d.get("message") == "CLI Proxy API Server"),
+                 "docs": "https://github.com/router-for-me/CLIProxyAPI/blob/main/internal/api/server_routes.go"},
+    "omniroute": {"label": "OmniRoute / 9router", "ports": (20128,), "kind": "aggregator",
+                  "docs": "https://github.com/decolua/9router"},
+}
+
+
+def look(url: str, timeout: float = 0.5, body: dict | None = None, headers: dict | None = None) -> tuple[int, object]:
+    """(status, the answer as JSON or text); (0, None) when nothing usable
+    answers. A GET, or a POST of `body` as JSON. Never through a proxy or a
+    redirect: it reaches `url`'s own host or nothing, a key in `headers` too."""
+    import client                                # its no-redirect handler
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), client._NoRedirect)
+    sent = {**UA, **({"Content-Type": "application/json"} if body else {}), **(headers or {})}
+    try:
+        try:
+            with opener.open(urllib.request.Request(url, json.dumps(body).encode() if body else None, sent),
+                             timeout=timeout) as r:
+                status, raw = r.status, r.read(1 << 20)
+        except urllib.error.HTTPError as e:
+            status, raw = e.code, e.read(1 << 16)
+    except Exception:                            # noqa: BLE001 -- refused, timed out, or not HTTP at all
+        return 0, None
+    try:
+        return status, json.loads(raw)
+    except ValueError:
+        return status, raw.decode("utf-8", "replace")
+
+
+def detect(skip=(), timeout: float = 0.5) -> list[dict]:
+    """The LOCAL servers answering on this machine, but none on a port in
+    `skip` (this install's own) or already an endpoint. Each: id, label, port,
+    base, kind, hub, provider (Ollama's Connect flow), models (None when the
+    list needs a key) and key. Every port at once, so a look takes about
+    `timeout`, a server that hangs included. Loopback only, so a GET here
+    never leaves this machine."""
+    from concurrent.futures import ThreadPoolExecutor
+    taken = set(skip) | _endpoint_ports()
+    by_port: dict[int, list[str]] = {}
+    for sid, s in LOCAL.items():
+        for port in s["ports"]:
+            if port not in taken:
+                by_port.setdefault(port, []).append(sid)
+
+    def identify(port: int, ids: list[str]) -> dict | None:
+        got = {"/v1/models": look(f"http://127.0.0.1:{port}/v1/models", timeout)}
+        status, data = got["/v1/models"]
+        keyed = status in (401, 403)
+        if not keyed and not (status == 200 and isinstance(data, dict) and isinstance(data.get("data"), list)):
+            return None                          # not an OpenAI-compatible API, or nothing there
+        for sid in ids:
+            s = LOCAL[sid]
+            path, test = s.get("sign") or ("/v1/models", None)
+            if path not in got:
+                got[path] = look(f"http://127.0.0.1:{port}{path}", timeout)
+            if test is None or test(*got[path]):
+                return {"id": sid, "label": s["label"], "port": port, "kind": s["kind"], "hub": s.get("hub", ""),
+                        "provider": s.get("provider", ""), "docs": s["docs"],
+                        "base": PROVIDERS[s["provider"]]["base"] if s.get("provider") else f"http://127.0.0.1:{port}/v1",
+                        "models": None if keyed else len(_rows(data)), "key": keyed}
+        return None
+
+    if not by_port:
+        return []
+    with ThreadPoolExecutor(len(by_port)) as pool:
+        return [f for f in pool.map(lambda kv: identify(*kv), by_port.items()) if f]
+
+
+def _endpoint_ports() -> set[int]:
+    """The ports of endpoints on this machine, under any of its names or
+    addresses: an endpoint added by a LAN address is the same server."""
+    import socket
+    here = {"localhost", "127.0.0.1", "::1"}
+    try:
+        name = socket.gethostname()
+        here |= {name.lower(), *socket.gethostbyname_ex(name)[2]}
+    except OSError:
+        pass
+    ports = set()
+    for e in endpoints.load().values():
+        url = urllib.parse.urlsplit(str(e.get("base", "")))
+        try:
+            if url.hostname in here:
+                ports.add(url.port or (443 if url.scheme == "https" else 80))
+        except ValueError:                       # a port that is not a number: not one of these
+            pass
+    return ports
 
 
 class ConnectError(Exception):
@@ -515,6 +658,11 @@ def check() -> list[str]:
                 problems.append(f"{pid}: {k} must be an object")
         if (p.get("entry") or {}).get("kind") not in set(endpoints.KINDS) - {"hub"}:
             problems.append(f"{pid}: entry.kind is provider, aggregator or local (a hub is added by hand)")
+    for sid, s in LOCAL.items():                 # the id is the name an endpoint is offered under
+        if not endpoints.NAME.match(sid) or not s.get("docs", "").startswith("https://"):
+            problems.append(f"local {sid}: the id must match endpoints.NAME, and docs be https")
+        if s.get("kind") not in endpoints.KINDS or (s["kind"] == "hub") != (s.get("hub") in endpoints.HUBS):
+            problems.append(f"local {sid}: kind is one of endpoints.KINDS, and a hub names one of endpoints.HUBS")
     return problems
 
 

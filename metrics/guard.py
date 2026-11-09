@@ -146,9 +146,11 @@ def cors_origin(headers, port: int) -> str:
     return origin if origin.lower() in origins(port) else ""
 
 
-def check(headers, port: int, post: bool, max_body: int, cors: bool = False) -> int:
+def check(headers, port: int, post: bool, max_body: int, cors: bool = False,
+          kind: str = "application/json") -> int:
     """Raise Refused, or return how many body bytes to read (0 for a GET).
-    `cors`: a gateway route, where an allowed origin may be cross-site."""
+    `cors`: a gateway route, where an allowed origin may be cross-site.
+    `kind`: the body's type; never one a plain form can send (an import's zip)."""
     host = (headers.get("Host") or "").strip().lower()
     if host not in hosts(port):
         raise Refused(403, f"unknown Host {host or '(none)'!r}; set BENCHWARMERS_PUBLIC_URL"
@@ -161,8 +163,8 @@ def check(headers, port: int, post: bool, max_body: int, cors: bool = False) -> 
         raise Refused(403, "cross-site requests are refused")
     if origin and origin not in allowed:
         raise Refused(403, f"Origin {origin!r} is not allowed; set BENCH_ALLOWED_ORIGINS to add one")
-    if not (headers.get("Content-Type") or "").lower().startswith("application/json"):
-        raise Refused(415, "send Content-Type: application/json")
+    if not (headers.get("Content-Type") or "").lower().startswith(kind):
+        raise Refused(415, f"send Content-Type: {kind}")
     try:
         length = int(headers.get("Content-Length") or 0)
     except ValueError:

@@ -99,7 +99,7 @@ with [AGENTS.md](AGENTS.md).
 
 ## Try it
 
-**v0.3, early.** It runs with Python 3.11 or later on Windows, macOS and
+**Pre-1.0, early.** It runs with Python 3.11 or later on Windows, macOS and
 Linux, from PyPI, npm, a checkout or Docker. Expect rough edges, and read the
 code where these pages are thin.
 
@@ -145,6 +145,10 @@ dependencies either way: the app is the Python standard library.
    its key, which goes to the key file in llm's user folder (`keys.json`,
    shared with the `llm` CLI if you have it, not needed otherwise), never into
    the data folder. `BENCHWARMERS_KEY_<NAME>` in the environment works too.
+   To move an install to another machine, Settings → Export and import takes
+   the folder as one .zip (settings only, or everything; the endpoints' keys
+   only if you tick them) and imports it on the other install, saving what it
+   replaces to `backups/` first.
 
 3. **Start the dashboard.** With no endpoint yet it opens on adding one: sign
    in with a provider on its own page (OpenRouter, NanoGPT, Hugging Face,
@@ -153,7 +157,10 @@ dependencies either way: the app is the Python standard library.
    LiteLLM included. Anthropic and Gemini keys can also be called through
    those providers' own APIs (the API choice in the same dialog). Only providers that publish a sign-in for other apps are
    offered; adding one is an entry in `metrics/connect.py` (its docstring says
-   how).
+   how). A model server already running on this machine at its usual port
+   (Ollama, LM Studio, Jan, llama.cpp, LocalAI, vLLM, LiteLLM, CLI Proxy API,
+   OmniRoute) is offered under "Found on this machine", its address and kind
+   filled in.
 
        python serve.py                  # http://localhost:8122
 
@@ -195,6 +202,18 @@ dependencies either way: the app is the Python standard library.
   that is only out of quota until a stated reset is not counted against. The
   built-in scheduler runs all of this once Settings switches it on; a fresh
   install spends no calls until then.
+- **Benchmarks.** One page of reports: bugs found against false alarms, who
+  is confidently wrong, real work that helped, each model against its own
+  earlier scores (Trend), whether each provider was there when the bench
+  called it (Uptime: busy, unreachable and timed out count as down; your own
+  quota and pacing are left out), and speed. Each report shares as an image or
+  its table. [BENCHMARKS.md](BENCHMARKS.md) says how to read them.
+- **Decision models.** A model that answers typed questions with a
+  probability (Mercury Decide, say) labels a request's shape, picks a
+  collection for a request that names none (when it is sure, and the reply
+  says so), and classes an error no rule knows. Each is measured daily on
+  questions the bench's own data answers, and each use asks the one that does
+  best.
 - **Rate limits and usage.** Limits come from providers' rate-limit headers
   and error messages, and from what you set per connection or model
   (requests a minute, day or month; tokens a minute or day). They are kept per
@@ -394,6 +413,13 @@ points at it with `ANTHROPIC_BASE_URL=http://127.0.0.1:8122` and
 OpenAI-, Responses- or Ollama-speaking agents with the same base URL.
 [GATEWAY.md](GATEWAY.md), "Route mode", has the set-up and the limits.
 
+**Ready set-ups.** The dashboard's **Clients** page (Gateway) gives each
+popular app's configuration, filled in from your install's address,
+collections and MCP server, with a Copy button: opencode, VS Code chat, Codex
+CLI, Zed, Continue, Cline and Kilo Code, Claude Code, goose, and chat apps
+(LobeHub, AnythingLLM, Cherry Studio, Chatbox, LibreChat). Where keys are
+asked for, it makes one and fills it in, never into a file that may sync.
+
 <!-- The MCP Registry's proof that the PyPI package is this server (server.json):
 mcp-name: io.github.WendellResearch-AI/benchwarmers -->
 
@@ -446,8 +472,10 @@ reaches Wendell Research. What it sends, and where:
 
 - **Your prompts**, only to the endpoints you add: a provider, an aggregator,
   a hub such as Open WebUI, or a local runtime. That includes the probes, the
-  suite and onboarding, which spend calls on your keys. Add only endpoints you
-  are content to send that work to.
+  suite and onboarding, which spend calls on your keys, and the decision
+  models' daily benchmark, which puts past requests, judged answers and
+  redacted error text to them again. Add only endpoints you are content to
+  send that work to.
 - **Catalog reads**, no key and nothing of yours: FreeLLMAPI (its feed and
   its site's sitemap) and models.dev once a day, and OpenRouter's public
   model list. With an NVIDIA connection, the public file of rate limits
@@ -462,12 +490,18 @@ reaches Wendell Research. What it sends, and where:
   API asks each sign-in's own provider for its quota.
 - **Charts**: the dashboard's browser page loads Observable Plot from jsDelivr
   at a pinned version.
+- **Posts**, only when you click Post on X, Bluesky, LinkedIn or Reddit in a
+  report's Share menu: that site opens in your browser with the report's name
+  and the project's link. The image goes only to your clipboard, a file, or
+  the app you pick in your system's share sheet.
 - **Seeding real-bug tasks**, only when you run `suite/rebench.py`: the
   SWE-rebench-V2 rows from Hugging Face and the files from GitHub.
 
 Keys stay in the environment or llm's key file (`keys.json` in its user
-folder), never in the data folder. [PRIVACY.md](PRIVACY.md) and [SECURITY.md](SECURITY.md) have the
-detail.
+folder), not in the data folder. An export (Settings, Export and import)
+carries them only if you tick them, and an import that carries keys first
+backs up the ones it replaces, in the data folder's `backups/`.
+[PRIVACY.md](PRIVACY.md) and [SECURITY.md](SECURITY.md) have the detail.
 
 ## Limits
 
@@ -475,8 +509,8 @@ detail.
   with tools is refused there, not trimmed. Route mode passes turns only to
   members on chat-completions endpoints, keeps its sticky conversations in
   memory (a restart starts each on a fresh pick), and has been run end to end
-  with Claude Code; the Codex, opencode and Cline set-ups are written from
-  their docs. Shadow seats (other members answering an agent's turn for
+  with Claude Code; the other set-ups on the Clients page are written from
+  each app's docs, not run. Shadow seats (other members answering an agent's turn for
   evaluation) are planned, not built.
 - **Some parts are checked against fakes only.** The native Anthropic and
   Gemini endpoints, and the LiteLLM and CLI Proxy API hub adapters, are built
@@ -486,9 +520,10 @@ detail.
   seats before it stream as they finish.
 - **Pacing and the ledger cover the built-in client.** Calls made through the
   `llm` CLI, when you choose it, are neither paced nor counted.
-- **Calls cost.** Probes, onboarding and the suite run on your keys and free
-  tiers. Onboarding runs one model at a time for that reason (Quick spreads
-  the suite over the scheduled passes); a suite pass is paced, not burst.
+- **Calls cost.** Probes, onboarding, the suite and the decision benchmark
+  run on your keys and free tiers. Onboarding runs one model at a time for
+  that reason (Quick spreads the suite over the scheduled passes); a suite
+  pass is paced, not burst.
 - **The scheduler lives in the server.** Its jobs run while the dashboard (or
   the container, or the service) is up; a missed run is made up once, within
   seven days, when it comes back.
