@@ -770,6 +770,44 @@ def main() -> int:
     print(("ok   " if ok else "FAIL ") + "gateway settings: the collection pick, on, off and its confidence"
           + ("" if ok else f" -> {saved} {bad} {kept}"))
     failures += 0 if ok else 1
+    # Export and import: the settings and the endpoints' keys out of this copy, into
+    # an empty install; a preview writes nothing; a name outside the scope is refused whole.
+    import io
+    import zipfile
+    real_llm, there = serve.endpoints.LLM_DIR, serve.DATA
+    serve.endpoints.LLM_DIR = there
+    ep = next(e for e in serve.endpoints.load().values() if e.get("key"))
+    (there / "keys.json").write_text(json.dumps({ep["key"]: "k-1", "unrelated": "k-2"}), encoding="utf-8")
+    (cfg / "x.json.lock").write_text("", encoding="utf-8")
+    plain, with_keys, evil = io.BytesIO(), io.BytesIO(), io.BytesIO()
+    serve.export_zip("settings", False, plain)
+    made = serve.export_zip("settings", True, with_keys)
+    names = zipfile.ZipFile(plain).namelist()
+    carried = json.loads(zipfile.ZipFile(with_keys).read("keys.json"))
+    other = there / "other"
+    other.mkdir()
+    serve.DATA = serve.endpoints.LLM_DIR = other
+    with_keys.seek(0)
+    look = serve.import_zip(with_keys, apply=False)
+    wrote_nothing = not (other / "config").exists()
+    with_keys.seek(0)
+    done = serve.import_zip(with_keys, apply=True)
+    with zipfile.ZipFile(evil, "w") as z:
+        z.writestr("manifest.json", json.dumps({"benchwarmers_export": 1, "scope": "settings"}))
+        z.writestr("config/../../outside.txt", "x")
+    evil.seek(0)
+    refused = serve.import_zip(evil, apply=True)
+    ok = ("manifest.json" in names and "keys.json" not in names and "config/endpoints.json" in names
+          and not any(n.endswith(".lock") for n in names) and carried == {ep["key"]: "k-1"} and made["keys"] == 1
+          and look["ok"] and look["replaces"] == 0 and look["keys"] == 1 and wrote_nothing
+          and done["ok"] and (other / done["backup"]).is_file()
+          and (other / "config" / "endpoints.json").read_bytes() == (cfg / "endpoints.json").read_bytes()
+          and json.loads((other / "keys.json").read_text(encoding="utf-8")) == {ep["key"]: "k-1"}
+          and not refused["ok"] and not (there / "outside.txt").exists() and not (there.parent / "outside.txt").exists())
+    serve.DATA, serve.endpoints.LLM_DIR = there, real_llm
+    print(("ok   " if ok else "FAIL ") + "export and import: settings and keys out, into an empty install, nothing outside"
+          + ("" if ok else f" -> {names[:5]} {carried} {look} {done} {refused}"))
+    failures += 0 if ok else 1
     decide.FILE, decide.LOG, decide.DECIDED, decide.RESULTS = real_decide
     shutil.rmtree(tmp, ignore_errors=True)
     print("\nall rules hold" if not failures else f"\n{failures} FAILED")

@@ -145,6 +145,10 @@ dependencies either way: the app is the Python standard library.
    its key, which goes to the key file in llm's user folder (`keys.json`,
    shared with the `llm` CLI if you have it, not needed otherwise), never into
    the data folder. `BENCHWARMERS_KEY_<NAME>` in the environment works too.
+   To move an install to another machine, Settings → Export and import takes
+   the folder as one .zip (settings only, or everything; the endpoints' keys
+   only if you tick them) and imports it on the other install, saving what it
+   replaces to `backups/` first.
 
 3. **Start the dashboard.** With no endpoint yet it opens on adding one: sign
    in with a provider on its own page (OpenRouter, NanoGPT, Hugging Face,

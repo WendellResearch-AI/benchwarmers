@@ -4492,6 +4492,149 @@ def login_page() -> str:
             "});</script>")
 
 
+# ---- Export and import: this install's settings, or everything, as one zip --
+# Moving an install is a copy of its data folder (metrics/paths.py); this is that
+# copy as a download and an upload. The keys are not in it: they are in the llm
+# key store, and only the endpoints' own travel, only when asked.
+MOVE_SCOPES = {"settings": ("config",), "all": ("config", "metrics", "perf", "runs", "suite")}
+IMPORT_MAX = 2_000_000_000            # bytes; everything on the owner's install is about 90 MB
+_KEY_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
+
+
+def _endpoint_keys() -> dict:
+    """The stored keys the endpoints use: each one's key, admin key and refresh
+    token. Never one from the environment, nor the llm CLI's own others."""
+    names = set()
+    for entry in endpoints.load().values():
+        key = entry.get("key", "")
+        names |= {key, endpoints.admin_name(entry), f"{key}.refresh"}
+    return {n: v for n, v in endpoints._stored().items() if n in names and isinstance(v, str) and v}
+
+
+def export_zip(scope: str, keys: bool, out) -> dict:
+    """Write an export to the binary file `out`: the scope's folders (lock files
+    never), keys.json when `keys`, and manifest.json. Returns the manifest."""
+    import zipfile
+    if scope not in MOVE_SCOPES:
+        raise ValueError(f"scope is one of {', '.join(MOVE_SCOPES)}")
+    made = datetime.datetime.now().astimezone().isoformat(timespec="seconds")
+    manifest = {"benchwarmers_export": 1, "release": RELEASE, "made": made, "scope": scope,
+                "files": 0, "keys": 0, "skipped": []}
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as z:
+        for top in MOVE_SCOPES[scope]:
+            for path in sorted((DATA / top).rglob("*")):
+                if not path.is_file() or path.suffix == ".lock":
+                    continue
+                name = path.relative_to(DATA).as_posix()
+                try:
+                    z.write(path, name)
+                    manifest["files"] += 1
+                except OSError as exc:                 # held open by another process
+                    manifest["skipped"].append(f"{name}: {exc.strerror or exc}")
+        if keys:
+            have = _endpoint_keys()
+            z.writestr("keys.json", json.dumps(have, indent=2))
+            manifest["keys"] = len(have)
+        z.writestr("manifest.json", json.dumps(manifest, indent=2))
+    return manifest
+
+
+def _movable(name: str, tops: tuple) -> bool:
+    """A name an import may write: relative, inside one of the scope's folders,
+    no way out of the data folder, not a lock file."""
+    parts = name.split("/")
+    return (parts[0] in tops and len(parts) > 1 and "\\" not in name and ":" not in name
+            and not any(p in ("", ".", "..") for p in parts) and not name.endswith(".lock"))
+
+
+def import_zip(src, apply: bool) -> dict:
+    """Read an export (`src`, a binary file) and say what is in it. With
+    `apply`: this install's files in its scope go to backups/ first (an export
+    of them), then its files replace this install's of the same name and its
+    keys go to the key store. Files this install has and it does not are left."""
+    import shutil
+    import zipfile
+
+    def refused(why: str) -> dict:
+        return {"ok": False, "errors": [why]}
+    try:
+        z = zipfile.ZipFile(src)
+    except zipfile.BadZipFile:
+        return refused("that is not a zip file")
+    with z:
+        try:
+            m = json.loads(z.read("manifest.json"))
+        except (KeyError, ValueError):
+            return refused("it has no manifest.json: not a Benchwarmers export")
+        if not isinstance(m, dict) or m.get("benchwarmers_export") != 1 or m.get("scope") not in MOVE_SCOPES:
+            return refused("its manifest is not one this version reads")
+        tops = MOVE_SCOPES[m["scope"]]
+        files = [i for i in z.infolist() if not i.is_dir() and i.filename not in ("manifest.json", "keys.json")]
+        bad = [i.filename for i in files if not _movable(i.filename, tops)]
+        if bad:
+            return refused(f"{len(bad)} file(s) in it are outside {', '.join(tops)}, e.g. {bad[0]!r}: nothing imported")
+        try:
+            keys = json.loads(z.read("keys.json")) if "keys.json" in z.namelist() else {}
+        except ValueError:
+            return refused("its keys.json is not JSON")
+        if not (isinstance(keys, dict) and all(isinstance(v, str) and _KEY_NAME.match(k) for k, v in keys.items())):
+            return refused("its keys.json is not a list of key names and keys")
+        out = {"ok": True, "errors": [], "scope": m["scope"], "release": str(m.get("release", "")),
+               "made": str(m.get("made", "")), "files": len(files), "bytes": sum(i.file_size for i in files),
+               "replaces": sum((DATA / i.filename).is_file() for i in files), "keys": len(keys)}
+        if out["bytes"] > 10 * IMPORT_MAX:              # zipfile stops each file at its stated size
+            return refused(f"it unpacks to {out['bytes']:,} bytes: more than any install holds")
+        if not apply:
+            return out
+        stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        backup = DATA / "backups" / f"before-import-{stamp}.zip"
+        backup.parent.mkdir(parents=True, exist_ok=True)
+        with open(backup, "wb") as f:
+            export_zip(m["scope"], bool(keys), f)
+        out["backup"] = backup.relative_to(DATA).as_posix()
+        done = 0
+        try:
+            for i in files:
+                dest = DATA / i.filename
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                part = dest.with_name(f".{dest.name}.{os.getpid()}.part")
+                try:
+                    with z.open(i) as r, open(part, "wb") as w:
+                        shutil.copyfileobj(r, w)
+                    os.replace(part, dest)
+                finally:
+                    part.unlink(missing_ok=True)
+                done += 1
+        except (OSError, zipfile.BadZipFile) as exc:     # a full disk, a file held open, a damaged zip
+            return refused(f"stopped after {done} of {len(files)} files ({exc}); what it replaced is in"
+                           f" {out['backup']}")
+        for name, value in keys.items():
+            endpoints.set_key(name, value)
+        return out
+
+
+def move_card() -> str:
+    """Settings' Export and import (export_zip, import_zip; bench.js)."""
+    return ("<div class='panel form-panel'><h2>Export and import</h2><p class='muted'>Take this install to another"
+            " machine, or keep a copy of it: one .zip file, imported on the other install's Settings page.</p>"
+            "<div class='pick'><label class='check'><input type='radio' name='x-scope' value='settings' checked"
+            " data-kept> <span><b>Settings only</b>: endpoints, collections, roles, model options, the schedule,"
+            " gateway keys, the theme (<code>config/</code>)</span></label>"
+            "<label class='check'><input type='radio' name='x-scope' value='all' data-kept> <span><b>Everything</b>:"
+            " the settings, and every result, history, log and saved answer the bench judges by</span></label></div>"
+            "<label class='check'><input type='checkbox' id='x-keys' data-kept> <span>With the endpoints' API keys."
+            " The file then holds them: keep it like a password, and delete it once imported.</span></label>"
+            "<div class='actions'><button class='btn' type='button' id='x-export'>Download export</button></div>"
+            "<h3 class='form-head'>Import</h3>"
+            "<p class='rules'>Its files replace this install's of the same name; files it does not have are left."
+            " This install's own go to <code>backups/</code> first. Restart afterwards (Server and access, below),"
+            " so every part reads them.</p>"
+            "<input type='file' id='x-file' accept='.zip,application/zip'>"
+            "<div class='done' id='x-what' role='status'></div><div class='errors' id='x-errors' role='alert'></div>"
+            "<div class='actions'><button class='btn primary' type='button' id='x-import' disabled>Import</button>"
+            "</div></div>")
+
+
 def access_card() -> str:
     """How this install is reached and who may call it, from the environment:
     shown here, never set here. Each needs a restart, and a page that could
@@ -4740,7 +4883,7 @@ def settings_page() -> str:
         " (cron, Windows Task Scheduler), turn it off in the same step, or every job runs twice.</p>"
         "<div class='errors' id='s-errors' role='alert'></div><div class='done' id='s-done'></div>"
         "<div class='actions'><button class='btn primary' id='s-save'>Save scheduler</button></div></div>"
-        + client_card() + own_client_card() + access_card())
+        + client_card() + own_client_card() + move_card() + access_card())
 
 
 def endpoints_page() -> str:
@@ -5448,6 +5591,29 @@ class Handler(gateway.Handler):
         if self.path == "/api/stamp":
             self._json(200, {"stamp": data_stamp()})
             return
+        if path == "/api/export":                      # Settings' Export and import: the zip, as a download
+            from urllib.parse import parse_qs, urlparse
+            q = parse_qs(urlparse(self.path).query)
+            scope, keys = q.get("scope", ["settings"])[0], q.get("keys", [""])[0] == "1"
+            if scope not in MOVE_SCOPES or (self.headers.get("Sec-Fetch-Site") or "").lower() == "cross-site":
+                self._json(400, {"ok": False, "errors": ["scope is settings or all, asked from this page"]})
+                return
+            import shutil
+            import tempfile
+            with tempfile.TemporaryFile() as tmp:
+                export_zip(scope, keys, tmp)
+                size = tmp.tell()
+                tmp.seek(0)
+                self.send_response(200)
+                self.send_header("Content-Type", "application/zip")
+                self.send_header("Content-Disposition", f"attachment; filename=\"benchwarmers-{scope}"
+                                 f"{'-with-keys' if keys else ''}-{datetime.date.today()}.zip\"")
+                self.send_header("Content-Length", str(size))
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.end_headers()
+                shutil.copyfileobj(tmp, self.wfile)
+            return
         if self.path.startswith(("/fonts/", "/ui/")):
             # Only the named font files and ASSETS; anything else is a 404, so
             # this cannot be walked to other paths.
@@ -5493,6 +5659,25 @@ class Handler(gateway.Handler):
                     _answering[0] -= 1
         if path == "/login":
             return self._login()
+        if path == "/api/import":                      # Settings' Export and import: the zip as the body
+            try:
+                length = guard.check(self.headers, PORT, post=True, max_body=IMPORT_MAX, kind="application/zip")
+            except guard.Refused as r:
+                return self._json(r.status, {"ok": False, "errors": [str(r)]})
+            if not self._admitted(path):
+                return
+            import tempfile
+            with tempfile.TemporaryFile() as tmp:
+                while length > 0:
+                    chunk = self.rfile.read(min(length, 1 << 20))
+                    if not chunk:
+                        break
+                    tmp.write(chunk)
+                    length -= len(chunk)
+                tmp.seek(0)
+                result = import_zip(tmp, apply="apply=1" in self.path) if length == 0 else \
+                    {"ok": False, "errors": ["the upload stopped before its end"]}
+            return self._json(200 if result["ok"] else 400, result)
         ops = {"/api/model": lambda p: change_model(str(p.get("alias", "")),
                                                     p.get("new_alias"), p.get("new_role"),
                                                     new_ad_hoc=p.get("new_ad_hoc"),

@@ -79,6 +79,37 @@
       .then(function (yes) { if (yes) restart(false); });
   });
 
+  // ---- Export and import (serve.export_zip, import_zip) ----------------
+  // A link with download, not location: a page that "leaves" for a download
+  // never comes back (beforeunload's loading state).
+  on('click', 'x-export', function () {
+    var scope = document.querySelector('input[name=x-scope]:checked').value;
+    el('a', {href: '/api/export?scope=' + scope + ($('x-keys').checked ? '&keys=1' : ''), download: ''}).click();
+  });
+  function mb(n) { return n < 1e6 ? Math.max(1, Math.round(n / 1e3)) + ' KB' : (n / 1e6).toFixed(1) + ' MB'; }
+  // Picked: what is in it, asked of the server. Import: the same file again, written.
+  function importZip(apply) {
+    var f = $('x-file').files[0], go = $('x-import'), what = $('x-what'), errs = $('x-errors');
+    errs.textContent = ''; what.textContent = f ? (apply ? 'Importing…' : 'Reading it…') : ''; go.disabled = true;
+    if (!f) return;
+    fetch('/api/import' + (apply ? '?apply=1' : ''), {method: 'POST', headers: {'Content-Type': 'application/zip'}, body: f})
+      .then(function (r) { return r.json(); }).then(function (r) {
+        if (!r.ok) { what.textContent = ''; listErrors(errs, r.errors); return; }
+        var keys = r.keys ? ', and ' + r.keys + ' API key' + (r.keys === 1 ? '' : 's') : '';
+        if (apply) {
+          what.textContent = 'Imported ' + r.files + ' files' + keys + '. This install\'s own are in ' + r.backup
+            + '. Restart now so every part reads them.';
+          return;
+        }
+        what.textContent = (r.scope === 'all' ? 'Everything' : 'Settings only') + ' from Benchwarmers ' + r.release
+          + ', made ' + r.made.slice(0, 16).replace('T', ' ') + ': ' + r.files + ' files (' + mb(r.bytes) + ')' + keys + '. '
+          + (r.replaces ? r.replaces + ' of them replace files here.' : 'None of them is here yet.');
+        go.disabled = false;
+      }).catch(function (e) { what.textContent = ''; listErrors(errs, [String(e)]); });
+  }
+  on('change', 'x-file', function () { importZip(false); });
+  on('click', 'x-import', function () { importZip(true); });
+
   // ---- tabs, remembered per browser ----------------------------------
   // The server renders only the one shown (serve.tabs, told by the bench_tab
   // cookie set here); the others are fetched when first opened (GET
@@ -87,7 +118,7 @@
   var onShow = {};                     // a page's loader, run each time it is shown
   var onLoad = {};                     // a page's set-up, run each time its HTML arrives
   var shown = null, fetching = {}, ready = {}, marks = 0, last = {}, edited = {};
-  var KEPT = 'input[data-filter], select[data-facet], input[data-retired], input[data-paid]';    // controls a swap keeps
+  var KEPT = 'input[data-filter], select[data-facet], input[data-retired], input[data-paid], [data-kept]';    // controls a swap keeps (or may reset)
   function show(id) {
     shown = id;
     tabs.forEach(function (b) { b.setAttribute('aria-selected', String(b.dataset.tab === id)); });
