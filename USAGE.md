@@ -29,7 +29,7 @@ coding agent doing it with you); the gateway's whole contract is in
 | | **Benchmarks** | How models do on the suite and on real work: bugs found against false alarms, who is confidently wrong, and speed. |
 | | **Quota management** | A tile per provider: what is left, when it resets, and which of its models are resting. Then the week's resets, and what the bench sent. |
 | | **Logs** | Gateway calls (who sat and how it went, never the prompt), changes made from the dashboard, the scheduler, and onboarding runs. |
-| Gateway | **Endpoints** | Where models are served from. Add an endpoint (a provider's sign-in, or any OpenAI-compatible API key), change a key, and see what each one serves. Also your own app registrations and rate limits per connection. |
+| Gateway | **Endpoints** | Where models are served from. Add an endpoint (a provider's sign-in, or any OpenAI-compatible API key), change a key, and see what each one serves. A model server running on this machine at its usual port (LM Studio, Jan, llama.cpp, vLLM and the like) is offered under Found on this machine: Add opens the dialog with it filled in, to test and save. Also your own app registrations and rate limits per connection. |
 | | **Models** | Every model on the bench, by the connection it comes from. |
 | | **Collections** | The named panels your apps ask for, and the gateway's settings. |
 | | **Discover** | Models worth adding, from public catalogs, with the ways this install can reach each one. |

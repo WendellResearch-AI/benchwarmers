@@ -157,7 +157,10 @@ dependencies either way: the app is the Python standard library.
    LiteLLM included. Anthropic and Gemini keys can also be called through
    those providers' own APIs (the API choice in the same dialog). Only providers that publish a sign-in for other apps are
    offered; adding one is an entry in `metrics/connect.py` (its docstring says
-   how).
+   how). A model server already running on this machine at its usual port
+   (Ollama, LM Studio, Jan, llama.cpp, LocalAI, vLLM, LiteLLM, CLI Proxy API,
+   OmniRoute) is offered under "Found on this machine", its address and kind
+   filled in.
 
        python serve.py                  # http://localhost:8122
 

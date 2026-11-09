@@ -5,9 +5,10 @@
 metrics/connect.py --selftest covers the flows themselves; this covers what
 serve.py does with them: the callback route on the real handler, saving the
 endpoint by save_endpoint's rules (an owner's headers kept), the refresh token
-beside the key, a device sign-in finished by polling, Ollama's local add, and
-models on a renewing endpoint routed to the built-in client. Endpoints, keys,
-the change log and connect.json all point at a temp folder.
+beside the key, a device sign-in finished by polling, Ollama's local add,
+models on a renewing endpoint routed to the built-in client, and model servers
+found on this machine (local_servers). Endpoints, keys, the change log and
+connect.json all point at a temp folder.
 """
 
 from __future__ import annotations
@@ -68,6 +69,99 @@ def serve_on(handler) -> ThreadingHTTPServer:
     server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server
+
+
+SHAPES: dict[int, dict] = {}                     # port -> path -> (status, answer): what the server there says
+
+
+class Server(BaseHTTPRequestHandler):
+    """A local model server, answering as SHAPES says the one on its port does."""
+    def do_GET(self):                            # noqa: N802
+        status, body = SHAPES[self.server.server_port].get(self.path, (404, {"error": "not found"}))
+        raw = body.encode() if isinstance(body, str) else json.dumps(body).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "text/html" if isinstance(body, str) else "application/json")
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+
+    def log_message(self, *_a):
+        pass
+
+
+def local_servers() -> None:
+    """Found on this machine (connect.detect): each server told by its answers,
+    llama.cpp and LocalAI apart on one port, impostors and a hung port ignored,
+    this install's ports and servers already added skipped. Fake servers on
+    free ports stand in for the real ones; endpoints.json is main()'s temp one."""
+    import socket
+    import time
+
+    def listing(*owners):
+        return 200, {"object": "list", "data": [{"id": f"m{i}", "object": "model", **({"owned_by": o} if o else {})}
+                                                for i, o in enumerate(owners)]}
+    refused, version = (401, {"error": "Missing API key"}), (200, {"version": "1.0"})
+    shapes = {
+        "ollama": {"/v1/models": listing("library"), "/api/version": version},
+        "lmstudio": {"/v1/models": listing(None, None, None), "/api/v1/models": (200, {"models": [{"key": "m0"}]})},
+        "jan": {"/v1/models": refused},
+        "llamacpp": {"/v1/models": listing("llamacpp")},
+        "localai": {"/v1/models": listing(None, None), "/version": version},
+        "vllm": {"/v1/models": listing("vllm"), "/version": version},
+        "litellm": {"/v1/models": refused, "/health/liveliness": (200, "I'm alive!")},
+        "cliproxy": {"/v1/models": refused, "/": (200, {"message": "CLI Proxy API Server", "endpoints": []})},
+        "omniroute": {"/v1/models": listing("a", "b")},
+    }
+    servers = {sid: serve_on(Server) for sid in shapes if sid != "localai"}
+    port = {sid: s.server_port for sid, s in servers.items()}
+    port["localai"] = shared = port["llamacpp"]  # as 8080 is both
+    for sid, shape in shapes.items():
+        if sid != "localai":
+            SHAPES[port[sid]] = shape
+    hung = socket.socket()                       # takes the connection, never answers
+    hung.bind(("127.0.0.1", 0))
+    hung.listen()
+    saved = dict(connect.LOCAL)
+    try:
+        for sid in shapes:
+            connect.LOCAL[sid] = {**saved[sid], "ports": (port[sid],)}
+        connect.LOCAL["hung"] = {"label": "Hung", "ports": (hung.getsockname()[1],), "kind": "local", "docs": "https://x"}
+
+        def found(**kw) -> dict:
+            return {f["id"]: f for f in connect.detect(**kw)}
+
+        start = time.time()
+        got = found()
+        assert time.time() - start < 2, "a hung port held detection up"
+        assert set(got) == set(shapes) - {"localai"}, got           # 8080 answering as llama.cpp
+        assert got["llamacpp"]["port"] == shared and got["lmstudio"]["models"] == 3, got
+        for sid in ("jan", "litellm", "cliproxy"):
+            assert got[sid]["key"] and got[sid]["models"] is None, got[sid]
+        assert (got["litellm"]["kind"], got["litellm"]["hub"]) == ("hub", "litellm")
+        assert (got["cliproxy"]["kind"], got["cliproxy"]["hub"]) == ("hub", "cliproxy")
+        assert got["omniroute"]["kind"] == "aggregator" and got["vllm"]["kind"] == "local"
+        assert got["vllm"]["base"] == f"http://127.0.0.1:{port['vllm']}/v1"
+        assert got["ollama"]["provider"] == "ollama" and got["ollama"]["base"] == connect.PROVIDERS["ollama"]["base"]
+        SHAPES[shared] = shapes["localai"]                          # the same port, answering as LocalAI
+        assert "localai" in found() and "llamacpp" not in found()
+        # Something else on a server's port: a web page, an API without the server's sign.
+        SHAPES[shared] = {"/v1/models": (200, "<html>a web app</html>")}
+        SHAPES[port["vllm"]] = {"/v1/models": listing(None)}
+        assert not {"localai", "llamacpp", "vllm"} & set(found())
+        # This install's own port, and servers already endpoints (by localhost, or by this machine's name).
+        assert "omniroute" not in found(skip={port["omniroute"]})
+        connect.locked.update(connect.endpoints.FILE, lambda d: d.update(
+            mine={"base": f"http://localhost:{port['lmstudio']}/v1", "key": "mine"},
+            lan={"base": f"http://{socket.gethostname()}:{port['jan']}/v1", "key": "lan"}))
+        listed = {f["id"]: f for f in serve.connect_local()["found"]}
+        assert not {"lmstudio", "jan"} & set(listed) and "ollama" in listed, listed
+        assert listed["ollama"]["name"] == "ollama" and listed["litellm"]["name"] == "litellm", listed
+    finally:
+        connect.LOCAL.clear()
+        connect.LOCAL.update(saved)
+        hung.close()
+        for s in servers.values():
+            s.shutdown()
 
 
 def main() -> int:
@@ -207,6 +301,8 @@ def main() -> int:
             assert set(json.loads(serve.DISMISSED_PATH.read_text(encoding="utf-8"))) == {"m2@hub", "m3"}
             assert not serve.remove_endpoint("fk-2")["ok"] and not serve.set_default("nope")["ok"]
             assert sum(1 for e in serve.endpoints.load().values() if e.get("default")) == 1
+
+            local_servers()
         finally:
             connect.PROVIDERS.clear()
             connect.PROVIDERS.update(saved[0])

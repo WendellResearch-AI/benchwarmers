@@ -1498,10 +1498,48 @@
       });
     });
   }
-  onShow.endpoints = function () {             // its own-app and rate-limit sections
+  onShow.endpoints = function () {             // its own-app and rate-limit sections, and what runs here
     $('cn-app-errors').textContent = $('cn-app-done').textContent = '';
-    loadProviders(); loadLimits();
+    loadProviders(); loadLimits(); loadFound();
   };
+  // Model servers running on this machine that are not endpoints yet
+  // (serve.connect_local): asked each time the page is shown, since a look
+  // takes up to a second; nothing shows when there is none.
+  function loadFound() {
+    fetch('/api/connect/local', {cache: 'no-store'}).then(function (r) { return r.json(); }).then(function (res) {
+      var list = $('e-found-list');
+      if (!list) return;
+      list.textContent = '';
+      (res.found || []).forEach(function (f) {
+        var row = el('div', {class: 'endpoint'}), left = el('div'), acts = el('div', {class: 'acts'});
+        left.appendChild(el('div', {class: 'what'}, f.label + ' on :' + f.port));
+        left.appendChild(el('div', {class: 'base'}, (f.key ? 'lists its models only with a key'
+          : f.models + ' model' + (f.models === 1 ? '' : 's')) + ' · ' + f.base));
+        var add = el('button', {class: 'btn small', type: 'button', 'aria-label': 'Add ' + f.label + ' on :' + f.port}, 'Add');
+        add.addEventListener('click', function () { addFound(f); });
+        acts.appendChild(add); row.appendChild(left); row.appendChild(acts);
+        list.appendChild(row);
+      });
+      $('e-found').hidden = !list.children.length;
+    }).catch(function () {});
+  }
+  // The Add dialog, filled in: the key form (Test, then Save, as ever), or
+  // for Ollama its own choice, which gives it the stand-in key llm needs.
+  function addFound(f) {
+    var loaded = openEndpoint('add');
+    if (f.provider) {
+      loaded.then(function () {
+        var b = cn.list.querySelector('[data-choice="' + f.provider + '"]');
+        if (b && !b.disabled) b.click();
+      });
+      return;
+    }
+    e.name.value = f.name; e.base.value = f.base; e.kind.value = f.kind;
+    if (f.hub) e.hub.value = f.hub;
+    $('e-hub-row').hidden = $('e-admin-row').hidden = f.kind !== 'hub';
+    e.done.textContent = f.label + ' answers here' + (f.key ? '; it wants a key: paste one, then Test.' : ': Test it, then Save.');
+    (f.key ? e.key : e.test).focus();
+  }
   // The dialog, in one of three modes. add: the choices, API key first, then
   // each provider's sign-in; change: one endpoint's key form; again: a
   // sign-in under way for an endpoint that has one.
@@ -1519,9 +1557,10 @@
       e.name.value = x.name; e.base.value = x.base; e.name.readOnly = true;
       $('e-admin-row').hidden = !x.hub;                     // a hub's admin key changes here too
     }
-    if (e.adding) loadProviders();
+    var loaded = e.adding ? loadProviders() : Promise.resolve();
     if (!ed.open) ed.showModal();
     (mode === 'change' ? e.key : e.name).focus();
+    return loaded;                   // the choices, once listed
   }
   // Which form shows: 'key' (paste an API key), a provider (sign in), or none.
   function choose(p) {
@@ -1656,7 +1695,7 @@
   // The dialog's choices (API key, then each provider) and the Manage page's
   // own-app rows, from one listing.
   function loadProviders() {
-    fetch('/api/connect').then(function (r) { return r.json(); }).then(function (res) {
+    return fetch('/api/connect').then(function (r) { return r.json(); }).then(function (res) {
       cn.list.textContent = ''; $('cn-apps').textContent = '';
       choice('key', 'API key', '').addEventListener('click', function () { choose('key'); e.name.focus(); });
       res.providers.forEach(function (p) {
