@@ -2926,14 +2926,15 @@ def _trend_rows(rows: list[tuple], today: datetime.date) -> dict:
         windows = {}
         for w in TREND_DAYS:
             since = (today - datetime.timedelta(days=w - 1)).isoformat()
-            moves, recent, earlier = [], {}, set()      # per task; day -> [moves]; days before
-            for scores in tasks.values():
+            moves, recent, earlier, per = [], {}, set(), []     # per task; day -> [moves]; days before; [task, move]
+            for (task, _of), scores in tasks.items():
                 old = [s for d, s in scores if d < since]
                 new = [(d, s) for d, s in scores if d >= since]
                 if not old or not new:
                     continue
                 base = mean(old)
                 moves.append(mean([s for _d, s in new]) - base)
+                per.append([task, moves[-1]])
                 earlier |= {d for d, _s in scores if d < since}
                 for d, s in new:
                     recent.setdefault(d, []).append(s - base)
@@ -2950,7 +2951,8 @@ def _trend_rows(rows: list[tuple], today: datetime.date) -> dict:
             else:
                 state = "steady"
             windows[w] = {"state": state, "change": change, "tasks": len(moves), "down": down, "up": up,
-                          "runs": len(recent), "runsDown": runs_down, "runsUp": runs_up, "before": len(earlier)}
+                          "runs": len(recent), "runsDown": runs_down, "runsUp": runs_up, "before": len(earlier),
+                          "per": sorted(per, key=lambda p: p[1])}
         models[alias] = {
             "runs": [[d, mean(c) if (c := [x[0] for x in v if x[0] is not None]) else None, len(c),
                       "\n".join(x[1] for x in v)] for d, v in sorted(runs.items())],
@@ -2968,21 +2970,27 @@ def _trend_says(s: dict) -> str:
             f" against {s['before']} before")
 
 
+def _trend_order(m: str, s: dict) -> tuple:
+    """The chart's and the table's order: lower, higher, steady, too little;
+    the biggest move first in each (too little: by name, its move means nothing)."""
+    return TREND_STATES.index(s["state"]), 0 if s["state"] == "too little" else -abs(s["change"]), m
+
+
 def trend_data() -> dict:
-    """For bench.js: registered models with a run to compare, each run as
-    [day, change or None, tasks compared, hover], each window's flag."""
+    """For bench.js: registered models with a run to compare, each window's
+    flag, its evidence and each task's move."""
     t, live = trend_rows(), on_bench()
     return {"first": t["first"], "today": datetime.date.today().isoformat(), "choices": list(TREND_DAYS),
             "move": TREND_MOVE,
-            "models": [{"name": m, "runs": v["runs"],
+            "models": [{"name": m, "last": v["last"],
                         "w": {str(w): {**s, "says": _trend_says(s)} for w, s in v["windows"].items()}}
                        for m, v in sorted(t["models"].items())
                        if m in live and any(r[1] is not None for r in v["runs"])]}
 
 
 def trend_card() -> str:
-    """Each model against its own history: a dot per run, and a flag when its
-    scores in the window sit below (or above) its scores before it."""
+    """Each model against its own history: a bar for how far its scores in the
+    window moved from its scores before it, grouped by the flag, the evidence beside it."""
     t, live, first, names = trend_rows(), current(), TREND_DAYS[0], {}
 
     def name(model: str) -> str:                       # each window's table shows it: worked out once
@@ -2997,7 +3005,7 @@ def trend_card() -> str:
         body = ["<table><thead><tr>", th("Model"), th("Trend"), th("Change", True), th("Tasks compared", True),
                 th("Down", True), th("Up", True), th("Runs in window", True), th("Runs before", True),
                 th("Last scored"), "</tr></thead><tbody>"]
-        for m in sorted(rows, key=lambda m: (TREND_STATES.index(rows[m]["state"]), rows[m]["change"], m)):
+        for m in sorted(rows, key=lambda m: _trend_order(m, rows[m])):
             s = rows[m]
             body.append(
                 name(m) + f"<td data-sort='{TREND_STATES.index(s['state'])}'>"
@@ -3013,23 +3021,27 @@ def trend_card() -> str:
         body.append("</tbody></table>")
         return f"<div data-trend-window='{w}'{'' if w == first else ' hidden'}>" + "".join(body) + "</div>"
 
-    legend = ("<div class='q-legend'><span><i style='background:var(--err)'></i>10 pts or more below its earlier"
-              " scores on the same tasks</span><span><i style='background:var(--muted)'></i>within 10 pts</span>"
-              "<span><i style='background:var(--ok)'></i>10 pts or more above</span><span><i style='background:none;"
-              "border:1px solid var(--muted)'></i>first scores on these tasks</span></div>")
+    legend = ("<div class='q-legend'><span><i style='background:var(--err)'></i>lower than it used to be</span>"
+              "<span><i style='background:var(--ok)'></i>higher</span><span><i style='background:var(--muted)'></i>"
+              "steady</span><span><i style='background:var(--line)'></i>within 10 pts of its earlier scores</span>"
+              "<span>no bar: too little to say</span></div>")
     pick = ("<div class='toolbar'><label>Window <select data-trend-days>"
             + "".join(f"<option value='{w}'>last {w} days</option>" for w in TREND_DAYS)
             + f"</select></label></div>{legend}")
     key = f"""<dl>
-      <dt>A dot</dt><dd>One day a model was scored on our tasks, against its own earlier scores on the same
-        tasks: each task as a share of its findings, so a 1-finding claim and an 11-finding file count the same,
-        then averaged over the tasks it had been asked before. Bigger when more tasks were compared. Hover for
-        each task's score and what it scored before.</dd>
-      <dt>The flag</dt><dd>The scores in the window against the scores before it, on the tasks scored in
-        both. <b>Lower</b> (or <b>higher</b>) when, on average, they moved 10 points or more, on at least two
-        tasks and twice as many as moved the other way, in at least two separate runs. <b>Too little</b> when
-        fewer than three tasks can be compared, or fewer than two runs in the window or before it; <b>steady</b>
-        otherwise. One bad run, or one task, is never a trend, and nor is one run to compare against.</dd>
+      <dt>A bar</dt><dd>How far a model's scores in the window sit from its own scores before it, on the tasks
+        scored in both: each task as a share of its findings, so a 1-finding claim and an 11-finding file count
+        the same, then averaged over those tasks. Left is lower, right is higher; the shaded band is 10 points
+        either side. Hover for each task's move.</dd>
+      <dt>The groups</dt><dd><b>Lower</b> (or <b>higher</b>) when, on average, the scores moved 10 points or
+        more, on at least two tasks and twice as many as moved the other way, in at least two separate runs.
+        <b>Steady</b> otherwise: a steady bar past the band moved on average, but not on enough tasks or runs.
+        <b>Too little to say</b>, with no bar, when fewer than three tasks can be compared, or fewer than two
+        runs in the window or before it. One bad run, or one task, is never a trend, and nor is one run to
+        compare against. Biggest move first in each group.</dd>
+      <dt>Beside the bar</dt><dd>The evidence: the tasks compared and how many went down or up, then the runs
+        in the window against the runs before it. A model with no task scored both in the window and before it
+        is named under the chart.</dd>
       <dt>The window</dt><dd>{first} days by default: a paid model is scored about once a week and a free one
         about every 15 days, six tasks a run, so 7 days holds one run at most and could only say what one
         afternoon did. {first} days holds 2 to 4 runs. Longer windows hold more runs but leave less before them
@@ -3042,8 +3054,8 @@ def trend_card() -> str:
         from 2026-11-08 in <code>runs/answers/&lt;task&gt;/&lt;model&gt;/</code>; older ones were replaced by
         the next run and are gone.</dd>
     </dl>"""
-    return chart_card("Trend", "Does a model score lower, or higher, than it used to? Each model against its own"
-                      " earlier scores, task by task; flagged only when the move holds over several tasks and runs.",
+    return chart_card("Trend", "Who scores lower, or higher, than it used to? Each model against its own earlier"
+                      " scores on the same tasks; flagged only when the move holds over several tasks and runs.",
                       "chart-trend", "".join(window(w) for w in TREND_DAYS), key, extra=pick)
 
 

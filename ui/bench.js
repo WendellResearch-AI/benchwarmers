@@ -2368,70 +2368,90 @@
     }
     function rows(n) { return 20 * n + 80; }
 
-    // Trend: a dot per day a model was scored, against its own earlier scores on
-    // the same tasks (serve.trend_data: a run is [day, change or null, tasks
-    // compared, hover]); beside each name, its flag for the window the card's select says.
+    // Trend: who moved, which way, by how much and how sure (serve.trend_data),
+    // in the window the card's select says. A row per model with a task to
+    // compare, grouped by its flag, the biggest move first (serve._trend_order,
+    // which the table follows): a bar from 0 to its change, none when there is
+    // too little to say, the evidence beside it, each task's move in its hover.
     var T = C.trend, tpick = document.querySelector('select[data-trend-days]');
     if (T && part !== 'uptime') put('chart-trend', function (w) {
       if (!T.models.length) return el('p', {class: 'hint'}, 'No model has been scored twice on the same task yet.');
       var win = tpick ? tpick.value : String(T.choices[0]);
-      var day = function (s) { return new Date(s + 'T12:00:00'); };
-      var since = new Date(day(T.today).getTime() - (win - 1) * 864e5);
-      var rank = {lower: 0, higher: 1, steady: 2, 'too little': 3};
-      function order(s) { return s.tasks ? rank[s.state] : 4; }      // nothing to compare: last
-      var R = T.models.slice().sort(function (a, b) {
-        var x = a.w[win], y = b.w[win];
-        return order(x) - order(y) || x.change - y.change || (a.name < b.name ? -1 : 1);
+      function pts(c) { return (c >= 0 ? '+' : '') + Math.round(c * 100); }
+      function n(k, what) { return k + ' ' + what + (k === 1 ? '' : 's'); }
+      var keys = [], heads = [], M = [];               // the rows in order; a group's heading; a model's row
+      [['lower', 'Lower', err, err], ['higher', 'Higher', good, good], ['steady', 'Steady', ink, muted],
+       ['too little', 'Too little to say', muted, null]].forEach(function (g) {
+        var R = T.models.filter(function (m) { return m.w[win].tasks && m.w[win].state === g[0]; })
+          .map(function (m) { return {key: m.name, m: m, s: m.w[win], bar: g[3]}; })
+          .sort(function (a, b) {
+            return (g[3] ? Math.abs(b.s.change) - Math.abs(a.s.change) : 0) || (a.key < b.key ? -1 : 1);
+          });
+        if (!R.length) return;
+        heads.push({key: '\u0000' + g[0], text: g[1] + ' (' + R.length + ')', c: g[2]});
+        keys.push('\u0000' + g[0]);
+        R.forEach(function (r) { M.push(r); keys.push(r.key); });
       });
-      var dots = [];
-      R.forEach(function (m) {
-        m.runs.forEach(function (r) { dots.push({name: m.name, d: r[0], at: day(r[0]), change: r[1], n: r[2], tip: r[3]}); });
-      });
-      function pts(c) { return (c >= 0 ? '+' : '') + Math.round(c * 100) + ' pts'; }
-      function tip(d) {
-        return d.name + '\n' + d.at.toLocaleDateString(undefined, {weekday: 'short', day: 'numeric', month: 'short'}) + '\n'
-          + (d.change == null ? 'first scores on these tasks' : pts(d.change) + ' against its earlier scores, '
-             + d.n + ' task' + (d.n === 1 ? '' : 's') + ' compared') + '\n' + d.tip;
+      var none = T.models.filter(function (m) { return !m.w[win].tasks; }).map(function (m) { return m.name; });
+      if (!M.length) return el('p', {class: 'hint'}, 'No model was scored on the same task both in the last ' + win
+        + ' days and before them.');
+      var B = M.filter(function (r) { return r.bar; });
+      function change(r) { return r.s.change; }
+      function tip(r) {
+        var s = r.s;
+        return r.key + ' · last ' + win + ' days\n' + s.says + '\nIn the window: ' + s.runsDown + ' of ' + n(s.runs, 'run')
+          + ' below its earlier scores, ' + s.runsUp + ' above\nEach task, in the window against before:\n'
+          + s.per.map(function (p) { return '  ' + p[0] + '  ' + pts(p[1]) + ' pts'; }).join('\n') + '\nLast scored ' + r.m.last;
       }
-      function says(m) {
-        var s = m.w[win];
-        function n(k, what) { return k + ' ' + what + (k === 1 ? '' : 's'); }
-        return s.tasks ? s.state + ' ' + pts(s.change) + ' · ' + n(s.tasks, 'task') + ', ' + n(s.runs, 'run') : 'no task to compare';
+      function evidence(r) {
+        var s = r.s;
+        return n(s.tasks, 'task') + ': ' + s.down + ' down, ' + s.up + ' up · ' + n(s.runs, 'run') + ' vs ' + s.before + ' before';
       }
-      // The name, then the flag, then the days. Room for the longest name at about
-      // 7 px a character, up to 260 px (a longer one loses its middle; its hover
-      // keeps it whole), and about 205 px for the flag. The days get 360 px at
-      // least: in a narrower column the chart scrolls sideways, names and flags first.
-      var flagW = 205, nameW = Math.min(260, Math.max(140, 7 * Math.max.apply(null, R.map(function (m) { return m.name.length; })) + 10));
-      var left = nameW + flagW, right = 20, fits = Math.floor((nameW - 10) / 7);
-      w = Math.max(w, left + right + 360);
-      return Plot.plot({
-        width: w, height: 22 * R.length + 70, style: Object.assign({}, style, {maxWidth: 'none'}),
-        marginLeft: left, marginRight: right, marginTop: 30, marginBottom: 30,
-        // From the window's start when the scores begin later (a young install).
-        x: {type: 'time', domain: [new Date(Math.min(day(T.first), since)), day(T.today)], axis: 'top', label: null, grid: true,
-            ticks: Math.max(2, Math.floor((w - left - right) / 90)),
-            tickFormat: function (d) { return d.toLocaleDateString(undefined, {day: 'numeric', month: 'short'}); }},
-        y: {domain: R.map(function (m) { return m.name; }), label: null, tickSize: 0, tickPadding: flagW + 6, tickFormat: function (m) {
-          var cut = m.length - fits;
-          return cut <= 0 ? m : m.slice(0, Math.ceil((m.length - cut - 1) / 2)) + '…' + m.slice(m.length - Math.floor((m.length - cut - 1) / 2));
-        }},
-        r: {type: 'identity'},
+      // The name (at about 7 px a character, up to 260 px: a longer one loses its
+      // middle, its hover keeps it whole), the bars (260 px at least), the
+      // evidence. On a phone, no evidence (the table has it) and shorter names;
+      // narrower still, the chart scrolls sideways.
+      var nameW = Math.min(260, Math.max(150, 7 * Math.max.apply(null, M.map(function (r) { return r.key.length; })) + 24));
+      var evW = 320;
+      w = $('chart-trend').clientWidth || w;          // its own box: a phone's is narrower than width()'s 520
+      if (w < nameW + evW + 260) { evW = 0; nameW = Math.min(nameW, 130); }
+      var fits = Math.floor((nameW - 24) / 7), right = evW || 20, wide = w < nameW + right + 140;
+      function cut(m) {
+        var k = m.length - fits;
+        return k <= 0 ? m : m.slice(0, Math.ceil((m.length - k - 1) / 2)) + '…' + m.slice(m.length - Math.floor((m.length - k - 1) / 2));
+      }
+      w = Math.max(w, nameW + right + 140);
+      // Symmetric, to the biggest bar and room for its number; 20 pts at least.
+      var top = Math.max(0.2, Math.ceil((Math.max.apply(null, [0].concat(B.map(function (r) { return Math.abs(r.s.change); }))) + 0.05) * 10) / 10);
+      function quiet(r) { return r.bar ? ink : muted; }
+      var plot = Plot.plot({
+        width: w, height: 24 * keys.length + 52, style: wide ? Object.assign({}, style, {maxWidth: 'none'}) : style,
+        marginLeft: nameW, marginRight: right, marginTop: 44, marginBottom: 8,
+        x: {domain: [-top, top], axis: 'top', label: evW ? '← lower · pts against its own earlier scores · higher →' : '← lower · pts · higher →',
+            labelAnchor: 'center', labelArrow: 'none', ticks: Math.max(2, Math.floor((w - nameW - right) / 60)), tickFormat: pts},
+        y: {domain: keys, axis: null},
         marks: [
-          Plot.ruleY(R.map(function (m) { return m.name; }), {stroke: line, strokeOpacity: 0.6}),
-          Plot.ruleX([since], {stroke: ink, strokeOpacity: 0.55, strokeDasharray: '4 3'}),
-          Plot.text([since], {x: function (d) { return d; }, frameAnchor: 'bottom', dy: 16, dx: 4, textAnchor: 'start',
-            fill: muted, text: function () { return 'last ' + win + ' days →'; }}),
-          // First scores on a task have nothing to be against: hollow.
-          Plot.dot(dots.filter(function (d) { return d.change == null; }), {x: 'at', y: 'name', r: 3, fill: 'none',
-            stroke: muted, title: tip}),
-          Plot.dot(dots.filter(function (d) { return d.change != null; }), {x: 'at', y: 'name', title: tip,
-            r: function (d) { return 3 + Math.min(d.n, 6) * 0.6; }, stroke: ink, strokeWidth: 0.5,
-            fill: function (d) { return d.change <= -T.move + 1e-9 ? err : d.change >= T.move - 1e-9 ? good : muted; }}),
-          Plot.text(R, {frameAnchor: 'left', y: 'name', textAnchor: 'start', dx: -flagW, fontSize: 12, text: says,
-            fill: function (m) { return m.w[win].state === 'lower' ? err : ink; }, title: function (m) { return m.w[win].says; }})
+          Plot.barX(B, {x1: -T.move, x2: T.move, y: 'key', fill: line, fillOpacity: 0.6}),     // within 10 pts
+          Plot.ruleX([0], {stroke: ink, strokeOpacity: 0.5}),
+          Plot.barX(B, {x1: 0, x2: change, y: 'key', fill: 'bar', insetTop: 5, insetBottom: 5, title: tip,
+            fillOpacity: function (r) { return r.s.state === 'steady' ? 0.6 : 1; }}),        // a flag stands out first
+          Plot.text(B.filter(function (r) { return r.s.change < 0; }), {x: change, y: 'key', text: function (r) { return pts(r.s.change); },
+            textAnchor: 'end', dx: -4, fill: ink}),
+          Plot.text(B.filter(function (r) { return r.s.change >= 0; }), {x: change, y: 'key', text: function (r) { return pts(r.s.change); },
+            textAnchor: 'start', dx: 4, fill: ink}),
+          Plot.text(heads, {y: 'key', frameAnchor: 'left', dx: -nameW, textAnchor: 'start', fontWeight: 700, fill: 'c', text: 'text'}),
+          Plot.text(M, {y: 'key', frameAnchor: 'left', dx: -nameW + 12, textAnchor: 'start', fill: quiet, title: tip,
+            text: function (r) { return cut(r.key); }}),
+          evW ? Plot.text(M, {y: 'key', frameAnchor: 'right', dx: 12, textAnchor: 'start', fontSize: 12, fill: quiet, title: tip,
+            text: evidence}) : null
         ]
       });
+      if (!none.length) return plot;
+      var box = el('div', {});
+      box.appendChild(plot);
+      box.appendChild(el('p', {class: 'hint'}, 'Nothing to compare in the last ' + win + ' days (no task scored both in them'
+        + ' and before them): ' + none.join(', ') + '.'));
+      return box;
     });
     if (part === 'trend') return;
 
