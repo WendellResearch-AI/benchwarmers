@@ -31,6 +31,12 @@ WHERE THE FACTS COME FROM
   the same weights, but a provider can cap context lower.
 - Open WebUI's /api/models, where a connection passes metadata through
   (Inception, Reflection do; most do not).
+- A local model server's own API, for what its /v1/models leaves out: LM
+  Studio's /api/v1/models (vision, tool use, reasoning; the context window a
+  loaded model runs with, else the most it can take) and Ollama's /api/show
+  (its capabilities, and `<arch>.context_length` from model_info, the trained
+  window: Ollama may run it with less). Like a connection's own listing, these
+  beat a same-id match from anywhere else.
 - Everything else, including rate limits, by hand: freellmapi.co/models is a
   good place to look them up. The bench never fetches it; its data licence is
   not stated.
@@ -152,6 +158,39 @@ def _fetch(url: str, headers: dict | None = None) -> dict:
         return json.load(r)
 
 
+def _native(name: str, served) -> tuple[str, dict]:
+    """What a local model server says of its own models that its /v1/models
+    leaves out: LM Studio's /api/v1/models, else Ollama's /api/show, one call
+    for each of `served`. (source, {served id: facts}); ("", {}) from any other."""
+    import connect
+    import endpoints
+    root, secret = endpoints.base(name).removesuffix("/v1"), endpoints.key(name)
+    auth = endpoints.auth_headers("chat", secret) if secret else {}
+    status, data = connect.look(root + "/api/v1/models", 5, headers=auth)
+    out: dict[str, dict] = {}
+    if status == 200 and isinstance(data, dict) and isinstance(data.get("models"), list):
+        for m in data["models"]:
+            caps, runs = m.get("capabilities") or {}, m.get("loaded_instances") or []
+            # Loaded: the window it runs with now; else the most it can take.
+            ctx = min(filter(None, ((i.get("config") or {}).get("context_length") for i in runs)),
+                      default=m.get("max_context_length"))
+            facts = {"context_window": ctx, "vision": caps.get("vision"),
+                     "tools": caps.get("trained_for_tool_use"), "reasoning": "reasoning" in caps}
+            # A request names the key, a variant (key@q4_k_m) or a loaded instance's id.
+            for i in (m.get("key"), *(m.get("variants") or ()), *(r.get("id") for r in runs)):
+                out[i] = facts
+        return "lmstudio /api/v1/models", out
+    for s in served:
+        status, d = connect.look(root + "/api/show", 5, {"model": s}, auth)
+        if status == 200 and isinstance(d, dict) and isinstance(d.get("capabilities"), list):
+            caps, mi = d["capabilities"], d.get("model_info") or {}
+            # ponytail: the trained window; Ollama runs a model with its own num_ctx
+            # (OLLAMA_CONTEXT_LENGTH, a Modelfile's) and cuts a longer prompt silently.
+            out[s] = {"context_window": mi.get(f"{mi.get('general.architecture')}.context_length"),
+                      "vision": "vision" in caps, "tools": "tools" in caps, "reasoning": "thinking" in caps}
+    return ("ollama /api/show" if out else ""), out
+
+
 def _watch_price(alias: str, served: str, conn: str, old: dict | None, new: dict | None) -> None:
     """A free model that now has a price: raise it, before calls start failing.
     models.dev can lag, so this is an early warning, not proof; the bench's own
@@ -189,11 +228,17 @@ def refresh() -> dict:
     # is registered on: the direct openrouter endpoint lists qwen/qwen3.8-27b
     # too, and pooling the listings filed OpenRouter's 1M window as groq's.
     listings: dict[str, dict] = {}
+    native: dict[str, tuple[str, dict]] = {}           # a local server's own API, what /v1/models leaves out
     for name in endpoints.load():
         try:
             listings[name] = endpoints.models(name)
         except Exception:                              # noqa: BLE001
             listings[name] = {}
+        try:
+            if endpoints.kind(name) == "local":
+                native[name] = _native(name, listings[name])
+        except Exception:                              # noqa: BLE001 -- an answer of another shape: nothing from it
+            pass
     home = {r["alias"]: r["endpoint"] for r in endpoints.registry()}
     models = {}
     for alias, served in registered.items():
@@ -270,9 +315,11 @@ def refresh() -> dict:
                        structured_output=bool(feats & {"json_mode", "structured_outputs"}))
         if entry.get("input_modalities") is not None:
             own["vision"] = "image" in entry["input_modalities"]
-        for k, v in own.items():
-            if v is not None:
-                rec[k], src[k] = v, f"{ep or 'endpoint'} listing"
+        said, facts = native.get(ep, ("", {}))
+        for mine, by in ((own, f"{ep or 'endpoint'} listing"), (facts.get(served, {}), said)):
+            for k, v in mine.items():
+                if v is not None:
+                    rec[k], src[k] = v, by
         rec["sources"] = src
         models[alias] = rec
         _watch_price(alias, served, conn, before.get(alias, {}).get("cost"), rec.get("cost"))
