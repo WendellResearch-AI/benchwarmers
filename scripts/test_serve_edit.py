@@ -632,7 +632,12 @@ def main() -> int:
     run10 = [r for r in t["tr-down"]["runs"] if r[0] == (today - dt.timedelta(days=10)).isoformat()]
     twice = [r[:3] for r in t["tr-twice"]["runs"]]
     late = late and "tr-late" in t
+    # The chart's and the table's order: by flag, the biggest move first; too little by name.
+    flags = {"x": ("higher", 0.1), "y": ("higher", 0.3), "z": ("lower", -0.1), "b": ("too little", 0.1), "a": ("too little", 0.9)}
+    order = sorted(flags, key=lambda m: serve._trend_order(m, dict(zip(("state", "change"), flags[m]))))
     ok = ({m: s["state"] for m, s in w.items()} == {"tr-down": "lower", "tr-once": "steady", "tr-thin": "too little"}
+          and [[k, round(v, 9)] for k, v in w["tr-down"]["per"]] == [["tb", -0.6], ["ta", -0.4], ["tc", -0.4]]
+          and order == ["z", "y", "x", "a", "b"]
           and (w["tr-down"]["tasks"], w["tr-down"]["down"], w["tr-down"]["runs"], w["tr-down"]["before"]) == (3, 3, 2, 2)
           and abs(w["tr-down"]["change"] + 1.4 / 3) < 1e-9 and w["tr-once"]["runsDown"] == 1
           and "tr-old" not in t and len(run10) == 1 and abs(run10[0][1] + 0.5) < 1e-9 and run10[0][2] == 2
