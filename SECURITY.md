@@ -24,8 +24,9 @@ reproduce, and what an attacker gains.
 **On this machine by default.** The dashboard (`serve.py`, port 8122) and the
 gateway (on the same port at `/v1`, or alone with `gateway.py` on 8123) listen
 on 127.0.0.1. Every request is checked for the server's own host name (against
-DNS rebinding), and every write must be a same-origin JSON request, so a web
-page open in your browser cannot drive either server. With no admin token
+DNS rebinding), and every write must be a same-origin request with a JSON
+body (a zip, for an import), a type no plain form can send, so a web page
+open in your browser cannot drive either server. With no admin token
 there is no login and the gateway asks for no key.
 
 **Anywhere else, only with a login.** To listen beyond this machine
@@ -60,15 +61,24 @@ open itself to anyone.
 - **Keys.** Endpoint keys come from `BENCHWARMERS_KEY_<NAME>` (the key name
   upper-cased, `-` as `_`) first, then from llm's key file (`keys.json` in
   its user folder, used whether or not the `llm` CLI is installed). They are
-  never written to the data folder, never shown back, and never put in a log.
-  Sign-ins through a provider's page store their token the same way.
+  never shown back and never put in a log. Sign-ins through a provider's page
+  store their token the same way.
+- **Exports.** Settings, Export and import, puts the endpoints' stored keys
+  (key, admin key, refresh token; never one from the environment) in an
+  export only when you tick them, in plain text in its `keys.json`: keep that
+  file like a password and delete it once imported. Importing one puts its
+  keys in the key store, and first backs up this install's own, with its files,
+  to the data folder's `backups/before-import-<time>.zip`. An import is
+  refused whole if any file in it would land outside its scope's folders.
 - **The network.** Your prompts go only to the endpoints you add; the probes,
-  the suite and onboarding spend calls there too. Otherwise: public catalog
-  reads (models.dev, FreeLLMAPI, OpenRouter's model list), each Open WebUI
-  connection's model list (through Open WebUI, with its key), a provider's
-  sign-in page when you choose one, Observable Plot from jsDelivr in the
-  dashboard's page, and Hugging Face and GitHub only when you run
-  `suite/rebench.py`. [PRIVACY.md](PRIVACY.md) lists them.
+  the suite, onboarding and the decision benchmark spend calls there too.
+  Otherwise: public catalog reads (models.dev, FreeLLMAPI, OpenRouter's model
+  list), each Open WebUI connection's model list (through Open WebUI, with its
+  key), a provider's sign-in page when you choose one, Observable Plot from
+  jsDelivr in the dashboard's page, the site a report's Share menu posts to
+  when you choose one (opened with the report's name and the project's link
+  only), and Hugging Face and GitHub only when you run `suite/rebench.py`.
+  [PRIVACY.md](PRIVACY.md) lists them.
 - **Files.** It writes inside its data folder (`BENCHWARMERS_HOME`, or the
   folder `.benchwarmers-home` names) and, in llm's user folder, the key file
   (when you paste a key or sign in) and the model list (when it registers a
