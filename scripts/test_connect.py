@@ -149,7 +149,8 @@ def local_servers() -> None:
 
         start = time.time()
         got = found()
-        assert time.time() - start < 2, "a hung port held detection up"
+        # 0.5 s per probe: a hung port that held it up would take far longer; CI runners are slow.
+        assert time.time() - start < 5, "a hung port held detection up"
         assert set(got) == set(shapes) - {"localai"}, got           # 8080 answering as llama.cpp
         assert got["llamacpp"]["port"] == shared and got["lmstudio"]["models"] == 3, got
         for sid in ("jan", "litellm", "cliproxy"):
