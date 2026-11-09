@@ -99,7 +99,7 @@ with [AGENTS.md](AGENTS.md).
 
 ## Try it
 
-**v0.3, early.** It runs with Python 3.11 or later on Windows, macOS and
+**Pre-1.0, early.** It runs with Python 3.11 or later on Windows, macOS and
 Linux, from PyPI, npm, a checkout or Docker. Expect rough edges, and read the
 code where these pages are thin.
 
@@ -199,6 +199,18 @@ dependencies either way: the app is the Python standard library.
   that is only out of quota until a stated reset is not counted against. The
   built-in scheduler runs all of this once Settings switches it on; a fresh
   install spends no calls until then.
+- **Benchmarks.** One page of reports: bugs found against false alarms, who
+  is confidently wrong, real work that helped, each model against its own
+  earlier scores (Trend), whether each provider was there when the bench
+  called it (Uptime: busy, unreachable and timed out count as down; your own
+  quota and pacing are left out), and speed. Each report shares as an image or
+  its table. [BENCHMARKS.md](BENCHMARKS.md) says how to read them.
+- **Decision models.** A model that answers typed questions with a
+  probability (Mercury Decide, say) labels a request's shape, picks a
+  collection for a request that names none (when it is sure, and the reply
+  says so), and classes an error no rule knows. Each is measured daily on
+  questions the bench's own data answers, and each use asks the one that does
+  best.
 - **Rate limits and usage.** Limits come from providers' rate-limit headers
   and error messages, and from what you set per connection or model
   (requests a minute, day or month; tokens a minute or day). They are kept per
@@ -450,8 +462,10 @@ reaches Wendell Research. What it sends, and where:
 
 - **Your prompts**, only to the endpoints you add: a provider, an aggregator,
   a hub such as Open WebUI, or a local runtime. That includes the probes, the
-  suite and onboarding, which spend calls on your keys. Add only endpoints you
-  are content to send that work to.
+  suite and onboarding, which spend calls on your keys, and the decision
+  models' daily benchmark, which puts past requests, judged answers and
+  redacted error text to them again. Add only endpoints you are content to
+  send that work to.
 - **Catalog reads**, no key and nothing of yours: FreeLLMAPI (its feed and
   its site's sitemap) and models.dev once a day, and OpenRouter's public
   model list. With an NVIDIA connection, the public file of rate limits
@@ -466,12 +480,18 @@ reaches Wendell Research. What it sends, and where:
   API asks each sign-in's own provider for its quota.
 - **Charts**: the dashboard's browser page loads Observable Plot from jsDelivr
   at a pinned version.
+- **Posts**, only when you click Post on X, Bluesky, LinkedIn or Reddit in a
+  report's Share menu: that site opens in your browser with the report's name
+  and the project's link. The image goes only to your clipboard, a file, or
+  the app you pick in your system's share sheet.
 - **Seeding real-bug tasks**, only when you run `suite/rebench.py`: the
   SWE-rebench-V2 rows from Hugging Face and the files from GitHub.
 
 Keys stay in the environment or llm's key file (`keys.json` in its user
-folder), never in the data folder. [PRIVACY.md](PRIVACY.md) and [SECURITY.md](SECURITY.md) have the
-detail.
+folder), not in the data folder. An export (Settings, Export and import)
+carries them only if you tick them, and an import that carries keys first
+backs up the ones it replaces, in the data folder's `backups/`.
+[PRIVACY.md](PRIVACY.md) and [SECURITY.md](SECURITY.md) have the detail.
 
 ## Limits
 
@@ -490,9 +510,10 @@ detail.
   seats before it stream as they finish.
 - **Pacing and the ledger cover the built-in client.** Calls made through the
   `llm` CLI, when you choose it, are neither paced nor counted.
-- **Calls cost.** Probes, onboarding and the suite run on your keys and free
-  tiers. Onboarding runs one model at a time for that reason (Quick spreads
-  the suite over the scheduled passes); a suite pass is paced, not burst.
+- **Calls cost.** Probes, onboarding, the suite and the decision benchmark
+  run on your keys and free tiers. Onboarding runs one model at a time for
+  that reason (Quick spreads the suite over the scheduled passes); a suite
+  pass is paced, not burst.
 - **The scheduler lives in the server.** Its jobs run while the dashboard (or
   the container, or the service) is up; a missed run is made up once, within
   seven days, when it comes back.

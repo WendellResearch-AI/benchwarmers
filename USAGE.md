@@ -13,6 +13,7 @@ coding agent doing it with you); the gateway's whole contract is in
 - [Collections](#collections)
 - [Connecting an app](#connecting-an-app)
 - [Recording verdicts](#recording-verdicts)
+- [Benchmarks, and sharing a report](#benchmarks-and-sharing-a-report)
 - [Discover: finding models to add](#discover-finding-models-to-add)
 - [Quota management](#quota-management)
 - [The scheduler](#the-scheduler)
@@ -24,17 +25,23 @@ coding agent doing it with you); the gateway's whole contract is in
 
 | Group | Page | What it is for |
 | --- | --- | --- |
-| Observe | **At a glance** | Every model on the bench: whether it works right now, its role, and its connection. Click a name for its popup: role, alias, facts, options, retire. |
+| Observe | **At a glance** | Every model on the bench: whether it works right now, its uptime over 7 days, its role, and its connection. Click a name for its popup: role, alias, facts, options, retire. |
 | | **Action needed** | What will not fix itself, by the connection it comes from, with Retry and Retire on each model. |
-| | **Benchmarks** | How models do on the suite and on real work: bugs found against false alarms, who is confidently wrong, and speed. |
+| | **Benchmarks** | How models do on the suite and on real work: bugs found against false alarms, who is confidently wrong, each model against its own earlier scores, uptime, speed, and the decision models. Each report shares as an image or its table. |
 | | **Quota management** | A tile per provider: what is left, when it resets, and which of its models are resting. Then the week's resets, and what the bench sent. |
 | | **Logs** | Gateway calls (who sat and how it went, never the prompt), changes made from the dashboard, the scheduler, and onboarding runs. |
 | Gateway | **Endpoints** | Where models are served from. Add an endpoint (a provider's sign-in, or any OpenAI-compatible API key), change a key, and see what each one serves. Also your own app registrations and rate limits per connection. |
 | | **Models** | Every model on the bench, by the connection it comes from. |
 | | **Collections** | The named panels your apps ask for, and the gateway's settings. |
 | | **Discover** | Models worth adding, from public catalogs, with the ways this install can reach each one. |
-| Control | **Settings** | Theme, gateway keys, the scheduler, the model client, providers whose free models work only in their own app, how the install is reached (shown only), and Restart. |
-| | **Info** | Version, Python, data folder and counts. |
+| Control | **Settings** | Theme, gateway keys, the scheduler, the model client, providers whose free models work only in their own app, export and import, how the install is reached (shown only), and Restart. |
+| | **Info** | The source repository, the version (linking its release), Python, data folder and counts. |
+
+The page shown follows the data: while it is in view it checks every 10
+seconds, and when something has changed it swaps in the new page in place,
+keeping open sections, sorting and filters. It waits while you are at work on
+it (a popup open, a form not saved or in use, text selected, a chart hovered),
+and **New results · Show**, top right, offers the change instead.
 
 **Action needed** lists what will not fix itself, such as a model about to be
 retired, grouped by the connection it comes from, since one cause usually
@@ -108,7 +115,9 @@ unavailable, so the daily probe keeps watching it.
 `code`, `light` (small and fast), `vision` (reads images well, weak at text:
 OCR and document models; seated only when a request carries images) or
 `image` (makes images; never seated). A model that reads images and does
-everything else well stays `general`.
+everything else well stays `general`. Where a decision model is onboarded,
+onboarding asks it to suggest a new chat model's role; the popup shows the
+suggestion, and nothing applies it.
 
 ## Collections
 
@@ -134,6 +143,10 @@ and how many of them explore). A collection can set its own in its popup; left
 empty, it follows those settings. A member out of quota stays on the collection
 and an explorer sits in for it, named `stand-in for <member>`, until the quota
 is back. Max explorers 0 means only the members ever run, stand-ins included.
+
+Gateway settings also says whether a request that names no collection is given
+one by a decision model, and how sure that model must be (GATEWAY.md, "No
+default collection").
 
 ## Connecting an app
 
@@ -229,6 +242,33 @@ claims feed **Confidently wrong** on Benchmarks, and verdicts together decide
 who sits on the next panel. Agreement between models is not evidence: they
 are often wrong together.
 
+## Benchmarks, and sharing a report
+
+**Benchmarks** is one report after another: who to trust with a review, bug
+hunt, real work, confidently wrong, our code, vision, trend, uptime,
+performance and the decision models, then links to public leaderboards. Most
+have a chart, the table folded under it (with a filter, and **Show
+retired**), and **How to read this**;
+[BENCHMARKS.md](BENCHMARKS.md) has the same explanations in one place.
+**Trend** (30 or 60 days) and **Uptime** (7 or 30) have a window to choose.
+
+**Share**, top right of each report:
+
+- **Copy image** / **Download image**: the report's charts, title and the line
+  under it, with a band at the foot holding the logo, the project's link and
+  the date, as a PNG at twice the size shown. The table, the key and the
+  controls stay out; a window you chose shows as its words.
+- **Copy table as Markdown** / **Download table as CSV**: the table as shown
+  (its window, filter and Show retired), a model's connection in brackets.
+- **Share…**: your system's share sheet, with the image.
+- **Post on** X, Bluesky, LinkedIn or Reddit: the image goes on the clipboard
+  (or is saved, where there is no clipboard), then the site opens with the
+  report's name and the project's link, for you to paste the image into.
+
+What your browser cannot do is not offered: copying needs a secure page
+(`localhost` is one; a LAN address over plain http is not), and Share… needs
+a share sheet.
+
 ## Discover: finding models to add
 
 **Discover** leads with FreeLLMAPI's catalog of free tiers and fills in from
@@ -319,8 +359,9 @@ Under the tiles are:
 ## The scheduler
 
 The recurring jobs (the morning availability probe, the catalog refresh, the
-deprecation check and auto-retire, suite passes, the weekly speed and
-capability tests) run inside the dashboard. Settings, **Scheduler**:
+deprecation check and auto-retire, suite passes, the decision models' daily
+benchmark, the weekly speed and capability tests) run inside the dashboard.
+Settings, **Scheduler**:
 
 - **Off**: nothing runs; a fresh install spends no calls until you opt in.
 - **Log only**: writes "would run" to `runs/scheduler.log` at each due time,
@@ -337,3 +378,16 @@ call logs, probe history, task answers) lives in the data folder: the one
 `BENCHWARMERS_HOME` names, else the one in `.benchwarmers-home` at the top of
 the checkout. Back it up by copying it; move it by copying it and pointing one
 of those two at the new place. Info shows which folder is in use.
+
+**Export and import**, on Settings, does the same through the dashboard, for
+another machine or a copy to keep: one .zip of **Settings only**
+(`config/`: endpoints, collections, roles, model options, the schedule,
+gateway keys, the theme) or **Everything** (also every result, history, log
+and saved answer). The endpoints' API keys go in only if you tick them; the
+file then holds them, so keep it like a password and delete it once
+imported. On the other install, choose the file: it says what is in it
+(scope, release, date, files, how many it replaces, keys) before **Import**.
+Its files replace the ones of the same name, after this install's own in that
+scope are saved to `backups/before-import-<time>.zip`; files it does not have
+are left. Restart afterwards (Settings, Server and access), so every part
+reads them.

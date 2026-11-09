@@ -552,7 +552,7 @@ key limited to its collection and a rate, or keep the key on the app's server.
 | Formats | `metrics/formats.py`: Anthropic Messages, Responses, legacy completions, Ollama and Gemini, each translated to and from OpenAI messages (Other API formats); the outbound half is for the built-in client to call those APIs natively, not wired yet. |
 | Collections | `metrics/bench_collections.py` reads the two config files and computes explorer seats. |
 | Seat router | `route.panel(members=…, explorers=n)` fills explorer seats by staleness for the shape. |
-| Shape picker | Optional decision model (above). |
+| Decision models | `metrics/decide.py`: the shape picker and the collection pick (above), each asking the model best on the decision benchmark; every call in `metrics/decisions.jsonl`. Benchmarks › Decision models shows the benchmark and who each use asks (BENCHMARKS.md). |
 | Call log | `runs/gateway/calls.jsonl`, gitignored: every seat's answer, status, timing and call id. |
 | Evidence | Each seat is recorded in `metrics/offloads.jsonl` as an unjudged offload when it answers; `offload.py verdict <call id>` or `POST /bench/verdict` replaces it. |
 | Collections tab | The collections, each drawn as its panel sits, and their form (one row per model, a chip per provider). Then the gateway's recent requests: every seat's status and verdict, how long the caller waited (Time), and how many verdicts are owed. Clicking a seat opens its answer and the verdict form. |
@@ -601,7 +601,9 @@ copy of the alias table and a plugin to write bench evidence.
   UIs: merged replies, opt-in, with every seat still called, recorded and
   returned in `bench`, and the merge told to keep who said what.)
 - **Collections replace `bench/panel`.** Every request names a collection;
-  the bench adds the explorers.
+  the bench adds the explorers. (Since 2026-11-08 a request that names none
+  can be given one by a confident decision model, never silently: "No default
+  collection".)
 - **No single-model routes**, which also dropped the shadow worker and judge
   model from the first draft: they learned from single-model traffic that no
   longer passes through the bench.

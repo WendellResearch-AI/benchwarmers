@@ -86,6 +86,11 @@ with a provider's own page needs a callback to the machine the browser is on,
 so on a hosted server the dashboard signs in by code where the provider
 offers that (GitHub, for one), and for the others you paste a key.
 
+**Moving an install you already run.** On its Settings, Export and import
+downloads its settings, or everything, as one .zip (its keys only if you tick
+them); import that on the hosted dashboard's Settings, then restart it there.
+Keys you give as secrets need not travel.
+
 **What the image does for each platform.** `deploy/container.py` is the
 image's entry point. It takes the platform's `PORT` as `BENCH_PORT`, and its
 public address (`FLY_APP_NAME`, `RAILWAY_PUBLIC_DOMAIN`, `RENDER_EXTERNAL_URL`)

@@ -1,6 +1,6 @@
 # Privacy policy
 
-*Effective 7 November 2026.*
+*Effective 8 November 2026.*
 
 Benchwarmers runs on your own machine or server. It has no account, no
 telemetry and no server of its own, and nothing you do with it reaches
@@ -11,8 +11,13 @@ Wendell Research.
 - **Your prompts**, only to the endpoints you add
   (a provider, an aggregator, a hub such as Open WebUI, or a local runtime).
   That includes what the gateway relays for your apps, and the calls the
-  probes, the suite and onboarding make. Each endpoint's own privacy policy
-  applies to what it receives; some free tiers keep prompts or train on them.
+  probes, the suite and onboarding make. A decision model on one of those
+  endpoints is also sent a gateway request, to label its shape or, when it
+  names no collection, to pick one; a seat's short reply that may be a
+  provider's notice; and, by the daily decision benchmark, past gateway
+  requests, answers you judged with their request, and redacted error text.
+  Each endpoint's own privacy policy applies to what it receives; some free
+  tiers keep prompts or train on them.
 - **Catalog reads**, carrying nothing of yours: FreeLLMAPI (its feed and its
   site's sitemap) and models.dev (at most once a day) and OpenRouter's public
   model list. With an NVIDIA connection on the bench, the public file of rate
@@ -37,6 +42,13 @@ Wendell Research.
     provider each sign-in belongs to (Google's, ChatGPT's).
 - **Charts**: the dashboard's page loads Observable Plot from jsDelivr, at a
   pinned version, in your browser.
+- **Posts**, only when you click Post on X, Bluesky, LinkedIn or Reddit in a
+  Benchmarks report's Share menu: that site opens in your browser with the
+  report's name and the project's link (LinkedIn's, the link alone), and
+  nothing else. The report's image
+  goes only to your clipboard, a file, or the app you pick in your system's
+  share sheet (Share…); you choose whether to attach it. Copying a table puts
+  it on your clipboard and sends nothing.
 - **Real-bug task seeding**, only when you run `suite/rebench.py`: dataset rows
   from Hugging Face and source files from GitHub.
 
@@ -47,9 +59,11 @@ installed). [SECURITY.md](SECURITY.md) has the full detail.
 ## What stays on your machine
 
 Everything else: your endpoints, collections, verdicts, call logs, the usage
-ledger (tokens per call, never the prompt), probe history and task answers
-live in your data folder, which is yours to back up,
-move or delete.
+ledger (tokens per call, never the prompt), the decision models' log (their
+answers, never the question), probe history and task answers live in your
+data folder, which is yours to back up, move or delete. An export (Settings,
+Export and import) is that folder, or its settings, as a .zip your browser
+downloads; it holds your endpoints' keys only if you tick them.
 
 ## Third parties
 

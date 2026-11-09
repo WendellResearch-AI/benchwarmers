@@ -1,3 +1,163 @@
+# Benchmarks
+
+The first part of this file says how to read the dashboard's **Benchmarks**
+page; each report has the same under **How to read this**. The rest, from
+"Standard benchmarks" on, is the record of why the bench scores models on its
+own suite rather than on public benchmarks (2026-09), kept as written. The
+`floor/` tier and the other files it names are not part of this repository.
+
+## The Benchmarks page
+
+- **Who to trust with a review.** Each dot is a model: further right finds
+  more of the real bugs in your own code, higher makes fewer things up. Top
+  right is where a reviewer should be.
+- **Bug hunt.** Every task with an answer key: on the bug tasks, the changed
+  line found, another line named, or no bug said; on the same files left
+  clean, false alarms. Ordered by found share minus false-alarm share.
+- **Real work.** Of the offloads judged, the share recorded useful, with how
+  many were judged. Benchmarks never count here.
+- **Confidently wrong.** Answers that asserted something false, of the answers
+  that could have: a clean control called faulty, a wrong line, a false claim
+  confirmed, a planted trap taken, and the false claims recorded in verdicts.
+- **Our code.** Every task on your own code: the findings each model located,
+  of the total, and anything it invented. A timeout, refusal or error is not
+  a score.
+- **Vision.** Fields read right on pictures with a known answer, then real
+  work on images and how much of it was checked.
+- **Trend**, **Uptime** and **Decision models**, below.
+- **Performance.** What the serving path does, not what the models are worth:
+  medians and 95th percentiles over time, each probe of the last 14 days by
+  what came back, and speed against quality on the suite. Weight it least
+  ([perf/README.md](perf/README.md)).
+
+Each report's **Share** menu copies or saves it as an image, or its table as
+Markdown or CSV, or opens a post (USAGE.md, "Benchmarks, and sharing a
+report").
+
+### Trend
+
+Who scores lower, or higher, than it used to: each model against its own
+earlier scores on the same tasks, over the last 30 days (or 60).
+
+- **A bar** is how far a model's scores in the window sit from its own scores
+  before it, on the tasks scored in both. Each task counts as a share of its
+  findings, so a one-finding claim and an eleven-finding file weigh the same,
+  then the tasks are averaged. Left is lower, right is higher; the shaded band
+  is 10 points either side. Hover for each task's move.
+- **Lower** (or **higher**) when the scores moved 10 points or more on
+  average, on at least two tasks and twice as many as moved the other way, in
+  at least two separate runs. **Steady** otherwise: a steady bar past the band
+  moved on average, but not on enough tasks or runs. **Too little to say**, with
+  no bar, when fewer than three tasks can be compared, or there are fewer than
+  two runs in the window or before it. One bad run, one task, or one earlier
+  run to compare against is never a trend. Biggest move first in each group.
+- **Beside the bar**, the evidence: the tasks compared and how many went down
+  or up, then the runs in the window against the runs before it. A model with
+  no task scored both in the window and before it is named under the chart.
+- **Runs** are days a model was scored; a task asked twice in a day counts
+  once, as the mean of its scores.
+- **Why 30 days.** A paid model is scored about once a week and a free one
+  about every 15 days, six tasks a run, so 7 days would hold one run at most.
+  30 days holds two to four. A longer window holds more runs but leaves less
+  before it to compare with.
+- **What is counted**: the scores in the run notes (`runs/suite-*.md`), under
+  each model's current name. Timeouts, errors and refusals are not scores and
+  are left out; Uptime counts them. A task whose number of findings changed
+  starts again. The answers behind the scores are kept from 2026-11-08 in
+  `runs/answers/<task>/<model>/`; older ones were replaced by the next run.
+
+### Uptime
+
+Whether the provider was there when the bench called it, from the calls the
+bench makes anyway: one cell a day, by provider and then by model, over the
+last 7 days (or 30). At a glance has each model's 7 days too.
+
+- **Down**: the provider was busy or overloaded (a 5xx, high demand, a shared
+  pool's 429), unreachable (a broken stream, no reply), timed out (the
+  gateway's 420 s included), or failed in a way no rule recognises yet. Those
+  are listed under the chart, so a rule can be added (`uptime_class` in
+  `suite/run.py`). The scheduler's `decisions` job asks a decision model about
+  a few new shapes a day; one it was sure of (0.6 or more) counts as it said,
+  marked "decided by" with the model and how sure.
+- **Left out**, neither up nor down, since it says nothing about the provider:
+  your own quota or allowance used up (a day, a month, credits), your own
+  per-minute or concurrency limit, a call the bench's pacing never sent, the
+  bench's own client failing, your LAN hub refusing the connection, and setup
+  problems (sign-in, no such model, no access, a bad request of the bench's).
+- **Up**: it answered. An empty reply still counts as an answer.
+- **A cell** is one day: answered of the calls counted that day, coloured all
+  answered, some down (80% or more answered), or under 80%; hollow when none
+  were counted. Hover for the day, the count and the main reasons.
+- **The %** is answered of counted over the days shown, weighted by calls, so
+  a provider's row is every call to any of its models.
+- **What is counted**: the daily probe, every gateway seat, the suite's own
+  calls (from 2026-11-08, when the client's ledger began keeping their error
+  text) and every decision model call, each on the connection behind its
+  served name. Each call is classified from its text when the report is drawn,
+  so a better rule changes the past too. It is shown only: nothing is routed
+  or retired by it.
+
+### Decision models
+
+Models that answer typed questions (a choice, a yes or no) with a
+probability, such as Mercury Decide, rather than chat. Onboarding records them
+in `config/decision-models.json` with the question types they take. The bench
+asks one for:
+
+| Use | When |
+| --- | --- |
+| The shape of a request | per request, when its collection leaves the shape automatic and there are explorer seats to fill |
+| A collection for a request that names none | per request (GATEWAY.md, "No default collection") |
+| Whether a short reply is a provider's notice about the account | per gateway seat, when a short reply mentions credit, quota or a limit and no known phrase matched; once per shape of reply |
+| The class of an error shape no uptime rule knows | the daily job, a few new shapes a day; cached |
+| A new chat model's role | at onboarding; the model popup shows it, nothing applies it |
+
+They are measured on three sets of questions with known answers, built from
+the bench's own data with no hand labelling:
+
+- **Error classes**: failed calls' error text, redacted (no keys, ids or
+  emails), and the class the uptime rules give it; a choice of six.
+- **Collections**: gateway requests and the collection the caller named (never
+  one a decision model chose); a choice among the collections.
+- **Useful answers**: seat answers you judged, with their request; yes or no.
+
+Per model and set:
+
+- **Right of asked**: each item's latest answer; a failed call counts as asked
+  and not right. **Accuracy** is of the answers given; **F1** is the mean over
+  the options of how well each was picked, so always saying the commonest
+  option scores low.
+- **Brier**: how far its probabilities sat from the truth. 0 is perfect; for
+  a choice it is summed over the options, so up to 2. Lower is better, and a
+  sure wrong answer costs most.
+- **Calibration**: the chart groups answers by the probability the model gave
+  (across) against how often they were right (up). On the diagonal, its 80%
+  answers come true 80% of the time; under it, it is surer than it should be.
+  The gap is the average distance from the diagonal, weighted by answers.
+- **At 0.6**: the gateway acts on a choice only when the model is this sure;
+  how many answers were, and how many of those were right.
+- **Rank**: among models with 8 or more items asked on the set, by right
+  answers smoothed for sample size, (right + 1) / (asked + 2). Below 8 a model
+  is shown but not ranked.
+- **Failures**: calls that came back with no answer, by the uptime classes.
+  A pass stops a model at its first failure.
+
+**Who each use asks** is listed on the report, with why: the best-ranked model
+on its set (the shape of a request and a new model's role on Collections, the
+notice check on Useful answers, the others on their own), or, until one is
+ranked, the first onboarded model that takes the question. A use asked per
+request never goes to an OpenRouter `:free` model while another can answer:
+those calls come out of OpenRouter's free daily budget, which the suite and the
+probe share.
+
+The scheduler's `decisions` job asks each model one question per set a day,
+the ones asked longest ago first, 30 seconds apart; `python metrics/decide.py
+bench` runs a pass by hand. Every decision call, the gateway's included, is a
+line in `metrics/decisions.jsonl` (the model, the use, the answers and their
+probabilities, seconds, any error redacted), never the question's text.
+
+---
+
 # Standard benchmarks: which to adopt, and why
 
 Two repositories were proposed. They are not the same kind of thing, and only

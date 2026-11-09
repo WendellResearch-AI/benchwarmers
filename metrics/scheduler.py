@@ -84,7 +84,7 @@ ABOUT = {
     "suite": "Scores one paid model on the review suite every six hours: up to six tasks it has not"
              " answered yet. These scores are what the router ranks by.",
     "decisions": "Measures the decision models: one labelled question per model on each set (error classes,"
-                 " collections, shapes, verdicts), 30 s apart, stopping a model at its first failure; and asks"
+                 " collections, verdicts), 30 s apart, stopping a model at its first failure; and asks"
                  " about up to three new unrecognised error shapes. The gateway's picks ask the best one.",
 }
 
