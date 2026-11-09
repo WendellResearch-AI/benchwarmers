@@ -63,14 +63,17 @@ ADDING A PROVIDER
 
 FOUND ON THIS MACHINE
 ---------------------
-`detect()` looks for model servers running here at their usual ports (LOCAL:
-Ollama, LM Studio, Jan, llama.cpp, LocalAI, vLLM, LiteLLM, CLI Proxy API,
-OmniRoute), so the Endpoints page can offer each one with its address and
-kind filled in. Loopback only, GET only, no key sent, every port at once. A
-port alone is not proof: each answers /v1/models (or refuses it without a
-key), and where something else could sit on its port, a `sign` from its docs
-or source says which it is (llama.cpp and LocalAI share 8080). Adding one is
-the ordinary Add form, test before save and all; Ollama keeps its own flow.
+`detect()` looks for model servers running here (LOCAL: Ollama, LM Studio,
+Jan, llama.cpp, LocalAI, vLLM, LiteLLM, CLI Proxy API, OmniRoute), so the
+Endpoints page can offer each one with its address and kind filled in. It
+asks their usual ports, and any port whose listening process is one of them
+by name or command line (`listeners()`), since a port can be changed.
+Loopback only, GET only, no key sent, every port at once. A port alone is not
+proof: each answers /v1/models (or refuses it without a key), and where
+something else could sit on its port, a `sign` from its docs or source says
+which it is (llama.cpp and LocalAI share 8080); without one, the process
+does. Adding one is the ordinary Add form, test before save and all; Ollama
+at its usual port keeps its own flow.
 """
 
 from __future__ import annotations
@@ -79,6 +82,7 @@ import base64
 import datetime as dt
 import hashlib
 import json
+import os
 import pathlib
 import re
 import secrets
@@ -192,37 +196,44 @@ def _version(status: int, data) -> bool:
 # server, none where the port is its own; the endpoint each becomes; where that
 # is said, read 2026-11-08. llama.cpp moved its default from 8080 to 9931
 # (README, --port), so both are asked. Order matters on a shared port: the
-# first whose sign holds.
+# first whose sign holds. `procs`, how its process's name starts (".exe" and
+# case aside), and `cmd`, a word in its command line for one run by Python or
+# Node: from release binaries, installers and launch code, read 2026-11-09.
 LOCAL: dict[str, dict] = {
     "ollama": {"label": "Ollama", "ports": (11434,), "kind": "local", "provider": "ollama",
-               "sign": ("/api/version", _version),
+               "sign": ("/api/version", _version), "procs": ("ollama",),
                "docs": "https://github.com/ollama/ollama/blob/main/docs/api.md#version"},
-    "lmstudio": {"label": "LM Studio", "ports": (1234,), "kind": "local",
+    # The app (Scoop's manifest, LM Studio.exe) or its headless daemon (lmstudio.ai/install.sh, llmster).
+    "lmstudio": {"label": "LM Studio", "ports": (1234,), "kind": "local", "procs": ("lm studio", "llmster"),
                  # Its own REST API: {"models": [{"key", "capabilities", ...}]}, or a refusal when it wants a token.
                  "sign": ("/api/v1/models", lambda s, d: s in (401, 403) or (
                      s == 200 and isinstance(d, dict) and isinstance(d.get("models"), list))),
                  "docs": "https://lmstudio.ai/docs/developer/rest/list"},
-    "jan": {"label": "Jan", "ports": (1337,), "kind": "local",
+    # The server runs in the app itself: Jan, now Jan-Desktop (src-tauri/tauri.conf.json).
+    "jan": {"label": "Jan", "ports": (1337,), "kind": "local", "procs": ("jan",),
             "docs": "https://docs.jan.ai/desktop/api-server"},
-    "llamacpp": {"label": "llama.cpp server", "ports": (9931, 8080), "kind": "local",
+    "llamacpp": {"label": "llama.cpp server", "ports": (9931, 8080), "kind": "local", "procs": ("llama-server",),
                  # Its /v1/models is public even with --api-key, each model owned_by "llamacpp".
                  "sign": ("/v1/models", lambda s, d: any(r.get("owned_by") == "llamacpp" for r in _rows(d))),
                  "docs": "https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md"},
     "localai": {"label": "LocalAI", "ports": (8080,), "kind": "local",
                 # No owned_by in its /v1/models (endpoints/openai/list.go); /version has no middleware.
-                "sign": ("/version", _version),
+                "sign": ("/version", _version), "procs": ("local-ai",),   # also local-ai-v4.12.1-linux-amd64
                 "docs": "https://github.com/mudler/LocalAI/blob/master/core/http/routes/localai.go"},
-    "vllm": {"label": "vLLM", "ports": (8000,), "kind": "local",
+    "vllm": {"label": "vLLM", "ports": (8000,), "kind": "local", "cmd": ("vllm",),
              "sign": ("/version", _version),          # --api-key guards /v1 and a few others, not this
              "docs": "https://docs.vllm.ai/en/latest/cli/serve.html"},
-    "litellm": {"label": "LiteLLM", "ports": (4000,), "kind": "hub", "hub": "litellm",
+    "litellm": {"label": "LiteLLM", "ports": (4000,), "kind": "hub", "hub": "litellm", "cmd": ("litellm",),
                 "sign": ("/health/liveliness", lambda s, d: s == 200 and "alive" in str(d)),
                 "docs": "https://docs.litellm.ai/docs/proxy/health"},
+    # Its releases, Homebrew's formula, and its Docker image (CLIProxyAPI).
     "cliproxy": {"label": "CLI Proxy API", "ports": (8317,), "kind": "hub", "hub": "cliproxy",
                  "sign": ("/", lambda s, d: isinstance(d, dict) and d.get("message") == "CLI Proxy API Server"),
+                 "procs": ("cli-proxy-api", "cliproxyapi"),
                  "docs": "https://github.com/router-for-me/CLIProxyAPI/blob/main/internal/api/server_routes.go"},
+    # Node running node_modules/omniroute/dist/server.js, or 9router/app/custom-server.js.
     "omniroute": {"label": "OmniRoute / 9router", "ports": (20128,), "kind": "aggregator",
-                  "docs": "https://github.com/decolua/9router"},
+                  "cmd": ("omniroute", "9router"), "docs": "https://github.com/decolua/9router"},
 }
 
 
@@ -248,20 +259,73 @@ def look(url: str, timeout: float = 0.5, body: dict | None = None, headers: dict
         return status, raw.decode("utf-8", "replace")
 
 
+def listeners() -> list[tuple[int, int, str, str]]:
+    """(pid, port, process name, command line) of each TCP listener on loopback
+    or all addresses, from the OS's own tools: netstat and PowerShell's process
+    list on Windows, ss on Linux, lsof on macOS, ps for a command line there.
+    [] when a tool is missing or fails (a container, no rights to see), which
+    leaves detect() the usual ports."""
+    import subprocess
+
+    def run(*cmd: str) -> str:
+        return subprocess.run(cmd, capture_output=True, text=True, errors="replace", timeout=5,
+                              creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout
+    try:
+        if sys.platform == "win32":
+            # A listener's far end is port 0; its state's name is translated, so not asked.
+            socks = [(int(p[4]), p[1]) for p in map(str.split, run("netstat", "-ano").splitlines())
+                     if len(p) == 5 and p[0] == "TCP" and p[2].endswith(":0")]
+            # Names and command lines in one look, sooner than tasklist gives names alone.
+            info = {p["ProcessId"]: (p["Name"] or "", p["CommandLine"] or "") for p in json.loads(run(
+                "powershell", "-NoProfile", "-NonInteractive", "-Command",
+                "Get-CimInstance Win32_Process | Select ProcessId,Name,CommandLine | ConvertTo-Json -Compress"))}
+        else:                                    # (pid, address, name), then each one's command line
+            if sys.platform == "darwin":
+                found, pid, name = [], 0, ""
+                for line in run("lsof", "-nP", "-iTCP", "-sTCP:LISTEN", "-Fpcn", "+c", "0").splitlines():
+                    if line[:1] == "p":
+                        pid = int(line[1:])
+                    elif line[:1] == "c":
+                        name = line[1:]
+                    elif line[:1] == "n":
+                        found.append((pid, line[1:], name))
+            else:                                # ... users:(("ollama",pid=812,fd=3))
+                found = [(int(pid), p[3], name) for p in map(str.split, run("ss", "-ltnp").splitlines())
+                         if p[:1] == ["LISTEN"] for name, pid in re.findall(r'"([^"]*)",pid=(\d+)', " ".join(p[5:]))]
+            pids = ",".join({str(f[0]) for f in found})
+            args = dict(line.strip().partition(" ")[::2] for line in run("ps", "-o", "pid=,args=", "-p", pids).splitlines())
+            socks, info = [f[:2] for f in found], {f[0]: (f[2], args.get(str(f[0]), "")) for f in found}
+    except Exception:                            # noqa: BLE001 -- missing, refused, timed out, or not what was expected
+        return []
+    rows = []
+    for pid, addr in socks:
+        host, _, port = addr.rpartition(":")
+        if host.strip("[]") in ("0.0.0.0", "127.0.0.1", "::", "::1", "*") and port.isdigit():
+            rows.append((pid, int(port), *info.get(pid, ("", ""))))
+    return rows
+
+
 def detect(skip=(), timeout: float = 0.5) -> list[dict]:
     """The LOCAL servers answering on this machine, but none on a port in
     `skip` (this install's own) or already an endpoint. Each: id, label, port,
     base, kind, hub, provider (Ollama's Connect flow), models (None when the
-    list needs a key) and key. Every port at once, so a look takes about
+    list needs a key) and key. Asked: each one's usual ports, and the ports of
+    processes that are one of them (`procs`, `cmd`), or Ollama's own
+    OLLAMA_HOST; a port no such process holds is asked only if it is usual.
+    Every port at once, so a look takes the listing (about a second) and
     `timeout`, a server that hangs included. Loopback only, so a GET here
     never leaves this machine."""
     from concurrent.futures import ThreadPoolExecutor
     taken = set(skip) | _endpoint_ports()
     by_port: dict[int, list[str]] = {}
-    for sid, s in LOCAL.items():
-        for port in s["ports"]:
-            if port not in taken:
-                by_port.setdefault(port, []).append(sid)
+    host = re.search(r":(\d+)/?$", os.environ.get("OLLAMA_HOST", "").strip())   # as 0.0.0.0:11435
+    # ponytail: the listing (about 0.8 s on Windows), then the probes; overlap them if a look must be quicker
+    running = listeners() + ([(0, int(host[1]), "ollama", "")] if host else [])
+    matched = [(port, sid) for _, port, name, cmd in running for sid, s in LOCAL.items()
+               if name.lower().startswith(s.get("procs", ())) or any(c in cmd.lower() for c in s.get("cmd", ()))]
+    for port, sid in matched + [(port, sid) for sid, s in LOCAL.items() for port in s["ports"]]:
+        if port not in taken and sid not in by_port.setdefault(port, []):
+            by_port[port].append(sid)
 
     def identify(port: int, ids: list[str]) -> dict | None:
         got = {"/v1/models": look(f"http://127.0.0.1:{port}/v1/models", timeout)}
@@ -275,9 +339,10 @@ def detect(skip=(), timeout: float = 0.5) -> list[dict]:
             if path not in got:
                 got[path] = look(f"http://127.0.0.1:{port}{path}", timeout)
             if test is None or test(*got[path]):
+                own = s.get("provider", "") if port in s["ports"] else ""   # Ollama's flow knows only its usual port
                 return {"id": sid, "label": s["label"], "port": port, "kind": s["kind"], "hub": s.get("hub", ""),
-                        "provider": s.get("provider", ""), "docs": s["docs"],
-                        "base": PROVIDERS[s["provider"]]["base"] if s.get("provider") else f"http://127.0.0.1:{port}/v1",
+                        "provider": own, "docs": s["docs"],
+                        "base": PROVIDERS[own]["base"] if own else f"http://127.0.0.1:{port}/v1",
                         "models": None if keyed else len(_rows(data)), "key": keyed}
         return None
 
