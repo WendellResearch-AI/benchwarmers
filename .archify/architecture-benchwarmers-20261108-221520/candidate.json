@@ -1,0 +1,936 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Benchwarmers v0.6.0 architecture",
+    "locale": "en",
+    "output": ".archify/architecture-benchwarmers-20261108-221520/benchwarmers.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/WendellResearch-AI/benchwarmers.git",
+      "provider": "github",
+      "link_mode": "web",
+      "revision": "f01361447e659220bd08a061579b429b027e25c9"
+    }
+  },
+  "components": [
+    {
+      "id": "browser",
+      "type": "external",
+      "icon": "person",
+      "label": "Person in a browser",
+      "sublabel": "the dashboard, :8122",
+      "pos": [
+        40,
+        210
+      ],
+      "size": [
+        190,
+        64
+      ],
+      "sources": [
+        {
+          "path": "ui/bench.js",
+          "line": 134,
+          "end_line": 158,
+          "label": "lazy tabs: GET /api/pane"
+        },
+        {
+          "path": "ui/bench.js",
+          "line": 471,
+          "end_line": 481,
+          "label": "live refresh: polls /api/stamp"
+        },
+        {
+          "path": "USAGE.md",
+          "line": 41,
+          "end_line": 45
+        }
+      ]
+    },
+    {
+      "id": "cli",
+      "type": "frontend",
+      "label": "bench CLI, stdio MCP",
+      "sublabel": "thin HTTP clients",
+      "pos": [
+        40,
+        350
+      ],
+      "size": [
+        190,
+        64
+      ],
+      "sources": [
+        {
+          "path": "cli.py",
+          "line": 1,
+          "end_line": 21
+        },
+        {
+          "path": "launcher.py",
+          "line": 1,
+          "end_line": 26
+        },
+        {
+          "path": "mcp_server.py",
+          "line": 1,
+          "end_line": 22
+        }
+      ]
+    },
+    {
+      "id": "agents",
+      "type": "external",
+      "label": "Agent and chat apps",
+      "sublabel": "OpenAI, Anthropic, Ollama, Gemini",
+      "pos": [
+        40,
+        660
+      ],
+      "size": [
+        190,
+        64
+      ],
+      "sources": [
+        {
+          "path": "README.md",
+          "line": 254,
+          "end_line": 273,
+          "label": "the API formats"
+        },
+        {
+          "path": "gateway.py",
+          "line": 81,
+          "end_line": 102,
+          "label": "other formats and route mode"
+        }
+      ]
+    },
+    {
+      "id": "mcp_clients",
+      "type": "external",
+      "label": "MCP clients",
+      "sublabel": "Claude Code plugin, Cursor",
+      "pos": [
+        40,
+        800
+      ],
+      "size": [
+        190,
+        64
+      ],
+      "sources": [
+        {
+          "path": "README.md",
+          "line": 322,
+          "end_line": 353
+        },
+        {
+          "path": "plugin/.mcp.json",
+          "line": 1,
+          "end_line": 11
+        },
+        {
+          "path": "plugin/hooks/hooks.json",
+          "line": 1,
+          "end_line": 18,
+          "label": "Stop hook: pending_verdicts"
+        }
+      ]
+    },
+    {
+      "id": "dashboard",
+      "type": "frontend",
+      "label": "Dashboard",
+      "sublabel": "serve.py and ui/bench.js",
+      "tag": "Clients page, export",
+      "pos": [
+        330,
+        70
+      ],
+      "size": [
+        160,
+        344
+      ],
+      "sources": [
+        {
+          "path": "serve.py",
+          "line": 5785,
+          "end_line": 5811,
+          "label": "one handler, auth by route"
+        },
+        {
+          "path": "serve.py",
+          "line": 5900,
+          "end_line": 5911,
+          "label": "/api/stamp and /api/export"
+        },
+        {
+          "path": "serve.py",
+          "line": 4611,
+          "end_line": 4629,
+          "label": "the Clients page"
+        }
+      ]
+    },
+    {
+      "id": "gateway",
+      "type": "backend",
+      "label": "Gateway",
+      "sublabel": "/v1 · /api · /v1beta · /mcp",
+      "tag": "panel or :route",
+      "pos": [
+        330,
+        520
+      ],
+      "size": [
+        160,
+        344
+      ],
+      "sources": [
+        {
+          "path": "gateway.py",
+          "line": 1128,
+          "end_line": 1157,
+          "label": "/mcp and /bench/verdict"
+        },
+        {
+          "path": "gateway.py",
+          "line": 1274,
+          "end_line": 1301,
+          "label": "collection, key scope, route mode"
+        },
+        {
+          "path": "metrics/guard.py",
+          "line": 28,
+          "end_line": 58,
+          "label": "login cookie vs gateway keys"
+        }
+      ]
+    },
+    {
+      "id": "detect",
+      "type": "backend",
+      "label": "Local-server detection",
+      "sublabel": "Endpoints page",
+      "pos": [
+        596,
+        70
+      ],
+      "size": [
+        170,
+        64
+      ],
+      "sources": [
+        {
+          "path": "serve.py",
+          "line": 1322,
+          "end_line": 1330
+        },
+        {
+          "path": "metrics/connect.py",
+          "line": 251,
+          "end_line": 262,
+          "label": "detect(): loopback only"
+        }
+      ]
+    },
+    {
+      "id": "onboarding",
+      "type": "backend",
+      "label": "Onboarding queue",
+      "sublabel": "onboard.py, one at a time",
+      "pos": [
+        596,
+        210
+      ],
+      "size": [
+        170,
+        64
+      ],
+      "sources": [
+        {
+          "path": "serve.py",
+          "line": 1826,
+          "end_line": 1852
+        },
+        {
+          "path": "serve.py",
+          "line": 1747,
+          "end_line": 1758
+        },
+        {
+          "path": "scripts/onboard.py",
+          "line": 11,
+          "end_line": 31,
+          "label": "register, probe, suite"
+        }
+      ]
+    },
+    {
+      "id": "benchmarks",
+      "type": "frontend",
+      "label": "Benchmarks",
+      "sublabel": "suite, uptime, trend, wrong",
+      "tag": "Share",
+      "pos": [
+        596,
+        350
+      ],
+      "size": [
+        170,
+        64
+      ],
+      "sources": [
+        {
+          "path": "serve.py",
+          "line": 3792,
+          "end_line": 3797,
+          "label": "the reports on one page"
+        },
+        {
+          "path": "serve.py",
+          "line": 2513,
+          "end_line": 2519,
+          "label": "Share: image or table"
+        },
+        {
+          "path": "metrics/wrong.py",
+          "line": 1,
+          "end_line": 21,
+          "label": "confidently wrong"
+        }
+      ]
+    },
+    {
+      "id": "data",
+      "type": "database",
+      "label": "Data folder",
+      "sublabel": "BENCHWARMERS_HOME",
+      "tag": "config, metrics, perf, runs",
+      "pos": [
+        596,
+        520
+      ],
+      "size": [
+        170,
+        64
+      ],
+      "sources": [
+        {
+          "path": "metrics/paths.py",
+          "line": 34,
+          "end_line": 48
+        },
+        {
+          "path": "serve.py",
+          "line": 146,
+          "end_line": 154,
+          "label": "what the live page watches"
+        },
+        {
+          "path": "serve.py",
+          "line": 4825,
+          "end_line": 4830,
+          "label": "export as one zip"
+        }
+      ]
+    },
+    {
+      "id": "panel",
+      "type": "backend",
+      "label": "Collections and seats",
+      "sublabel": "members + explorers",
+      "pos": [
+        596,
+        660
+      ],
+      "size": [
+        170,
+        64
+      ],
+      "sources": [
+        {
+          "path": "gateway.py",
+          "line": 545,
+          "end_line": 560
+        },
+        {
+          "path": "gateway.py",
+          "line": 630,
+          "end_line": 672,
+          "label": "seats asked in parallel"
+        },
+        {
+          "path": "gateway.py",
+          "line": 859,
+          "end_line": 867,
+          "label": "route mode: one member"
+        }
+      ]
+    },
+    {
+      "id": "decide",
+      "type": "backend",
+      "label": "Decision models",
+      "sublabel": "decide.py: picks a collection",
+      "pos": [
+        596,
+        800
+      ],
+      "size": [
+        170,
+        64
+      ],
+      "sources": [
+        {
+          "path": "gateway.py",
+          "line": 275,
+          "end_line": 298,
+          "label": "pick a collection"
+        },
+        {
+          "path": "metrics/decide.py",
+          "line": 221,
+          "end_line": 245,
+          "label": "POST to a Decisions API"
+        },
+        {
+          "path": "metrics/decide.py",
+          "line": 10,
+          "end_line": 56,
+          "label": "not in the ledger, not paced"
+        }
+      ]
+    },
+    {
+      "id": "local",
+      "type": "external",
+      "icon": "backend",
+      "label": "Local model servers",
+      "sublabel": "Ollama, LM Studio, vLLM",
+      "pos": [
+        872,
+        70
+      ],
+      "size": [
+        180,
+        64
+      ],
+      "sources": [
+        {
+          "path": "metrics/connect.py",
+          "line": 196,
+          "end_line": 226,
+          "label": "the servers detect() looks for"
+        },
+        {
+          "path": "README.md",
+          "line": 153,
+          "end_line": 165
+        }
+      ]
+    },
+    {
+      "id": "client",
+      "type": "backend",
+      "label": "Built-in model client",
+      "sublabel": "client.py and pacing.py",
+      "tag": "limits enforced",
+      "pos": [
+        872,
+        660
+      ],
+      "size": [
+        180,
+        64
+      ],
+      "sources": [
+        {
+          "path": "metrics/client.py",
+          "line": 667,
+          "end_line": 680
+        },
+        {
+          "path": "metrics/client.py",
+          "line": 708,
+          "end_line": 735,
+          "label": "chat, Responses, Anthropic, Gemini"
+        },
+        {
+          "path": "metrics/client.py",
+          "line": 763,
+          "end_line": 796,
+          "label": "reads the key, then pacing.admit"
+        }
+      ]
+    },
+    {
+      "id": "catalog",
+      "type": "backend",
+      "label": "Catalog and Discover",
+      "sublabel": "catalog.py, sources.py",
+      "pos": [
+        1152,
+        70
+      ],
+      "size": [
+        170,
+        64
+      ],
+      "sources": [
+        {
+          "path": "metrics/catalog.py",
+          "line": 214,
+          "end_line": 226
+        },
+        {
+          "path": "metrics/catalog.py",
+          "line": 161,
+          "end_line": 191,
+          "label": "local servers' own facts"
+        },
+        {
+          "path": "metrics/sources.py",
+          "line": 41,
+          "end_line": 47
+        }
+      ]
+    },
+    {
+      "id": "scheduler",
+      "type": "backend",
+      "label": "Scheduler",
+      "sublabel": "off, log-only or run",
+      "tag": "jobs in the server",
+      "pos": [
+        1152,
+        290
+      ],
+      "size": [
+        170,
+        64
+      ],
+      "sources": [
+        {
+          "path": "metrics/scheduler.py",
+          "line": 50,
+          "end_line": 64,
+          "label": "the jobs and their times"
+        },
+        {
+          "path": "metrics/scheduler.py",
+          "line": 130,
+          "end_line": 145
+        },
+        {
+          "path": "serve.py",
+          "line": 6185,
+          "end_line": 6188
+        }
+      ]
+    },
+    {
+      "id": "keys",
+      "type": "security",
+      "label": "Key store",
+      "sublabel": "llm keys.json or env",
+      "tag": "not in the data folder",
+      "pos": [
+        1172,
+        520
+      ],
+      "size": [
+        150,
+        64
+      ],
+      "sources": [
+        {
+          "path": "metrics/endpoints.py",
+          "line": 235,
+          "end_line": 277
+        },
+        {
+          "path": "README.md",
+          "line": 500,
+          "end_line": 503
+        }
+      ]
+    },
+    {
+      "id": "public",
+      "type": "cloud",
+      "label": "Public catalogs",
+      "sublabel": "models.dev, FreeLLMAPI",
+      "pos": [
+        1402,
+        70
+      ],
+      "size": [
+        196,
+        64
+      ],
+      "sources": [
+        {
+          "path": "metrics/sources.py",
+          "line": 1,
+          "end_line": 26
+        },
+        {
+          "path": "metrics/catalog.py",
+          "line": 224,
+          "end_line": 226,
+          "label": "OpenRouter's public list"
+        }
+      ],
+      "tag": "OpenRouter's list"
+    },
+    {
+      "id": "hubs",
+      "type": "external",
+      "icon": "cloud",
+      "label": "Self-hosted hubs",
+      "sublabel": "Open WebUI, LiteLLM, CLI Proxy API",
+      "pos": [
+        1402,
+        350
+      ],
+      "size": [
+        196,
+        64
+      ],
+      "sources": [
+        {
+          "path": "metrics/endpoints.py",
+          "line": 35,
+          "end_line": 49
+        },
+        {
+          "path": "metrics/owui.py",
+          "line": 1,
+          "end_line": 7
+        },
+        {
+          "path": "metrics/litellm_hub.py",
+          "line": 1,
+          "end_line": 12
+        }
+      ]
+    },
+    {
+      "id": "cloud",
+      "type": "cloud",
+      "label": "Model provider APIs",
+      "sublabel": "OpenAI-style, Anthropic, Gemini",
+      "tag": "OpenRouter and others",
+      "pos": [
+        1402,
+        520
+      ],
+      "size": [
+        196,
+        344
+      ],
+      "sources": [
+        {
+          "path": "metrics/endpoints.py",
+          "line": 1,
+          "end_line": 13
+        },
+        {
+          "path": "metrics/connect.py",
+          "line": 1,
+          "end_line": 25,
+          "label": "sign-in flows"
+        },
+        {
+          "path": "README.md",
+          "line": 153,
+          "end_line": 158
+        }
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "This machine: 127.0.0.1 unless an admin token is set",
+      "wraps": [
+        "dashboard",
+        "detect",
+        "onboarding",
+        "benchmarks",
+        "gateway",
+        "data",
+        "panel",
+        "decide",
+        "local",
+        "client",
+        "catalog",
+        "scheduler",
+        "keys"
+      ]
+    },
+    {
+      "kind": "security-group",
+      "label": "Dashboard routes: login once a token is set",
+      "wraps": [
+        "dashboard",
+        "detect",
+        "onboarding",
+        "benchmarks"
+      ]
+    },
+    {
+      "kind": "security-group",
+      "label": "Gateway keys where required",
+      "wraps": [
+        "gateway"
+      ]
+    },
+    {
+      "kind": "region",
+      "label": "Internet: no key",
+      "wraps": [
+        "public"
+      ]
+    },
+    {
+      "kind": "region",
+      "label": "LAN",
+      "wraps": [
+        "hubs"
+      ]
+    },
+    {
+      "kind": "region",
+      "label": "Internet: your prompts",
+      "wraps": [
+        "cloud"
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "browser-dashboard",
+      "from": "browser",
+      "to": "dashboard",
+      "label": "HTTP :8122",
+      "variant": "emphasis"
+    },
+    {
+      "id": "cli-dashboard",
+      "from": "cli",
+      "to": "dashboard",
+      "label": "admin routes"
+    },
+    {
+      "id": "cli-gateway",
+      "from": "cli",
+      "to": "gateway",
+      "label": "ask, verdict"
+    },
+    {
+      "id": "agents-gateway",
+      "from": "agents",
+      "to": "gateway",
+      "label": "bench/<name>",
+      "variant": "emphasis"
+    },
+    {
+      "id": "mcp-gateway",
+      "from": "mcp_clients",
+      "to": "gateway",
+      "label": "MCP at /mcp"
+    },
+    {
+      "id": "dashboard-detect",
+      "from": "dashboard",
+      "to": "detect",
+      "label": "Endpoints"
+    },
+    {
+      "id": "dashboard-onboarding",
+      "from": "dashboard",
+      "to": "onboarding",
+      "label": "Onboard"
+    },
+    {
+      "id": "dashboard-benchmarks",
+      "from": "dashboard",
+      "to": "benchmarks",
+      "label": "reports"
+    },
+    {
+      "id": "dashboard-data",
+      "from": "dashboard",
+      "to": "data",
+      "label": "config, export",
+      "fromSide": "bottom",
+      "toSide": "left"
+    },
+    {
+      "id": "data-benchmarks",
+      "from": "data",
+      "to": "benchmarks",
+      "label": "results"
+    },
+    {
+      "id": "gateway-data",
+      "from": "gateway",
+      "to": "data",
+      "label": "verdicts, log"
+    },
+    {
+      "id": "gateway-panel",
+      "from": "gateway",
+      "to": "panel",
+      "label": "a collection",
+      "variant": "emphasis",
+      "fromSide": "right",
+      "toSide": "left",
+      "route": "straight"
+    },
+    {
+      "id": "gateway-decide",
+      "from": "gateway",
+      "to": "decide",
+      "label": "if none named"
+    },
+    {
+      "id": "panel-client",
+      "from": "panel",
+      "to": "client",
+      "label": "call per seat",
+      "variant": "emphasis"
+    },
+    {
+      "id": "onboarding-client",
+      "from": "onboarding",
+      "to": "client",
+      "label": "probe, suite"
+    },
+    {
+      "id": "scheduler-client",
+      "from": "scheduler",
+      "to": "client",
+      "label": "probes, suite",
+      "fromSide": "left",
+      "toSide": "top"
+    },
+    {
+      "id": "scheduler-catalog",
+      "from": "scheduler",
+      "to": "catalog",
+      "label": "daily"
+    },
+    {
+      "id": "detect-local",
+      "from": "detect",
+      "to": "local",
+      "label": "port probe"
+    },
+    {
+      "id": "catalog-local",
+      "from": "catalog",
+      "to": "local",
+      "label": "capabilities"
+    },
+    {
+      "id": "catalog-public",
+      "from": "catalog",
+      "to": "public",
+      "label": "feeds"
+    },
+    {
+      "id": "client-local",
+      "from": "client",
+      "to": "local",
+      "label": "loopback"
+    },
+    {
+      "id": "client-hubs",
+      "from": "client",
+      "to": "hubs",
+      "label": "OpenAI API",
+      "fromSide": "top",
+      "toSide": "left"
+    },
+    {
+      "id": "client-cloud",
+      "from": "client",
+      "to": "cloud",
+      "label": "HTTPS, paced",
+      "variant": "emphasis"
+    },
+    {
+      "id": "hubs-cloud",
+      "from": "hubs",
+      "to": "cloud",
+      "label": "relay upstream"
+    },
+    {
+      "id": "decide-cloud",
+      "from": "decide",
+      "to": "cloud",
+      "label": "Decisions API"
+    },
+    {
+      "id": "client-data",
+      "from": "client",
+      "to": "data",
+      "label": "usage ledger"
+    },
+    {
+      "id": "client-keys",
+      "from": "client",
+      "to": "keys",
+      "label": "reads keys",
+      "variant": "security",
+      "fromSide": "top",
+      "toSide": "left"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "rose",
+      "title": "Who may call",
+      "items": [
+        "Both servers bind 127.0.0.1; anywhere else they refuse to start without BENCHWARMERS_ADMIN_TOKEN",
+        "Dashboard routes then take a login cookie; /v1, /bench, /mcp and Ollama's /api names take named, revocable gateway keys",
+        "A Host allow-list on every request, and JSON-only, same-site writes, keep web pages out"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "The loop",
+      "items": [
+        "Every seat answers with a call id and is logged as an unjudged offload",
+        "Verdicts arrive by POST /bench/verdict, the MCP verdict tool, bench verdict or the dashboard",
+        "Explorer seats go to the models unused longest; useful verdicts and suite findings rank route mode's member and the merger",
+        ":merged adds one merger answer; :route gives an agent one member per turn, kept for the conversation, with failover"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Scheduler jobs, off until Settings opts in",
+      "items": [
+        "Morning availability probe; suite passes; weekly speed and capability tests",
+        "Catalog and Discover refresh; deprecation check with auto-retire",
+        "Daily decisions benchmark: decide.py puts labelled questions to each decision model",
+        "Results land in the data folder: perf history, suite answers, the scheduler log"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "Kept apart",
+      "items": [
+        "API keys are written by the Endpoints dialog and sign-ins, never into the data folder",
+        "Export and import move the data folder as one zip; keys only if ticked",
+        "Decision models are called on their endpoint's Decisions API, outside pacing and the ledger",
+        "A hub can also run on this machine, where detection finds LiteLLM and CLI Proxy API"
+      ]
+    }
+  ]
+}
