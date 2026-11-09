@@ -250,6 +250,134 @@
   });
   applyRetired();
 
+  // ---- Share a report (serve.SHARE): its charts as an image, its table as
+  // Markdown or CSV, or a post with the image on the clipboard. Only what the
+  // report shows travels: the table as filtered, no key, no controls. --------
+  var canClip = !!(window.isSecureContext && navigator.clipboard && window.ClipboardItem);
+  document.documentElement.classList.toggle('no-clip', !canClip);
+  document.documentElement.classList.toggle('no-share', !(navigator.canShare
+    && navigator.canShare({files: [new File([''], 'a.png', {type: 'image/png'})]})));
+  var LOOK = ['display', 'box-sizing', 'width', 'height', 'margin', 'padding', 'border', 'border-radius', 'background-color', 'color',
+              'font-family', 'font-size', 'font-weight', 'font-style', 'line-height', 'letter-spacing', 'text-align',
+              'white-space', 'vertical-align', 'gap', 'flex-wrap', 'align-items', 'opacity'];
+  function ground(n) {           // the colour behind a report: the nearest that is not transparent
+    for (; n; n = n.parentElement) {
+      var bg = getComputedStyle(n).backgroundColor;
+      if (bg && !/^(transparent|rgba\(.*,\s*0\))$/.test(bg)) return bg;
+    }
+    return '#fff';
+  }
+  // The report drawn as a PNG: a copy of it with its look written on each element
+  // (the page's css does not travel), in an SVG foreignObject, onto a canvas.
+  function shareImage(panel, credit) {
+    var copy = panel.cloneNode(true), from = panel.querySelectorAll('*'), to = copy.querySelectorAll('*');
+    function look(a, b) {
+      var cs = getComputedStyle(a);
+      b.setAttribute('style', LOOK.map(function (p) { return p + ':' + cs.getPropertyValue(p); }).join(';'));
+    }
+    look(panel, copy);
+    for (var i = 0; i < from.length; i++)                      // svg keeps its own attributes and style
+      if (!(from[i] instanceof SVGElement) && !from[i].closest('details')) look(from[i], to[i]);
+    var picks = panel.querySelectorAll('select');
+    copy.querySelectorAll('select').forEach(function (s, k) {   // a window chosen: as words
+      var o = picks[k].options[picks[k].selectedIndex];
+      s.replaceWith(el('span', {style: 'font-weight:700'}, o ? o.text : ''));
+    });
+    copy.querySelectorAll('details, button, input, script').forEach(function (n) { n.remove(); });
+    var pad = parseFloat(getComputedStyle(panel).paddingLeft) + parseFloat(getComputedStyle(panel).paddingRight);
+    var W = Math.ceil(Math.max.apply(null, [panel.clientWidth].concat(Array.prototype.map.call(
+      panel.querySelectorAll('.chart'), function (c) { return c.scrollWidth + pad; }))));
+    copy.appendChild(el('p', {style: 'margin:16px 0 0;font:12px system-ui,sans-serif;opacity:.7'}, credit));
+    copy.style.cssText += ';width:' + W + 'px;height:auto;box-sizing:border-box;margin:0;border-radius:0;position:fixed;left:-99999px;top:0'
+      + ';background-color:' + ground(panel);
+    document.body.appendChild(copy);
+    var H = Math.ceil(copy.getBoundingClientRect().height);
+    copy.remove();
+    copy.style.position = copy.style.left = copy.style.top = '';
+    var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + W + '" height="' + H + '">'
+      + '<foreignObject width="100%" height="100%">' + new XMLSerializer().serializeToString(copy) + '</foreignObject></svg>';
+    return new Promise(function (ok, fail) {
+      var img = new Image(), k = Math.min(2, 16000 / Math.max(W, H));
+      img.onload = function () {
+        var c = el('canvas', {width: Math.round(W * k), height: Math.round(H * k)}), g = c.getContext('2d');
+        g.scale(k, k);
+        g.drawImage(img, 0, 0);
+        c.toBlob(function (b) { if (b) ok(b); else fail(new Error('no image')); }, 'image/png');
+      };
+      img.onerror = function () { fail(new Error('the report could not be drawn')); };
+      img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+    });
+  }
+  function shareRows(panel) {     // the rows the table shows: its filter and "Show retired" apply
+    var t = panel.querySelector('table');
+    return t ? Array.prototype.filter.call(t.rows, function (r) { return getComputedStyle(r).display !== 'none'; })
+      .map(function (r) {
+        return Array.prototype.map.call(r.cells, function (c) {
+          var k = c.cloneNode(true);                 // a model's connection in brackets, as the key writes it
+          k.querySelectorAll('.conn').forEach(function (n) { n.textContent = ' (' + n.textContent + ')'; });
+          return k.textContent.replace(/\s+/g, ' ').trim();
+        });
+      }) : [];
+  }
+  function markdown(rows) {
+    return rows.map(function (r, i) {
+      var line = '| ' + r.map(function (s) { return s.replace(/\|/g, '\\|'); }).join(' | ') + ' |';
+      return i ? line : line + '\n|' + r.map(function () { return ' --- '; }).join('|') + '|';
+    }).join('\n');
+  }
+  function csv(rows) {           // with a BOM, so a spreadsheet reads it as UTF-8
+    return '﻿' + rows.map(function (r) {
+      return r.map(function (s) { return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }).join(',');
+    }).join('\r\n') + '\r\n';
+  }
+  function saveFile(blob, name) {
+    var a = el('a', {href: URL.createObjectURL(blob), download: name});
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 5000);
+  }
+  // Where a post opens: the text and the project's link; the image is pasted in.
+  var POST = {
+    x: function (t, u) { return 'https://x.com/intent/tweet?text=' + encodeURIComponent(t + ' ' + u); },
+    bsky: function (t, u) { return 'https://bsky.app/intent/compose?text=' + encodeURIComponent(t + ' ' + u); },
+    linkedin: function (t, u) { return 'https://www.linkedin.com/sharing/share-offsite/?url=' + encodeURIComponent(u); },
+    reddit: function (t, u) { return 'https://www.reddit.com/submit?url=' + encodeURIComponent(u) + '&title=' + encodeURIComponent(t); }
+  };
+  document.addEventListener('click', function (ev) {
+    var b = ev.target.closest('[data-share]'), menu = ev.target.closest('details.share');
+    document.querySelectorAll('details.share[open]').forEach(function (d) { if (d !== menu) d.open = false; });
+    if (!b) return;
+    var panel = menu.closest('.panel'), what = b.dataset.share, sm = menu.querySelector('summary');
+    var now = new Date(), title = panel.querySelector('h2').textContent.trim();
+    var day = now.getFullYear() + '-' + ('0' + (now.getMonth() + 1)).slice(-2) + '-' + ('0' + now.getDate()).slice(-2);
+    var name = 'benchwarmers-' + title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') + '-' + day;
+    var credit = title + ' · Benchwarmers, ' + D.repo.replace(/^https:\/\//, '') + ' · ' + day;
+    menu.open = false;
+    function said(text) { sm.textContent = text; setTimeout(function () { sm.textContent = 'Share'; }, 3500); }
+    function failed(e) { if (!e || e.name !== 'AbortError') said('Share failed: ' + ((e && e.message) || e)); }
+    if (what === 'md') {
+      navigator.clipboard.writeText(markdown(shareRows(panel)) + '\n\n' + credit + '\n').then(function () { said('Table copied'); }, failed);
+      return;
+    }
+    if (what === 'csv') { saveFile(new Blob([csv(shareRows(panel))], {type: 'text/csv'}), name + '.csv'); said('Table saved'); return; }
+    var png = shareImage(panel, credit), post = POST[what];
+    if (what === 'png') { png.then(function (blob) { saveFile(blob, name + '.png'); said('Image saved'); }, failed); return; }
+    if (what === 'native') {
+      png.then(function (blob) {
+        return navigator.share({files: [new File([blob], name + '.png', {type: 'image/png'})], title: title, text: credit});
+      }).then(function () { said('Shared'); }, failed);
+      return;
+    }
+    // Copy, or a post: the image on the clipboard (saved where there is none), then the post opened.
+    var put = canClip ? navigator.clipboard.write([new ClipboardItem({'image/png': png})])
+                      : png.then(function (blob) { saveFile(blob, name + '.png'); });
+    put.then(function () {
+      if (post) window.open(post(title + ', from my model bench (Benchwarmers):', D.repo), '_blank', 'noopener');
+      said(!post ? 'Image copied' : canClip ? 'Image copied: paste it into the post' : 'Image saved: attach it to the post');
+    }, failed);
+  });
+
   // ---- Discover: paid models hidden unless asked for -------------------
   var showPaid = store('bench.paid') === '1';
   function applyPaid() {

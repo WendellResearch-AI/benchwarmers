@@ -2492,12 +2492,24 @@ def on_bench() -> set[str]:
     return set(registered().values())
 
 
+# Every report with a chart shares the same way (bench.js "share"): its charts as
+# an image, its table as Markdown or CSV, or a post with the image on the clipboard.
+SHARE = ("<details class='share'><summary>Share</summary><div class='share-menu'>"
+         + "".join(f"<button type='button' class='linkish' data-share='{k}'>{label}</button>" for k, label in (
+             ("copy", "Copy image"), ("png", "Download image"), ("md", "Copy table as Markdown"),
+             ("csv", "Download table as CSV"), ("native", "Share…")))
+         + "<span class='share-to'>Post on " + ", ".join(
+             f"<button type='button' class='linkish' data-share='{k}'>{label}</button>" for k, label in (
+                 ("x", "X"), ("bsky", "Bluesky"), ("linkedin", "LinkedIn"), ("reddit", "Reddit")))
+         + "</span></div></details>")
+
+
 def chart_card(title: str, sub: str, chart_id: str, table: str, key: str, extra: str = "",
                retired: bool = True, after: str = "") -> str:
     """A Benchmarks panel: the chart first (drawn by bench.js with Observable
     Plot), the table folded under it, the key under that. `extra` goes above
     the chart, `after` right under it."""
-    return (f"<div class='panel'><h2>{title}</h2><p class='sub'>{sub}</p>{extra}"
+    return (f"<div class='panel'>{SHARE}<h2>{title}</h2><p class='sub'>{sub}</p>{extra}"
             f"<div class='chart' id='{chart_id}'></div>{after}"
             "<details class='key'><summary>Table</summary><div class='toolbar'><input type='search'"
             " data-filter placeholder='Filter by model or connection' aria-label='Filter rows'>"
@@ -2829,7 +2841,7 @@ def vision_card() -> str:
     held = (f"<p class='hint'>The vision tasks wait until {esc(v['held'])}: no run picks them before then"
             " (<code>vision_from</code> in <code>config/suite.json</code>; remove it to start them now).</p>"
             if v["held"] else "")
-    return ("<div class='panel'><h2>Vision</h2><p class='sub'>Reading images: fields read right on pictures with"
+    return (f"<div class='panel'>{SHARE}<h2>Vision</h2><p class='sub'>Reading images: fields read right on pictures with"
             " a known answer, then real work on images and how much of it was actually checked.</p>" + held +
             "<h3 class='chart-head'>On the vision tasks, field by field</h3><div class='chart' id='chart-vision-fields'></div>"
             "<h3 class='chart-head'>On real work with images, by how each seat was judged</h3>"
@@ -3645,7 +3657,7 @@ def work_card() -> str:
 
 
 def overview_card() -> str:
-    return ("<div class='panel'><h2>Who to trust with a review</h2><p class='sub'>Each dot is a model."
+    return (f"<div class='panel'>{SHARE}<h2>Who to trust with a review</h2><p class='sub'>Each dot is a model."
             " Right: finds more of the real bugs in our own code. Up: makes fewer things up (confidently"
             " wrong on clean code, wrong lines, false claims, traps). Top right is where a reviewer should be.</p>"
             "<div class='chart' id='chart-overview'></div></div>")
@@ -5106,7 +5118,8 @@ def directory_json() -> str:
     # A decision model's role suggestion from onboarding (decide.suggest_role): shown, never applied.
     suggested = {a: s for a, s in (locked.read_json(decide.DECIDED).get("roles") or {}).items() if isinstance(s, dict)}
     return json.dumps({"models": directory, "facts": facts, "options": options, "roles": model_roles.load()["roles"],
-                       "suggested": suggested, "retired": retired(), "onboard": onboard_issues(), "stamp": data_stamp()},
+                       "suggested": suggested, "retired": retired(), "onboard": onboard_issues(), "stamp": data_stamp(),
+                       "repo": connect.REPO},
                       ensure_ascii=False).replace("</", "<\\/")
 
 
