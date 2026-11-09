@@ -285,10 +285,15 @@ def _log(row: dict) -> None:
 
 
 def log_rows() -> list[dict]:
-    """Every logged call, oldest first; a line still being written is skipped."""
+    """Every logged call, oldest first."""
+    return _jsonl(LOG)
+
+
+def _jsonl(path: pathlib.Path) -> list[dict]:
+    """A log's objects, oldest first; a line still being written is skipped."""
     out = []
     try:
-        with LOG.open(encoding="utf-8", errors="replace") as fh:
+        with path.open(encoding="utf-8", errors="replace") as fh:
             for line in fh:
                 try:
                     row = json.loads(line)
@@ -509,19 +514,7 @@ def shape(text: str) -> str:
 
 
 def _gateway_calls() -> list[dict]:
-    out = []
-    try:
-        with (DATA / "runs" / "gateway" / "calls.jsonl").open(encoding="utf-8", errors="replace") as fh:
-            for line in fh:
-                try:
-                    r = json.loads(line)
-                except ValueError:
-                    continue
-                if isinstance(r, dict):
-                    out.append(r)
-    except OSError:
-        pass
-    return out
+    return _jsonl(DATA / "runs" / "gateway" / "calls.jsonl")
 
 
 def error_texts(calls: list[dict] | None = None) -> list[tuple[str, str]]:

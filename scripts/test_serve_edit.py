@@ -673,9 +673,8 @@ def main() -> int:
         late = any(r[3] == "tr-late" for r in serve.note_rows())
     t = serve.trend_rows()["models"]
     w = {m: t[m]["windows"][serve.TREND_DAYS[0]] for m in ("tr-down", "tr-once", "tr-thin")}
-    run10 = [r for r in t["tr-down"]["runs"] if r[0] == (today - dt.timedelta(days=10)).isoformat()]
-    twice = [r[:3] for r in t["tr-twice"]["runs"]]
-    late = late and "tr-late" in t
+    twice = t["tr-twice"]
+    late = late and "tr-late" in t and not t["tr-late"]["compared"]
     # The chart's and the table's order: by flag, the biggest move first; too little by name.
     flags = {"x": ("higher", 0.1), "y": ("higher", 0.3), "z": ("lower", -0.1), "b": ("too little", 0.1), "a": ("too little", 0.9)}
     order = sorted(flags, key=lambda m: serve._trend_order(m, dict(zip(("state", "change"), flags[m]))))
@@ -684,12 +683,12 @@ def main() -> int:
           and order == ["z", "y", "x", "a", "b"]
           and (w["tr-down"]["tasks"], w["tr-down"]["down"], w["tr-down"]["runs"], w["tr-down"]["before"]) == (3, 3, 2, 2)
           and abs(w["tr-down"]["change"] + 1.4 / 3) < 1e-9 and w["tr-once"]["runsDown"] == 1
-          and "tr-old" not in t and len(run10) == 1 and abs(run10[0][1] + 0.5) < 1e-9 and run10[0][2] == 2
+          and "tr-old" not in t and t["tr-down"]["last"] == (today - dt.timedelta(days=3)).isoformat()
           and ("ta", "tr-down") in serve._suite_scores() and serve.trend_rows() is serve.trend_rows()
-          and late and twice == [[(today - dt.timedelta(days=50)).isoformat(), None, 0],
-                                 [(today - dt.timedelta(days=10)).isoformat(), 0.5, 1]])
+          and late and twice["compared"] and twice["last"] == (today - dt.timedelta(days=10)).isoformat()
+          and abs(twice["windows"][serve.TREND_DAYS[0]]["change"] - 0.5) < 1e-9)   # day 50's two scores: one mean
     print(("ok   " if ok else "FAIL ") + "trend: a model against itself, two runs to be a trend"
-          + ("" if ok else f" -> {w} {run10} {twice} late {late}"))
+          + ("" if ok else f" -> {w} {twice} late {late}"))
     failures += 0 if ok else 1
 
     # gzip for a caller off this machine that takes it; never over loopback.

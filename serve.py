@@ -2011,6 +2011,10 @@ def th(label: str, num: bool = False) -> str:
     return f"<th data-sortable tabindex='0'{' class=num' if num else ''}>{label}</th>"
 
 
+def ext_link(url: str, text: str) -> str:
+    return f"<a href='{esc(url)}' target='_blank' rel='noopener'>{esc(text)}</a>"
+
+
 STATUS = {
     # failure class -> (chip label, chip class, plain reading)
     "capacity": ("throttled", "warn", "rate limit or quota"),
@@ -2252,7 +2256,7 @@ def actions_page(groups: dict, auto: list) -> str:
         if not url:
             return ""
         shown = re.sub(r"^https?://", "", url).split("?")[0]
-        return f" <a href='{esc(url)}' target='_blank' rel='noopener'>{esc(shown)} ↗</a>"
+        return " " + ext_link(url, shown + " ↗")
 
     def why(text: str, url: str, title: str) -> str:
         return (f"<td class='why' title='{esc(title)}'><div class='said-line'><span class='said'>{esc(text)}</span>"
@@ -2919,12 +2923,11 @@ def trend_rows() -> dict:
 
 
 def _trend_rows(rows: list[tuple], today: datetime.date) -> dict:
-    """{"first": the first day with a score, "models": alias -> {"runs": [[day,
-    change, tasks compared, hover]], "last": day, "windows": {days: summary}}}.
-    A run's change is against the model's scores on the same tasks on earlier
-    days (None when it had none); a window's summary is the scores in the
-    window against those before it. A task asked twice in a day counts once
-    that day, as the mean of its scores."""
+    """{"first": the first day with a score, "models": alias -> {"last": day,
+    "compared": a task scored on two days or more, "windows": {days:
+    summary}}}. A window's summary is the scores in the window against those
+    before it. A task asked twice in a day counts once that day, as the mean
+    of its scores."""
     by: dict[str, dict[tuple, dict]] = {}               # alias -> (task, of) -> day -> [found], oldest first
     first = ""
     for day, _run, task, alias, found, _inv, _s in rows:
@@ -2938,17 +2941,8 @@ def _trend_rows(rows: list[tuple], today: datetime.date) -> dict:
         return sum(xs) / len(xs)
     models = {}
     for alias, found_by_task in by.items():
-        runs: dict[str, list] = {}                      # day -> [[change or None, hover line]]
-        tasks: dict[tuple, list] = {}                   # (task, of) -> [(day, share)], oldest first
-        for (task, of), days in found_by_task.items():
-            scores = tasks[(task, of)] = [(d, mean(f) / of) for d, f in days.items()]
-            for i, (day, share) in enumerate(scores):
-                before = [s for _d, s in scores[:i]]
-                runs.setdefault(day, []).append(
-                    [share - mean(before) if before else None,
-                     f"{task} {', '.join(f'{n}/{of}' for n in days[day])}"
-                     + (f", before {mean(before) * of:.3g}/{of} over {len(before)} run{'s' * (len(before) != 1)}"
-                        if before else ", its first score")])
+        tasks = {(task, of): [(d, mean(f) / of) for d, f in days.items()]     # [(day, share)], oldest first
+                 for (task, of), days in found_by_task.items()}
         windows = {}
         for w in TREND_DAYS:
             since = (today - datetime.timedelta(days=w - 1)).isoformat()
@@ -2979,10 +2973,8 @@ def _trend_rows(rows: list[tuple], today: datetime.date) -> dict:
             windows[w] = {"state": state, "change": change, "tasks": len(moves), "down": down, "up": up,
                           "runs": len(recent), "runsDown": runs_down, "runsUp": runs_up, "before": len(earlier),
                           "per": sorted(per, key=lambda p: p[1])}
-        models[alias] = {
-            "runs": [[d, mean(c) if (c := [x[0] for x in v if x[0] is not None]) else None, len(c),
-                      "\n".join(x[1] for x in v)] for d, v in sorted(runs.items())],
-            "last": max(runs), "windows": windows}
+        models[alias] = {"last": max(d for s in tasks.values() for d, _s in s),
+                         "compared": any(len(s) > 1 for s in tasks.values()), "windows": windows}
     return {"first": first, "models": models}
 
 
@@ -3006,12 +2998,10 @@ def trend_data() -> dict:
     """For bench.js: registered models with a run to compare, each window's
     flag, its evidence and each task's move."""
     t, live = trend_rows(), on_bench()
-    return {"first": t["first"], "today": datetime.date.today().isoformat(), "choices": list(TREND_DAYS),
-            "move": TREND_MOVE,
+    return {"choices": list(TREND_DAYS), "move": TREND_MOVE,
             "models": [{"name": m, "last": v["last"],
                         "w": {str(w): {**s, "says": _trend_says(s)} for w, s in v["windows"].items()}}
-                       for m, v in sorted(t["models"].items())
-                       if m in live and any(r[1] is not None for r in v["runs"])]}
+                       for m, v in sorted(t["models"].items()) if m in live and v["compared"]]}
 
 
 def trend_card() -> str:
@@ -3314,17 +3304,14 @@ def _uptime_rows() -> dict:
         count(at, alias, c or conn(alias), cls, why, 1, [float(seconds)] if seconds else [], error)
     # Decision models: every call decide.call logged, on the connection behind its served name
     # (provider tags: OpenRouter for the :free ones), its hub's address deciding the relay.
-    tags = load_json(DATA / "config" / "provider-tags.json")
+    tags, hubs = load_json(DATA / "config" / "provider-tags.json"), {}
     for at, alias, served, via, status, error, seconds in _decision_calls():
         if at[:10] < since:
             continue
         alias = now(alias)                             # a renamed decision model keeps its calls
-        hub = urllib.parse.urlsplit(data.get(via, {}).get("base") or "").hostname or ""
-        try:
-            private_hub = ipaddress.ip_address(hub).is_private
-        except ValueError:
-            private_hub = hub == "localhost"
-        cls, why = classify(error, status, private_hub)
+        if via not in hubs:
+            hubs[via] = decide._private(via)
+        cls, why = classify(error, status, hubs[via])
         c = str(tags.get(served) or "").split("/")[0] or via or "unknown"
         conns.setdefault(alias, c)
         count(at, alias, c, cls, why, 1, [float(seconds)] if seconds and cls == "ok" else [], error)
@@ -3524,12 +3511,13 @@ DECIDE_USES = {"shape": "The shape of a request (gateway)", "collection": "A col
                "notice": "A short reply that may be a provider's notice (gateway seats)",
                "errors": "Error shapes no uptime rule knows (daily job)", "role": "A new chat model's role (onboarding)"}
 DECIDE_SETS = {"errors": "Error classes", "collection": "Collections", "useful": "Useful answers"}
+DECIDE_KIND = {"errors": "choice of 6", "collection": "choice of the collections", "useful": "yes or no"}
 
 
 def decision_data() -> dict:
     """For bench.js: each model's calibration bins per set, [said, right, n]."""
     res = decide.results()
-    return {"sets": [[s, DECIDE_SETS[s]] for s in decide.SETS], "cutoff": decide.CONFIDENT,
+    return {"sets": [[s, DECIDE_SETS[s]] for s in decide.SETS],
             "points": [{"model": a, "set": s, "said": b["said"], "right": b["right"], "n": b["n"]}
                        for a, by in sorted((res.get("models") or {}).items()) for s, r in by.items()
                        if s in decide.SETS for b in r.get("calibration") or []]}
@@ -3632,9 +3620,6 @@ def decision_card() -> str:
                       " a probability: how often they are right on the bench's own labelled questions, how far"
                       " to trust their probabilities, and which one each use asks.",
                       "chart-decide", "".join(tables), key, extra=extra, retired=False)
-
-
-DECIDE_KIND = {"errors": "choice of 6", "collection": "choice of the collections", "useful": "yes or no"}
 
 
 def bughunt_card() -> str:
@@ -3751,8 +3736,7 @@ EXTERNAL = (("LiveBench", "https://livebench.ai/", "contamination-limited questi
 def external_card() -> str:
     """Links, not scores: the External tab showed FuncBench numbers nobody
     refreshed and was dropped (2026-10-16). Public leaderboards are read there."""
-    rows = "".join(f"<li><a href='{esc(u)}' target='_blank' rel='noopener'>{esc(n)}</a>"
-                   f" <span class='muted'>— {esc(why)}</span></li>" for n, u, why in EXTERNAL)
+    rows = "".join(f"<li>{ext_link(u, n)} <span class='muted'>— {esc(why)}</span></li>" for n, u, why in EXTERNAL)
     return ("<div class='panel'><h2>External</h2><p class='sub'>Public leaderboards, for comparison."
             " The bench does not copy their numbers; its own tests above are what routing uses.</p>"
             f"<ul class='links'>{rows}</ul></div>")
@@ -4668,8 +4652,7 @@ def clients_page() -> str:
         f"<p class='sub'>{c['gets']}</p><p class='where'>{c['where']}</p>"
         + "".join(_snip_html(c["id"], i, s) for i, s in enumerate(c["blocks"]))
         + f"<p class='watch'><b>Watch for:</b> {c['watch']}</p>"
-        + "<p class='rules'>Written from " + ", ".join(f"<a href='{esc(u)}' target='_blank' rel='noopener'>{esc(t)}</a>"
-                                                      for u, t in c["docs"])
+        + "<p class='rules'>Written from " + ", ".join(ext_link(u, t) for u, t in c["docs"])
         + f", read {CLIENTS_READ}" + (f": {c['docs_note']}" if c.get("docs_note") else ".") + "</p></div>"
         for c in client_setups(root, cols, keys))
     return head + "</div>" + panels
@@ -5565,11 +5548,9 @@ def on_disk() -> tuple[str, str]:
 def info_page() -> str:
     import scheduler
     import client as model_client
-    def link(url: str, text: str) -> str:
-        return f"<a href='{esc(url)}' target='_blank' rel='noopener'>{esc(text)}</a>"
     # The release this is, or on a branch the one it builds on (0.5.6-dev -> v0.5.6).
-    rows = [("Source", link(connect.REPO, connect.REPO.removeprefix("https://"))),
-            ("Version", link(f"{connect.REPO}/releases/tag/v{RELEASE.split('-')[0]}", RELEASE))]
+    rows = [("Source", ext_link(connect.REPO, connect.REPO.removeprefix("https://"))),
+            ("Version", ext_link(f"{connect.REPO}/releases/tag/v{RELEASE.split('-')[0]}", RELEASE))]
     rows += [(k, esc(v)) for k, v in [
         ("Date", RELEASE_DATE or "unknown"), ("Commit", COMMIT or "unknown"),
         ("Python", f"{sys.version.split()[0]} · {sys.executable}"),
@@ -5828,10 +5809,10 @@ class Handler(gateway.Handler):
         callback = self.path.startswith((connect.CALLBACK + "?", connect.CALLBACK + "/"))
         if not callback and not self._admitted(path):
             return
+        from urllib.parse import parse_qs, urlparse
+        q = parse_qs(urlparse(self.path).query)
         if self.path.startswith("/api/onboard?"):
-            from urllib.parse import parse_qs, urlparse
-            log = parse_qs(urlparse(self.path).query).get("log", [""])[0]
-            self._json(200, onboard_status(log))
+            self._json(200, onboard_status(q.get("log", [""])[0]))
             return
         if self.path in ("/api/candidates", "/api/candidates?fresh=1"):
             self._json(200, onboard_candidates(fresh=self.path.endswith("fresh=1")))
@@ -5846,8 +5827,7 @@ class Handler(gateway.Handler):
                                  "count": open_count(groups)})
             return
         if path == "/api/pane":                        # a tab's page, when first opened (bench.js load)
-            from urllib.parse import parse_qs, urlparse
-            key = parse_qs(urlparse(self.path).query).get("tab", [""])[0]
+            key = q.get("tab", [""])[0]
             if not any(k == key for k, _, _ in TABS):
                 self._json(404, {"ok": False, "errors": [f"no tab {key!r}"]})
                 return
@@ -5876,7 +5856,7 @@ class Handler(gateway.Handler):
             # OAuth callbacks are: the state is single-use and unguessable, and
             # only a sign-in this dashboard started has one. No login cookie:
             # SameSite=Strict keeps it off the provider's cross-site redirect.
-            from urllib.parse import parse_qsl, urlparse
+            from urllib.parse import parse_qsl
             query = dict(parse_qsl(urlparse(self.path).query))
             query["state"] = connect.callback_id(self.path, query)
             try:
@@ -5910,23 +5890,17 @@ class Handler(gateway.Handler):
             self._json(200, connections_view())
             return
         if self.path.startswith("/api/discover-model?"):
-            from urllib.parse import parse_qs, urlparse
-            q = parse_qs(urlparse(self.path).query)
             res = discover_model(q.get("provider", [""])[0], q.get("model", [""])[0])
             self._json(200 if res["ok"] else 404, res)
             return
         if self.path.startswith("/api/gateway-seat?"):
-            from urllib.parse import parse_qs, urlparse
-            call = parse_qs(urlparse(self.path).query).get("call", [""])[0]
-            res = gateway_seat(call)
+            res = gateway_seat(q.get("call", [""])[0])
             self._json(200 if res["ok"] else 404, res)
             return
         if self.path == "/api/stamp":
             self._json(200, {"stamp": data_stamp()})
             return
         if path == "/api/export":                      # Settings' Export and import: the zip, as a download
-            from urllib.parse import parse_qs, urlparse
-            q = parse_qs(urlparse(self.path).query)
             scope, keys = q.get("scope", ["settings"])[0], q.get("keys", [""])[0] == "1"
             if scope not in MOVE_SCOPES or (self.headers.get("Sec-Fetch-Site") or "").lower() == "cross-site":
                 self._json(400, {"ok": False, "errors": ["scope is settings or all, asked from this page"]})
@@ -5966,8 +5940,7 @@ class Handler(gateway.Handler):
             self.end_headers()
             self.wfile.write(data)
             return
-        from urllib.parse import parse_qs, urlparse
-        theme = parse_qs(urlparse(self.path).query).get("theme", [None])[0]   # a preview; else the saved one
+        theme = q.get("theme", [None])[0]               # a preview; else the saved one
         shown = re.search(r"(?:^|;)\s*bench_tab=(\w+)", self.headers.get("Cookie") or "")   # the tab last shown
         try:
             page = render(theme, shown.group(1) if shown else "glance")
