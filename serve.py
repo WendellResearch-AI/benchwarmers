@@ -127,6 +127,9 @@ def font_file(name: str) -> pathlib.Path | None:
 # Images a theme may draw (Hardwood's centre court): named here, served from
 # ui/ with a fixed type, so the route cannot be walked to other files.
 ASSETS = {"mascot.png": "image/png"}
+# The logo, header and byline in one, for a shared report's image (bench.js
+# "share"): the repository's own, at /ui/<name>; light and dark grounds.
+LOGOS = {"logo.svg": ROOT / ".github" / "logo.svg", "logo-dark.svg": ROOT / ".github" / "logo-dark.svg"}
 
 
 def read(path: pathlib.Path) -> str:
@@ -3034,7 +3037,7 @@ def trend_card() -> str:
         return f"<div data-trend-window='{w}'{'' if w == first else ' hidden'}>" + "".join(body) + "</div>"
 
     legend = ("<div class='q-legend'><span><i style='background:var(--err)'></i>lower than it used to be</span>"
-              "<span><i style='background:var(--ok)'></i>higher</span><span><i style='background:var(--muted)'></i>"
+              "<span><i style='background:var(--ok)'></i>higher</span><span><i style='background:var(--muted);opacity:.6'></i>"
               "steady</span><span><i style='background:var(--line)'></i>within 10 pts of its earlier scores</span>"
               "<span>no bar: too little to say</span></div>")
     pick = ("<div class='toolbar'><label>Window <select data-trend-days>"
@@ -5631,13 +5634,14 @@ class Handler(gateway.Handler):
             # this cannot be walked to other paths.
             name = self.path.split("/", 2)[2]
             path = font_file(name) if self.path.startswith("/fonts/") else \
-                (UI / name if name in ASSETS and (UI / name).exists() else None)
+                (UI / name if name in ASSETS and (UI / name).exists() else
+                 LOGOS[name] if name in LOGOS and LOGOS[name].exists() else None)
             if not path:
                 self.send_error(404)
                 return
             data = path.read_bytes()
             self.send_response(200)
-            self.send_header("Content-Type", ASSETS.get(name, "font/woff2"))
+            self.send_header("Content-Type", ASSETS.get(name) or ("image/svg+xml" if name in LOGOS else "font/woff2"))
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Content-Length", str(len(data)))
             self.send_header("Cache-Control", "max-age=86400")

@@ -298,8 +298,24 @@
     }
     return '#fff';
   }
+  // The logo (header and byline, serve.LOGOS) for a light or a dark ground: a data
+  // URI and its width at 40 px high, or none where the install has no logo file.
+  var logos = {};
+  function logo(dark) {
+    var name = dark ? 'logo-dark.svg' : 'logo.svg';
+    return logos[name] || (logos[name] = fetch('/ui/' + name).then(function (r) { return r.ok ? r.text() : ''; })
+      .then(function (svg) {
+        var box = (svg.match(/viewBox="([^"]+)"/) || [])[1], v = box ? box.split(/[\s,]+/).map(Number) : [];
+        return svg && v[3] ? {src: 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg), width: Math.round(40 * v[2] / v[3])} : null;
+      }).catch(function () { return null; }));
+  }
+  function dark(colour) {
+    var n = (colour.match(/[\d.]+/g) || [255, 255, 255]).map(Number);
+    return 0.299 * n[0] + 0.587 * n[1] + 0.114 * n[2] < 128;
+  }
   // The report drawn as a PNG: a copy of it with its look written on each element
-  // (the page's css does not travel), in an SVG foreignObject, onto a canvas.
+  // (the page's css does not travel), the logo under it, in an SVG foreignObject,
+  // onto a canvas.
   function shareImage(panel, credit) {
     var copy = panel.cloneNode(true), from = panel.querySelectorAll('*'), to = copy.querySelectorAll('*');
     function look(a, b) {
@@ -318,15 +334,25 @@
     var pad = parseFloat(getComputedStyle(panel).paddingLeft) + parseFloat(getComputedStyle(panel).paddingRight);
     var W = Math.ceil(Math.max.apply(null, [panel.clientWidth].concat(Array.prototype.map.call(
       panel.querySelectorAll('.chart'), function (c) { return c.scrollWidth + pad; }))));
-    copy.appendChild(el('p', {style: 'margin:16px 0 0;font:12px system-ui,sans-serif;opacity:.7'}, credit));
-    copy.style.cssText += ';width:' + W + 'px;height:auto;box-sizing:border-box;margin:0;border-radius:0;position:fixed;left:-99999px;top:0'
-      + ';background-color:' + ground(panel);
-    document.body.appendChild(copy);
-    var H = Math.ceil(copy.getBoundingClientRect().height);
-    copy.remove();
-    copy.style.position = copy.style.left = copy.style.top = '';
-    var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + W + '" height="' + H + '">'
-      + '<foreignObject width="100%" height="100%">' + new XMLSerializer().serializeToString(copy) + '</foreignObject></svg>';
+    var bg = ground(panel), rule = getComputedStyle(document.documentElement).getPropertyValue('--line').trim() || '#ccc';
+    return logo(dark(bg)).then(function (mark) {
+      var band = el('div', {style: 'display:flex;align-items:center;justify-content:space-between;gap:12px 24px;flex-wrap:wrap;'
+        + 'margin:24px 0 0;padding:16px 0 0;border-top:1px solid ' + rule + ';font:13px system-ui,sans-serif'});
+      if (mark) band.appendChild(el('img', {src: mark.src, alt: 'Benchwarmers, by Wendell Research',
+                                            style: 'display:block;height:40px;width:' + mark.width + 'px'}));
+      band.appendChild(el('span', {style: 'opacity:.75'}, (mark ? '' : 'Benchwarmers · ') + credit));
+      copy.appendChild(band);
+      copy.style.cssText += ';width:' + W + 'px;height:auto;box-sizing:border-box;margin:0;border-radius:0;position:fixed;left:-99999px;top:0'
+        + ';background-color:' + bg;
+      document.body.appendChild(copy);
+      var H = Math.ceil(copy.getBoundingClientRect().height);
+      copy.remove();
+      copy.style.position = copy.style.left = copy.style.top = '';
+      return draw('<svg xmlns="http://www.w3.org/2000/svg" width="' + W + '" height="' + H + '">'
+        + '<foreignObject width="100%" height="100%">' + new XMLSerializer().serializeToString(copy) + '</foreignObject></svg>', W, H);
+    });
+  }
+  function draw(svg, W, H) {
     return new Promise(function (ok, fail) {
       var img = new Image(), k = Math.min(2, 16000 / Math.max(W, H));
       img.onload = function () {
@@ -339,8 +365,8 @@
       img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
     });
   }
-  function shareRows(panel) {     // the rows the table shows: its filter and "Show retired" apply
-    var t = panel.querySelector('table');
+  function shareRows(panel) {     // the rows the table shows: its window, its filter and "Show retired" apply
+    var t = Array.prototype.find.call(panel.querySelectorAll('table'), function (t) { return !t.closest('[hidden]'); });
     return t ? Array.prototype.filter.call(t.rows, function (r) { return getComputedStyle(r).display !== 'none'; })
       .map(function (r) {
         return Array.prototype.map.call(r.cells, function (c) {
@@ -392,7 +418,7 @@
       return;
     }
     if (what === 'csv') { saveFile(new Blob([csv(shareRows(panel))], {type: 'text/csv'}), name + '.csv'); said('Table saved'); return; }
-    var png = shareImage(panel, credit), post = POST[what];
+    var png = shareImage(panel, D.repo.replace(/^https:\/\//, '') + ' · ' + day), post = POST[what];
     if (what === 'png') { png.then(function (blob) { saveFile(blob, name + '.png'); said('Image saved'); }, failed); return; }
     if (what === 'native') {
       png.then(function (blob) {

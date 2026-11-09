@@ -49,6 +49,8 @@
     "repoqa/*.py",
     "repoqa/*.md",
     "ui/",
+    ".github/logo.svg",
+    ".github/logo-dark.svg",
     "examples/",
     "VERSION",
     "NOTICE",
