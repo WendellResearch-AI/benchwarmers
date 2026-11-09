@@ -32,6 +32,7 @@ coding agent doing it with you); the gateway's whole contract is in
 | Gateway | **Endpoints** | Where models are served from. Add an endpoint (a provider's sign-in, or any OpenAI-compatible API key), change a key, and see what each one serves. Also your own app registrations and rate limits per connection. |
 | | **Models** | Every model on the bench, by the connection it comes from. |
 | | **Collections** | The named panels your apps ask for, and the gateway's settings. |
+| | **Clients** | Each popular app's set-up (opencode, VS Code, Codex, Zed, Continue, Cline, Kilo Code, Claude Code, goose, chat apps), filled in from this install, with Copy and a gateway key made on the spot. |
 | | **Discover** | Models worth adding, from public catalogs, with the ways this install can reach each one. |
 | Control | **Settings** | Theme, gateway keys, the scheduler, the model client, providers whose free models work only in their own app, how the install is reached (shown only), and Restart. |
 | | **Info** | Version, Python, data folder and counts. |
@@ -137,6 +138,12 @@ is back. Max explorers 0 means only the members ever run, stand-ins included.
 
 ## Connecting an app
 
+The dashboard's **Clients** page has a ready set-up for each popular app,
+filled in from this install (its address, collections and MCP server): copy it
+into the file or screen it names. When keys are asked for, it makes one on the
+spot and fills it in where a key goes, never into a file that may sync. What
+follows is the same by hand.
+
 Any OpenAI-compatible client works. Point it at the dashboard's port and ask
 for the model `bench/<collection>`:
 
@@ -197,7 +204,8 @@ claude
 
 Each conversation is one offload per model that answered it; a verdict is
 optional, and the Gateway card lists route conversations apart from the
-panels. GATEWAY.md, "Route mode", has the other clients and the limits.
+panels. The Clients page has the other agents' set-ups; GATEWAY.md, "Route
+mode", has the limits.
 
 **A coding agent** connects over MCP instead: the Claude Code plugin
 (`/plugin marketplace add WendellResearch-AI/benchwarmers`, then

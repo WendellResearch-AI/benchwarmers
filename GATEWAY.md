@@ -450,6 +450,11 @@ the caller sees would wait for or change because of them. Not built.
 
 ### Pointing agents at a collection
 
+The dashboard's **Clients** page has each app's set-up filled in from the
+install (opencode, VS Code chat, Codex, Zed, Continue, Cline and Kilo Code,
+Claude Code, goose, chat apps), each written from that app's docs on the date
+it shows. By hand:
+
 The base URL is the server: `http://127.0.0.1:8122` (the dashboard's port)
 or `:8123` (`gateway.py`). On this machine any key text works; elsewhere,
 or where keys are required, use a gateway key from Settings.
@@ -477,7 +482,7 @@ over past a member's 429 on the first turn and staying on one model after.
 "http://127.0.0.1:8122/v1"`, `wire_api = "responses"`, the model
 `bench/core:route`, and the gateway key as its API key. Function and custom
 tools work; hosted tools (`web_search`, `local_shell`) are refused, so turn
-them off. Nothing is stored: `previous_response_id` is refused, so the
+them off (Codex: `web_search = "disabled"`). Nothing is stored: `previous_response_id` is refused, so the
 client must send the whole conversation every turn.
 Not checked against a real Codex yet.
 
