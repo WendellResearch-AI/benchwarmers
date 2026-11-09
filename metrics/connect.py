@@ -354,19 +354,31 @@ def detect(skip=(), timeout: float = 0.5) -> list[dict]:
 
 def _endpoint_ports() -> set[int]:
     """The ports of endpoints on this machine, under any of its names or
-    addresses: an endpoint added by a LAN address is the same server."""
+    addresses: an endpoint added by a LAN address is the same server. No DNS:
+    resolving this machine's own name took seconds on some (macOS CI); an
+    address binds only if it is this machine's."""
+    import ipaddress
     import socket
-    here = {"localhost", "127.0.0.1", "::1"}
-    try:
-        name = socket.gethostname()
-        here |= {name.lower(), *socket.gethostbyname_ex(name)[2]}
-    except OSError:
-        pass
+    name = socket.gethostname().lower()
+
+    def here(host: str | None) -> bool:
+        if host in ("localhost", "127.0.0.1", "::1", name):
+            return True
+        try:
+            ip = ipaddress.ip_address(host or "")
+        except ValueError:
+            return False                         # another name: not resolved here
+        try:
+            with socket.socket(socket.AF_INET6 if ip.version == 6 else socket.AF_INET) as s:
+                s.bind((str(ip), 0))
+            return True
+        except OSError:
+            return False
     ports = set()
     for e in endpoints.load().values():
         url = urllib.parse.urlsplit(str(e.get("base", "")))
         try:
-            if url.hostname in here:
+            if here(url.hostname):
                 ports.add(url.port or (443 if url.scheme == "https" else 80))
         except ValueError:                       # a port that is not a number: not one of these
             pass
