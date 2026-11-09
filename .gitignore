@@ -40,6 +40,9 @@ runs/scheduler-state.json
 runs/scheduler.lock
 .archify/**/*.json
 !.archify/**/candidate.json
+# graphify's knowledge graph of a checkout, and what it leaves out: local only
+graphify-out/
+.graphifyignore
 # deploy/vps/backup.sh's archives: the data folder, and any pasted keys
 deploy/vps/backups/
 # deploy/railway: what npm install railway adds there (the IaC file's types)
