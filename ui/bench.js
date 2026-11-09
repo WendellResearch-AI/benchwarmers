@@ -1394,6 +1394,44 @@
     });
   });
 
+  // ---- Clients (serve.clients_page): a key made there fills the blocks marked
+  // data-key (shell lines, fields typed into an app; never a file that may sync).
+  // Held in memory only, so a page swapped in fresh is filled again, and a reload
+  // forgets it, as Settings' does.
+  var clientKey = null;
+  function fillKey() {
+    if (!clientKey) return;
+    document.querySelectorAll('#tab-clients pre[data-key]').forEach(function (p) {
+      p.textContent = p.textContent.split('<your gateway key>').join(clientKey);      // serve.KEY_HOLDER
+    });
+  }
+  onLoad.clients = fillKey;
+  on('click', 'cl-make', function () {
+    $('cl-errors').textContent = '';
+    post('/api/gateway-key', {name: $('cl-name').value}).then(function (r) {
+      if (!r.ok) { listErrors($('cl-errors'), r.errors); return; }
+      clientKey = r.key; fillKey();
+      $('cl-done').hidden = false; $('cl-make').disabled = true;
+      refreshPanes(['settings']);                // its list of keys, when next opened
+    }).catch(function (e) { listErrors($('cl-errors'), [String(e)]); });
+  });
+  // Copy: the clipboard where the page may write it (https, localhost), else the
+  // old way, else the text left selected for the reader's own Ctrl+C.
+  document.addEventListener('click', function (ev) {
+    var b = ev.target.closest('[data-copy]');
+    if (!b) return;
+    var pre = $(b.dataset.copy);
+    (window.isSecureContext && navigator.clipboard ? navigator.clipboard.writeText(pre.textContent) : Promise.reject())
+      .catch(function () {
+        var sel = getSelection();
+        sel.selectAllChildren(pre);
+        if (!document.execCommand('copy')) throw new Error('no copy');
+        sel.removeAllRanges();
+      })
+      .then(function () { b.textContent = 'Copied'; }, function () { b.textContent = 'Selected: press Ctrl+C'; })
+      .then(function () { setTimeout(function () { b.textContent = 'Copy'; }, 2500); });
+  });
+
   // ---- scheduler: its mode and jobs (serve.save_scheduler) -----------------
   function modeWhy() { $('s-mode-why').textContent = $('s-mode').selectedOptions[0].dataset.why; }
   on('change', 's-mode', modeWhy); onLoad.settings = modeWhy;

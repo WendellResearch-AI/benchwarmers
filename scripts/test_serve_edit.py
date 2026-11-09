@@ -171,6 +171,50 @@ def main() -> int:
     ok = (set(view["served"]) == set(view["models"]) and victim not in view["served"]
           and view["served"].get(other) == d3[other]["served"])
     print(("ok   " if ok else "FAIL ") + "collection view: served name for every member choice"); failures += 0 if ok else 1
+    # Clients: every snippet parses in its format, names each collection, sets the
+    # timeouts a panel needs, and a made key goes only into a shell line or a field.
+    import tomllib
+    try:
+        import yaml                                     # comes with the llm CLI; the built-in client's venv may lack it
+        load_yaml = yaml.safe_load
+    except ImportError:
+        load_yaml = None
+    bad = []
+    for keys in (False, True):
+        setups = {c["id"]: c for c in serve.client_setups("http://127.0.0.1:8122", [("core", 200_000, False),
+                                                                                    ("fast", None, True)], keys)}
+        parsed = {}
+        for c in setups.values():
+            for b in c["blocks"]:
+                parse = {"json": json.loads, "toml": tomllib.loads, "yaml": load_yaml}.get(b["lang"])
+                try:
+                    parsed[c["id"], b["label"]] = parse(b["text"]) if parse else b["text"]
+                except Exception as exc:                # noqa: BLE001
+                    bad.append(f"{c['id']} {b['label']} does not parse: {exc}")
+                if b["key"] and b["lang"] not in ("sh", "bat", "text"):
+                    bad.append(f"{c['id']} {b['label']}: a key would go into a file")
+            alltext = "\n".join(b["text"] for b in c["blocks"])
+            want = ("bench/core:merged", "bench/fast:merged") if c["id"] == "chat" else \
+                ("bench/core:route", "bench/fast:route") if c["id"] != "codex" else ("bench/core:route",)
+            bad += [f"{c['id']} lacks {w}" for w in want if w not in alltext]
+        oc, cx = parsed.get(("opencode", "opencode.json")), parsed.get(("codex", "config.toml"))
+        if oc and cx:
+            p = oc["provider"]["benchwarmers"]
+            if (oc["mcp"]["benchwarmers"]["timeout"] != 900_000 or cx["mcp_servers"]["benchwarmers"]["tool_timeout_sec"] != 900
+                    or cx["model_providers"]["benchwarmers"]["wire_api"] != "responses" or cx["web_search"] != "disabled"
+                    or p["models"]["bench/fast:route"]["limit"]["context"] != serve.UNKNOWN_CONTEXT
+                    or ("apiKey" in p["options"]) != keys or ("env_key" in cx["model_providers"]["benchwarmers"]) != keys):
+                bad.append(f"opencode or Codex settings wrong (keys={keys})")
+        if parsed.get(("cline", "Cline: cline_mcp_settings.json"), {}).get("mcpServers", {}).get("benchwarmers", {}).get("timeout") != 900:
+            bad.append("Cline's MCP timeout is not 900 s")
+        if not all(m["toolCalling"] for m in parsed.get(("vscode", "chatLanguageModels.json"), [{}])[0].get("models", [{}])):
+            bad.append("a VS Code model without toolCalling is hidden from the agent picker")
+        if load_yaml and parsed.get(("goose", "config.yaml"), {}).get("extensions", {}).get("benchwarmers", {}).get("timeout") != 900:
+            bad.append("goose's extension timeout is not 900 s")
+    ok = not bad
+    print(("ok   " if ok else "FAIL ") + "client set-ups: JSON, TOML" + (", YAML" if load_yaml else " (YAML unread: no PyYAML)")
+          + " parse, collections named, timeouts set, keys only in shell lines and fields" + ("" if ok else f" -> {bad}"))
+    failures += 0 if ok else 1
     # restore: same alias back, out of retired.json, role and ad hoc kept, and
     # back into the collections that still exist (one deleted, one changed since)
     serve.delete_collection("doomed")

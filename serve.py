@@ -4370,6 +4370,7 @@ SECTIONS = (("Observe", (("glance", "At a glance", "roster"),
             ("Gateway", (("endpoints", "Endpoints", "endpoints_page"),
                          ("models", "Models", "models_page"),
                          ("collections", "Collections", "collections_and_gateway"),   # starred (bench.css)
+                         ("clients", "Clients", "clients_page"),
                          ("discover", "Discover", "discover_card"))),
             ("Control", (("settings", "Settings", "settings_page"),
                          ("info", "Info", "info_page"))))
@@ -4379,6 +4380,307 @@ UI_CONFIG = DATA / "config" / "ui.json"
 
 def collections_and_gateway() -> str:
     return collections_tab() + gateway_card()
+
+
+# ---- Clients: each app's set-up, filled in from this install ---------------
+# Each format follows the client's own docs as read on CLIENTS_READ (linked on
+# the page); only Claude Code was run against the gateway (GATEWAY.md, "Route
+# mode"). A key made on the page never goes into a file, which may sync: a file
+# names an environment variable, or the app asks, or (an MCP header in Zed,
+# Cline or goose, which take no variable) KEY_HOLDER stays for the reader.
+# Only blocks marked `key` (shell lines, fields typed into an app) get the key
+# made on the page, swapped in for KEY_HOLDER by bench.js.
+KEY_HOLDER = "<your gateway key>"
+KEY_ENV = "BENCHWARMERS_KEY"         # the plugin's and the CLI's name for it too
+CLIENTS_READ = "2026-11-08"
+AGENT_OUT = 16_384                   # the output budget an agent is told; route mode cuts it to the model's own
+UNKNOWN_CONTEXT = 128_000            # for a collection whose members' windows the catalog does not know
+DEFAULT_SERVER = "http://127.0.0.1:8122"
+
+
+def _snip(label: str, lang: str, text: str, key: bool = False) -> dict:
+    return {"label": label, "lang": lang, "text": text, "key": key}
+
+
+def _env_snips(name: str) -> list[dict]:
+    return [_snip("macOS, Linux: in your shell profile", "sh", f"export {name}='{KEY_HOLDER}'", True),
+            _snip("Windows: once, then start the app again", "bat", f'setx {name} "{KEY_HOLDER}"', True)]
+
+
+def _fields(pairs: list) -> str:
+    width = max(len(k) for k, _ in pairs)
+    return "\n".join(f"{k.ljust(width)}  {v}" for k, v in pairs)
+
+
+def client_setups(root: str, cols: list, keys: bool) -> list[dict]:
+    """Every client's panel: what it gets, its snippets (_snip), where they
+    go, the one thing to watch for and the docs they follow. `root`: the
+    server, without /v1; `cols`: (name, context window or None, sees images)
+    for each collection offered, the first being the one a single-model field
+    names; `keys`: whether every call needs a gateway key."""
+    base, mcp, env = root + "/v1", root + "/mcp", KEY_ENV
+    fast = next((n for n, _, _ in cols if n == "fast"), cols[0][0])
+    # (model, collection, context window, output budget, sees images)
+    rows = [(f"bench/{n}:route", n, c or UNKNOWN_CONTEXT, min(AGENT_OUT, (c or UNKNOWN_CONTEXT) // 4), bool(eyes))
+            for n, c, eyes in cols]
+    model, ctx, out = rows[0][0], rows[0][2], rows[0][3]
+    q = json.dumps                       # a quoted string, read the same by JSON, TOML and YAML
+
+    def js(data) -> str:
+        return json.dumps(data, indent=2)
+
+    def lines(*parts) -> str:
+        return "\n".join(p for p in parts if p is not None)
+
+    def when(text: str):
+        return text if keys else None
+
+    opencode = {"$schema": "https://opencode.ai/config.json",
+                "provider": {"benchwarmers": {
+                    "npm": "@ai-sdk/openai-compatible", "name": "Benchwarmers",
+                    "options": {"baseURL": base, **({"apiKey": f"{{env:{env}}}"} if keys else {})},
+                    "models": {m: {"name": f"{n} (route)", "limit": {"context": c, "output": o}}
+                               for m, n, c, o, _ in rows}}},
+                "mcp": {"benchwarmers": {
+                    "type": "remote", "url": mcp, "enabled": True, "oauth": False,
+                    **({"headers": {"Authorization": f"Bearer {{env:{env}}}"}} if keys else {}),
+                    "timeout": 900_000}}}
+    vscode = [{"name": "Benchwarmers", "vendor": "customendpoint", "apiKey": "${input:benchwarmersKey}",
+               "apiType": "chat-completions",
+               "models": [{"id": m, "name": f"{n} (Benchwarmers)", "url": base + "/chat/completions",
+                           "toolCalling": True, "vision": eyes, "maxInputTokens": c - o, "maxOutputTokens": o}
+                          for m, n, c, o, eyes in rows]}]
+    vscode_mcp = {**({"inputs": [{"type": "promptString", "id": "benchwarmers-key",
+                                  "description": "Benchwarmers gateway key", "password": True}]} if keys else {}),
+                  "servers": {"benchwarmers": {"type": "http", "url": mcp, **(
+                      {"headers": {"Authorization": "Bearer ${input:benchwarmers-key}"}} if keys else {})}}}
+    codex = lines(f"model = {q(model)}", 'model_provider = "benchwarmers"', f"model_context_window = {ctx}",
+                  'web_search = "disabled"', "",
+                  "[model_providers.benchwarmers]", 'name = "Benchwarmers"', f"base_url = {q(base)}",
+                  when(f'env_key = "{env}"'), 'wire_api = "responses"', "",
+                  "[mcp_servers.benchwarmers]", f"url = {q(mcp)}", when(f'bearer_token_env_var = "{env}"'),
+                  "tool_timeout_sec = 900")
+    zed = {"language_models": {"openai_compatible": {"benchwarmers": {
+               "api_url": base,
+               "available_models": [{"name": m, "display_name": f"{n} (Benchwarmers)", "max_tokens": c,
+                                     "max_output_tokens": o,
+                                     "capabilities": {"tools": True, "images": eyes, "parallel_tool_calls": False,
+                                                      "prompt_cache_key": False}}
+                                    for m, n, c, o, eyes in rows]}}},
+           "context_servers": {"benchwarmers": {"url": mcp, **(
+               {"headers": {"Authorization": f"Bearer {KEY_HOLDER}"}} if keys else {})}}}
+    secret = f"${{{{ secrets.{env} }}}}"
+    continue_ = lines("name: Benchwarmers", "version: 0.0.1", "schema: v1", "models:",
+                      *(lines(f"  - name: {q(n + ' (Benchwarmers)')}", "    provider: openai", f"    model: {q(m)}",
+                              f"    apiBase: {q(base)}", when(f"    apiKey: {secret}"),
+                              "    roles: [chat, edit, apply]",
+                              f"    capabilities: [tool_use{', image_input' if eyes else ''}]",
+                              "    defaultCompletionOptions:", f"      contextLength: {c}", f"      maxTokens: {o}")
+                        for m, n, c, o, eyes in rows),
+                      "mcpServers:", "  - name: benchwarmers", "    type: streamable-http", f"    url: {q(mcp)}",
+                      when("    requestOptions:"), when("      headers:"),
+                      when(f"        Authorization: Bearer {secret}"))
+    cline_mcp = {"mcpServers": {"benchwarmers": {"type": "streamableHttp", "url": mcp, **(
+        {"headers": {"Authorization": f"Bearer {KEY_HOLDER}"}} if keys else {}), "timeout": 900}}}
+    librechat = lines("endpoints:", "  custom:", '    - name: "Benchwarmers"',
+                      f'      apiKey: "{"${" + env + "}" if keys else "local"}"', f"      baseURL: {q(base)}",
+                      "      models:", f"        default: [{', '.join(q(f'bench/{n}:merged') for n, _, _ in cols)}]",
+                      "        fetch: true", "      titleConvo: false", '      modelDisplayLabel: "Benchwarmers"')
+    goose = {"name": "benchwarmers", "engine": "openai", "display_name": "Benchwarmers",
+             "description": "Benchwarmers collections, one model per conversation (route mode)",
+             "api_key_env": env, "base_url": base + "/chat/completions",
+             "models": [{"name": m, "context_limit": c} for m, _, c, _, _ in rows],
+             "supports_streaming": True, "requires_auth": keys}
+    goose_ext = lines("extensions:", "  benchwarmers:", "    type: streamable_http", "    name: benchwarmers",
+                      "    enabled: true", f"    uri: {q(mcp)}",
+                      f"    headers: {{Authorization: {q('Bearer ' + KEY_HOLDER)}}}" if keys else "    headers: {}",
+                      "    timeout: 900")
+    plugin_at = ("" if root == DEFAULT_SERVER else f", so set it to <code>{esc(root)}</code>")
+    any_text = "" if keys else " Keys are not asked for here, so any text works."
+    return [
+        {"id": "opencode", "name": "opencode",
+         "gets": "An agent with its tools on any collection (route mode), and the panel's ask and verdict as MCP tools.",
+         "where": "<code>~/.config/opencode/opencode.json</code>, or <code>opencode.json</code> in a project; merge"
+                  " into what is there. Pick a model with <code>/models</code>"
+                  f" (<code>benchwarmers/{esc(model)}</code>)."
+                  + (f" The key comes from <code>{env}</code>." if keys else ""),
+         "blocks": [_snip("opencode.json", "json", js(opencode))],
+         "watch": "<code>timeout</code> is in milliseconds and covers each MCP call: without it opencode stops"
+                  " waiting long before a panel answers.",
+         "docs": [("https://github.com/anomalyco/opencode/blob/v1.19.5/packages/web/src/content/docs/providers.mdx",
+                   "v1.19.5's providers"),
+                  ("https://github.com/anomalyco/opencode/blob/v1.19.5/packages/web/src/content/docs/mcp-servers.mdx",
+                   "MCP servers")],
+         "docs_note": "the current release's own docs. opencode.ai already shows the next config"
+                      " (<code>providers</code>, <code>mcp.servers</code>), which v1.19.5 does not read."},
+        {"id": "vscode", "name": "VS Code chat (Custom Endpoint)",
+         "gets": "Copilot chat's agent on a collection (route mode), with your own key, and the panel as MCP tools.",
+         "where": "<code>chatLanguageModels.json</code>: in the chat's model picker, Manage Models, Add Models,"
+                  " Custom Endpoint; add the object to the list there. <code>mcp.json</code>: the command"
+                  " <b>MCP: Open User Configuration</b>. VS Code asks for the key once and keeps it." + any_text,
+         "blocks": [_snip("chatLanguageModels.json", "json", js(vscode)), _snip("mcp.json", "json", js(vscode_mcp))],
+         "watch": "Keep <code>toolCalling: true</code>: VS Code hides a model without it from the agent picker."
+                  " Restart VS Code if the models do not appear.",
+         "docs": [("https://code.visualstudio.com/docs/copilot/customization/language-models", "language models"),
+                  ("https://code.visualstudio.com/docs/agents/reference/mcp-configuration", "MCP configuration")]},
+        {"id": "codex", "name": "Codex CLI",
+         "gets": "Codex on a collection over the Responses API (route mode), and the panel as MCP tools.",
+         "where": "<code>~/.codex/config.toml</code> (<code>%USERPROFILE%\\.codex\\config.toml</code> on Windows)."
+                  " The first four lines go above the file's first <code>[table]</code>."
+                  + (f" The key comes from <code>{env}</code>." if keys else ""),
+         "blocks": [_snip("config.toml", "toml", codex)],
+         "watch": "<code>web_search = \"disabled\"</code>: left on, Codex sends OpenAI's hosted search, which the"
+                  " gateway refuses (no other model can run it), and every turn fails.",
+         "docs": [("https://learn.chatgpt.com/docs/config-file/config-reference", "configuration reference")]},
+        {"id": "zed", "name": "Zed",
+         "gets": "Zed's agent on a collection (route mode), and the panel as MCP tools.",
+         "where": "<code>settings.json</code>: the command <b>zed: open settings file</b>. Zed reads the key from"
+                  " <code>BENCHWARMERS_API_KEY</code>, named after the provider id, or from the provider's settings"
+                  " screen; never from settings.json." + any_text,
+         "blocks": [_snip("settings.json", "json", js(zed)), *_env_snips("BENCHWARMERS_API_KEY")],
+         "watch": ("settings.json takes no variable, so the MCP header holds the key as text: replace"
+                   f" <code>{esc(KEY_HOLDER)}</code> there yourself, and keep the file out of synced dotfiles."
+                   if keys else "Zed asks for a key even where none is needed: set the variable to any text."),
+         "docs": [("https://zed.dev/docs/ai/use-api-access", "API access"), ("https://zed.dev/docs/ai/mcp", "MCP")]},
+        {"id": "continue", "name": "Continue",
+         "gets": "Continue's chat, edit and agent on a collection (route mode), and the panel as MCP tools.",
+         "where": "<code>~/.continue/config.yaml</code> (<code>%USERPROFILE%\\.continue\\config.yaml</code> on"
+                  " Windows); in a file you have, add the items to its <code>models</code> and"
+                  " <code>mcpServers</code>."
+                  + (f" <code>secrets.{env}</code> is read from <code>~/.continue/.env</code> or the environment."
+                     if keys else ""),
+         "blocks": [_snip("config.yaml", "yaml", continue_)],
+         "watch": "Keep <code>capabilities: [tool_use]</code>: without it Continue offers the model for chat,"
+                  " not agent mode.",
+         "docs": [("https://docs.continue.dev/customize/model-providers/top-level/openai", "OpenAI provider"),
+                  ("https://docs.continue.dev/customize/deep-dives/mcp", "MCP"),
+                  ("https://docs.continue.dev/reference", "config.yaml reference")]},
+        {"id": "cline", "name": "Cline and Kilo Code",
+         "gets": "Their agent on a collection (route mode), set in their own screens; Cline takes the panel as"
+                 " MCP tools too.",
+         "where": "Cline: its settings, API Provider. Kilo Code: Settings, Providers, Custom provider. Cline's MCP:"
+                  " the MCP Servers icon, Configure, Configure MCP Servers." + any_text,
+         "blocks": [_snip("Cline", "text", _fields([("API Provider", "OpenAI Compatible"), ("Base URL", base),
+                                                    ("API Key", KEY_HOLDER), ("Model ID", model),
+                                                    ("Context Window Size", ctx), ("Max Output Tokens", out),
+                                                    ("Image Support", "on" if rows[0][4] else "off")]), True),
+                    _snip("Kilo Code", "text", _fields([("Provider ID", "benchwarmers"),
+                                                        ("Display name", "Benchwarmers"),
+                                                        ("Provider API", "OpenAI Compatible"), ("Base URL", base),
+                                                        ("API key", KEY_HOLDER if keys else "(leave empty)"),
+                                                        ("Models", ", ".join(m for m, *_ in rows))]), True),
+                    _snip("Cline: cline_mcp_settings.json", "json", js(cline_mcp))],
+         "watch": "Keep <code>\"type\": \"streamableHttp\"</code>: without it Cline tries the old SSE transport."
+                  " Its <code>timeout</code> is in seconds (60 unless set).",
+         "docs": [("https://docs.cline.bot/provider-config/openai-compatible", "Cline: OpenAI Compatible"),
+                  ("https://docs.cline.bot/mcp/configuring-mcp-servers", "Cline: MCP servers"),
+                  ("https://kilo.ai/docs/providers/openai-compatible", "Kilo Code: OpenAI Compatible")]},
+        {"id": "claude-code", "name": "Claude Code",
+         "gets": "The panel as MCP tools, with the plugin's <code>/benchwarmers:ask</code>, its skill and its"
+                 " reminder of seats still unjudged; or Claude Code itself on a collection (route mode).",
+         "where": f"The plugin finds the server at <code>BENCHWARMERS_URL</code>, <code>{DEFAULT_SERVER}</code>"
+                  f" unless set{plugin_at}" + (f", and sends <code>{env}</code>." if keys else ".")
+                  + " Route mode: the shell you start <code>claude</code> from." + any_text,
+         "blocks": [_snip("In Claude Code: the plugin", "text",
+                          "/plugin marketplace add WendellResearch-AI/benchwarmers\n"
+                          "/plugin install benchwarmers@benchwarmers"),
+                    _snip("Claude Code on a collection: a shell", "sh",
+                          lines(f"export ANTHROPIC_BASE_URL={root}", f"export ANTHROPIC_API_KEY='{KEY_HOLDER}'",
+                                f"export ANTHROPIC_MODEL={model}",
+                                f"export ANTHROPIC_DEFAULT_HAIKU_MODEL=bench/{fast}:route", "claude"), True)],
+         "watch": "The plugin's Stop hook needs the server on the same machine; with none running, every turn"
+                  " ends with a hook error.",
+         "docs": [("https://github.com/WendellResearch-AI/benchwarmers#from-claude-code-and-other-agents",
+                   "README, From Claude Code and other agents")],
+         "docs_note": "checked end to end with Claude Code 2.1.299 on 2026-10-23 (GATEWAY.md, Route mode)."},
+        {"id": "chat", "name": "Chat apps",
+         "gets": "LobeHub, AnythingLLM, Cherry Studio, Chatbox and LibreChat: a chat window on a collection, one"
+                 " merged answer per question, every seat still called and recorded.",
+         "where": "Each app's settings, as an OpenAI-compatible (custom) provider. LibreChat:"
+                  " <code>librechat.yaml</code>"
+                  + (f", with <code>{env}</code> in its <code>.env</code>." if keys else ".") + any_text,
+         "blocks": [_snip("Any of them", "text", _fields([("Base URL", base), ("API key", KEY_HOLDER),
+                                                          ("Model", f"bench/{cols[0][0]}:merged")]), True),
+                    _snip("LibreChat: librechat.yaml", "yaml", librechat)],
+         "watch": "An app in Docker reaches this machine at another address than 127.0.0.1, and that host:port"
+                  " goes in <code>BENCH_ALLOWED_HOSTS</code>. Turn automatic titles off: each runs a whole panel.",
+         "docs": [("https://www.librechat.ai/docs/configuration/librechat_yaml/object_structure/custom_endpoint",
+                   "LibreChat: custom endpoints")]},
+        {"id": "goose", "name": "goose",
+         "gets": "goose on a collection (route mode), and the panel as an MCP extension.",
+         "where": "The provider: <code>~/.config/goose/custom_providers/benchwarmers.json</code>. The extension:"
+                  " <code>~/.config/goose/config.yaml</code>. On Windows both are under"
+                  " <code>%APPDATA%\\Block\\goose\\config\\</code>."
+                  + (f" goose reads the provider's key from <code>{env}</code>, never from config.yaml." if keys
+                     else ""),
+         "blocks": [_snip("custom_providers/benchwarmers.json", "json", js(goose)),
+                    _snip("config.yaml", "yaml", goose_ext)],
+         "watch": ("The extension's header holds the key as text: replace"
+                   f" <code>{esc(KEY_HOLDER)}</code> there yourself." if keys else
+                   "<code>timeout</code> is in seconds; goose's usual 300 can end a long panel."),
+         "docs": [("https://goose-docs.ai/docs/getting-started/providers", "providers"),
+                  ("https://goose-docs.ai/docs/getting-started/using-extensions", "extensions"),
+                  ("https://goose-docs.ai/docs/guides/config-files", "config files")]},
+    ]
+
+
+def clients_page() -> str:
+    """Clients: a panel per app (client_setups), from this install's address,
+    collections and whether keys are asked for. A key made here is shown once
+    and goes only into this page's blocks marked data-key (bench.js)."""
+    root = gateway_url().removesuffix("/v1")
+    offered = sorted((n, c) for n, c in bench_collections.load().items() if not c.get("ad_hoc"))
+    offered.sort(key=lambda nc: nc[0] != "core")                   # core first, where there is one
+    cols = []
+    for n, c in offered:
+        together = bench_collections.described(n, c).get("together") or {}
+        cols.append((n, together.get("context_window"), "vision" in (together.get("capabilities") or [])))
+    keys = guard.keys_required()
+    head = ("<div class='panel form-panel'><h2>Clients</h2><p class='sub'>A ready set-up for each app, filled in from"
+            " this install: copy it into the file or screen named. Agents get a collection in route mode (one"
+            " member with its tools, <code>bench/&lt;collection&gt;:route</code>); chat windows a merged answer"
+            " (<code>:merged</code>); the MCP server the panel itself, as ask and verdict tools.</p>"
+            f"<p class='where'>Gateway <code>{esc(root)}/v1</code> · MCP server <code>{esc(root)}/mcp</code><br>"
+            f"Collections: {esc(', '.join(n for n, _ in offered)) or 'none yet'}"
+            "<span class='muted'> (ad hoc ones are left out: name one yourself to use it)</span></p>")
+    if not cols:
+        return head + ("<p>No collection yet: make one on <button class='btn' type='button' data-go='collections'>"
+                       "Collections</button>, and the set-ups appear here.</p></div>")
+    if keys:
+        head += ("<h3 class='form-head'>Gateway key</h3><p class='rules'>Every call needs one. Make one for these"
+                 f" apps and it fills in every <code>{esc(KEY_HOLDER)}</code> below that is not in a file, on this"
+                 " page only: it is shown this once and kept as a hash. Or use one you have.</p>"
+                 "<label class='field' for='cl-name'>Name for a new key</label>"
+                 "<input id='cl-name' placeholder='e.g. opencode' autocomplete='off'>"
+                 "<div class='errors' id='cl-errors' role='alert'></div>"
+                 "<div class='done' id='cl-done' hidden>Made: copy what you need now, as it is gone when this page"
+                 " reloads. Settings lists it.</div>"
+                 "<div class='actions'><button class='btn primary' type='button' id='cl-make'>Make a key</button></div>"
+                 f"<p class='rules'>Most snippets read it from <code>{KEY_ENV}</code>:</p>"
+                 + "".join(_snip_html("key", i, s) for i, s in enumerate(_env_snips(KEY_ENV))))
+    else:
+        head += ("<p class='rules'>Keys are not asked for on this machine, so the snippets carry none where an"
+                 f" app allows it; where one wants a key, any text works in place of <code>{esc(KEY_HOLDER)}</code>."
+                 " Set <code>BENCHWARMERS_REQUIRE_KEYS=1</code> (or an admin token) and this page offers to make"
+                 " one.</p>")
+    panels = "".join(
+        f"<div class='panel client' id='client-{c['id']}'><h2>{esc(c['name'])}</h2>"
+        f"<p class='sub'>{c['gets']}</p><p class='where'>{c['where']}</p>"
+        + "".join(_snip_html(c["id"], i, s) for i, s in enumerate(c["blocks"]))
+        + f"<p class='watch'><b>Watch for:</b> {c['watch']}</p>"
+        + "<p class='rules'>Written from " + ", ".join(f"<a href='{esc(u)}' target='_blank' rel='noopener'>{esc(t)}</a>"
+                                                      for u, t in c["docs"])
+        + f", read {CLIENTS_READ}" + (f": {c['docs_note']}" if c.get("docs_note") else ".") + "</p></div>"
+        for c in client_setups(root, cols, keys))
+    return head + "</div>" + panels
+
+
+def _snip_html(group: str, i: int, s: dict) -> str:
+    pid = f"cl-{group}-{i}"
+    return (f"<div class='snip'><div class='snip-head'><span class='mono'>{esc(s['label'])}</span>"
+            f"<button class='btn small' type='button' data-copy='{pid}'>Copy</button></div>"
+            f"<pre class='log' id='{pid}' data-lang='{s['lang']}'{' data-key' if s['key'] else ''}>"
+            f"{esc(s['text'])}</pre></div>")
 
 
 def pane(key: str, actions: tuple | None = None) -> str:

@@ -401,6 +401,13 @@ points at it with `ANTHROPIC_BASE_URL=http://127.0.0.1:8122` and
 OpenAI-, Responses- or Ollama-speaking agents with the same base URL.
 [GATEWAY.md](GATEWAY.md), "Route mode", has the set-up and the limits.
 
+**Ready set-ups.** The dashboard's **Clients** page (Gateway) gives each
+popular app's configuration, filled in from your install's address,
+collections and MCP server, with a Copy button: opencode, VS Code chat, Codex
+CLI, Zed, Continue, Cline and Kilo Code, Claude Code, goose, and chat apps
+(LobeHub, AnythingLLM, Cherry Studio, Chatbox, LibreChat). Where keys are
+asked for, it makes one and fills it in, never into a file that may sync.
+
 <!-- The MCP Registry's proof that the PyPI package is this server (server.json):
 mcp-name: io.github.WendellResearch-AI/benchwarmers -->
 
@@ -482,8 +489,8 @@ detail.
   with tools is refused there, not trimmed. Route mode passes turns only to
   members on chat-completions endpoints, keeps its sticky conversations in
   memory (a restart starts each on a fresh pick), and has been run end to end
-  with Claude Code; the Codex, opencode and Cline set-ups are written from
-  their docs. Shadow seats (other members answering an agent's turn for
+  with Claude Code; the other set-ups on the Clients page are written from
+  each app's docs, not run. Shadow seats (other members answering an agent's turn for
   evaluation) are planned, not built.
 - **Some parts are checked against fakes only.** The native Anthropic and
   Gemini endpoints, and the LiteLLM and CLI Proxy API hub adapters, are built
