@@ -97,8 +97,11 @@ class Server(BaseHTTPRequestHandler):
 def local_servers() -> None:
     """Found on this machine (connect.detect): each server told by its answers,
     llama.cpp and LocalAI apart on one port, impostors and a hung port ignored,
-    this install's ports and servers already added skipped. Fake servers on
-    free ports stand in for the real ones; endpoints.json is main()'s temp one."""
+    this install's ports and servers already added skipped; then on any port,
+    by the process listening there. Fake servers on free ports stand in for the
+    real ones, a table of their own for this machine's processes (none at
+    first: the usual ports alone); endpoints.json is main()'s temp one."""
+    import os
     import socket
     import time
 
@@ -134,10 +137,11 @@ def local_servers() -> None:
     hung = socket.socket()                       # takes the connection, never answers
     hung.bind(("127.0.0.1", 0))
     hung.listen()
-    saved = dict(connect.LOCAL)
+    saved = (dict(connect.LOCAL), connect.listeners, os.environ.pop("OLLAMA_HOST", None))
+    connect.listeners = lambda: []
     try:
         for sid in shapes:
-            connect.LOCAL[sid] = {**saved[sid], "ports": (port[sid],)}
+            connect.LOCAL[sid] = {**saved[0][sid], "ports": (port[sid],)}
         connect.LOCAL["hung"] = {"label": "Hung", "ports": (hung.getsockname()[1],), "kind": "local", "docs": "https://x"}
 
         def found(**kw) -> dict:
@@ -183,9 +187,30 @@ def local_servers() -> None:
         assert catalog._native("olla", ["q:2b"]) == ("ollama /api/show", {"q:2b": {
             "context_window": 262144, "vision": False, "tools": True, "reasoning": False}})
         assert catalog._native("vl", ["m0"]) == ("", {})
+        # On any port, by the process listening there: LM Studio by its name, vLLM by its command
+        # line under Python, Ollama by OLLAMA_HOST (added at its real port, so not by its own
+        # flow, which knows only 11434); a port whose process is none of them is never asked.
+        extra = {sid: serve_on(Server) for sid in ("lmstudio", "vllm", "ollama", "other")}
+        servers.update({sid + "-moved": s for sid, s in extra.items()})
+        at = {sid: s.server_port for sid, s in extra.items()}
+        for sid in at:
+            SHAPES[at[sid]] = shapes["vllm" if sid == "other" else sid]     # "other" answers as vLLM too
+        connect.listeners = lambda: [(1, at["lmstudio"], "LM Studio.exe", ""),
+                                     (2, at["vllm"], "python3", "/opt/venv/bin/python3 /opt/venv/bin/vllm serve m"),
+                                     (3, at["other"], "notepad.exe", "notepad.exe a.txt")]
+        os.environ["OLLAMA_HOST"] = f"0.0.0.0:{at['ollama']}"
+        moved = {(f["id"], f["port"]): f for f in connect.detect()}
+        assert {("lmstudio", at["lmstudio"]), ("vllm", at["vllm"]), ("ollama", at["ollama"])} <= set(moved), moved
+        assert at["other"] not in {p for _, p in moved}, moved
+        ollama = moved[("ollama", at["ollama"])]
+        assert not ollama["provider"] and ollama["base"] == f"http://127.0.0.1:{at['ollama']}/v1", ollama
     finally:
         connect.LOCAL.clear()
-        connect.LOCAL.update(saved)
+        connect.LOCAL.update(saved[0])
+        connect.listeners = saved[1]
+        os.environ.pop("OLLAMA_HOST", None)
+        if saved[2] is not None:
+            os.environ["OLLAMA_HOST"] = saved[2]
         hung.close()
         for s in servers.values():
             s.shutdown()

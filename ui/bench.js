@@ -1567,7 +1567,7 @@
   };
   // Model servers running on this machine that are not endpoints yet
   // (serve.connect_local): asked each time the page is shown, since a look
-  // takes up to a second; nothing shows when there is none.
+  // takes a second or two; nothing shows when there is none.
   function loadFound() {
     get('/api/connect/local').then(function (res) {
       var list = $('e-found-list');

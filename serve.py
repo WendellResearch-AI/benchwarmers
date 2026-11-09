@@ -1320,10 +1320,11 @@ def connect_list_suggest(provider: str) -> str:
 
 
 def connect_local() -> dict:
-    """Model servers running on this machine at their usual ports that are not
-    endpoints yet (connect.detect), each with the name it would be added under.
-    Asked when the Endpoints page is shown, never in its render: a look takes
-    up to a second. Never this install's ports, nor another one's defaults."""
+    """Model servers running on this machine, at their usual ports or wherever
+    their processes listen, that are not endpoints yet (connect.detect), each
+    with the name it would be added under. Asked when the Endpoints page is
+    shown, never in its render: a look takes a second or two. Never this
+    install's ports, nor another one's defaults."""
     found = connect.detect(skip={PORT, gateway.PORT, 8122, 8123})
     for f in found:
         f["name"] = connect_list_suggest(f["provider"]) if f["provider"] else free_name(f["id"])
