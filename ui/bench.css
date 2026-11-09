@@ -388,6 +388,8 @@ dialog h2 { margin: 0 0 .2rem; font-size: 1.375rem; font-weight: 700; }
             padding: .5rem .75rem; margin: 0 -.75rem; border-radius: var(--radius); }
 .endpoint:hover { background: var(--step-1); }
 .endpoint .base { color: var(--muted); font-size: .875rem; overflow-wrap: anywhere; }
+.found { margin: 0 0 1rem; }
+.found h3 { margin: 0 0 .25rem; font-size: 1rem; font-weight: 700; }
 :is(dialog, .form-panel) h3.form-head { margin: 1.25rem 0 0; font-size: 1rem; font-weight: 700; }
 :is(dialog, .form-panel) input[readonly] { background: var(--step-1); }
 /* Add an endpoint's choices: API key, then each provider; the chosen one pressed */

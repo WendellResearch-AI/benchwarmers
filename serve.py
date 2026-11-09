@@ -1319,6 +1319,17 @@ def connect_list_suggest(provider: str) -> str:
     return provider if local and _signed_in_as(provider, provider) else free_name(provider)
 
 
+def connect_local() -> dict:
+    """Model servers running on this machine at their usual ports that are not
+    endpoints yet (connect.detect), each with the name it would be added under.
+    Asked when the Endpoints page is shown, never in its render: a look takes
+    up to a second. Never this install's ports, nor another one's defaults."""
+    found = connect.detect(skip={PORT, gateway.PORT, 8122, 8123})
+    for f in found:
+        f["name"] = connect_list_suggest(f["provider"]) if f["provider"] else free_name(f["id"])
+    return {"ok": True, "errors": [], "found": found}
+
+
 def connect_app(provider: str, client_id: str) -> dict:
     """Use your own app: this install's client id for a provider that needs a
     registration, instead of the one Benchwarmers ships. Empty goes back to it."""
@@ -4973,6 +4984,8 @@ def endpoints_page() -> str:
         f" check listed{' on ' + esc(checked) if checked else ''}.</p>"
         "<div class='list-actions'><button class='btn primary' id='e-add'>Add an endpoint</button>"
         "<span class='done' id='el-done'></span><span class='errors' id='el-errors' role='alert'></span></div>"
+        # Model servers running here, not endpoints yet: bench.js asks /api/connect/local on show.
+        "<div class='found' id='e-found' hidden><h3>Found on this machine</h3><div id='e-found-list'></div></div>"
         "<div class='toolbar'><input type='search' data-filter placeholder='Find a model on any endpoint'"
         " aria-label='Filter models'></div>"
         f"{''.join(blocks)}</div>"
@@ -5552,6 +5565,9 @@ class Handler(gateway.Handler):
             return
         if self.path == "/api/connect":
             self._json(200, connect_list())
+            return
+        if self.path == "/api/connect/local":          # Endpoints' "Found on this machine", when it is shown
+            self._json(200, connect_local())
             return
         if callback:
             # The provider sends the browser back here. A GET that saves, as
