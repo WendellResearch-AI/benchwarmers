@@ -4,8 +4,9 @@
 
 Each rule the popup enforces is tried once and must refuse; then a role change
 and a rename are applied to the copy and checked. The llm sync is not run:
-serve.ROOT points at the copy, which has no scripts/sync_config.py, so the
-sync reports that it could not run. Alerts and endpoints point at copies too,
+with the built-in client it is skipped, and with the llm CLI serve.ROOT points
+at the copy, which has no scripts/sync_config.py, so the sync reports that it
+could not run. Alerts and endpoints point at copies too,
 because removing a model clears its alerts and a regressed endpoint check
 would write the endpoint file.
 """
@@ -255,7 +256,7 @@ def main() -> int:
 
     # Call options: max_tokens set, refused above the model's max output or as
     # a fraction or for no model, then cleared; the llm CLI's copy is stubbed.
-    told, real_info = [], serve.catalog.info
+    told, real_info, llm_option = [], serve.catalog.info, serve._llm_option
     serve._llm_option = lambda alias, name, value: told.append((alias, name, value)) or "stub"
     serve.catalog.info = lambda a: {**real_info(a), "max_output": 50_000}
     chat = next(a for a, m in sorted(serve.model_directory().items()) if m.get("kind") != "decision")
@@ -290,6 +291,7 @@ def main() -> int:
     import client as model_client
     model_client.CHOICE = cfg / "client.json"
     env, real_which = os.environ.pop("BENCH_CLIENT", None), shutil.which
+    ran, real_run = [], serve.subprocess.run
     try:
         shutil.which = lambda name: "/usr/bin/" + name                 # llm installed: still built-in
         first = model_client.chosen()
@@ -305,14 +307,26 @@ def main() -> int:
         no_llm = serve.save_client("llm")["ok"]
         shutil.which = real_which
         unknown = serve.save_client("curl")["ok"]
+        # With the built-in client nothing is mirrored into the llm CLI (5-6 s
+        # a save); choosing the llm CLI syncs it once.
+        serve.subprocess.run = lambda args, **kw: ran.append(args) or serve.subprocess.CompletedProcess(args, 0, "", "")
+        quiet = (serve._sync_cli(), llm_option(chat, "max_tokens", 5), list(ran))
+        shutil.which = lambda name: "/usr/bin/" + name
+        switched, again = serve.save_client("llm"), serve.save_client("llm")
     finally:
-        shutil.which = real_which
+        serve.subprocess.run, shutil.which = real_run, real_which
         os.environ.pop("BENCH_CLIENT", None)
         if env is not None:
             os.environ["BENCH_CLIENT"] = env
     ok = (first == ("builtin", "default") and bare == ("builtin", "default") and made["ok"] and picked == (("builtin", "settings"), "builtin")
           and pinned == (("llm", "environment"), False) and not no_llm and not unknown)
     print(("ok   " if ok else "FAIL ") + "model client choice" + ("" if ok else f" -> {first} {made} {picked} {pinned}"))
+    failures += 0 if ok else 1
+    # Saving it again syncs again: the way to retry a failed sync.
+    ok = (quiet == (serve.NOT_SYNCED, serve.NOT_SYNCED, []) and switched["sync"] == "synced to the llm CLI"
+          and again["sync"] == "synced to the llm CLI" and len(ran) == 2
+          and all(str(r[-1]).endswith("sync_config.py") for r in ran))
+    print(("ok   " if ok else "FAIL ") + "llm CLI synced only when it is the client" + ("" if ok else f" -> {quiet} {switched} {ran}"))
     failures += 0 if ok else 1
 
     # Free only in their own app: only what differs from the built-in is written; bad input refused.
@@ -553,6 +567,210 @@ def main() -> int:
                                    if (DATA / "config" / "collections.json").exists() else None))
     print(("ok   " if ok else "FAIL ") + "the real alerts, endpoints and collections were not touched")
     failures += 0 if ok else 1
+
+    # The Logs page reads a log from its end, and still gets whole lines.
+    log = cfg / "big.log"
+    lines = [f"{i} " + "x" * 2000 for i in range(400)]
+    log.write_text("\n".join(lines) + "\n\n", encoding="utf-8")
+    ok = (serve._log_rows(log) == lines[::-1][:200] and serve._log_rows(log, 100) == lines[::-1][:100]
+          and serve._log_rows(log.with_name("none.log")) == [] and list(serve._from_end(log)) == lines[::-1])
+    print(("ok   " if ok else "FAIL ") + "a log's last lines, read from its end")
+    failures += 0 if ok else 1
+
+    # Confidently wrong is scored again when a task or a saved answer changes.
+    answer = cfg / "tasks" / "t" / "output" / "m.md"
+    answer.parent.mkdir(parents=True)
+    (cfg / "tasks" / "t" / "task.json").write_text("{}", encoding="utf-8")
+    answer.write_text("a", encoding="utf-8")
+    before = serve._tasks_key(cfg / "tasks")
+    answer.write_text("ab", encoding="utf-8")
+    ok = len(before) == 2 and serve._tasks_key(cfg / "tasks") != before and serve._tasks_key(cfg / "none") == ()
+    print(("ok   " if ok else "FAIL ") + "a changed answer changes the scoring's key")
+    failures += 0 if ok else 1
+
+    # Suite scores and statuses are worked out once a render; what one pane
+    # changes in its copy, the next does not see.
+    (serve.DATA / "runs" / "suite-2026-01-01.md").write_text("| t1 | `m1` | 1/2 | — | 3.0 |\n", encoding="utf-8")
+    with serve.locked.snapshot():
+        serve.model_status().clear()
+        for v in serve.suite_scores().values():
+            v.clear()
+        ok = (serve.model_status() == serve._model_status() and serve._suite_scores()
+              and serve.suite_scores() == serve._suite_scores())
+    print(("ok   " if ok else "FAIL ") + "suite scores and statuses once a render, a copy each")
+    failures += 0 if ok else 1
+
+    # Trend: a model against itself, task by task. A drop in two runs is a trend;
+    # the same drop in one run, or against one earlier run, is not. A retried row
+    # ("2.0 (x2)") is a score, and a renamed alias goes by its current name.
+    import datetime as dt
+    hist = json.loads(serve.HISTORY_PATH.read_text(encoding="utf-8"))
+    serve.HISTORY_PATH.write_text(json.dumps({**hist, "tr-old": "tr-down"}), encoding="utf-8")
+    aliases.forget()
+    today = dt.date.today()
+
+    def note(ago, rows):
+        day = (today - dt.timedelta(days=ago)).isoformat()
+        with (serve.DATA / "runs" / f"suite-{day}.md").open("a", encoding="utf-8") as fh:
+            fh.write(f"\n## Suite run {day}\n\n| Task | Model | Found | Invented | Seconds |\n| --- | --- | --- | --- | --- |\n"
+                     + "".join(f"| {t} | `{m}` | {f} | — | 2.0 (x2) |\n" for t, m, f in rows))
+    three = ("ta", "tb", "tc")
+    note(50, [(t, m, "5/5") for m in ("tr-old", "tr-once", "tr-thin") for t in three] + [("ta", "tr-twice", "0/1")])
+    note(50, [("ta", "tr-twice", "1/1")])               # the same task again that day: one score, the mean
+    note(40, [(t, m, "5/5") for m in ("tr-old", "tr-once") for t in three] + [("ta", "tr-down", "timeout")])
+    note(10, [("ta", "tr-down", "3/5"), ("tb", "tr-down", "2/5"), ("ta", "tr-thin", "2/5"), ("tb", "tr-thin", "2/5")]
+         + [(t, "tr-once", "5/5") for t in three])
+    note(3, [("tc", "tr-down", "3/5"), ("tc", "tr-thin", "2/5")] + [(t, "tr-once", "1/5") for t in three])
+    note(10, [("ta", "tr-twice", "1/1")])
+    # A note appended in the middle of a render is read from disk, not from that render's copy.
+    with serve.locked.snapshot():
+        serve.note_rows()
+        note(0, [("ta", "tr-late", "1/1")])
+        late = any(r[3] == "tr-late" for r in serve.note_rows())
+    t = serve.trend_rows()["models"]
+    w = {m: t[m]["windows"][serve.TREND_DAYS[0]] for m in ("tr-down", "tr-once", "tr-thin")}
+    run10 = [r for r in t["tr-down"]["runs"] if r[0] == (today - dt.timedelta(days=10)).isoformat()]
+    twice = [r[:3] for r in t["tr-twice"]["runs"]]
+    late = late and "tr-late" in t
+    ok = ({m: s["state"] for m, s in w.items()} == {"tr-down": "lower", "tr-once": "steady", "tr-thin": "too little"}
+          and (w["tr-down"]["tasks"], w["tr-down"]["down"], w["tr-down"]["runs"], w["tr-down"]["before"]) == (3, 3, 2, 2)
+          and abs(w["tr-down"]["change"] + 1.4 / 3) < 1e-9 and w["tr-once"]["runsDown"] == 1
+          and "tr-old" not in t and len(run10) == 1 and abs(run10[0][1] + 0.5) < 1e-9 and run10[0][2] == 2
+          and ("ta", "tr-down") in serve._suite_scores() and serve.trend_rows() is serve.trend_rows()
+          and late and twice == [[(today - dt.timedelta(days=50)).isoformat(), None, 0],
+                                 [(today - dt.timedelta(days=10)).isoformat(), 0.5, 1]])
+    print(("ok   " if ok else "FAIL ") + "trend: a model against itself, two runs to be a trend"
+          + ("" if ok else f" -> {w} {run10} {twice} late {late}"))
+    failures += 0 if ok else 1
+
+    # gzip for a caller off this machine that takes it; never over loopback.
+    import gzip
+
+    class Reply:
+        def __init__(self, address, accept):
+            self.headers, self.client_address, self.sent = {"Accept-Encoding": accept}, (address, 1), {}
+
+        def send_header(self, k, v):
+            self.sent[k] = v
+    body = b"<p>a page</p>" * 500
+    far, near, plain = Reply("203.0.113.20", "gzip, deflate, br"), Reply("::ffff:127.0.0.1", "gzip"), Reply("10.0.0.2", "")
+    refused, other = Reply("10.0.0.3", "gzip;q=0, identity"), Reply("10.0.0.4", "x-gzip-not")
+    ok = (gzip.decompress(serve.Handler._length(far, body)) == body and far.sent["Content-Encoding"] == "gzip"
+          and int(far.sent["Content-Length"]) < len(body) and serve.Handler._length(near, body) == body
+          and serve.Handler._length(plain, body) == body and serve.Handler._length(refused, body) == body
+          and serve.Handler._length(other, body) == body
+          and "Content-Encoding" not in {**near.sent, **plain.sent, **refused.sent, **other.sent}
+          and plain.sent["Content-Length"] == str(len(body)))
+    print(("ok   " if ok else "FAIL ") + "gzip off this machine only" + ("" if ok else f" -> {far.sent} {near.sent}"))
+    failures += 0 if ok else 1
+
+    # Uptime counts each call once: a gateway seat from its log, a probe from its
+    # row, the suite's calls from the ledger only after its last failure kept
+    # without text; the ledger's own lines for the gateway and the probe are skipped.
+    import datetime as dt
+    import ledger
+    import time
+    home = serve.DATA                                   # `tmp` names another folder by now
+    ledger.DIR = home / "usage"
+    ledger.DIR.mkdir()
+    now = time.time()
+    at = dt.datetime.fromtimestamp(now).astimezone().isoformat(timespec="seconds")
+    (home / "runs" / "gateway").mkdir(parents=True, exist_ok=True)
+    seat = {"call": "p.member1", "seat": "member", "alias": "m1", "status": "ok", "answer": "yes", "error": "", "seconds": 2}
+    panel = {"at": at, "shape": "design", "seats": [
+        seat, {**seat, "status": "error", "answer": "", "error": "Error: Error code: 503 - high demand"},
+        {**seat, "status": "error", "answer": "", "error": "Error: Error code: 429 - Daily token quota exceeded."}]}
+    calls = home / "runs" / "gateway" / "calls.jsonl"
+    calls.write_text(json.dumps(panel) + "\n", encoding="utf-8")
+    (home / "perf").mkdir(exist_ok=True)
+    (home / "perf" / "history.csv").write_text(
+        "timestamp,model,prompt,n,p50_s,p95_s,min_s,max_s,chars_per_s,answered,refused,error,timeout,failure,detail\n"
+        f"{at[:19]},m1,tiny,1,1.5,1.5,1.5,1.5,0,1,0,0,0,,\n", encoding="utf-8")
+
+    def line(dt_s, caller, status, **more):
+        return json.dumps({"t": now + dt_s, "at": at, "alias": "m1", "connection": "c1", "endpoint": "e",
+                           "served": "m1", "status": status, "attempts": 1, "seconds": 3.0, "caller": caller,
+                           "purpose": "", **more}, separators=(",", ":")) + "\n"
+    ledger._file(now).write_text(
+        line(-30, "serve", "ok") + line(-20, "suite/run", "ok") + line(-10, "suite/run", "error")
+        + line(10, "suite/run", "ok") + line(20, "suite/run", "error", error="Error: Error code: 503 - overloaded"),
+        encoding="utf-8")
+    first = serve._uptime_rows()["models"]["m1"][-1]
+    with calls.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps({**panel, "seats": [seat]}) + "\n")
+    again = serve._uptime_rows()
+    ok = (first[:3] == [3, 2, 1] and again["models"]["m1"][-1][:3] == [4, 2, 1]
+          and again["providers"]["c1"][-1][:3] == [4, 2, 1] and first[3] == {"busy": 2, "our quota": 1})
+    print(("ok   " if ok else "FAIL ") + "uptime counts each call once, the new ones only"
+          + ("" if ok else f" -> {first} {again['models']['m1'][-1]}"))
+    failures += 0 if ok else 1
+
+    # Decision models in Uptime, from their own log; and an error no rule knows, counted as a
+    # decision model said, marked so in the hover and the list (never asked here).
+    real_decide = decide.FILE, decide.LOG, decide.DECIDED, decide.RESULTS
+    decide.FILE, decide.LOG = home / "config" / "decision-models.json", home / "metrics" / "decisions.jsonl"
+    decide.DECIDED, decide.RESULTS = home / "metrics" / "decided.json", home / "metrics" / "decide-bench.json"
+    decide.FILE.write_text(json.dumps({"dmA": {"served": "dmA", "endpoint": "e", "via": "e",
+                                               "question_types": ["choice", "noul"]},
+                                       "dmB": {"served": "v/dmB:free", "endpoint": "e", "via": "e",
+                                               "question_types": ["choice"]}}),
+                           encoding="utf-8")
+    decide.LOG.write_text(
+        json.dumps({"at": at, "alias": "dmB", "served": "v/dmB:free", "via": "e", "answers": {"q": {}}, "error": "",
+                    "seconds": 0.4}) + "\n"
+        + json.dumps({"at": at, "alias": "dmB", "served": "v/dmB:free", "via": "e", "answers": None,
+                      "error": "404 No endpoints found for v/dmB:free.", "seconds": 0.1}) + "\n", encoding="utf-8")
+    odd_error = "Error: the gremlins ate it"
+    decide.DECIDED.write_text(json.dumps({"errors": {decide.shape(odd_error): {"class": "busy", "confidence": 0.81,
+                                                                                "by": "dmA"}},
+                                          "roles": {"m1": {"role": "code", "confidence": 0.7, "by": "dmA"}}}),
+                              encoding="utf-8")
+    with calls.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps({**panel, "seats": [{**seat, "status": "error", "answer": "", "error": odd_error}]}) + "\n")
+    u = serve._uptime_rows()
+    marked = "busy (decided by dmA at 0.81)"
+    ok = (u["models"]["dmB"][-1][:4] == [1, 0, 1, {"setup: not found": 1}]
+          and u["models"]["m1"][-1][3].get(marked) == 1 and serve._down(marked)
+          and [o[4:] for o in u["odd"]] == [[serve._shape(odd_error), "busy, decided by dmA at 0.81"]]
+          and any(r["name"] == "dmB" for r in serve.uptime_data()["models"])
+          and "decided by dmA at 0.81" in serve.uptime_card())
+    print(("ok   " if ok else "FAIL ") + "uptime: decision models' calls, and decided shapes marked"
+          + ("" if ok else f" -> {u['models'].get('dmB')} {u['models']['m1'][-1]} {u['odd']}"))
+    failures += 0 if ok else 1
+
+    # The Decision models card: ranked from MIN_ITEMS items, said so below that; the role
+    # suggestion reaches the popup's data, and the collection pick is saved beside the limits.
+    cal = [{"from": 0.8, "n": 8, "said": 0.9, "right": 0.875}]
+    decide.RESULTS.write_text(json.dumps({"updated": at, "models": {
+        "dmA": {"errors": {"asked": 8, "answered": 8, "correct": 7, "accuracy": 0.875, "macro_f1": 0.8, "brier": 0.1,
+                           "ece": 0.03, "calibration": cal, "confident": {"cutoff": 0.6, "coverage": 1.0, "accuracy": 0.875},
+                           "seconds": 0.3, "failures": {}, "last": at}},
+        "dmB": {"errors": {"asked": 1, "answered": 0, "correct": 0, "failures": {"setup": 1}, "seconds": 0.1,
+                           "last": at}}}}), encoding="utf-8")
+    html = serve.decision_card()
+    data = serve.decision_data()
+    ok = ("1 of 1" in html and "below 8 items" in html and "7/8" in html and "88% <span class='muted'>of 8"
+          in html and data["points"] == [{"model": "dmA", "set": "errors", "said": 0.9, "right": 0.875, "n": 8}]
+          and "best of 1 ranked on the errors set: 7 right of 8 asked" in html
+          and json.loads(serve.directory_json())["suggested"]["m1"]["role"] == "code")
+    print(("ok   " if ok else "FAIL ") + "decision card: ranks, below the floor, uses, role suggestion"
+          + ("" if ok else f" -> {data}"))
+    failures += 0 if ok else 1
+    gw = serve.bench_collections.SETTINGS_FILE
+    saved = [serve.save_gateway_settings(5, 2, pick_collection=False, pick_confidence=0.8),
+             serve.save_gateway_settings(5, 2)]                       # not sent: left as they are
+    kept = serve.bench_collections.pick_settings()
+    saved.append(serve.save_gateway_settings(5, 2, pick_collection=True, pick_confidence=None))
+    bad = [serve.save_gateway_settings(5, 2, pick_collection="yes"), serve.save_gateway_settings(5, 2, pick_confidence=0),
+           serve.save_gateway_settings(5, 2, pick_confidence=True)]
+    ok = (all(r["ok"] for r in saved) and not any(r["ok"] for r in bad)
+          and kept == {"pick_collection": False, "pick_confidence": 0.8}
+          and json.loads(gw.read_text(encoding="utf-8")).get("pick_collection") is True
+          and "pick_confidence" not in json.loads(gw.read_text(encoding="utf-8")))
+    print(("ok   " if ok else "FAIL ") + "gateway settings: the collection pick, on, off and its confidence"
+          + ("" if ok else f" -> {saved} {bad} {kept}"))
+    failures += 0 if ok else 1
+    decide.FILE, decide.LOG, decide.DECIDED, decide.RESULTS = real_decide
     shutil.rmtree(tmp, ignore_errors=True)
     print("\nall rules hold" if not failures else f"\n{failures} FAILED")
     return 1 if failures else 0

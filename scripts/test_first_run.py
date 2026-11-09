@@ -94,9 +94,11 @@ def main() -> int:
         assert "cannot be read" in get("/"), "a broken endpoints file read as none"
         broken.unlink()
 
-        # 1. No endpoint: the page renders and leads into Add; the APIs answer.
+        # 1. No endpoint: the page renders and leads into Add (on the Endpoints
+        # page, which bench.js fetches when the step opens it); the APIs answer.
         page = get("/")
-        assert "id='first-run' data-step='endpoint'" in page and "id='e-add'" in page, "no first-run step"
+        assert "id='first-run' data-step='endpoint'" in page and "id='e-add'" in get("/api/pane?tab=endpoints")["html"], \
+            "no first-run step"
         assert get("/api/endpoints")["endpoints"] == []
         assert get("/api/connect")["providers"], "no providers to sign in with"
         cand = get("/api/candidates")

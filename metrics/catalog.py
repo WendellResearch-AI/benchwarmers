@@ -64,8 +64,9 @@ LIMIT_LABELS = {"rpm": "requests per minute", "rpd": "requests per day", "tpm": 
 
 
 def _read(path: pathlib.Path) -> dict:
+    import locked
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(locked.read_text(path))      # inside a render, from its snapshot
     except (OSError, ValueError):
         return {}
     return data if isinstance(data, dict) else {}

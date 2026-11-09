@@ -29,34 +29,51 @@ import collections
 import datetime as dt
 import json
 import pathlib
+import threading
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 from paths import DATA  # noqa: E402  -- the install's data folder (metrics/paths.py)
 LOG = DATA / "metrics" / "offloads.jsonl"
 
 
+_lock = threading.Lock()
+_seen: dict = {"mark": {}, "renames": None, "out": [], "by_call": {}}
+
+
 def entries() -> list[dict]:
     """Every offload, oldest first. An entry with a `call` id (written by the
     bench gateway) is superseded by a later one with the same id: the gateway
-    records each seat unjudged as it answers, and the verdict comes after."""
-    if not LOG.exists():
-        return []
-    out, by_call = [], {}
-    from aliases import current
-    for line in LOG.read_text(encoding="utf-8").splitlines():
-        if line.strip():
-            try:
-                e = json.loads(line)
-            except ValueError:
-                continue
-            e["model"] = current(e.get("model", ""))   # a renamed model keeps its record
-            if e.get("call") in by_call:
-                out[by_call[e["call"]]] = e
-                continue
-            if e.get("call"):
-                by_call[e["call"]] = len(out)
-            out.append(e)
-    return out
+    records each seat unjudged as it answers, and the verdict comes after.
+
+    Only the lines added since the last call are read (all of them again
+    after a rename): one dashboard render asked seven times, a log of 44,000
+    lines took most of a second each, and the gateway adds to it on every
+    call. A new list each call; the entries in it are shared, so never change
+    one."""
+    import aliases
+    import locked
+    with _lock:
+        s = _seen
+        if s["renames"] is not aliases.history():  # a rename re-reads the history as a new dict
+            s.update(mark={}, renames=aliases.history())
+        fresh, lines = locked.appended(LOG, s["mark"])
+        if fresh:
+            s.update(out=[], by_call={})
+        out, by_call = s["out"], s["by_call"]
+        for line in lines:
+            if line.strip():
+                try:
+                    e = json.loads(line)
+                except ValueError:
+                    continue
+                e["model"] = aliases.current(e.get("model", ""), s["renames"])   # a renamed model keeps its record
+                if e.get("call") in by_call:
+                    out[by_call[e["call"]]] = e
+                    continue
+                if e.get("call"):
+                    by_call[e["call"]] = len(out)
+                out.append(e)
+        return list(out)
 
 
 def add(model: str, task: str, useful: bool | None, note: str, call: str | None = None,

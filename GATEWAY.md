@@ -70,11 +70,20 @@ it is for, up to 300 characters) and `tags` (up to 8 lower-case words).
 orchestrator can list the collections and pick the one that fits before it
 calls. Write the description for that reader.
 
-**No default collection.** A request that names no collection, or one that
-does not exist, is refused (400 / 404) with every collection's description and
-tags in the message, so a caller that could not choose learns how to. A
-`bench/auto` that guessed for it was considered and rejected: the caller knows
-the task, and a guess would run the wrong models silently.
+**No default collection.** A request that names no collection at all is put
+to a decision model (the one best on the decision benchmark's collection set,
+`metrics/decide.py`; never an OpenRouter `:free` one while another can answer), which
+chooses among the collections the key may call that
+are not ad hoc, from their descriptions and tags. When it is sure (confidence at
+`pick_confidence` in `config/gateway.json`, else 0.6), the request runs on that
+collection and the reply says so: `bench.picked` (collection, model,
+confidence, why), an `X-Bench-Picked` header, and a line under the panel's
+heading (both set under Collections › Gateway settings). Otherwise, or with
+`"pick_collection": false`, or for a name that is
+not a collection (a typo is not guessed at), it is refused (400 / 404) with
+every collection's description and tags in the message, so a caller that could
+not choose learns how to. The pick is never silent, and the call log marks it,
+so the benchmark never learns from its own choices.
 
 **Ad hoc collections.** A collection marked ad hoc (the checkbox in its dialog,
 `bench collection save <name> --ad-hoc`, or `"ad_hoc": true`) runs only when a
@@ -496,8 +505,14 @@ request, and they should go to models suited to the task — no code-completion
 model on a design question. A collection may set its **shape** (review, design,
 enumeration, …), and then that decides. Left on *automatic*, a decision model
 labels the prompt, when one that takes choice questions is onboarded and not ad
-hoc; otherwise, or on failure or confidence under 0.6, the shape is `general`.
-With no explorer seats to fill, nothing is asked.
+hoc: the one ranked best on the decision benchmark's collection set (from 8
+items asked; never an OpenRouter `:free` one while another can answer), the
+first onboarded until then; otherwise, or on failure or confidence under 0.6,
+the shape is `general`. Benchmarks › Decision models says which model each use
+asks and why. With no explorer seats to fill, nothing is asked. Every
+decision call is logged in `metrics/decisions.jsonl`, and the benchmark
+(`python metrics/decide.py bench`, the scheduler's `decisions` job) measures
+each decision model on sets built from the bench's own data.
 
 ## Who may call
 

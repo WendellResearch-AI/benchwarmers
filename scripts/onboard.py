@@ -21,7 +21,9 @@ WHAT IT DOES, AND WHY IN THIS ORDER
 3. **Register and sync**, then, with an Open WebUI hub, refresh the provider
    tags so the connection behind it is known — which is what the router uses
    to keep a panel independent. Without one the endpoint is the connection.
-   Then refresh the catalog, so its details (context, tools, vision) show now.
+   Then refresh the catalog, so its details (context, tools, vision) show now,
+   and ask a decision model which role suits it from them: kept as a
+   suggestion with its confidence (metrics/decide.py suggest_role), never set.
 4. **Probe availability** before spending anything: two prompt sizes, two
    samples. A model that cannot answer "ready" will not answer a 46 KB task,
    and finding that out here costs four calls instead of six large ones.
@@ -185,6 +187,17 @@ def makes_images(alias: str, served_name: str) -> bool:
     return "image" in out if out else bool(IMAGE_NAMES.search(served_name))
 
 
+def role_facts(alias: str, served_name: str, connection: str) -> str:
+    """What a decision model is told when asked for a new chat model's role:
+    its name, connection and catalog facts, the description last."""
+    import catalog
+    rec = catalog.info(alias)
+    facts = [f"{k.replace('_', ' ')}: {', '.join(map(str, v)) if isinstance(v, list) else v}"
+             for k in catalog.FIELDS if k != "description" and (v := rec.get(k)) not in (None, "", [])]
+    return "\n".join([f"model: {served_name}", f"connection: {connection}", *facts,
+                      f"description: {rec.get('description') or 'none known'}"])
+
+
 def run(*args: str, timeout: int = 3600) -> subprocess.CompletedProcess:
     return subprocess.run([str(PY), *args], cwd=str(ROOT), timeout=timeout,
                           capture_output=True, text=True, encoding="utf-8",
@@ -305,7 +318,13 @@ def main() -> None:
                       lambda roles: roles.setdefault("models", {}).__setitem__(alias, "vision"),
                       ensure_ascii=False)
         print("        role vision: a seat only for requests that carry images")
-    run("scripts/sync_config.py", timeout=300)
+    # The llm CLI's copy of the registry, only while it is the client: the
+    # built-in client reads the data folder's, and choosing the llm CLI on
+    # Settings syncs it whole (serve.save_client).
+    import client as model_client
+    synced = model_client.chosen()[0] == "llm"
+    if synced:
+        run("scripts/sync_config.py", timeout=300)
     # Open WebUI's tags name the connection behind the hub; without a hub the
     # endpoint is the connection, and route.connection_of needs no tags.
     if endpoints.find_hub("openwebui"):
@@ -319,7 +338,8 @@ def main() -> None:
     catalog = run("metrics/catalog.py", timeout=300)
     details = ("details from the catalog" if catalog.returncode == 0
                else f"catalog refresh failed (exit {catalog.returncode}); details at its next run")
-    print(f"  [3/5] synced; connection is {connection}; {details}")
+    print(f"  [3/5] {'synced to the llm CLI' if synced else 'the llm CLI not synced (the built-in client is in use)'};"
+          f" connection is {connection}; {details}")
 
     # An image generator: role image, which no chat shape admits, so it never
     # fills a seat or a collection; a chat probe and the suite would only
@@ -340,6 +360,16 @@ def main() -> None:
                      f"Connection: {connection}. Image generator, role image:"
                      " never a seat, not probed, no suite.\n")
         return
+
+    # A decision model's suggestion for its role, from what the catalog knows:
+    # kept for the model popup (metrics/decided.json), never set from here.
+    try:
+        hint = decide.suggest_role(alias, role_facts(alias, name, connection))
+        print(f"        role suggested by {hint['by']}: {hint['role']} at {hint['confidence']:.2f}"
+              " (a suggestion; the role is yours to set in its model popup)" if "role" in hint
+              else f"        no role suggestion: {hint['error']}")
+    except Exception as exc:                       # noqa: BLE001 -- a suggestion never stops an onboarding
+        print(f"        no role suggestion: {type(exc).__name__}: {exc}")
 
     # 4. availability
     print("  [4/5] probing availability (4 calls)...")
@@ -414,6 +444,17 @@ def _selftest() -> None:
     # The name fallback, for a model the catalog says nothing about.
     assert all(IMAGE_NAMES.search(s) for s in ("gpt-image-2.5-flare", "openai/dall-e-3", "black-forest-labs/flux.2-pro"))
     assert not any(IMAGE_NAMES.search(s) for s in ("gpt-5.2", "reflux-7b", "gemini-3-pro"))
+    # What the role suggestion is told: the catalog's facts, the description last.
+    import catalog
+    real = catalog.info
+    catalog.info = lambda a: {"context_window": 131072, "vision": False, "input_modalities": ["text"],
+                              "tools": None, "description": "A coding model."}
+    try:
+        facts = role_facts("m1", "vendor/m1", "groq").splitlines()
+    finally:
+        catalog.info = real
+    assert facts == ["model: vendor/m1", "connection: groq", "context window: 131072", "vision: False",
+                     "input modalities: text", "description: A coding model."], facts
     print("ok")
 
 

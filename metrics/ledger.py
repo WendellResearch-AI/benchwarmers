@@ -17,7 +17,9 @@ are what a provider's request limits count. `status` is ok, empty, error,
 timeout or refused (not sent: pacing, or the free-tier guard). Tokens are the
 provider's own figures from the reply's usage, absent when it gave none.
 `caller` is the script that made the call (gateway, perf/run, suite/run, ...)
-and `purpose` what the caller said it was for, when it said.
+and `purpose` what the caller said it was for, when it said. A failed call
+(status error) carries its `error`, start and end (client.clip), from
+2026-11-08: the uptime report classifies it (suite/run.uptime_class).
 
 A FILE A MONTH
 --------------

@@ -75,13 +75,30 @@ def judge(spec: dict, text: str, invented: list) -> tuple[str | None, bool]:
     return None, False
 
 
-def table() -> dict[str, dict]:
+def _row() -> dict:
+    return {"answers": 0, "wrong": 0, "by": {k: [0, 0] for k in KINDS}, "reviews": 0, "review_false": 0,
+            "hunt": dict.fromkeys(HUNT, 0)}
+
+
+def table(scored: dict[str, dict] | None = None) -> dict[str, dict]:
+    """scores(), or the `scored` the caller kept from it, with each model's
+    reviews from the offloads added."""
+    import copy
     import offload
+    out = collections.defaultdict(_row, copy.deepcopy(scores() if scored is None else scored))
+    for e in offload.entries():
+        if e.get("useful") is not None:
+            row = out[e["model"]]
+            row["reviews"] += 1
+            row["review_false"] += len(e.get("false") or [])
+    return dict(out)
+
+
+def scores() -> dict[str, dict]:
+    """Every suite answer judged, by model: the costly part (it reads them all)."""
     import run
     from aliases import current
-    out: dict[str, dict] = collections.defaultdict(
-        lambda: {"answers": 0, "wrong": 0, "by": {k: [0, 0] for k in KINDS}, "reviews": 0, "review_false": 0,
-                 "hunt": dict.fromkeys(HUNT, 0)})
+    out: dict[str, dict] = collections.defaultdict(_row)
     for path in sorted(TASKS.glob("*/task.json")):
         spec = json.loads(path.read_text(encoding="utf-8"))
         # Reading images has its own record (serve.vision_rows): a trap taken
@@ -104,11 +121,6 @@ def table() -> dict[str, dict]:
             if wrong:
                 row["wrong"] += 1
                 row["by"][kind][0] += 1
-    for e in offload.entries():
-        if e.get("useful") is not None:
-            row = out[e["model"]]
-            row["reviews"] += 1
-            row["review_false"] += len(e.get("false") or [])
     return dict(out)
 
 

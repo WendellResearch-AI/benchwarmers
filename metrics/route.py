@@ -101,8 +101,9 @@ from aliases import current as current_alias  # noqa: E402
 
 
 def _json(path: pathlib.Path) -> dict:
+    import locked
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        return json.loads(locked.read_text(path))      # inside a render, from its snapshot
     except (OSError, ValueError):
         return {}
 
@@ -135,7 +136,14 @@ def full_tag_of(alias: str) -> str:
     name, else "?": a hub fronts many connections, and an untagged model
     behind it (Open WebUI stopped listing it) is not on a connection called
     `openwebui` with every other untagged one.
+
+    Worked out once per alias in a dashboard render, which asked 2,600 times.
     """
+    import locked
+    return locked.once(("full_tag_of", alias), lambda: _full_tag_of(alias))
+
+
+def _full_tag_of(alias: str) -> str:
     from run import _registered_names
     import endpoints
     # Tags are keyed by the served name. A decision model is not in the llm

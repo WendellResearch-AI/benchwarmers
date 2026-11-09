@@ -12,7 +12,8 @@ It writes three kinds of thing, each behind a popup and each logged to
 `config/changes.jsonl`. A model's ROLE or ALIAS (click its name): rules from
 the bench itself — a role the config defines; an alias in the standing form,
 unused, never a retired name — written atomically, the rename recorded in
-`config/alias-history.json`, the `llm` registry re-synced. A model's REMOVAL
+`config/alias-history.json`, the `llm` registry re-synced while it is the
+client. A model's REMOVAL
 (same popup, confirmed, reason optional): deregistered, taken
 out of every collection, and recorded in `config/retired.json`; no evidence
 is deleted. And ONBOARDING
@@ -35,6 +36,7 @@ from __future__ import annotations
 
 import csv
 import datetime
+import functools
 import html
 import json
 import os
@@ -129,7 +131,7 @@ ASSETS = {"mascot.png": "image/png"}
 
 def read(path: pathlib.Path) -> str:
     try:
-        return path.read_text(encoding="utf-8")
+        return locked.read_text(path)          # inside a render, from its snapshot
     except OSError:
         return ""
 
@@ -140,10 +142,11 @@ def load_json(path: pathlib.Path) -> dict:
 
 def data_stamp() -> float:
     """Newest change to anything the page renders from. The page polls this
-    and offers a reload when it moves, rather than reloading under you."""
+    and, when it moves, fetches the page shown again (bench.js, "live")."""
     paths = [*DATA.glob("config/*.json*"), *DATA.glob("config/*.yaml"),
-             *DATA.glob("metrics/*.json*"), DATA / "perf" / "history.csv",
-             *DATA.glob("runs/*.md")]
+             *DATA.glob("metrics/*.json*"), *DATA.glob("metrics/usage/*.jsonl"),
+             DATA / "perf" / "history.csv", *DATA.glob("runs/*.md"),
+             *DATA.glob("runs/gateway/*.jsonl"), DATA / "runs" / "scheduler.log"]
     paths = [p for p in paths if p.name != UI_CONFIG.name]     # a theme switch is already on the page
     return max((p.stat().st_mtime for p in paths if p.exists()), default=0.0)
 
@@ -172,26 +175,92 @@ def suite_scores() -> dict:
     had that role stay in the notes, uncounted. Real work, perf and reviews
     still count it. Nor the vision tasks (vision-*): the Vision panel reads
     those (vision_rows).
+
+    Read once a render (four panes ask), each caller given its own copy.
     """
+    return {k: dict(v) for k, v in locked.once(("suite_scores",), _suite_scores).items()}
+
+
+def _suite_scores() -> dict:
     from run import images_only
-    row = re.compile(r"^\|\s*([\w-]+)\s*\|\s*`([^`]+)`\s*\|\s*([^|]+?)\s*\|"
-                     r"\s*([^|]*?)\s*\|\s*([\d.]+)\s*\|")
     scores: dict[tuple[str, str], dict] = {}
     skip = images_only()
-    for path in sorted(DATA.glob("runs/suite-*.md")):
-        for line in read(path).splitlines():
-            if (m := row.match(line.strip())):
-                task, model, found, invented, seconds = m.groups()
-                model = current_alias(model)
-                if model in skip or task.startswith("vision-"):
-                    continue
-                scores[(task, model)] = {
-                    "found": found, "invented": invented.strip(" —-"),
-                    "seconds": float(seconds)}
+    for _day, _run, task, model, found, invented, seconds in note_rows():
+        model = current_alias(model)
+        if model in skip or task.startswith("vision-"):
+            continue
+        scores[(task, model)] = {
+            "found": found, "invented": invented.strip(" —-"),
+            "seconds": float(seconds)}
     return scores
 
 
+# A row of a run note's table (suite/run._write_report). The seconds may carry
+# the call's attempts, "3.2 (x3)": such rows were skipped before 2026-11-08.
+_NOTE_ROW = re.compile(r"^\|\s*([\w-]+)\s*\|\s*`([^`]+)`\s*\|\s*([^|]+?)\s*\|"
+                       r"\s*([^|]*?)\s*\|\s*([\d.]+)(?:\s*\(x\d+\))?\s*\|")
+_notes: dict = {}                                   # path -> ((mtime_ns, size), rows)
+_notes_all: tuple = (None, [])                      # (the listing's stats, every row)
+
+
+def note_rows() -> list[tuple]:
+    """Every table row of the run notes (runs/suite-*.md), in order, as
+    written: (day, run, task, alias, found, invented, seconds). `run` counts
+    the note's "## Suite run" sections (one per run, in start order); `day` is
+    "" for a note not named by its date. Shared: read it, never change it."""
+    return _note_table()[1]
+
+
+def _note_table() -> tuple:
+    """(the notes' stats, note_rows()). A note is parsed again only when its
+    listing's stat changes: only today's does."""
+    global _notes_all
+    listing = []
+    try:
+        for e in os.scandir(DATA / "runs"):
+            if e.name.startswith("suite-") and e.name.endswith(".md"):
+                try:
+                    listing.append((e.path, e.name, e.stat()))
+                except OSError:                         # gone since the listing: the rest still count
+                    pass
+    except OSError:
+        pass
+    listing.sort(key=lambda e: e[1])
+    key = tuple((path, st.st_mtime_ns, st.st_size) for path, _name, st in listing)
+    seen = _notes_all
+    if seen[0] == key:
+        return seen
+    out: list[tuple] = []
+    for path, name, st in listing:
+        hit = _notes.get(path)
+        if hit is None or hit[0] != (st.st_mtime_ns, st.st_size):
+            day = name[6:-3] if re.fullmatch(r"\d{4}-\d\d-\d\d", name[6:-3]) else ""
+            # From disk, not the render's copy (read): a note appended since this
+            # render first read it would be kept as it was, under its new stat.
+            try:
+                text = pathlib.Path(path).read_text(encoding="utf-8")
+            except OSError:                             # this time only: kept under no key, read again next time
+                key = None
+                continue
+            rows, run = [], 0
+            for line in text.splitlines():
+                if line.startswith("## Suite run"):
+                    run += 1
+                elif (m := _NOTE_ROW.match(line.strip())):
+                    rows.append((day, run, *m.groups()))
+            hit = _notes[path] = ((st.st_mtime_ns, st.st_size), rows)
+        out += hit[1]
+    _notes_all = (key, out)
+    return _notes_all
+
+
 def perf_rows() -> list[dict]:
+    """perf/history.csv, read once a render (Benchmarks asks three times),
+    each caller given its own copies."""
+    return [dict(r) for r in locked.once(("perf_rows",), _perf_rows)]
+
+
+def _perf_rows() -> list[dict]:
     path = DATA / "perf" / "history.csv"
     if not path.exists():
         return []
@@ -491,17 +560,7 @@ def change_model(alias: str, new_alias: str | None, new_role: str | None,
         if is_decision:
             return {"ok": True, "errors": [], "changed": changed, "sync": ""}
         # 4. push the registry to where the CLI reads it
-        try:
-            result = subprocess.run(
-                [sys.executable, str(ROOT / "scripts" / "sync_config.py")],
-                cwd=str(ROOT), capture_output=True, text=True, timeout=120,
-                encoding="utf-8", errors="replace")
-            sync_report = ("synced to the llm CLI" if result.returncode == 0
-                           else f"sync_config.py exited {result.returncode}:"
-                                f" {(result.stderr or result.stdout).strip()[:300]}"
-                                " — run it by hand")
-        except (OSError, subprocess.SubprocessError) as exc:
-            sync_report = f"could not run scripts/sync_config.py ({exc}); run it by hand"
+        sync_report = _sync_cli()
 
     return {"ok": True, "errors": [], "changed": changed, "sync": sync_report}
 
@@ -574,7 +633,19 @@ def _return_to_collections(alias: str, was: dict, stamp: str, who: str) -> list[
     return back
 
 
+# The llm CLI keeps its own copy of the registry and the options, which only
+# it reads: the built-in client reads the data folder's. So the copy is kept
+# in step only while the llm CLI is the client (it cost 5-6 s a save), and
+# save_client syncs it whole when it becomes the client.
+# ponytail: BENCH_CLIENT=llm set at a restart is not a switch anyone sees here;
+# run scripts/sync_config.py once then, or sync at startup if that becomes usual.
+NOT_SYNCED = "not synced: the built-in client is in use; synced when you switch to the llm CLI"
+
+
 def _sync_cli() -> str:
+    import client as model_client
+    if model_client.chosen()[0] != "llm":
+        return NOT_SYNCED
     try:
         result = subprocess.run(
             [sys.executable, str(ROOT / "scripts" / "sync_config.py")],
@@ -593,7 +664,8 @@ def remove_model(alias: str, reason: str = "", who: str = "ui") -> dict:
 
     The daily check (`scripts/check_deprecations.py`, via `auto_retire.py`)
     calls this too, with `who="auto"`, when a model is clearly gone; this is
-    also the button for a person who knows sooner. It deregisters the alias from the llm registry (and re-syncs),
+    also the button for a person who knows sooner. It deregisters the alias from the llm registry (and
+    re-syncs the llm CLI while it is the client),
     drops it from the role and direct-endpoint configs and from every
     collection (members and merger), records it in
     `config/retired.json` — so the alias is never reused, and onboarding the
@@ -1385,9 +1457,13 @@ def save_model_facts(alias: str, facts: dict, who: str = "ui") -> dict:
 
 def _llm_option(alias: str, name: str, value) -> str:
     """The llm CLI keeps its own copy of a model's options (sync_config.py
-    sets them from the file), so a change here is made there too; None clears
-    it. The built-in client reads the file itself."""
+    sets them from the file), so a change here is made there too while it is
+    the client (NOT_SYNCED); None clears it. The built-in client reads the
+    file itself."""
     import shutil
+    import client as model_client
+    if model_client.chosen()[0] != "llm":
+        return NOT_SYNCED
     if not shutil.which("llm"):            # found the way every llm call here finds it
         return "no llm CLI on this machine's PATH, so only the built-in client uses it"
     # `--`: whatever follows is an argument, never a flag, whatever the alias.
@@ -1500,7 +1576,7 @@ def collections_view() -> dict:
                     "price": price_of(a, served[a], f), "role": (roles.get("models") or {}).get(a, "general"),
                     "family": route.family_of(a), "provider": provider_label(tag), "connection": tag}
     return {"ok": True, "errors": [], "collections": rows, "settings": s,
-            "shapes": shapes, "models": _chat_aliases(), "served": served, "tag_suggestions": suggestions,
+            "pick": bench_collections.pick_settings(), "confident": decide.CONFIDENT, "shapes": shapes, "models": _chat_aliases(), "served": served, "tag_suggestions": suggestions,
             "facts": facts, "shape_roles": {k: v for k, v in roles["shapes"].items() if k in shapes},
             "long_context": LONG_CONTEXT}
 
@@ -1583,12 +1659,25 @@ def delete_collection(name: str, who: str = "ui") -> dict:
     return {"ok": True, "errors": [], "changed": ["config/collections.json"]}
 
 
-def save_gateway_settings(max_calls, max_explorers, who: str = "ui") -> dict:
+KEEP = object()                                      # a setting the request did not send: left as it is
+
+
+def save_gateway_settings(max_calls, max_explorers, who: str = "ui", pick_collection=KEEP,
+                          pick_confidence=KEEP) -> dict:
+    """The gateway's limits, and the collection pick for a request that names
+    none (bench_collections.pick_settings): `pick_collection` true or false,
+    `pick_confidence` above 0 and at most 1, or None for the default."""
     errors = []
     if not isinstance(max_calls, int) or isinstance(max_calls, bool) or not 1 <= max_calls <= 10:
         errors.append("max calls must be a whole number from 1 to 10")
     if not isinstance(max_explorers, int) or isinstance(max_explorers, bool) or not 0 <= max_explorers <= 2:
         errors.append("max explorers must be 0, 1 or 2 (route.py seats at most two)")
+    if pick_collection is not KEEP and not isinstance(pick_collection, bool):
+        errors.append("choosing a collection must be on or off")
+    if pick_confidence is not KEEP and pick_confidence is not None and not (
+            isinstance(pick_confidence, (int, float)) and not isinstance(pick_confidence, bool)
+            and 0 < pick_confidence <= 1):
+        errors.append(f"the confidence must be above 0 and at most 1, or empty for {decide.CONFIDENT}")
     too_big = [n for n, c in bench_collections.load().items()
                if isinstance(max_calls, int) and len(c.get("members", [])) > max_calls
                and "max_calls" not in bench_collections.own_limits(c)]
@@ -1599,12 +1688,18 @@ def save_gateway_settings(max_calls, max_explorers, who: str = "ui") -> dict:
     if errors:
         return {"ok": False, "errors": errors}
     raw = bench_collections._read(bench_collections.SETTINGS_FILE)
-    old = bench_collections.settings()
+    old = {**bench_collections.settings(), **bench_collections.pick_settings()}
     raw.pop("default_collection", None)
     raw.update({"max_calls": max_calls, "max_explorers": max_explorers})
+    if pick_collection is not KEEP:
+        raw["pick_collection"] = pick_collection
+    if pick_confidence is None:
+        raw.pop("pick_confidence", None)                # empty: the default, decide.CONFIDENT
+    elif pick_confidence is not KEEP:
+        raw["pick_confidence"] = pick_confidence
     _write_atomic(bench_collections.SETTINGS_FILE, _dump(raw))
     _log_change(datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
-                who, "", "gateway settings", old, bench_collections.settings())
+                who, "", "gateway settings", old, {**bench_collections.settings(), **bench_collections.pick_settings()})
     return {"ok": True, "errors": [], "changed": ["config/gateway.json"]}
 
 
@@ -1899,7 +1994,7 @@ def card(title: str, subtitle: str, body: str, key: str, facets: str = "") -> st
 
 
 def th(label: str, num: bool = False) -> str:
-    return f"<th data-sortable{' class=num' if num else ''}>{label}</th>"
+    return f"<th data-sortable tabindex='0'{' class=num' if num else ''}>{label}</th>"
 
 
 STATUS = {
@@ -1919,7 +2014,12 @@ def model_status() -> dict[str, tuple[str, str, str]]:
     """alias -> (label, chip class, why), for every registered or retired model.
 
     One vocabulary for the whole page, so the roster, the problems and the
-    editor never describe the same model two ways."""
+    editor never describe the same model two ways. Worked out once a render
+    (four panes ask), each caller given its own copy (the values are tuples)."""
+    return dict(locked.once(("model_status",), _model_status))
+
+
+def _model_status() -> dict[str, tuple[str, str, str]]:
     alerts = load_json(DATA / "metrics" / "alerts.json")
     pending = {a.get("alias"): a for k, a in alerts.items()
                if k.startswith("model:pending:")}
@@ -2281,7 +2381,8 @@ def roster() -> str:
     directory = model_directory()
     severity = {"err": 0, "warn": 1, "": 2, "ok": 3}
 
-    body = ["<table><thead><tr>", th("Model"), th("Status"), th("Role"),
+    up = uptime_rows()["models"]
+    body = ["<table><thead><tr>", th("Model"), th("Status"), th("Uptime 7d", True), th("Role"),
             th("Context", True), th("Can"),
             th("Offloads", True), th("Helped"), th("Suite", True),
             th("Reply time", True), th("Last answer"), "</tr></thead><tbody>"]
@@ -2326,7 +2427,7 @@ def roster() -> str:
                           f"onboarding stopped at the {stuck[alias].get('step', 'probe')}:"
                           f" {stuck[alias]['label']}. Open the model for the error.")
                if alias in stuck else "")
-            + f"</td><td>{esc(role)}</td>{facts_cells(alias, f)}"
+            + "</td>" + uptime_cell(up.get(alias)) + f"<td>{esc(role)}</td>{facts_cells(alias, f)}"
             f"<td class='num'>{w.get('offloads', 0)}</td>"
             f"<td data-sort='{rate:.3f}'>{helped}</td>{suite_cell}"
             + (f"<td class='num' data-sort='{p50}'>{p50:.1f}s</td>" if p50 is not None
@@ -2346,7 +2447,7 @@ def roster() -> str:
             " availability probe yet'>—</span>"
             + (" " + chip("new", "new", "onboarded this week") if d.get("onboarded", "") >=
                (datetime.date.today() - datetime.timedelta(days=7)).isoformat() else "")
-            + f"</td><td>decision · {esc(', '.join(d['question_types']))}</td>"
+            + "</td>" + uptime_cell(up.get(alias)) + f"<td>decision · {esc(', '.join(d['question_types']))}</td>"
             "<td class='num muted' data-sort='-1'>—</td><td class='muted'>—</td>"
             f"<td class='num'>{w.get('offloads', 0)}</td>"
             "<td data-sort='-1'><span class='muted'>not judged</span></td>"
@@ -2359,6 +2460,9 @@ def roster() -> str:
         never retire a model inside 7 days; <em>retiring in Nd</em> is the
         countdown before the bench retires it on its own. Hover a chip for the
         provider's own words.</dd>
+      <dt>Uptime 7d</dt><dd>Of its calls in the last 7 days that say anything about the provider,
+        the share answered: busy, unreachable and timed out count against it; our own quota,
+        pacing and setup problems are left out. Benchmarks has it a day at a time.</dd>
       <dt>Offloads, Helped</dt><dd>Real work handed over, and how much of what
         was judged actually helped. Benchmarks never count here.</dd>
       <dt>Suite</dt><dd>Verified findings located across the internal tasks:
@@ -2389,11 +2493,12 @@ def on_bench() -> set[str]:
 
 
 def chart_card(title: str, sub: str, chart_id: str, table: str, key: str, extra: str = "",
-               retired: bool = True) -> str:
+               retired: bool = True, after: str = "") -> str:
     """A Benchmarks panel: the chart first (drawn by bench.js with Observable
-    Plot), the table folded under it, the key under that."""
+    Plot), the table folded under it, the key under that. `extra` goes above
+    the chart, `after` right under it."""
     return (f"<div class='panel'><h2>{title}</h2><p class='sub'>{sub}</p>{extra}"
-            f"<div class='chart' id='{chart_id}'></div>"
+            f"<div class='chart' id='{chart_id}'></div>{after}"
             "<details class='key'><summary>Table</summary><div class='toolbar'><input type='search'"
             " data-filter placeholder='Filter by model or connection' aria-label='Filter rows'>"
             + ("<label><input type='checkbox' data-retired> Show retired</label>" if retired else "") + "</div>"
@@ -2409,24 +2514,52 @@ def _family(task: str) -> str:
     return "hand-built"
 
 
-_wrong: tuple = (0.0, {})
+_wrong: tuple = (None, {})                          # (key, wrong.scores())
+_wrong_table: tuple = (None, {})                    # (key, wrong.table())
+
+
+def _tasks_key(tasks: pathlib.Path) -> tuple:
+    """(path, mtime, size) of every file in each task's folder and its output
+    folder: what scoring reads. The listings carry the stats on Windows."""
+    key = []
+    for task in (os.scandir(tasks) if tasks.is_dir() else ()):
+        for folder in (task.path, os.path.join(task.path, "output")):
+            try:
+                key += [(e.path, e.stat().st_mtime_ns, e.stat().st_size) for e in os.scandir(folder) if e.is_file()]
+            except OSError:                                  # not a folder, or no output yet
+                pass
+    return tuple(key)
 
 
 def wrong_table() -> dict:
-    """wrong.table(), shared by the three cards of one render: it scores every
-    suite answer, and asking three times was a second of each reload."""
-    global _wrong
+    """wrong.table(). The suite answers are scored again only when an answer,
+    a task, a rename or a model's role changes (it reads them all: asked three
+    times a render, then kept 5 seconds, it was 0.7 s of each reload); the
+    reviews are counted again when the offloads change."""
+    global _wrong, _wrong_table
+    import aliases
+    import offload
     import wrong
     from run import images_only
-    seen = _wrong
-    if time.monotonic() - seen[0] > 5:
-        table = wrong.table()
+    vision = images_only()
+    key = (locked.once(("tasks key",), lambda: _tasks_key(wrong.TASKS)), aliases.history(), vision)
+    scored = _wrong
+    if scored[0] != key:
+        s = wrong.scores()
         # A vision or image model keeps its reviews (real work, judged) but not
         # its code-task answers: the suite is not what it is for (suite_scores).
-        for alias in images_only() & set(table):
-            r = table[alias]
-            r.update(answers=0, wrong=0, by={k: [0, 0] for k in r["by"]}, hunt=dict.fromkeys(r["hunt"], 0))
-        seen = _wrong = (time.monotonic(), table)    # stamped once scored, not before
+        for alias in vision & set(s):
+            s[alias].update(answers=0, wrong=0, by={k: [0, 0] for k in s[alias]["by"]},
+                            hunt=dict.fromkeys(s[alias]["hunt"], 0))
+        scored = _wrong = (key, s)                   # keyed before scoring: a change meanwhile scores again
+    try:
+        st = offload.LOG.stat()
+        log = st.st_mtime_ns, st.st_size
+    except OSError:
+        log = None
+    seen = _wrong_table
+    if seen[0] != (key, log):
+        seen = _wrong_table = ((key, log), wrong.table(scored[1]))
     return seen[1]
 
 
@@ -2454,7 +2587,9 @@ def charts_data() -> dict:
     return {"overview": overview, "heat": heat, "families": ["hand-built", "claims", "seeded, function",
                                                              "seeded, whole file", "real bugs"],
             "wrong": bars, "wrongTotals": totals, "kinds": list(wrong.KINDS), "hunt": hunt,
-            "work": work_rows(), "vision": vision_rows(), **perf_charts()}
+            "work": work_rows(), "vision": vision_rows(), "uptime": uptime_data(), "trend": trend_data(),
+            "decide": decision_data(),
+            **perf_charts()}
 
 
 def work_rows() -> list[dict]:
@@ -2547,6 +2682,70 @@ def _vision_family(spec: dict) -> str:
     return next((name for prefix, name in VISION_FAMILIES if spec["id"].startswith(prefix)), "own")
 
 
+_gateway_seen: dict = {"mark": {}, "seats": [], "read": 0}
+_gateway_lock = threading.Lock()
+
+
+def _gateway_fold(calls: pathlib.Path) -> list[tuple]:
+    """Every gateway seat, oldest first: (panel shape, panel at, alias, call,
+    status, answered, seconds, error). Only the lines added since the last call
+    are parsed: the log runs to 50 MB, and the gateway adds to it on every
+    call. Vision and Uptime both read it, so it is parsed once. Hold
+    _gateway_lock; `read` counts the times it started over."""
+    fresh, lines = locked.appended(calls, _gateway_seen["mark"])
+    if fresh:
+        _gateway_seen["seats"] = []
+        _gateway_seen["read"] += 1
+    for raw in lines:
+        try:
+            panel = json.loads(raw)
+        except ValueError:
+            continue
+        shape, at = panel.get("shape"), panel.get("at") or ""
+        _gateway_seen["seats"] += [(shape, at, s.get("alias", ""), s.get("call"), s.get("status"),
+                                    s.get("status") == "ok" and bool((s.get("answer") or "").strip()),
+                                    s.get("seconds"), s.get("error") or "") for s in panel.get("seats", [])]
+    return _gateway_seen["seats"]
+
+
+def _gateway_seats(calls: pathlib.Path) -> list[tuple]:
+    with _gateway_lock:
+        return list(_gateway_fold(calls))
+
+
+_seat_days: dict = {"read": None, "since": "", "n": 0, "counts": {}}
+
+
+def _seat_counts(since: str) -> dict:
+    """(day, alias as logged, status, error) -> (seats, answered seconds, last
+    at) for the gateway's seats from `since` on, the new seats folded in: a
+    render then resolves a few thousand keys, not every seat."""
+    with _gateway_lock:
+        seats, s = _gateway_fold(DATA / "runs" / "gateway" / "calls.jsonl"), _seat_days
+        if (s["read"], s["since"]) != (_gateway_seen["read"], since):
+            s.update(read=_gateway_seen["read"], since=since, n=0, counts={})
+        counts = s["counts"]
+        for _shape, at, alias, _call, status, _answered, seconds, error in seats[s["n"]:]:
+            if at[:10] < since:
+                continue
+            c = counts.get(k := (at[:10], alias, status or "error", error))
+            if c is None:
+                c = counts[k] = [0, [], ""]
+            c[0] += 1
+            if seconds and status == "ok":
+                c[1].append(float(seconds))
+            c[2] = max(c[2], at)
+        s["n"] = len(seats)
+        return {k: (n, list(secs), last) for k, (n, secs, last) in counts.items()}
+
+
+def _vision_seat_list(calls: pathlib.Path) -> list[tuple]:
+    """Every seat of the gateway's vision panels, oldest first: (alias, call,
+    answered, seconds)."""
+    return [(alias, call, answered, seconds)
+            for shape, _, alias, call, _, answered, seconds, _ in _gateway_seats(calls) if shape == "vision"]
+
+
 def _vision_work_rows(live: set[str]) -> dict:
     """alias -> {seat kind: count, claims right, claims wrong, seconds}; read
     again only when the gateway's log or the verdicts change (5 MB a render)."""
@@ -2561,32 +2760,25 @@ def _vision_work_rows(live: set[str]) -> dict:
     from offload import entries
     judged = {e["call"]: e for e in entries() if e.get("call") and e.get("useful") is not None}
     out: dict[str, dict] = {}
-    for raw in read(calls).splitlines():
-        try:
-            panel = json.loads(raw)
-        except ValueError:
+    for alias, call, answered, seconds in _vision_seat_list(calls):
+        alias = current_alias(alias)
+        if alias not in live:
             continue
-        if panel.get("shape") != "vision":
-            continue
-        for s in panel.get("seats", []):
-            alias = current_alias(s.get("alias", ""))
-            if alias not in live:
-                continue
-            r = out.setdefault(alias, {**dict.fromkeys(VISION_SEATS, 0), "real": 0, "false": 0, "seconds": []})
-            v = judged.get(s.get("call"))
-            if s.get("status") != "ok" or not (s.get("answer") or "").strip():
-                kind = "no answer"
-            elif v is None:
-                kind = "not judged"
-            elif v.get("real") or v.get("false"):
-                kind = "checked, helped" if v["useful"] else "checked, did not help"
-                r["real"] += len(v.get("real") or [])
-                r["false"] += len(v.get("false") or [])
-            else:
-                kind = "useful, no claims" if v["useful"] else "no use, no claims"
-            r[kind] += 1
-            if kind != "no answer" and s.get("seconds"):
-                r["seconds"].append(float(s["seconds"]))
+        r = out.setdefault(alias, {**dict.fromkeys(VISION_SEATS, 0), "real": 0, "false": 0, "seconds": []})
+        v = judged.get(call)
+        if not answered:
+            kind = "no answer"
+        elif v is None:
+            kind = "not judged"
+        elif v.get("real") or v.get("false"):
+            kind = "checked, helped" if v["useful"] else "checked, did not help"
+            r["real"] += len(v.get("real") or [])
+            r["false"] += len(v.get("false") or [])
+        else:
+            kind = "useful, no claims" if v["useful"] else "no use, no claims"
+        r[kind] += 1
+        if kind != "no answer" and seconds:
+            r["seconds"].append(float(seconds))
     for r in out.values():
         secs = sorted(r.pop("seconds"))
         r["seconds"] = secs[len(secs) // 2] if secs else None
@@ -2669,6 +2861,742 @@ def perf_charts() -> dict:
              for m, s in sorted(seconds.items()) if recall.get(m) and recall[m][1]]
     return {"reliability": [{"model": m, "outcome": o, "count": n} for (m, o), n in sorted(outcomes.items())],
             "speed": speed}
+
+
+# ---- Trend: does a model score lower, or higher, than it used to? ----------
+#
+# From the run notes, a model against itself, task by task: a run asks up to
+# six tasks and tasks differ in size, so run totals are never compared. A score
+# is a share of the task's findings; a task whose count of findings changed
+# (its answer key did) starts again. Not a score (timeout, error, refused): left
+# out, as uptime counts those. Shown only: it routes and retires nothing.
+
+TREND_DAYS = (30, 60)          # the window's choices, the first by default
+TREND_MOVE = 0.10              # a move of 10 points of a task's findings, on average
+TREND_STATES = ("lower", "higher", "steady", "too little")
+
+
+_trend_seen: tuple = (None, {})                     # (notes' stats, renames, today), _trend_rows()
+
+
+def trend_rows() -> dict:
+    """The trend, worked out again only when a note, a rename or the day
+    changes. Shared: read it, never change it."""
+    global _trend_seen
+    stats, rows = _note_table()
+    key, seen = (stats, aliases.history(), datetime.date.today()), _trend_seen
+    if stats is None:                                   # a note could not be read: not kept
+        return _trend_rows(rows, key[2])
+    if seen[0] != key:
+        seen = _trend_seen = (key, _trend_rows(rows, key[2]))
+    return seen[1]
+
+
+def _trend_rows(rows: list[tuple], today: datetime.date) -> dict:
+    """{"first": the first day with a score, "models": alias -> {"runs": [[day,
+    change, tasks compared, hover]], "last": day, "windows": {days: summary}}}.
+    A run's change is against the model's scores on the same tasks on earlier
+    days (None when it had none); a window's summary is the scores in the
+    window against those before it. A task asked twice in a day counts once
+    that day, as the mean of its scores."""
+    by: dict[str, dict[tuple, dict]] = {}               # alias -> (task, of) -> day -> [found], oldest first
+    first = ""
+    for day, _run, task, alias, found, _inv, _s in rows:
+        hit = re.fullmatch(r"(\d+)/(\d+)", found)
+        if not day or not hit or not int(hit[2]):
+            continue
+        first = min(first or day, day)
+        by.setdefault(current_alias(alias), {}).setdefault((task, int(hit[2])), {}).setdefault(day, []).append(int(hit[1]))
+
+    def mean(xs):
+        return sum(xs) / len(xs)
+    models = {}
+    for alias, found_by_task in by.items():
+        runs: dict[str, list] = {}                      # day -> [[change or None, hover line]]
+        tasks: dict[tuple, list] = {}                   # (task, of) -> [(day, share)], oldest first
+        for (task, of), days in found_by_task.items():
+            scores = tasks[(task, of)] = [(d, mean(f) / of) for d, f in days.items()]
+            for i, (day, share) in enumerate(scores):
+                before = [s for _d, s in scores[:i]]
+                runs.setdefault(day, []).append(
+                    [share - mean(before) if before else None,
+                     f"{task} {', '.join(f'{n}/{of}' for n in days[day])}"
+                     + (f", before {mean(before) * of:.3g}/{of} over {len(before)} run{'s' * (len(before) != 1)}"
+                        if before else ", its first score")])
+        windows = {}
+        for w in TREND_DAYS:
+            since = (today - datetime.timedelta(days=w - 1)).isoformat()
+            moves, recent, earlier = [], {}, set()      # per task; day -> [moves]; days before
+            for scores in tasks.values():
+                old = [s for d, s in scores if d < since]
+                new = [(d, s) for d, s in scores if d >= since]
+                if not old or not new:
+                    continue
+                base = mean(old)
+                moves.append(mean([s for _d, s in new]) - base)
+                earlier |= {d for d, _s in scores if d < since}
+                for d, s in new:
+                    recent.setdefault(d, []).append(s - base)
+            down, up = sum(m < -1e-9 for m in moves), sum(m > 1e-9 for m in moves)
+            change = mean(moves) if moves else 0.0
+            runs_down = sum(mean(v) < -1e-9 for v in recent.values())
+            runs_up = sum(mean(v) > 1e-9 for v in recent.values())
+            if len(moves) < 3 or len(recent) < 2 or len(earlier) < 2:     # one run on either side is not a trend
+                state = "too little"
+            elif change <= -TREND_MOVE + 1e-9 and down >= 2 and down >= 2 * up and runs_down >= 2:
+                state = "lower"
+            elif change >= TREND_MOVE - 1e-9 and up >= 2 and up >= 2 * down and runs_up >= 2:
+                state = "higher"
+            else:
+                state = "steady"
+            windows[w] = {"state": state, "change": change, "tasks": len(moves), "down": down, "up": up,
+                          "runs": len(recent), "runsDown": runs_down, "runsUp": runs_up, "before": len(earlier)}
+        models[alias] = {
+            "runs": [[d, mean(c) if (c := [x[0] for x in v if x[0] is not None]) else None, len(c),
+                      "\n".join(x[1] for x in v)] for d, v in sorted(runs.items())],
+            "last": max(runs), "windows": windows}
+    return {"first": first, "models": models}
+
+
+def _trend_says(s: dict) -> str:
+    """A window's summary in words, as the chart and the table say it."""
+    if not s["tasks"]:
+        return "no task scored both in the window and before it"
+    head = {"too little": "too little to say", "steady": "steady"}.get(s["state"], s["state"])
+    return (f"{head}: {s['change'] * 100:+.0f} pts on {s['tasks']} task{'s' * (s['tasks'] != 1)}"
+            f" ({s['down']} down, {s['up']} up), {s['runs']} run{'s' * (s['runs'] != 1)}"
+            f" against {s['before']} before")
+
+
+def trend_data() -> dict:
+    """For bench.js: registered models with a run to compare, each run as
+    [day, change or None, tasks compared, hover], each window's flag."""
+    t, live = trend_rows(), on_bench()
+    return {"first": t["first"], "today": datetime.date.today().isoformat(), "choices": list(TREND_DAYS),
+            "move": TREND_MOVE,
+            "models": [{"name": m, "runs": v["runs"],
+                        "w": {str(w): {**s, "says": _trend_says(s)} for w, s in v["windows"].items()}}
+                       for m, v in sorted(t["models"].items())
+                       if m in live and any(r[1] is not None for r in v["runs"])]}
+
+
+def trend_card() -> str:
+    """Each model against its own history: a dot per run, and a flag when its
+    scores in the window sit below (or above) its scores before it."""
+    t, live, first, names = trend_rows(), current(), TREND_DAYS[0], {}
+
+    def name(model: str) -> str:                       # each window's table shows it: worked out once
+        if model not in names:
+            names[model] = f"{tr(model)}<td>{named(model)}</td>"
+        return names[model]
+
+    css = {"lower": "err", "higher": "ok", "steady": "", "too little": ""}
+
+    def window(w: int) -> str:
+        rows = {m: v["windows"][w] for m, v in t["models"].items() if m in live and v["windows"][w]["tasks"]}
+        body = ["<table><thead><tr>", th("Model"), th("Trend"), th("Change", True), th("Tasks compared", True),
+                th("Down", True), th("Up", True), th("Runs in window", True), th("Runs before", True),
+                th("Last scored"), "</tr></thead><tbody>"]
+        for m in sorted(rows, key=lambda m: (TREND_STATES.index(rows[m]["state"]), rows[m]["change"], m)):
+            s = rows[m]
+            body.append(
+                name(m) + f"<td data-sort='{TREND_STATES.index(s['state'])}'>"
+                + chip(s["state"], css[s["state"]], _trend_says(s)) + "</td>"
+                f"<td class='num' data-sort='{s['change']:.4f}'>{s['change'] * 100:+.0f} pts</td>"
+                f"<td class='num'>{s['tasks']}</td><td class='num'>{s['down']}</td><td class='num'>{s['up']}</td>"
+                f"<td class='num' data-sort='{s['runs']}'>{s['runs']}"
+                f" <span class='muted'>({s['runsDown']} below, {s['runsUp']} above)</span></td>"
+                f"<td class='num'>{s['before']}</td><td class='mono'>{esc(t['models'][m]['last'])}</td></tr>")
+        if not rows:
+            body.append(f"<tr><td colspan='9' class='muted'>No model was scored on the same task both in the last"
+                        f" {w} days and before them.</td></tr>")
+        body.append("</tbody></table>")
+        return f"<div data-trend-window='{w}'{'' if w == first else ' hidden'}>" + "".join(body) + "</div>"
+
+    legend = ("<div class='q-legend'><span><i style='background:var(--err)'></i>10 pts or more below its earlier"
+              " scores on the same tasks</span><span><i style='background:var(--muted)'></i>within 10 pts</span>"
+              "<span><i style='background:var(--ok)'></i>10 pts or more above</span><span><i style='background:none;"
+              "border:1px solid var(--muted)'></i>first scores on these tasks</span></div>")
+    pick = ("<div class='toolbar'><label>Window <select data-trend-days>"
+            + "".join(f"<option value='{w}'>last {w} days</option>" for w in TREND_DAYS)
+            + f"</select></label></div>{legend}")
+    key = f"""<dl>
+      <dt>A dot</dt><dd>One day a model was scored on our tasks, against its own earlier scores on the same
+        tasks: each task as a share of its findings, so a 1-finding claim and an 11-finding file count the same,
+        then averaged over the tasks it had been asked before. Bigger when more tasks were compared. Hover for
+        each task's score and what it scored before.</dd>
+      <dt>The flag</dt><dd>The scores in the window against the scores before it, on the tasks scored in
+        both. <b>Lower</b> (or <b>higher</b>) when, on average, they moved 10 points or more, on at least two
+        tasks and twice as many as moved the other way, in at least two separate runs. <b>Too little</b> when
+        fewer than three tasks can be compared, or fewer than two runs in the window or before it; <b>steady</b>
+        otherwise. One bad run, or one task, is never a trend, and nor is one run to compare against.</dd>
+      <dt>The window</dt><dd>{first} days by default: a paid model is scored about once a week and a free one
+        about every 15 days, six tasks a run, so 7 days holds one run at most and could only say what one
+        afternoon did. {first} days holds 2 to 4 runs. Longer windows hold more runs but leave less before them
+        to compare with (the scores start {esc(t['first'] or 'with the first run')}).</dd>
+      <dt>Runs</dt><dd>Days a model was scored (a task asked twice in a day counts once, as the mean of its
+        scores). In the window, how many sat below or above its earlier scores.</dd>
+      <dt>What is counted</dt><dd>Scores as the run notes recorded them (<code>runs/suite-*.md</code>), under
+        each model's current name; timeouts, errors and refusals are not scores and are left out (Uptime counts
+        them). A task whose number of findings changed starts again. The answers behind the scores are kept
+        from 2026-11-08 in <code>runs/answers/&lt;task&gt;/&lt;model&gt;/</code>; older ones were replaced by
+        the next run and are gone.</dd>
+    </dl>"""
+    return chart_card("Trend", "Does a model score lower, or higher, than it used to? Each model against its own"
+                      " earlier scores, task by task; flagged only when the move holds over several tasks and runs.",
+                      "chart-trend", "".join(window(w) for w in TREND_DAYS), key, extra=pick)
+
+
+# ---- Uptime: was the provider there when the bench called it? --------------
+#
+# Only calls the bench already makes, each counted once: the daily probe
+# (perf/history.csv), every gateway seat (runs/gateway/calls.jsonl), and the
+# calls only the client's ledger has (the suite's, onboarding's). The ledger
+# also lists the probe's and the gateway's calls, which are counted from their
+# own logs because those keep the error text. Each call is classified from its
+# text when the report is drawn (suite/run.uptime_class). Shown only: uptime
+# changes no routing and retires nothing.
+
+UPTIME_DAYS = (7, 30)                                # the window's choices, the first by default
+LEDGER_OWN = ("perf/run", "serve", "gateway")        # callers whose calls their own logs count
+# A probe row from before 2026-10-16 keeps no text, only its class then.
+_OLD_CLASS = {"empty": "empty", "capacity": "busy", "structural": "setup",
+              "paywalled": "setup", "entitlement": "setup", "signin": "setup"}
+_OUT_LABEL = {"quota": "our quota", "rate": "our rate limit", "notsent": "not sent by the bench",
+              "client": "our client", "relay": "our LAN hub"}
+_ledger_seen: dict = {"marks": {}, "rows": {}, "mute": {}, "conn": {}, "endpoint": {}}
+_ledger_lock = threading.Lock()
+_LEDGER_HEAD = re.compile(r'"t":([\d.]+),"at":"([^"]*)","alias":"([^"]*)","connection":"([^"]*)","endpoint":"([^"]*)"')
+
+
+def _ledger_calls(since_month: str) -> tuple[list, dict, dict, float]:
+    """(calls only the ledger has, alias -> connection, alias -> endpoint, the
+    start of the last failed call it kept no text for) from the month files
+    from `since_month` (YYYY-MM) on. A call is (t, at, alias, connection,
+    status, error, seconds). New lines only, as the gateway's seats are read."""
+    import ledger
+    with _ledger_lock:
+        seen = _ledger_seen
+        for path in sorted(ledger.DIR.glob("*.jsonl")):
+            stem = path.stem
+            if stem < since_month:
+                continue
+            fresh, lines = locked.appended(path, seen["marks"].setdefault(stem, {}))
+            if fresh:
+                seen["rows"][stem], seen["mute"][stem] = [], 0.0
+            rows = seen["rows"].setdefault(stem, [])
+            for raw in lines:
+                # Most lines are the probe's or the gateway's, wanted only for
+                # where the model was: read by a pattern, not parsed (ledger.append
+                # writes the keys in this order).
+                if (m := _LEDGER_HEAD.search(raw)) and any(f'"caller":"{c}"' in raw for c in LEDGER_OWN):
+                    t, at, alias, conn, endpoint = float(m[1]), m[2], m[3], m[4], m[5]
+                    status, mute = None, '"status":"error"' in raw and '"error":' not in raw
+                else:
+                    try:
+                        r = json.loads(raw)
+                    except ValueError:
+                        continue
+                    if not isinstance(r, dict) or not r.get("alias") or not isinstance(r.get("t"), (int, float)):
+                        continue
+                    t, at, alias, conn, endpoint = r["t"], r.get("at") or "", r["alias"], r.get("connection"), r.get("endpoint")
+                    status = (r.get("status") or "") if r.get("caller") not in LEDGER_OWN else None
+                    mute = r.get("status") == "error" and "error" not in r
+                if conn not in (None, "", "?"):
+                    seen["conn"][alias] = conn
+                if endpoint:
+                    seen["endpoint"][alias] = endpoint
+                if mute:
+                    seen["mute"][stem] = max(seen["mute"].get(stem, 0.0), t)
+                if status is not None:
+                    rows.append((t, at, alias, conn or "", status, r.get("error") or "", r.get("seconds")))
+        stems = sorted(s for s in seen["rows"] if s >= since_month)
+        # Until the ledger kept error text (2026-11-08) its failed calls cannot be
+        # classified, and counting only its successes would flatter everyone: its
+        # own calls count from after the last failure it kept no text for.
+        mute = max((seen["mute"].get(s, 0.0) for s in stems), default=0.0)
+        return ([c for s in stems for c in seen["rows"][s]], dict(seen["conn"]), dict(seen["endpoint"]), mute)
+
+
+@functools.lru_cache(maxsize=8192)
+def _uptime_class(text: str, status: str, private: bool, decided: tuple = ()) -> tuple[str, str]:
+    """`decided`: metrics/decided.json's stat, so a new decision about a
+    shape (decide.classify_errors) is read on the next render, not the next start."""
+    from run import uptime_class
+    return uptime_class(text, status, private)
+
+
+def _down(kind: str) -> bool:
+    """A kind of failure counted down: its class, before any "(decided by ...)"."""
+    from run import UPTIME_DOWN
+    return kind.split(" (decided by ")[0] in UPTIME_DOWN
+
+
+_decide_seen: dict = {"mark": {}, "rows": []}
+_decide_lock = threading.Lock()
+
+
+def _decision_calls() -> list[tuple]:
+    """Every decision call (metrics/decisions.jsonl, decide.call): (at, alias,
+    served, via, status, error, seconds). New lines only, as the ledger is read."""
+    with _decide_lock:
+        fresh, lines = locked.appended(decide.LOG, _decide_seen["mark"])
+        if fresh:
+            _decide_seen["rows"] = []
+        for raw in lines:
+            try:
+                r = json.loads(raw)
+            except ValueError:
+                continue
+            if isinstance(r, dict) and r.get("at") and r.get("alias"):
+                # Answered unless it failed: a reply without the asked answer is still the provider there.
+                status = "error" if r.get("error") else "ok"
+                _decide_seen["rows"].append((r["at"], r["alias"], r.get("served") or "", r.get("via") or "",
+                                             status, r.get("error") or "", r.get("seconds")))
+        return list(_decide_seen["rows"])
+
+
+def _shape(text: str) -> str:
+    """An error as a shape, so the same failure counts once in a list: URLs,
+    ids and numbers stand in for what changes between calls."""
+    s = re.sub(r"https?://\S+", "<url>", text)
+    s = re.sub(r"\b(?=[A-Za-z0-9_-]*\d)[A-Za-z0-9_-]{14,}\b", "<id>", s)
+    return " ".join(re.sub(r"\d+(\.\d+)?", "N", s).split())[:130]
+
+
+def uptime_rows() -> dict:
+    """The Uptime report, once a render (the card and the charts both ask)."""
+    return locked.once(("uptime",), _uptime_rows)
+
+
+def _uptime_rows() -> dict:
+    """{"days": the last 30 dates, "providers"/"models": name -> one bucket a
+    day (None, or up, down, out, {class: n}, [answered seconds], last down),
+    "conn": model -> connection, "odd": unrecognised shapes [day index, at,
+    connection, shape]}. A provider's uptime is weighted by calls: every call
+    to any of its models counts once."""
+    import ipaddress
+    import urllib.parse
+    from run import UPTIME_DOWN, UPTIME_UP
+    today = datetime.date.today()
+    days = [(today - datetime.timedelta(days=i)).isoformat() for i in range(UPTIME_DAYS[-1] - 1, -1, -1)]
+    since, index = days[0], {d: i for i, d in enumerate(days)}
+    named_now: dict[str, str] = {}
+
+    def now(alias: str) -> str:
+        if alias not in named_now:
+            named_now[alias] = current_alias(alias)
+        return named_now[alias]
+    # The month before too: a file is a UTC month, a day here is local.
+    calls, conn_of, endpoint_of, mute = _ledger_calls((today - datetime.timedelta(days=UPTIME_DAYS[-1])).isoformat()[:7])
+    conn_of = {now(a): c for a, c in conn_of.items()}           # a renamed model keeps where it was
+    endpoint_of = {now(a): e for a, e in endpoint_of.items()}
+    data = endpoints.load()
+    regs = endpoints.registrations()
+    gone = retired()
+    conns: dict[str, str] = {}
+    private: dict[str, bool] = {}
+
+    def conn(alias: str) -> str:
+        if alias not in conns:
+            c = conn_of.get(alias) or catalog.connection_of(alias)
+            if c in ("", "?"):
+                c = (gone.get(alias, {}).get("tag") or "").split("/")[0] or "unknown"
+            conns[alias] = c
+        return conns[alias]
+
+    def lan(alias: str) -> bool:
+        """The call went to a hub on our own network (a private or loopback address)."""
+        if alias not in private:
+            base = (regs.get(alias, {}).get("api_base")
+                    or data.get(endpoint_of.get(alias, ""), {}).get("base") or "")
+            host = urllib.parse.urlsplit(base).hostname or ""
+            try:
+                private[alias] = ipaddress.ip_address(host).is_private
+            except ValueError:
+                private[alias] = host == "localhost" or host.endswith((".local", ".lan", ".localhost"))
+        return private[alias]
+
+    agg: dict[tuple, list] = {}           # (day, alias, connection, class, why) -> [calls, answered seconds, last at]
+    odd: list[list] = []
+    try:
+        st = decide.DECIDED.stat()
+        stamp = (st.st_mtime_ns, st.st_size)
+    except OSError:
+        stamp = ()
+
+    def classify(text: str, status: str, private: bool) -> tuple[str, str]:
+        return _uptime_class(text, status, private, stamp)
+
+    def count(at: str, alias: str, c: str, cls: str, why: str, n: int = 1, seconds=(), text: str = "") -> None:
+        day = index.get(at[:10])
+        if day is None or n <= 0:
+            return
+        a = agg.get(k := (day, alias, c, cls, why))
+        if a is None:
+            a = agg[k] = [0, [], ""]
+        a[0] += n
+        if cls == "ok":
+            a[1] += seconds
+        a[2] = max(a[2], at)
+        # No rule knows it: listed, with what a decision model said of it when one did.
+        if cls == "unrecognised" or why.startswith("decided by"):
+            odd.append([day, at, c, n, _shape(text) if text else f"({why})",
+                        f"{cls}, {why}" if why.startswith("decided by") else ""])
+
+    for r in perf_rows():                                  # the probe: counts per row, one text per row
+        at, alias = r.get("timestamp") or "", r["model"]
+        # Not the dashboard's Retry: it writes a row only when the model answered.
+        if at[:10] < since or r.get("prompt") == "retry":
+            continue
+        c, num = conn(alias), (lambda k: int(r.get(k) or 0))
+        p50 = float(r.get("p50_s") or 0)                    # of the answers; a refusal is not timed
+        count(at, alias, c, "ok", "", num("answered") + num("refused"), [p50] * num("answered") if p50 > 0 else [])
+        count(at, alias, c, "timeout", "timed out", num("timeout"))
+        if num("error"):
+            old = r.get("failure") or ""
+            if old == "timeout":
+                # The row's one text is its timeout's; its errors were worse-than-nothing
+                # classes after it (empty, other) that kept no text.
+                cls, why = "unrecognised", "no text kept; the probe's text was its timeout's"
+            elif r.get("detail"):
+                cls, why = classify(r["detail"], "error", lan(alias))
+            else:
+                cls, why = _OLD_CLASS.get(old, "unrecognised"), f"no text kept; the probe said {old or 'nothing'}"
+            count(at, alias, c, cls, why, num("error"), text=r.get("detail") if old != "timeout" else "")
+    for (_day, alias, status, error), (n, seconds, last) in _seat_counts(since).items():
+        alias = now(alias)
+        cls, why = classify(error, status, lan(alias))
+        count(last, alias, conn(alias), cls, why, n, seconds, error)
+    for t, at, alias, c, status, error, seconds in calls:   # the suite's and the rest, once text is kept
+        if t <= mute or at[:10] < since:
+            continue
+        alias = now(alias)
+        cls, why = classify(error, status, lan(alias))
+        count(at, alias, c or conn(alias), cls, why, 1, [float(seconds)] if seconds else [], error)
+    # Decision models: every call decide.call logged, on the connection behind its served name
+    # (provider tags: OpenRouter for the :free ones), its hub's address deciding the relay.
+    tags = load_json(DATA / "config" / "provider-tags.json")
+    for at, alias, served, via, status, error, seconds in _decision_calls():
+        if at[:10] < since:
+            continue
+        alias = now(alias)                             # a renamed decision model keeps its calls
+        hub = urllib.parse.urlsplit(data.get(via, {}).get("base") or "").hostname or ""
+        try:
+            private_hub = ipaddress.ip_address(hub).is_private
+        except ValueError:
+            private_hub = hub == "localhost"
+        cls, why = classify(error, status, private_hub)
+        c = str(tags.get(served) or "").split("/")[0] or via or "unknown"
+        conns.setdefault(alias, c)
+        count(at, alias, c, cls, why, 1, [float(seconds)] if seconds and cls == "ok" else [], error)
+    providers: dict[str, list] = {}
+    models: dict[str, list] = {}
+    for (day, alias, c, cls, why), (n, seconds, last) in agg.items():
+        kind = f"setup: {why}" if cls == "setup" else _OUT_LABEL.get(cls, cls)
+        if why.startswith("decided by") and cls != "setup":
+            kind += f" ({why})"                        # the hover says a model, not a rule, said so
+        for table, key in ((providers, c), (models, alias)):
+            cells = table.setdefault(key, [None] * len(days))
+            b = cells[day] = cells[day] or [0, 0, 0, {}, [], ""]
+            if cls in UPTIME_UP:
+                b[0] += n
+                b[4] += seconds
+                continue
+            b[3][kind] = b[3].get(kind, 0) + n
+            if cls in UPTIME_DOWN:
+                b[1] += n
+                b[5] = max(b[5], last)
+            else:
+                b[2] += n
+    return {"days": days, "providers": providers, "models": models,
+            "conn": {m: conn(m) for m in models}, "odd": odd}
+
+
+def _uptime_window(cells: list, days: int) -> dict:
+    """One row's totals over the last `days`."""
+    up = down = out = 0
+    kinds: dict[str, int] = {}
+    seconds: list[float] = []
+    last = ""
+    for b in cells[-days:]:
+        if b:
+            up, down, out, last = up + b[0], down + b[1], out + b[2], max(last, b[5])
+            seconds += b[4]
+            for k, n in b[3].items():
+                kinds[k] = kinds.get(k, 0) + n
+    seconds.sort()
+    return {"up": up, "down": down, "out": out, "kinds": kinds, "last": last,
+            "pct": up / (up + down) if up + down else None,
+            "median": seconds[len(seconds) // 2] if seconds else None}
+
+
+def uptime_cell(cells: list | None, days: int = UPTIME_DAYS[0]) -> str:
+    """At a glance's Uptime column: answered of counted over the last `days`."""
+    t = _uptime_window(cells or [], days)
+    if t["pct"] is None:
+        return "<td class='num muted' data-sort='-1' title='no counted calls'>—</td>"
+    return (f"<td class='num{' err' if t['pct'] < .8 else ''}' data-sort='{t['pct']:.4f}'"
+            f" title='{t['up']} of {t['up'] + t['down']} answered'>{t['pct'] * 100:.1f}%</td>")
+
+
+def _why(kinds: dict, which) -> str:
+    return ", ".join(f"{k} {n}" for k, n in sorted(kinds.items(), key=lambda kv: -kv[1]) if which(k))
+
+
+def uptime_data() -> dict:
+    """For bench.js: each row's 30 days, a day as [up, down, left out, why] or 0.
+    Models on the bench now, decision models included."""
+    u = uptime_rows()
+    live = on_bench() | set(decide.load())
+
+    def row(name: str, cells: list) -> dict:
+        out = []
+        for b in cells:
+            if not b:
+                out.append(0)
+                continue
+            down = _why(b[3], _down)
+            left = _why(b[3], lambda k: not _down(k))
+            out.append([b[0], b[1], b[2], "; ".join(filter(None, [down and "down: " + down,
+                                                                  left and "left out: " + left]))])
+        return {"name": name, "cells": out}
+    return {"days": u["days"], "choices": list(UPTIME_DAYS),
+            "providers": [row(c, cells) for c, cells in sorted(u["providers"].items())],
+            "models": [row(m, cells) for m, cells in sorted(u["models"].items()) if m in live]}
+
+
+def uptime_card() -> str:
+    """Was the provider there when the bench called it: a cell a day, by
+    provider then by model; 7 days, or 30 on choice (bench.js swaps them)."""
+    u = uptime_rows()
+    first, gone, names = UPTIME_DAYS[0], retired(), {}
+
+    def name(model: str) -> str:                       # each window's table shows it: worked out once
+        if model not in names:
+            names[model] = (("<tr class='retired'>" if model in gone else "<tr>")
+                            + f"<td>{named(model)}</td><td>{esc(u['conn'].get(model, ''))}</td>")
+        return names[model]
+
+    def window(w: int) -> str:
+        parts = []
+        for title, rows, models in (("Providers", u["providers"], False), ("Models", u["models"], True)):
+            totals = {k: _uptime_window(cells, w) for k, cells in rows.items()}
+            totals = {k: t for k, t in totals.items() if t["up"] + t["down"] + t["out"]}
+            body = ["<table><thead><tr>", th("Model" if models else "Provider"), th("Connection") if models else "",
+                    th("Uptime"), th("Calls counted", True), th("Down"), th("Left out"), th("Reply time", True),
+                    th("Last down"), "</tr></thead><tbody>"]
+            for k in sorted(totals, key=lambda k: (2 if totals[k]["pct"] is None else totals[k]["pct"], k)):
+                t, pct = totals[k], totals[k]["pct"]
+                meter = (f"<span class='helped'><span class='meter'><span{' class=low' if pct < .8 else ''}"
+                         f" style='width:{max(4, round(pct * 100))}%'></span></span>"
+                         f"<span class='mono'>{pct * 100:.1f}%</span></span>" if pct is not None
+                         else "<span class='muted'>no counted calls</span>")
+                down = _why(t["kinds"], _down)
+                left = _why(t["kinds"], lambda kind: not _down(kind))
+                body.append(
+                    (name(k) if models else f"<tr><td>{esc(k)}</td>")
+                    + f"<td data-sort='{-1 if pct is None else round(pct, 4)}'>{meter}</td>"
+                    f"<td class='num'>{t['up'] + t['down']}</td>"
+                    f"<td class='why' data-sort='{t['down']}'>{t['down']}"
+                    + (f" <span class='muted'>· {esc(down)}</span>" if down else "") + "</td>"
+                    f"<td class='why' data-sort='{t['out']}'>{t['out']}"
+                    + (f" <span class='muted'>· {esc(left)}</span>" if left else "") + "</td>"
+                    + (f"<td class='num' data-sort='{t['median']}'>{t['median']:.1f}s</td>" if t["median"]
+                       else "<td class='num muted' data-sort='99999'>—</td>")
+                    + (f"<td class='mono' data-sort='{t['last']}'>{esc(t['last'][5:16].replace('T', ' '))}</td>"
+                       if t["last"] else "<td class='muted' data-sort=''>—</td>") + "</tr>")
+            body.append("</tbody></table>")
+            parts.append(f"<h3 class='chart-head'>{title}</h3>" + "".join(body))
+        return (f"<div data-uptime-window='{w}'{'' if w == first else ' hidden'}>" + "".join(parts) + "</div>")
+
+    def odd(w: int) -> str:
+        shapes: dict[str, list] = {}
+        for day, at, conn, n, shape, said in u["odd"]:
+            if day >= len(u["days"]) - w:
+                # By shape and what was decided of it: two texts this shape joins may not share a decision.
+                s = shapes.setdefault((shape, said), [0, set(), at, at, said])
+                s[0] += n
+                s[1].add(conn)
+                s[2], s[3] = min(s[2], at), max(s[3], at)
+        if not shapes:
+            return ""
+        items = "".join(
+            f"<li><span class='mono'>{n}×</span> {esc(shape)} <span class='muted'>· {esc(', '.join(sorted(conns)))},"
+            f" {esc(a[5:10])}{'' if a[:10] == b[:10] else ' to ' + esc(b[5:10])}</span>"
+            + (" {} <span class='muted'>{}</span>".format(
+                chip(said.partition(", ")[0], "warn", "no rule knows it; counted as " + said),
+                esc(said.partition(", ")[2])) if said else "") + "</li>"
+            for (shape, _), (n, conns, a, b, said) in sorted(shapes.items(), key=lambda kv: -kv[1][0])[:12])
+        decided, total = sum(s[0] for s in shapes.values() if s[4]), sum(s[0] for s in shapes.values())
+        return (f"<div data-uptime-window='{w}'{'' if w == first else ' hidden'}>"
+                f"<h3 class='chart-head'>Not recognised by a rule: {total} call{'s' * (total != 1)}"
+                + (f", {decided} of them classed by a decision model" if decided else "") + "</h3>"
+                "<p class='hint'>Counted as down until a rule in <code>suite/run.py</code>"
+                " (<code>uptime_class</code>) says what they are, unless a decision model was asked about the"
+                " shape (the scheduler's <code>decisions</code> job, a few new shapes a day): then counted as it"
+                " said, marked here and in the hovers with the model and how sure it was.</p>"
+                f"<ul class='links'>{items}</ul></div>")
+
+    legend = ("<div class='q-legend'><span><i style='background:var(--ok)'></i>all answered</span>"
+              "<span><i style='background:var(--signal)'></i>some down, 80% or more answered</span>"
+              "<span><i style='background:var(--err)'></i>under 80% answered</span>"
+              "<span><i style='background:none;border:1px solid var(--line)'></i>no counted calls</span></div>")
+    pick = ("<div class='toolbar'><label>Days <select data-uptime-days>"
+            + "".join(f"<option value='{w}'>last {w}</option>" for w in UPTIME_DAYS)
+            + f"</select></label></div>{legend}")
+    key = """<dl>
+      <dt>Down</dt><dd>The provider was busy or overloaded (a 5xx, high demand, a shared pool's
+        429), unreachable (a broken stream, no reply), timed out (the gateway's 420 s included), or
+        failed in a way no rule recognises yet, listed under the chart so a rule can be added. A
+        shape a decision model was asked about counts as it said, marked "decided by" with the model
+        and how sure it was (at 0.6 or more; below that it stays unrecognised).</dd>
+      <dt>Left out</dt><dd>Neither up nor down, since it says nothing about the provider: our own
+        quota or allowance used up (a day, a month, credits), our own per-minute or concurrency
+        limit, a call the bench's pacing never sent, our client failing, our LAN hub refusing the
+        connection, and setup problems (sign-in, no such model, no access, our own request).</dd>
+      <dt>Up</dt><dd>It answered. An empty reply still counts as an answer.</dd>
+      <dt>A cell</dt><dd>One day: answered of the calls counted that day. Hollow when nothing was
+        counted that day; hover for the day, the count and the main reasons.</dd>
+      <dt>The % and (n)</dt><dd>Answered of counted over the days shown, and how many were counted:
+        weighted by calls, so a provider's row is every call to any of its models.</dd>
+      <dt>What is counted</dt><dd>Only calls the bench makes anyway: the daily probe, every gateway
+        seat, the suite's own calls once the client's ledger keeps their error text
+        (2026-11-08 on), and every decision model call (<code>metrics/decisions.jsonl</code>), on the
+        connection behind its served name. Each is classified from its error text when this is drawn,
+        so a better rule changes the past too. It is shown only: nothing is routed or retired by it.</dd>
+    </dl>"""
+    return chart_card("Uptime", "Whether the provider was there when the bench called it: the daily probe"
+                      " and every real call, one cell a day. Busy, unreachable and timed out count as down;"
+                      " our own quota, our own pacing and setup problems are left out.",
+                      "chart-uptime-models", "".join(window(w) for w in UPTIME_DAYS), key,
+                      extra=pick + "<h3 class='chart-head'>By provider</h3>"
+                                   "<div class='chart' id='chart-uptime-providers'></div>"
+                                   "<h3 class='chart-head'>By model</h3>",
+                      after="".join(odd(w) for w in UPTIME_DAYS))
+
+
+# ---- Decision models: how well each answers the bench's typed questions -----
+#
+# metrics/decide.py's benchmark (the scheduler's `decisions` job) writes
+# metrics/decide-bench.json; this shows it, and which model each use goes to
+# now (decide.choose), never asking one.
+
+DECIDE_USES = {"shape": "The shape of a request (gateway)", "collection": "A collection for a request that names none",
+               "notice": "A short reply that may be a provider's notice (gateway seats)",
+               "errors": "Error shapes no uptime rule knows (daily job)", "role": "A new chat model's role (onboarding)"}
+DECIDE_SETS = {"errors": "Error classes", "collection": "Collections", "useful": "Useful answers"}
+
+
+def decision_data() -> dict:
+    """For bench.js: each model's calibration bins per set, [said, right, n]."""
+    res = decide.results()
+    return {"sets": [[s, DECIDE_SETS[s]] for s in decide.SETS], "cutoff": decide.CONFIDENT,
+            "points": [{"model": a, "set": s, "said": b["said"], "right": b["right"], "n": b["n"]}
+                       for a, by in sorted((res.get("models") or {}).items()) for s, r in by.items()
+                       if s in decide.SETS for b in r.get("calibration") or []]}
+
+
+def _pct(x) -> str:
+    return "—" if x is None else f"{x * 100:.0f}%"
+
+
+def decision_card() -> str:
+    """Per decision model and set: right of asked, Brier, calibration, the
+    cutoff's coverage and accuracy, seconds, failures; and who each use asks."""
+    res = decide.results()
+    measured, onboarded, low = res.get("models") or {}, decide.load(), decide.MIN_ITEMS
+    uses = []
+    for u in decide.USES:
+        who, why = decide.choose(u, measured)
+        uses.append(f"<li>{esc(DECIDE_USES[u])}"
+                    + (" <span class='muted'>· per request</span>" if u in decide.PER_REQUEST else "") + ": "
+                    + (f"<b>{esc(who)}</b>" if who else "<span class='muted'>nobody</span>")
+                    + f" <span class='muted'>· {esc(why)}</span></li>")
+    tables = []
+    for s, title in DECIDE_SETS.items():
+        info = (res.get("sets") or {}).get(s) or {}
+        rows = {a: by[s] for a, by in measured.items() if isinstance(by.get(s), dict)}
+        ranked = sorted((a for a, r in rows.items() if r["asked"] >= low and a in onboarded),
+                        key=lambda a: -(rows[a]["correct"] + 1) / (rows[a]["asked"] + 2))
+        body = ["<table><thead><tr>", th("Model"), th("Rank"), th("Right of asked", True), th("Accuracy", True),
+                th("Brier", True), th("Calibration gap", True), th(f"At {decide.CONFIDENT}"), th("Seconds", True),
+                th("Failures"), th("Last asked"), "</tr></thead><tbody>"]
+        for a in sorted(rows, key=lambda a: (a not in ranked, ranked.index(a) if a in ranked else 0, a)):
+            r, n = rows[a], rows[a].get("answered", 0)
+            rank = (chip(f"{ranked.index(a) + 1} of {len(ranked)}", "ok" if ranked.index(a) == 0 else "",
+                         f"ranked on {r['asked']} items asked") if a in ranked
+                    else chip(f"below {low} items", "", f"{r['asked']} asked; a model is ranked from {low}")
+                    if a in onboarded else chip("not onboarded", "", "no longer in config/decision-models.json"))
+            acc = (f"{_pct(r.get('accuracy'))} <span class='muted'>of {n}</span>"
+                   + (f" <span class='muted'>· F1 {r['macro_f1']:.2f}</span>" if r.get("macro_f1") is not None else "")
+                   if n else "<span class='muted'>no answer</span>")
+            sure = r.get("confident") or {}
+            cut = (f"{_pct(sure.get('coverage'))} <span class='muted'>of {n} sure</span>, {_pct(sure.get('accuracy'))}"
+                   f" <span class='muted'>of {round(sure['coverage'] * n)} right</span>"
+                   if n and sure.get("coverage") is not None else "—")
+            fails = sum((r.get("failures") or {}).values())
+            body.append(
+                f"<tr><td>{named(a)}</td><td>{rank}</td>"
+                f"<td class='num' data-sort='{r['correct']}'>{r['correct']}/{r['asked']}</td>"
+                f"<td class='num' data-sort='{r.get('accuracy') if n else -1}'>{acc}</td>"
+                + (f"<td class='num' data-sort='{r['brier']}'>{r['brier']:.3f}</td>"
+                   f"<td class='num' data-sort='{r['ece']}'>{r['ece']:.2f}</td>" if n else
+                   "<td class='num muted' data-sort='9'>—</td><td class='num muted' data-sort='9'>—</td>")
+                + f"<td class='why'>{cut}</td>"
+                + (f"<td class='num'>{r['seconds']:.2f}</td>" if r.get("seconds") is not None
+                   else "<td class='num muted'>—</td>")
+                + f"<td class='why' data-sort='{fails}'>{fails}"
+                + (f" <span class='muted'>· {esc(_why(r['failures'], lambda k: True))}</span>" if fails else "")
+                + f"</td><td class='mono'>{esc((r.get('last') or '')[5:16].replace('T', ' '))}</td></tr>")
+        if not rows:
+            body.append("<tr><td colspan='10' class='muted'>No model asked yet.</td></tr>")
+        body.append("</tbody></table>")
+        labels = ", ".join(f"{k} {v}" for k, v in (info.get("labels") or {}).items())
+        tables.append(f"<h3 class='chart-head'>{title}: {info.get('size', '?')} items"
+                      f" <span class='muted'>({esc(DECIDE_KIND[s])}{'; ' + esc(labels) if labels else ''})</span></h3>"
+                      + "".join(body))
+    when = res.get("updated", "")
+    extra = (f"<h3 class='chart-head'>Who each use asks now</h3><ul class='links'>{''.join(uses)}</ul>"
+             f"<p class='hint'>{'Measured up to ' + esc(when[:16].replace('T', ' ')) + '.' if when else 'Not measured yet.'}"
+             " The scheduler's <code>decisions</code> job asks each model one question a set a day;"
+             " <code>python metrics/decide.py bench</code> runs a pass by hand.</p>"
+             "<h3 class='chart-head'>Calibration: said against right</h3>")
+    key = f"""<dl>
+      <dt>The sets</dt><dd>Questions with known answers, built from the bench's own data, no hand labelling.
+        <b>Error classes</b>: failed calls' error text (redacted: no keys, ids or emails) and the class the
+        uptime rules give it. <b>Collections</b>: gateway requests and the collection the caller named (not
+        ones a decision model chose). <b>Useful answers</b>: seat answers you judged, with their request,
+        a yes/no question.</dd>
+      <dt>Right of asked</dt><dd>Each item's latest answer; a failed call counts as asked and not right.
+        <b>Accuracy</b> is of the answers given; F1 is the mean over the options of how well each was
+        picked, so always saying the commonest option scores low.</dd>
+      <dt>Brier</dt><dd>How far its probabilities sat from the truth: 0 is perfect; for a choice it is
+        summed over the options, so up to 2. Lower is better, and a sure wrong answer costs most.</dd>
+      <dt>Calibration</dt><dd>The chart: answers grouped by the probability the model gave its answer
+        (x), against how often those answers were right (y). On the diagonal, its 80% answers come true
+        80% of the time; under it, it is surer than it should be. A bigger dot is more answers. The gap is
+        the average distance from the diagonal, weighted by answers.</dd>
+      <dt>At {decide.CONFIDENT}</dt><dd>The gateway acts on a choice only when the model is this sure: how
+        many answers were that sure, and how many of those were right.</dd>
+      <dt>Rank</dt><dd>Among models with {low} or more items asked on the set, by right answers
+        smoothed for sample size ((right + 1) / (asked + 2)). Below {low} a model is shown but not ranked,
+        and a use keeps its default (the first onboarded model that takes the question).</dd>
+      <dt>Who each use asks</dt><dd>The shape of a request and a new model's role are ranked on the
+        collection set (one described option of several, for a text), the notice check on useful answers
+        (the only yes/no set). A use asked per request never goes to a <code>:free</code> model while
+        another can answer: their calls come out of OpenRouter's free daily budget, which the suite and
+        the probe share.</dd>
+      <dt>Failures</dt><dd>Calls that came back with no answer, by the uptime classes (setup: no such
+        model, or paywalled). The pass stops a model at its first failure.</dd>
+    </dl>"""
+    return chart_card("Decision models", "The models that answer typed questions (a choice, a yes or no) with"
+                      " a probability: how often they are right on the bench's own labelled questions, how far"
+                      " to trust their probabilities, and which one each use asks.",
+                      "chart-decide", "".join(tables), key, extra=extra, retired=False)
+
+
+DECIDE_KIND = {"errors": "choice of 6", "collection": "choice of the collections", "useful": "yes or no"}
 
 
 def bughunt_card() -> str:
@@ -2841,8 +3769,9 @@ def wrong_card() -> str:
 
 def benchmarks_tab() -> str:
     data = json.dumps(charts_data(), ensure_ascii=False).replace("</", "<\\/")
+    # Trend, Uptime and Performance side by side: what moves over time, in one stretch.
     return (overview_card() + bughunt_card() + work_card() + wrong_card() + suite_card() + vision_card()
-            + perf_card() + external_card()
+            + trend_card() + uptime_card() + perf_card() + decision_card() + external_card()
             + f"<script type='application/json' id='charts-data'>{data}</script>")
 
 
@@ -2922,7 +3851,12 @@ def favicon(theme: str) -> str:
     return f"<link rel='icon' type='image/svg+xml' href='data:image/svg+xml,{quote(svg)}'>"
 
 
-def render(theme: str | None = None) -> str:
+def render(theme: str | None = None, shown: str = "glance") -> str:
+    with locked.snapshot():                    # each file read once a render (metrics/locked.py)
+        return _page(theme, shown)
+
+
+def _page(theme: str | None, shown: str = "glance") -> str:
     theme = theme if theme in themes() else saved_theme()      # a ?theme preview, else the saved one
     return (
         f"<!doctype html><html lang='en' data-theme='{esc(theme)}'><meta charset='utf-8'>"
@@ -2936,7 +3870,7 @@ def render(theme: str | None = None) -> str:
         # The credit is fixed, not a setting (RELEASE-PLAN decision 7).
         "<p class='sub'>by <a href='https://wendellresearch.ai' target='_blank' rel='noopener'>Wendell Research</a></p>"
         "<div class='head-actions'>"
-        "<button class='btn fresh' id='fresh' hidden>New results · Reload</button>"
+        "<button class='btn fresh' id='fresh' hidden>New results · Show</button>"
         # The onboarding queue's progress (bench.js fills it from /api/onboard-queue).
         "<div class='oq' id='oq' hidden role='status'>"
         "<span class='oq-chip' id='oq-chip'><span id='oq-text'></span></span>"
@@ -2946,7 +3880,7 @@ def render(theme: str | None = None) -> str:
         "<button class='btn primary' id='onboard-open'>Onboard a model</button></div></header>"
         # What needs a person first, then the pages; endpoints are managed from
         # Connections now (the header button moved there).
-        f"<main>{first_run()}<div class='layout'>{tabs()}</div></main>{editor()}"
+        f"<main>{first_run()}<div class='layout'>{tabs(shown)}</div></main>{editor()}"
         f"<script>window.BENCH={directory_json()};</script>"
         # Observable Plot (on d3) draws the Benchmarks charts. Pinned versions from
         # jsDelivr; without a network the tables under each chart still work.
@@ -2959,9 +3893,8 @@ def gateway_card(limit: int = 30) -> str:
     """Recent bench-gateway requests: who sat, how each seat went, and which
     verdicts are still owed. A verdict owed is evidence the router is waiting
     for; this is where it shows."""
-    lines = read(DATA / "runs" / "gateway" / "calls.jsonl").splitlines()
     records = []
-    for line in reversed(lines):
+    for line in _log_rows(DATA / "runs" / "gateway" / "calls.jsonl"):     # newest first, from its end
         try:
             records.append(json.loads(line))
         except ValueError:
@@ -3034,7 +3967,7 @@ def gateway_card(limit: int = 30) -> str:
         how it was chosen (set on the collection, or a decision model's label).</dd>
     </dl>"""
     return card("Gateway", f"The last {len(records)} bench-gateway requests:"
-                f" {seats_total} seats, {owed} verdict{'s' * (owed != 1)} owed.",
+                f" {seats_total} seats, <span id='g-owed' data-n='{owed}'>{owed} verdict{'s' * (owed != 1)} owed</span>.",
                 "".join(body) + route_table(judged), key)
 
 
@@ -3082,9 +4015,10 @@ def route_table(judged: dict, limit: int = 30) -> str:
 
 def gateway_seat(call: str) -> dict:
     """One seat of a logged gateway request, with its latest verdict, for the
-    verdict dialog."""
+    verdict dialog. Searched from the log's end, where a recent seat is: the
+    log runs to 50 MB, read whole each time the dialog opened."""
     panel = call.rsplit(".", 1)[0]
-    for line in reversed(read(DATA / "runs" / "gateway" / "calls.jsonl").splitlines()):
+    for line in _from_end(DATA / "runs" / "gateway" / "calls.jsonl"):
         if not panel or f'"{panel}"' not in line:           # skip without parsing
             continue
         try:
@@ -3371,9 +4305,16 @@ def collections_tab() -> str:
         "</div>"
         "<p class='rules'>Explorers = min(max explorers, max calls − members): with 5 and 2, a"
         " 2- or 3-model collection gets 2, a 4-model one 1, a 5-model one none. These apply to"
-        " every collection that does not set its own in its dialog. A request that"
-        " names no collection is refused with each one's description and tags, so the caller"
-        " can choose.</p>"
+        " every collection that does not set its own in its dialog.</p>"
+        "<label class='check'><input type='checkbox' id='g-pick'> Choose a collection for a request that"
+        " names none</label>"
+        "<div class='settings'><div><label class='field' for='g-pick-conf'>Only when the model is at least"
+        "</label><input id='g-pick-conf' type='number' min='0.05' max='1' step='0.05'></div></div>"
+        "<p class='rules'>A decision model (the one Benchmarks › Decision models says the collection pick"
+        " asks) chooses from the collections' descriptions and tags, and the reply says which and why"
+        " (<code>bench.picked</code>, <code>X-Bench-Picked</code>). Less sure than this, or switched off,"
+        " the request is refused with each collection's description and tags, so the caller can choose."
+        " A name that is not a collection is always refused.</p>"
         "<div class='errors' id='g-errors' role='alert'></div><div class='done' id='g-done'></div>"
         "<div class='actions'>"
         "<button class='btn primary' id='g-save'>Save settings</button></div>"
@@ -3402,12 +4343,23 @@ def collections_and_gateway() -> str:
     return collections_tab() + gateway_card()
 
 
-def tabs() -> str:
-    # Read once a render: Action needed's page, its count in the sidebar and
-    # At a glance's line about it.
-    groups, auto = open_actions()
-    count = {"needs": open_count(groups)}
-    page = {"needs": lambda: actions_page(groups, auto), "glance": lambda: actions_line(groups) + roster()}
+def pane(key: str, actions: tuple | None = None) -> str:
+    """One tab's page, as its section holds it. The page renders the tab shown
+    (tabs); bench.js fetches the others from GET /api/pane when first opened."""
+    if key in ("needs", "glance"):
+        groups, auto = actions or open_actions()
+        return actions_page(groups, auto) if key == "needs" else actions_line(groups) + roster()
+    return globals()[next(fn for k, _, fn in TABS if k == key)]()
+
+
+def tabs(shown: str = "glance") -> str:
+    # Read once a render: Action needed's count in the sidebar, and its page or
+    # At a glance's line about it when one of those is shown. Only the tab
+    # shown is rendered (the bench_tab cookie, set by bench.js): rendering every
+    # one took seconds. The rest are empty until opened (data-lazy).
+    actions = open_actions()
+    count = {"needs": open_count(actions[0])}
+    shown = shown if any(k == shown for k, _, _ in TABS) else "glance"
 
     def button(key: str, label: str) -> str:
         n = count.get(key)
@@ -3417,8 +4369,8 @@ def tabs() -> str:
     nav = "".join(f"<div class='group'><h2>{esc(group)}</h2>"
                   + "".join(button(key, label) for key, label, _ in pages) + "</div>"
                   for group, pages in SECTIONS)
-    panes = "".join(f"<section class='tab' id='tab-{key}'>{page[key]() if key in page else globals()[fn]()}</section>"
-                    for key, _, fn in TABS)
+    panes = "".join(f"<section class='tab' id='tab-{key}'>{pane(key, actions)}</section>" if key == shown
+                    else f"<section class='tab' id='tab-{key}' data-lazy></section>" for key, _, _ in TABS)
     return f"<nav class='tabs' role='tablist' aria-label='Pages'>{nav}</nav><div class='panes'>{panes}</div>"
 
 
@@ -3664,7 +4616,9 @@ def save_client(name: str, who: str = "ui") -> dict:
     locked.update(model_client.CHOICE, lambda d: d.update(client=name))
     _log_change(datetime.datetime.now().astimezone().isoformat(timespec="seconds"), who, "",
                 "model client", old, name)
-    return {"ok": True, "errors": []}
+    # Not kept in step while it was not the client (_sync_cli): brought up to
+    # date now, and on every save of it, so saving it again retries a failed sync.
+    return {"ok": True, "errors": [], "sync": _sync_cli() if name == "llm" else ""}
 
 
 def client_card() -> str:
@@ -4022,8 +4976,32 @@ def quotas_page() -> str:
         f"<script type='application/json' id='quota-data'>{data}</script>")
 
 
+def _from_end(path: pathlib.Path):
+    """A log's lines that hold something, newest first, read from its end in
+    growing chunks, so a caller that stops early never reads the rest: the
+    gateway's log runs to 50 MB. Nothing when it cannot be read."""
+    try:
+        fh = open(path, "rb")
+    except OSError:
+        return
+    with fh:
+        end, back, cut = fh.seek(0, os.SEEK_END), 1 << 18, b""
+        while end:
+            start = max(end - back, 0)
+            fh.seek(start)
+            lines = (fh.read(end - start) + cut).split(b"\n")
+            cut = lines.pop(0) if start else b""        # may be cut: finished by the chunk before it
+            for line in reversed(lines):
+                if line.strip():
+                    yield line.decode("utf-8", "replace").rstrip("\r")
+            end, back = start, back * 4
+
+
 def _log_rows(path: pathlib.Path, limit: int = 200) -> list[str]:
-    return [line for line in reversed(read(path).splitlines()) if line.strip()][:limit]
+    """The last `limit` lines that hold something, newest first. Read from the
+    end: the gateway's log runs to 50 MB, and was read whole for 200 lines."""
+    from itertools import islice
+    return list(islice(_from_end(path), limit))
 
 
 def logs_page() -> str:
@@ -4125,8 +5103,10 @@ def directory_json() -> str:
     directory = model_directory()
     facts = {a: catalog.info(a) for a, d in directory.items() if d.get("kind") != "decision"}
     options = {a: o for a, o in load_json(OPTIONS_PATH).items() if a in facts and isinstance(o, dict)}
+    # A decision model's role suggestion from onboarding (decide.suggest_role): shown, never applied.
+    suggested = {a: s for a, s in (locked.read_json(decide.DECIDED).get("roles") or {}).items() if isinstance(s, dict)}
     return json.dumps({"models": directory, "facts": facts, "options": options, "roles": model_roles.load()["roles"],
-                       "retired": retired(), "onboard": onboard_issues(), "stamp": data_stamp()},
+                       "suggested": suggested, "retired": retired(), "onboard": onboard_issues(), "stamp": data_stamp()},
                       ensure_ascii=False).replace("</", "<\\/")
 
 
@@ -4145,6 +5125,7 @@ def editor() -> str:
         " history and run notes keep following this model.</p>"
         "<label class='field' for='m-role'>Role</label><select id='m-role'></select>"
         "<p class='rules' id='m-role-why'></p>"
+        "<p class='note' id='m-role-hint' hidden></p>"
         "<fieldset id='m-qtypes' hidden><legend class='field'>Question types</legend>"
         "<label class='check'><input type='checkbox' value='noul'> yes/no"
         " <span class='muted'>(noul: a probability that the answer is yes)</span></label>"
@@ -4372,6 +5353,29 @@ class Handler(gateway.Handler):
         if self.path == "/api/onboard-queue":
             self._json(200, onboard_queue())
             return
+        if self.path == "/api/needs":                  # after an action there: that page, not the whole one
+            with locked.snapshot():
+                groups, auto = open_actions()
+                self._json(200, {"html": actions_page(groups, auto), "line": actions_line(groups),
+                                 "count": open_count(groups)})
+            return
+        if path == "/api/pane":                        # a tab's page, when first opened (bench.js load)
+            from urllib.parse import parse_qs, urlparse
+            key = parse_qs(urlparse(self.path).query).get("tab", [""])[0]
+            if not any(k == key for k, _, _ in TABS):
+                self._json(404, {"ok": False, "errors": [f"no tab {key!r}"]})
+                return
+            with locked.snapshot():
+                try:
+                    page = pane(key)
+                except RuntimeError as exc:            # endpoints.json unreadable: say which and why, as the page does
+                    page = f"<p>{esc(exc)}</p>"
+            self._json(200, {"ok": True, "html": page})
+            return
+        if self.path == "/api/directory":              # window.BENCH again, after a retire or restore
+            with locked.snapshot():
+                self._json(200, json.loads(directory_json()))
+            return
         if self.path == "/api/endpoints":
             self._json(200, endpoint_list())
             return
@@ -4451,16 +5455,12 @@ class Handler(gateway.Handler):
             return
         from urllib.parse import parse_qs, urlparse
         theme = parse_qs(urlparse(self.path).query).get("theme", [None])[0]   # a preview; else the saved one
+        shown = re.search(r"(?:^|;)\s*bench_tab=(\w+)", self.headers.get("Cookie") or "")   # the tab last shown
         try:
-            body = render(theme).encode("utf-8")
+            page = render(theme, shown.group(1) if shown else "glance")
         except RuntimeError as exc:                    # endpoints.json unreadable: say which and why
-            body = f"<!doctype html><meta charset='utf-8'><title>Benchwarmers</title><p>{esc(exc)}</p>".encode()
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        self.wfile.write(body)
+            page = f"<!doctype html><meta charset='utf-8'><title>Benchwarmers</title><p>{esc(exc)}</p>"
+        self._page(page)                               # gzipped beyond this machine (_length)
 
     def do_POST(self):                                   # noqa: N802
         """One endpoint, one operation: change a model's role or alias.
@@ -4535,7 +5535,8 @@ class Handler(gateway.Handler):
                                                         str(p.get("note") or ""), p.get("real"),
                                                         p.get("false")),
                "/api/gateway-settings": lambda p: save_gateway_settings(
-                   p.get("max_calls"), p.get("max_explorers")),
+                   p.get("max_calls"), p.get("max_explorers"), pick_collection=p.get("pick_collection", KEEP),
+                   pick_confidence=p.get("pick_confidence", KEEP)),
                "/api/gateway-key": lambda p: make_gateway_key(str(p.get("name") or ""), p.get("collections"),
                                                               p.get("rpm")),
                "/api/gateway-key/remove": lambda p: revoke_gateway_key(str(p.get("name") or "")),
@@ -4603,11 +5604,29 @@ class Handler(gateway.Handler):
         self.send_header("Content-Length", "0")
         self.end_headers()
 
+    def _length(self, body: bytes) -> bytes:
+        """Content-Length, gzipped first when the caller takes gzip and is not
+        on this machine: the page is 2.1 MB, 185 KB gzipped, which a network
+        feels and loopback does not (there it only costs CPU). Returns the
+        bytes to write."""
+        import gzip
+        import ipaddress
+        # gzip as a token, not refused with q=0 ("gzip;q=0" is a no).
+        takes = any(name.strip().lower() == "gzip" and not re.fullmatch(r"\s*q\s*=\s*0(\.0*)?\s*", q)
+                    for name, _, q in (p.partition(";") for p in (self.headers.get("Accept-Encoding") or "").split(",")))
+        if (len(body) > 1024 and takes
+                and not ipaddress.ip_address(self.client_address[0].removeprefix("::ffff:")).is_loopback):
+            body = gzip.compress(body, 6)
+            self.send_header("Content-Encoding", "gzip")
+            self.send_header("Vary", "Accept-Encoding")
+        self.send_header("Content-Length", str(len(body)))
+        return body
+
     def _page(self, html_text: str) -> None:
         body = html_text.encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
+        body = self._length(body)
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)
@@ -4616,7 +5635,7 @@ class Handler(gateway.Handler):
         body = json.dumps(data).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
+        body = self._length(body)
         self.send_header("Cache-Control", "no-store")
         if cookie:
             self.send_header("Set-Cookie", cookie)

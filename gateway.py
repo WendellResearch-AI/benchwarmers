@@ -11,9 +11,13 @@ is called every day:
 
 Collections and those limits live in `config/collections.json` and
 `config/gateway.json` (see `metrics/bench_collections.py`), edited from the
-dashboard. There is no default: a request that names no collection, or one
-that does not exist, is refused with every collection's description and tags,
-so the caller can choose — `GET /v1/models` carries the same.
+dashboard. There is no default. A request that names no collection gets one
+a decision model chooses from the collections' descriptions and tags, when
+it is sure (pick_collection; gateway.json `pick_collection`, on unless
+false), and the reply says which and why (`bench.picked`, X-Bench-Picked).
+Otherwise, and for a collection that does not exist, it is refused with
+every collection's description and tags, so the caller can choose — `GET
+/v1/models` carries the same.
 
 The reply is every answer, each labelled by seat and model with a call id,
 including seats that failed or came back empty: who answered is evidence about
@@ -30,8 +34,9 @@ one-line note: the panel the caller waited for is never lost.
 
 A collection's `shape` (review, design, …) decides which models may fill the
 explorer seats. Left empty, a decision model labels the prompt when one that
-takes choice questions is onboarded (not ad hoc); otherwise, or on any doubt,
-the shape is `general`. A request body may add `"with": ["<alias>"]` to seat a
+takes choice questions is onboarded (not ad hoc): the one metrics/decide.py
+choose() names for the shape use; otherwise, or on any doubt, the shape is
+`general`. A request body may add `"with": ["<alias>"]` to seat a
 model in an explorer chair, as `route.py --with` does.
 
 A retired model (`config/retired.json`) is never called: retiring takes it out
@@ -155,19 +160,10 @@ import model_roles  # noqa: E402
 import offload  # noqa: E402
 import route  # noqa: E402
 
-# What the shape picker is asked to choose between. Each option carries a
-# description because bare names mislead it: Mercury Decide called "list every
-# place serve.py writes a file" `code` at 0.93 when given names alone.
-SHAPES = {
-    "general": "A general question or task that fits none of the other kinds.",
-    "design": "Architecture, process or approach decisions: weighing options, an ADR, a plan.",
-    "prose": "Writing or editing documentation or other text.",
-    "review": "Judging whether given code is correct: finding bugs, or where a guarantee breaks.",
-    "code": "Writing new code or changing existing code.",
-    "enumeration": "Listing every place something happens in given code or files.",
-    "quick": "A short, bounded task: classify, extract or summarise a small input.",
-}
-CONFIDENT = 0.6
+# What the shape picker chooses between, and how sure it must be: in
+# metrics/decide.py, whose benchmark asks the same question.
+SHAPES = decide.SHAPES
+CONFIDENT = decide.CONFIDENT
 LARGE = 8000          # characters; route.py keeps models that fail big prompts off big tasks
 # Bytes. A million-token prompt is about 4 MB, and a photo sent as a data URL
 # is 4/3 of its file. 20 MB is the tightest whole-request limit among the big
@@ -177,9 +173,9 @@ TOO_BIG = (" Send images as http(s) URLs, or smaller ones: models scale a photo 
            " 1,500-2,000 pixels on its long side anyway.")
 IMAGE_TOKENS = 2_500   # per image, in the size check (estimate_tokens says why)
 IMAGE_URL = re.compile(r"(https?://[^\s/?#]+|data:image/[\w.+-]+;base64,)", re.I)
-DATA_URLS = re.compile(r"data:[\w/.+-]*;base64,[A-Za-z0-9+/=_\\-]*", re.I)
-URLS = re.compile(r"https?://[^\s\"'<>\\]+", re.I)
-BASE64 = re.compile(r"[A-Za-z0-9+/]{100,}={0,2}")
+# How an image or a URL is written down: in metrics/client.py, which writes a
+# failed call's error to the ledger and so redacts it too.
+from client import BASE64, DATA_URLS, URLS, placeholder, redact  # noqa: E402,F401
 HEADER_NAMES = re.compile(r"[A-Za-z0-9-]{1,64}(\s*,\s*[A-Za-z0-9-]{1,64}){0,31}")
 SEAT_KEYS = ("call", "seat", "alias", "status", "seconds", "answer", "error")
 QUERY_KEY = re.compile(r"([?&](?:key|api_key|access_token)=)[^&\s'\"]*", re.I)
@@ -243,32 +239,6 @@ def images(messages: list[dict]) -> list[str]:
     return urls
 
 
-def placeholder(url: str) -> str:
-    """How an image is written down (the call log, offloads, the dashboard,
-    error text, the merger's copy of the request), never its bytes: a data
-    URL by its size, an http URL without its query (a signed URL's signature
-    is a credential) or a user:password."""
-    if url[:5].lower() == "data:":
-        return f"[image: data URL, {(len(url) * 3 // 4 + 999) // 1000:,} KB]"
-    u = urllib.parse.urlsplit(url)
-    return f"[image: {u.scheme}://{u.netloc.rpartition('@')[2]}{u.path[:200]}{'?...' if u.query else ''}]"
-
-
-def redact(text: str) -> str:
-    """`text` with each inline image as its placeholder, every http(s) URL
-    without its query or user:password, and any other long base64 run as its
-    size: an upstream may echo the request in an error, in whatever form, and
-    errors are logged, shown and learned from."""
-    def bare(m):
-        try:
-            u = urllib.parse.urlsplit(m.group())
-        except ValueError:                             # an unparseable netloc, such as "[::1"
-            return "[url]"
-        return f"{u.scheme}://{u.netloc.rpartition('@')[2]}{u.path}{'?...' if u.query else ''}"
-    text = URLS.sub(bare, DATA_URLS.sub(lambda m: placeholder(m.group()), text))
-    return BASE64.sub(lambda m: f"[base64, {(len(m.group()) * 3 // 4 + 999) // 1000:,} KB]", text)
-
-
 def cannot_see(alias: str) -> str:
     """Why an image cannot be put to `alias`, or "" when it can. The catalog
     decides (metrics/catalog.py: the model's input types, your Vision / OCR
@@ -289,27 +259,43 @@ def cannot_see(alias: str) -> str:
 
 
 def pick_shape(prompt: str) -> tuple[str, str]:
-    """(shape, how it was chosen). Falls back to general on any doubt."""
-    try:
-        held = set(json.loads((DATA / "config" / "model-roles.json").read_text(encoding="utf-8"))
-                   .get("ad_hoc", []))
-    except (OSError, ValueError, AttributeError):
-        return "general", "config/model-roles.json unreadable"
-    picker = next((a for a, d in decide.load().items()
-                   if "choice" in d["question_types"] and a not in held), None)
-    if not picker:
-        return "general", "no decision model onboarded"
-    question = {"shape": {"type": "choice",
-                          "instructions": "What kind of task does this prompt ask for?",
-                          "criteria": SHAPES}}
-    try:
-        answer = decide.ask(picker, prompt[:20000], question)["answers"]["shape"]
-    except Exception as exc:                           # noqa: BLE001
-        return "general", f"{picker} failed ({decide.error_text(exc)[:80]})"
-    conf = answer.get("confidence", 0)
+    """(shape, how it was chosen). The decision model decide.choose names for
+    the shape use is asked (ranked on the collection set, never a `:free` one
+    while another answers; the first onboarded before any is ranked), and the
+    call is logged. Falls back to general on any doubt."""
+    answer, picker, why = decide.pick("shape", prompt, SHAPES, "pick_shape")
+    if why:
+        return "general", why
+    conf = float(answer.get("confidence") or 0)
     if answer.get("choice") not in SHAPES or conf < CONFIDENT:
         return "general", f"{picker} unsure ({answer.get('choice')} at {conf:.2f})"
     return answer["choice"], f"{picker}, {conf:.2f}"
+
+
+def pick_collection(messages: list[dict], who: str) -> tuple[str | None, dict]:
+    """For a request that names no collection: (the collection a decision
+    model chose for it, what the reply says about that), or (None, {}) when
+    gateway.json's `pick_collection` is off, nothing is on offer, or the model
+    is not sure (its confidence under `pick_confidence`, else CONFIDENT); the
+    request is then refused as before. The model best on the benchmark's
+    collection set chooses among the collections this key may call that are
+    not ad hoc, from their descriptions and tags, as choose_message lists them."""
+    s = bench_collections.pick_settings()
+    cols = {n: c for n, c in bench_collections.load().items() if not c.get("ad_hoc") and guard.may_call(who, n)}
+    if not s["pick_collection"] or not cols:
+        return None, {}
+    system, prompt = flatten(messages)
+    whole = f"{system}\n\n{prompt}".strip()
+    if not whole:
+        return None, {}
+    answer, by, why = decide.pick("collection", whole, decide.collection_options(cols), "pick_collection")
+    conf = float(answer.get("confidence") or 0)
+    if why or answer.get("choice") not in cols or conf < (s["pick_confidence"] or CONFIDENT):
+        return None, {}
+    name = answer["choice"]
+    return name, {"collection": bench_collections.PREFIX + name, "by": by, "confidence": round(conf, 2),
+                  "why": f"no collection was named, so {by} chose it from the collections' descriptions and"
+                         f" tags, at {conf:.2f}"}
 
 
 def retired() -> dict[str, dict]:
@@ -390,9 +376,10 @@ def ask_seat(alias: str, system: str, prompt: str, messages: list[dict] | None =
     else:
         answer, error = _ask_llm(cmd, prompt)
     # A quota or credit notice delivered as the reply's text, with a success
-    # exit, is not an answer (suite/run.py PROVIDER_NOTICES).
+    # exit, is not an answer (suite/run.py PROVIDER_NOTICES; a short reply
+    # that only looks like one is put to a decision model, once per shape).
     from run import provider_notice
-    if not error and (notice := provider_notice(answer)):
+    if not error and (notice := provider_notice(answer, ask=True)):
         error, answer = f"provider notice in a success reply ({notice}): {answer[:200]}", ""
     if messages is not None:
         # Before the error is cut, logged or learned from. ponytail: the answer
@@ -407,7 +394,8 @@ def ask_seat(alias: str, system: str, prompt: str, messages: list[dict] | None =
         except Exception:                              # noqa: BLE001
             pass
     status = "error" if error else ("empty" if not answer else "ok")
-    return {"status": status, "answer": answer, "error": error[-500:],
+    # Its start and end: the start holds the HTTP status a long body's tail lost.
+    return {"status": status, "answer": answer, "error": client.clip(error),
             "seconds": round(time.monotonic() - started, 1)}
 
 
@@ -555,10 +543,13 @@ def section(seat: dict) -> str:
 
 
 def run_collection(name: str, messages: list[dict], nominated: list[str] | None = None,
-                   reply: str = "", who: str = "local", on_part=None) -> tuple[str, dict]:
+                   reply: str = "", who: str = "local", on_part=None, picked: dict | None = None) -> tuple[str, dict]:
     """The panel's reply as markdown, and the same seats as data for the
     response's `bench` field. `reply`: the request's mode, "" for the
     collection's own. `who`: the gateway key that asked, for the call log.
+    `picked`: the request named no collection and a decision model chose
+    this one (pick_collection); the reply says so, in `bench.picked` and its
+    heading, and the call log keeps it (so the benchmark never learns from it).
 
     `on_part`, for a streaming caller: called with each piece of an
     every-answer reply as it is ready, the heading once the panel is seated,
@@ -669,6 +660,8 @@ def run_collection(name: str, messages: list[dict], nominated: list[str] | None 
     task = " ".join(prompt.split())[:90] + f" ({model}, {shape})"
     out = [f"Bench {model} {panel_id} · {len(sitting)} members + {len(seats) - len(sitting)}"
            f" explorers · explorer shape {shape} ({how})\n"]
+    if picked:
+        out.append(f"Collection {model} chosen for this request: {picked['why']}.\n")
     if skipped:
         out.append("Not asked: " + "; ".join(f"{k['alias']} ({k['why']})" for k in skipped) + "\n")
     emit = None if merged else on_part
@@ -691,7 +684,7 @@ def run_collection(name: str, messages: list[dict], nominated: list[str] | None 
     record = {"panel": panel_id, "at": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
               "model": model, "shape": shape, "shape_by": how, "key": who, "system": system,
               "prompt": prompt, "seats": [done[i] for i in range(len(seats))],
-              **({"skipped": skipped} if skipped else {})}
+              **({"skipped": skipped} if skipped else {}), **({"picked": picked} if picked else {})}
     out += [section(s) for s in record["seats"]]
     footer = ("---\nRecord a verdict per seat once checked against the code:\n"
               "`POST /bench/verdict` on this same server (see `bench.verdict`), or"
@@ -707,7 +700,7 @@ def run_collection(name: str, messages: list[dict], nominated: list[str] | None 
              # A path, not a URL: the same server answered, whichever port or
              # proxy the caller came through (the dashboard serves these routes too).
              "verdict": 'POST /bench/verdict {"call", "useful": true|false, "note", "real": [...], "false": [...]}',
-             **({"skipped": skipped} if skipped else {})}
+             **({"skipped": skipped} if skipped else {}), **({"picked": picked} if picked else {})}
     if merged:
         try:
             merger, note = merge(collection, members, shape, whole, record["seats"], task, panel_id)
@@ -760,6 +753,11 @@ def bench_headers(bench: dict) -> dict:
     seats = bench.get("seats", []) + ([bench["merger"]] if bench.get("merger") else [])
     return {"X-Bench-Panel": str(bench.get("panel", "")),
             "X-Bench-Seats": json.dumps([{k: s.get(k) for k in ("call", "seat", "alias", "status")} for s in seats])}
+
+
+def picked_headers(picked: dict | None) -> dict:
+    """X-Bench-Picked, when a decision model chose the collection: which, by whom, how sure."""
+    return {"X-Bench-Picked": f"{picked['collection']}; {picked['by']}, {picked['confidence']:.2f}"} if picked else {}
 
 
 def refusal(exc: Exception) -> tuple[int, str]:
@@ -1003,6 +1001,7 @@ def route_turn(name: str, plan: dict, ask: dict, who: str, emit) -> None:
         return emit("done", {"collection": model, "reply": "route", "conversation": conv["conv"], "call": call,
                              "alias": alias, "turn": turn_no, **({"failed_over": tried} if tried else {}),
                              **({"skipped": plan["skipped"]} if plan["skipped"] else {}),
+                             **({"picked": plan["picked"]} if plan.get("picked") else {}),
                              "verdict": 'optional, once per conversation: POST /bench/verdict {"call", "useful", "note"}'})
     _log_route(conv, conv["turns"], "", bench_collections.PREFIX + name, who, "", "error", None, tried,
                "every member failed")
@@ -1064,7 +1063,7 @@ class Handler(BaseHTTPRequestHandler):
                 and (origin := guard.cors_origin(headers, self.server.server_port)):
             self.send_header("Access-Control-Allow-Origin", origin)
             self.send_header("Access-Control-Expose-Headers",
-                             "X-Bench-Panel, X-Bench-Seats, X-Bench-Conversation, X-Bench-Model")
+                             "X-Bench-Panel, X-Bench-Seats, X-Bench-Conversation, X-Bench-Model, X-Bench-Picked")
             self.send_header("Vary", "Origin")
         super().end_headers()
 
@@ -1275,6 +1274,14 @@ class Handler(BaseHTTPRequestHandler):
         the key's scope and cap, then the panel, answered in that format."""
         model, suffix = bench_collections.split_reply(ask["model"])
         name = bench_collections.resolve(model)
+        picked = {}
+        if name is None and not model:
+            # NO COLLECTION NAMED: a decision model may choose one (pick_collection); when it does
+            # not, the refusal is the one there always was, and costs the key nothing.
+            try:
+                name, picked = pick_collection(ask["messages"], self.who)
+            except Exception:                          # noqa: BLE001 -- refused as before, never a 500
+                name, picked = None, {}
         if name is None:
             return self._error(400 if not model else 404, bench_collections.choose_message(model), fmt=fmt)
         model = bench_collections.PREFIX + name
@@ -1283,30 +1290,31 @@ class Handler(BaseHTTPRequestHandler):
             return self._error(403, f"the gateway key {self.who} may not call {model}; it may call {allowed}",
                                fmt=fmt)
         try:
-            guard.spend(self.who)                      # counted once it names a collection it may call
+            guard.spend(self.who)                      # counted once it names (or is given) a collection it may call
         except guard.Refused as r:
             return self._error(r.status, str(r), r.headers, fmt)
         reply = ask["reply"] or suffix                 # the body is the most specific, then the suffix, then the collection
         # Chat completions have always answered with the collection's name;
         # the other formats echo the name as asked, which their clients match.
-        shown = model if fmt == "chat" else ask["model"]
+        shown = model if fmt == "chat" or picked else ask["model"]
         if (reply or bench_collections.load()[name].get("reply")) == "route":
-            return self._route(fmt, name, ask, shown, sse)
+            return self._route(fmt, name, ask, shown, sse, picked)
         if ask["agentic"]:
             return self._error(400, formats.TOOLS, fmt=fmt)
         if ask["stream"]:
             out = formats.INBOUND[fmt].stream(shown, prompt_tokens(ask["messages"]), sse=sse)
-            return self._stream(fmt, name, ask, reply, out)
+            return self._stream(fmt, name, ask, reply, out, picked)
         started = time.monotonic()
         try:
-            content, bench = run_collection(name, ask["messages"], ask["with"], reply, self.who)
+            content, bench = run_collection(name, ask["messages"], ask["with"], reply, self.who,
+                                            **({"picked": picked} if picked else {}))
         except (ValueError, LookupError) as exc:       # TooLarge is a ValueError
             return self._error(*refusal(exc), fmt=fmt)
         usage = (prompt_tokens(ask["messages"]), estimate_tokens(content))
         self._json(200, formats.INBOUND[fmt].reply(content, shown, bench, usage, time.monotonic() - started),
-                   bench_headers(bench) if fmt == "gemini" else None)
+                   {**(bench_headers(bench) if fmt == "gemini" else {}), **picked_headers(picked)} or None)
 
-    def _stream(self, fmt: str, name: str, ask: dict, reply: str, out: formats.Stream) -> None:
+    def _stream(self, fmt: str, name: str, ask: dict, reply: str, out: formats.Stream, picked: dict | None = None) -> None:
         """The panel as it comes, in the format's stream shape: every answer
         seat by seat as each finishes, or a merged reply when the merge is
         done. The panel runs in its own thread and this one writes, so a
@@ -1320,7 +1328,7 @@ class Handler(BaseHTTPRequestHandler):
         def work():
             try:
                 events.put(("done", run_collection(name, ask["messages"], ask["with"], reply, self.who,
-                                                   on_part=lambda text: events.put(("part", text)))))
+                                                   on_part=lambda text: events.put(("part", text)), picked=picked)))
             except Exception as exc:                   # noqa: BLE001 -- answered below, as a status or in the stream
                 events.put(("error", exc))
         threading.Thread(target=work, daemon=True).start()
@@ -1337,6 +1345,8 @@ class Handler(BaseHTTPRequestHandler):
                     self.send_response(200)
                     self.send_header("Content-Type", out.content_type)
                     self.send_header("Cache-Control", "no-cache")
+                    for k, v in picked_headers(picked).items():
+                        self.send_header(k, v)
                     self.end_headers()
                     self.wfile.write(out.start())
                     started = True
@@ -1355,7 +1365,7 @@ class Handler(BaseHTTPRequestHandler):
             except OSError:
                 return                                 # the caller left; the panel still finishes, every seat recorded
 
-    def _route(self, fmt: str, name: str, ask: dict, shown: str, sse: bool = True) -> None:
+    def _route(self, fmt: str, name: str, ask: dict, shown: str, sse: bool = True, picked: dict | None = None) -> None:
         """Route mode: one member's answer, in the request's format. The
         turn runs in its own thread (route_turn) and this one writes: a
         whole reply once it is done, or a stream whose 200 waits for the
@@ -1365,6 +1375,7 @@ class Handler(BaseHTTPRequestHandler):
             plan = route_plan(name, ask, self.who)
         except (ValueError, LookupError) as exc:       # TooLarge is a ValueError
             return self._error(*refusal(exc), fmt=fmt)
+        plan["picked"] = picked or {}
         events: queue.Queue = queue.Queue()
 
         def work():
@@ -1374,7 +1385,7 @@ class Handler(BaseHTTPRequestHandler):
                 events.put(("error", (500, f"route mode failed ({type(exc).__name__}: {exc})")))
         threading.Thread(target=work, daemon=True).start()
         tokens, began = route_tokens(ask), time.monotonic()
-        headers = {"X-Bench-Conversation": plan["conv"]["conv"]}
+        headers = {"X-Bench-Conversation": plan["conv"]["conv"], **picked_headers(picked)}
         if not ask["stream"]:
             turn = formats.Turn()
             while True:
