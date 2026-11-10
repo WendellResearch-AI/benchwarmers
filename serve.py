@@ -5251,8 +5251,11 @@ def models_page() -> str:
             " comes from, with the endpoint it is reached through and what is known of its limits. A name"
             " opens the model.</p><div class='toolbar'><input type='search' data-filter='page'"
             " placeholder='Find a model or connection' aria-label='Filter models'>"
-            "<button class='btn small' type='button' data-fold-all='close'>Collapse all</button>"
-            "<button class='btn small' type='button' data-fold-all='open'>Expand all</button></div></div>"
+            # Each shown only while it would change something (bench.js foldButtons): all open, no ⊞.
+            "<button class='fold-all' type='button' data-fold-all='close' title='Collapse all'"
+            " aria-label='Collapse all'>⊟</button>"
+            "<button class='fold-all' type='button' data-fold-all='open' title='Expand all'"
+            " aria-label='Expand all' hidden>⊞</button></div></div>"
             + "".join(cards))
 
 
@@ -5429,8 +5432,10 @@ def logs_page() -> str:
                       for p in sorted((DATA / "runs").glob("onboard-*.log"), reverse=True)[:30])
 
     def section(title, body, n, open_=False):
-        return (f"<details class='panel'{' open' if open_ else ''}><summary><b>{esc(title)}</b>"
-                f" <span class='muted'>· {n}</span></summary>{body}</details>")
+        # CSV: this log alone, its own columns, the filter applied (bench.js); for a spreadsheet.
+        return (f"<details class='panel'{' open' if open_ else ''} data-log='{esc(title)}'><summary><b>{esc(title)}</b>"
+                f" <span class='muted'>· {n}</span> <button class='btn small' type='button' data-csv"
+                f" title='Save this log, as filtered, as a CSV file'>CSV</button></summary>{body}</details>")
     return (
         "<div class='panel'><div class='toolbar'><input data-filter='page' placeholder='Filter every log on this page'"
         " aria-label='Filter logs'>"

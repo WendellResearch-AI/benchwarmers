@@ -276,21 +276,59 @@
   document.addEventListener('input', function (ev) { if (ev.target.matches('input[data-filter]')) applyFilter(scopeOf(ev.target)); });
   document.addEventListener('change', function (ev) { if (ev.target.matches('select[data-facet]')) applyFilter(scopeOf(ev.target)); });
 
-  // ---- Collapse all / Expand all: every fold of the page's groups (Models' connections)
+  // ---- Collapse all / Expand all: every fold of the page's groups (Models' connections).
+  // Each icon shows only while it would change something: ⊟ while any is open, ⊞ while any
+  // is shut. Kept right after any fold opens or shuts, by hand, by these or by a live swap.
+  function foldButtons(tab) {
+    var folds = tab.querySelectorAll('details.model-card'), open = 0;
+    folds.forEach(function (d) { if (d.open) open++; });
+    tab.querySelectorAll('[data-fold-all]').forEach(function (b) {
+      b.hidden = b.dataset.foldAll === 'open' ? open === folds.length : open === 0;
+    });
+  }
   document.addEventListener('click', function (e) {
     var b = e.target.closest('[data-fold-all]');
     if (!b) return;
-    b.closest('.tab').querySelectorAll('details.model-card').forEach(function (d) { d.open = b.dataset.foldAll === 'open'; });
+    var tab = b.closest('.tab');
+    tab.querySelectorAll('details.model-card').forEach(function (d) { d.open = b.dataset.foldAll === 'open'; });
+    foldButtons(tab);
   });
+  document.addEventListener('toggle', function (e) {            // toggle does not bubble: caught on its way down
+    if (e.target.matches && e.target.matches('details.model-card')) foldButtons(e.target.closest('.tab'));
+  }, true);
 
-  // ---- Logs, Export as text: each log on the page as it shows (the filter applied,
-  // folded ones too), a table's rows tab-separated under its header, to one .txt.
+  // ---- Logs: Export as text (every log in one .txt, to read) and CSV (one log, its
+  // own columns, for a spreadsheet). Both as the page shows them, the filter applied.
+  function stampNow() {                                     // local time, as the page shows
+    var now = new Date(), two = function (n) { return String(n).padStart(2, '0'); };
+    return now.getFullYear() + '-' + two(now.getMonth() + 1) + '-' + two(now.getDate()) + '-' + two(now.getHours()) + two(now.getMinutes());
+  }
+  // The file itself: Share's saveFile(blob, name) and csv(rows) (RFC 4180, with a BOM).
+  document.addEventListener('click', function (e) {
+    var b = e.target.closest('[data-csv]');
+    if (!b) return;
+    e.preventDefault();                                     // in the summary: no fold
+    var d = b.closest('details'), rows = [];
+    var cells = function (tr) {
+      return Array.prototype.map.call(tr.children, function (c) { return c.textContent.trim().replace(/\s+/g, ' '); });
+    };
+    var head = d.querySelector('thead tr');
+    if (head) {
+      rows.push(cells(head));
+      d.querySelectorAll('tbody tr').forEach(function (r) { if (!r.hidden) rows.push(cells(r)); });
+    } else {
+      rows.push(['Line']);
+      d.querySelectorAll('.log-line').forEach(function (r) { if (!r.hidden) rows.push([r.textContent.trim()]); });
+    }
+    var slug = d.dataset.log.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    saveFile(new Blob([csv(rows)], {type: 'text/csv;charset=utf-8'}), 'benchwarmers-' + slug + '-' + stampNow() + '.csv');
+  });
   on('click', 'logs-export', function () {
     var tab = $('tab-logs'), out = ['Benchwarmers logs, exported ' + new Date().toString()];
     var q = (tab.querySelector('input[data-filter]') || {}).value;
     if (q) out.push('Filtered by: ' + q);
     tab.querySelectorAll('details.panel').forEach(function (d) {
-      out.push('', '== ' + d.querySelector('summary').textContent.trim() + ' ==');
+      out.push('', '== ' + d.dataset.log + ' ==');
       var cells = function (tr) {
         return Array.prototype.map.call(tr.children, function (c) { return c.textContent.trim().replace(/\s+/g, ' '); }).join('\t');
       };
@@ -300,12 +338,7 @@
         if (!r.hidden) out.push(r.matches('tr') ? cells(r) : r.textContent.trim());
       });
     });
-    var now = new Date(), two = function (n) { return String(n).padStart(2, '0'); };   // local time, as the page shows
-    var stamp = now.getFullYear() + '-' + two(now.getMonth() + 1) + '-' + two(now.getDate()) + '-' + two(now.getHours()) + two(now.getMinutes());
-    var a = el('a', {href: URL.createObjectURL(new Blob([out.join('\n') + '\n'], {type: 'text/plain;charset=utf-8'})),
-                     download: 'benchwarmers-logs-' + stamp + '.txt'});
-    document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+    saveFile(new Blob([out.join('\n') + '\n'], {type: 'text/plain;charset=utf-8'}), 'benchwarmers-logs-' + stampNow() + '.txt');
   });
 
   // ---- a link to another page ----
