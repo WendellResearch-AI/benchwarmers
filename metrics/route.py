@@ -148,12 +148,14 @@ def _full_tag_of(alias: str) -> str:
     import endpoints
     # Tags are keyed by the served name. A decision model is not in the llm
     # yaml, so its served name comes from config/decision-models.json.
-    served = (_registered_names().get(alias)
-              or (_json(DATA / "config" / "decision-models.json").get(alias) or {}).get("served")
-              or alias)
+    decision = _json(DATA / "config" / "decision-models.json").get(alias) or {}
+    served = _registered_names().get(alias) or decision.get("served") or alias
     tag = _json(DATA / "config" / "provider-tags.json").get(served)
     if not tag:
-        name = endpoints.endpoint_name(endpoints.registrations().get(alias) or {})
+        # A decision model is in no registration either: its own endpoint is its `via`
+        # (Cloudflare's clef, onboarded from a direct cloudflare endpoint).
+        name = (endpoints.endpoint_name(endpoints.registrations().get(alias) or {})
+                or decision.get("via") or decision.get("endpoint"))
         tag = name if name and not endpoints.hub(name) else None
     return tag or "?"
 
