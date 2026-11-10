@@ -2690,6 +2690,15 @@
       var keep = s.length - over - 1;
       return over <= 0 ? s : s.slice(0, Math.ceil(keep / 2)) + '…' + s.slice(s.length - Math.floor(keep / 2));
     }
+    function fit(s, max) { return middle(s, s.length - max); }
+    // The 95% Wilson interval of k successes in n: [low, high]. Honest at small n and at
+    // 0 or n of n, where k/n ± 1.96·se says nothing (3 of 3 is not "100% ± 0").
+    function wilson(k, n) {
+      if (!n) return [0, 1];
+      var z = 1.96, p = k / n, z2 = z * z, den = 1 + z2 / n;
+      var mid = p + z2 / (2 * n), half = z * Math.sqrt(p * (1 - p) / n + z2 / (4 * n * n));
+      return [Math.max(0, (mid - half) / den), Math.min(1, (mid + half) / den)];
+    }
 
     // Trend: who moved, which way, by how much and how sure (serve.trend_data),
     // in the window the card's select says. A row per model with a task to
@@ -2988,24 +2997,42 @@
       });
     });
 
-    // Real work: the share of judged offloads that helped, sample size beside the name.
+    // Real work: how often each model helped, with how sure that is. The dot is the share
+    // helped, its size how many were judged, the line the range the true share likely sits
+    // in (95% Wilson interval: wide for 3 of 3, narrow for 40 of 50). Ranked by the low end
+    // of that range, so volume counts: 3 of 3 no longer outranks 40 of 50. The dashed line
+    // is every model's offloads pooled.
     put('chart-work', function (w) {
-      var R = C.work.slice().sort(function (a, b) { return b.useful / b.judged - a.useful / a.judged || b.judged - a.judged; });
-      if (!R.length) return el('p', {class: 'hint'}, 'No judged offloads yet.');
-      var by = {};
-      R.forEach(function (r) { by[r.model] = r; });
-      function share(r) { return r.useful / r.judged; }
+      if (!C.work.length) return el('p', {class: 'hint'}, 'No judged offloads yet.');
+      var R = C.work.map(function (r) {
+        var b = wilson(r.useful, r.judged), p = r.useful / r.judged;
+        var verdict = b[0] >= 0.5 ? 'helps' : b[1] < 0.5 ? 'does not help' : 'too few to say';
+        return Object.assign({p: p, lo: b[0], hi: b[1], verdict: verdict}, r);
+      }).sort(function (a, b) { return b.lo - a.lo || b.judged - a.judged; });
+      var all = R.reduce(function (s, r) { return [s[0] + r.useful, s[1] + r.judged]; }, [0, 0]);
+      var pooled = all[0] / all[1];
+      var narrowW = w < 560, nameW = narrowW ? 130 : 210;
       return Plot.plot({
-        width: w, height: rows(R.length), style: style, marginLeft: 250, marginRight: 50,
-        x: {domain: [0, 1], label: 'Helped, share of judged offloads →', tickFormat: '.0%', grid: true},
+        width: w, height: 24 * R.length + 90, style: style, marginLeft: nameW, marginRight: 64, marginTop: 34,
+        x: {domain: [0, 1], label: 'Helped, share of judged offloads →', tickFormat: '.0%', ticks: 5, grid: true},
         y: {domain: R.map(function (r) { return r.model; }), label: null,
-            tickFormat: function (m) { return m + '  (' + by[m].judged + ')'; }},
+            tickFormat: function (m) { return fit(m, narrowW ? 16 : 26); }},
+        r: {domain: [0, Math.max.apply(null, R.map(function (r) { return r.judged; }))], range: [3, 11]},
+        color: {domain: ['helps', 'too few to say', 'does not help'], range: [good, muted, err], legend: true},
         marks: [
-          Plot.barX(R, {x: share, y: 'model', fill: function (r) { return share(r) >= 0.5 ? good : err; },
-            title: function (r) { return r.model + ': helped ' + r.useful + ' of ' + r.judged + ' judged (' + r.offloads + ' offloads)'
-              + (r.real || r.false ? '\nverified findings ' + r.real + ', false claims ' + r.false : ''); }}),
-          Plot.text(R, {x: share, y: 'model', text: function (r) { return r.useful + '/' + r.judged; }, dx: 18, fill: ink}),
-          Plot.ruleX([0], {stroke: ink})
+          Plot.ruleX([0.5], {stroke: line}),
+          Plot.ruleX([pooled], {stroke: ink, strokeDasharray: '4 3', strokeOpacity: 0.6}),
+          Plot.text([pooled], {x: function (d) { return d; }, frameAnchor: 'top', dy: -20, fill: muted, fontSize: 11,
+            text: function () { return 'all models ' + Math.round(pooled * 100) + '%'; }}),
+          Plot.ruleY(R, {y: 'model', x1: 'lo', x2: 'hi', stroke: 'verdict', strokeWidth: 2, strokeOpacity: 0.55}),
+          Plot.dot(R, {x: 'p', y: 'model', r: 'judged', fill: 'verdict', stroke: halo, strokeWidth: 1.5,
+            title: function (r) {
+              return r.model + '\nhelped ' + r.useful + ' of ' + r.judged + ' judged (' + Math.round(r.p * 100) + '%; '
+                + r.offloads + ' offloads)\nlikely between ' + Math.round(r.lo * 100) + '% and ' + Math.round(r.hi * 100) + '%'
+                + (r.real || r.false ? '\nverified findings ' + r.real + ', false claims ' + r.false : '');
+            }}),
+          Plot.text(R, {x: 'hi', y: 'model', dx: 8, textAnchor: 'start', fill: ink, fontSize: 11,
+            text: function (r) { return r.useful + '/' + r.judged; }})
         ]
       });
     });
@@ -3048,8 +3075,13 @@
         x: {type: 'log', domain: [lo, hi], label: 'Median seconds per answer on our tasks →'},
         y: {domain: [y0, 1], label: '↑ Findings located', tickFormat: '.0%'},
         marks: [
+          // The zone to be in, as on Who to trust: the faster half (on the log scale) and the
+          // top quarter of findings. Outlined, so it reads on a dark ground too.
+          Plot.rect([{x1: lo, x2: Math.sqrt(lo * hi), y1: y0 + (1 - y0) * 3 / 4, y2: 1}], {x1: 'x1', x2: 'x2', y1: 'y1', y2: 'y2',
+            fill: good, fillOpacity: 0.12, stroke: good, strokeOpacity: 0.5, strokeDasharray: '4 3'}),
           Plot.dot(C.speed, {x: 'seconds', y: 'recall', r: 6, fill: sky, stroke: ink, strokeWidth: 0.5}),
-          Plot.text(labels, {x: 'seconds', y: 'ty', text: 'model', fontSize: 11, fill: ink}),
+          Plot.text(labels, {x: 'seconds', y: 'ty', text: 'model', fontSize: 11, fill: ink,
+                             stroke: halo, strokeWidth: 3.5, strokeOpacity: 0.9, paintOrder: 'stroke'}),
           Plot.tip(C.speed, Plot.pointer({x: 'seconds', y: 'recall',
             title: function (d) { return d.model + '\nmedian ' + d.seconds.toFixed(0) + 's over ' + d.tasks + ' tasks\nfinds ' + Math.round(d.recall * 100) + '%'; }}))
         ]

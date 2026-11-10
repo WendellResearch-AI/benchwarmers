@@ -39,6 +39,7 @@ import datetime
 import functools
 import html
 import json
+import math
 import os
 import pathlib
 import re
@@ -3684,20 +3685,36 @@ def bughunt_card() -> str:
                       " same files left clean. Right is good, left is bad.", "chart-hunt", "".join(body), key)
 
 
+def _wilson(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
+    """The 95% Wilson interval of k successes in n, as bench.js wilson() draws it."""
+    if not n:
+        return 0.0, 1.0
+    p, z2 = k / n, z * z
+    mid, half = p + z2 / (2 * n), z * math.sqrt(p * (1 - p) / n + z2 / (4 * n * n))
+    return max(0.0, (mid - half) / (1 + z2 / n)), min(1.0, (mid + half) / (1 + z2 / n))
+
+
 def work_card() -> str:
     """How often real offloads helped."""
     rows = work_rows()
     body = ["<table><thead><tr>", th("Model"), th("Offloads", True), th("Judged", True), th("Helped", True),
-            th("Verified findings", True), th("False claims", True), "</tr></thead><tbody>"]
-    for r in sorted(rows, key=lambda r: -r["useful"] / r["judged"]):
+            th("Likely between", True), th("Verified findings", True), th("False claims", True), "</tr></thead><tbody>"]
+    for r in sorted(rows, key=lambda r: (-_wilson(r["useful"], r["judged"])[0], -r["judged"])):
+        lo, hi = _wilson(r["useful"], r["judged"])
         body.append(f"<tr><td>{named(r['model'])}</td><td class='num'>{r['offloads']}</td><td class='num'>{r['judged']}</td>"
                     f"<td class='num' data-sort='{r['useful'] / r['judged']:.3f}'>{r['useful']}/{r['judged']}</td>"
+                    f"<td class='num' data-sort='{lo:.3f}'>{lo * 100:.0f}–{hi * 100:.0f}%</td>"
                     f"<td class='num'>{r['real']}</td><td class='num'>{r['false']}</td></tr>")
     body.append("</tbody></table>")
     key = """<dl>
       <dt>Helped</dt><dd>Of the offloads judged, the share recorded useful: real work (reviews,
         enumerations) handed to the model and checked afterwards. Benchmarks never count here.</dd>
-      <dt>The number beside a name</dt><dd>How many were judged. 3 of 3 is weaker evidence than 40 of 50.</dd>
+      <dt>The dot and its line</dt><dd>The dot is the share that helped, bigger for more judged. The
+        line is where the true share likely sits (a 95% Wilson interval): long for 3 of 3, short for
+        40 of 50. Green when even its low end is over half, red when even its high end is under,
+        grey when there are too few to say.</dd>
+      <dt>Order</dt><dd>By the low end of that line, so volume counts: 40 of 50 ranks above 3 of 3.</dd>
+      <dt>The dashed line</dt><dd>Every model's judged offloads together, for comparison.</dd>
       <dt>Findings and false claims</dt><dd>Verified one by one in reviews, recorded since 2026-10-17.</dd>
     </dl>"""
     return chart_card("Real work", "When a model was given real work and the result was checked: how often"
@@ -3887,7 +3904,8 @@ def perf_card() -> str:
         rate limit (capacity), a timeout, or a failure the bench classifies (structural, paywalled,
         entitlement, other).</dd>
       <dt>Speed vs quality</dt><dd>Median seconds per answer on our own suite tasks (real prompts,
-        not the one-word probe) against the share of findings located. Top left is fast and good.</dd>
+        not the one-word probe) against the share of findings located. Top left is fast and good:
+        the green box is the faster half and the top quarter of findings.</dd>
     </dl>""")
     return chart_card("Performance", "What the serving path does — not what the models are worth. One"
                       " reading is weather; the history is climate.", "chart-speed", body, key,
