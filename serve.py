@@ -2254,27 +2254,6 @@ def open_count(groups: dict) -> int:
     return sum(len(g["rows"]) + len(g["held"]) for g in groups.values())
 
 
-def and_list(parts: list[str]) -> str:
-    return " and ".join(parts) if len(parts) < 3 else ", ".join(parts[:-1]) + " and " + parts[-1]
-
-
-def actions_line(groups: dict) -> str:
-    """At a glance's one line about Action needed, when anything is open:
-    what is waiting and how soon, and the way to its page."""
-    rows = [r for g in groups.values() for r in g["rows"]]
-    held = sum(len(g["held"]) for g in groups.values())
-    if not rows and not held:
-        return ""
-    models = sum(1 for r in rows if r["alias"])
-    what = and_list([f"{n} {word}{'s' * (n != 1)}" for n, word in
-                     ((models, "model"), (held, "connection"), (len(rows) - models, "notice")) if n])
-    soon = min(r["days"] for r in rows) if rows else 99
-    many = sum(r["days"] == soon for r in rows)
-    when = (f"; {many} retire{'s' * (many == 1)} in {soon} day{'s' * (soon != 1)}" if soon < 99 else "")
-    return (f"<p class='a-line'><strong>Action needed</strong> <span>{what}{when}.</span>"
-            " <button type='button' class='linkish' data-go='needs'>Review →</button></p>")
-
-
 def actions_page(groups: dict, auto: list) -> str:
     """Action needed, its own page since 2026-11-02: it sat above every page
     and grew to a screen and more of red. Grouped by connection, because
@@ -2371,167 +2350,6 @@ def price_of(alias: str, served: str, f: dict) -> str:
     if any(k.startswith("limits") and str(v).startswith("freellmapi") for k, v in (f.get("sources") or {}).items()):
         return "free"
     return "paid" if sources.is_free(f.get("cost")) is False else "unknown"
-
-
-def facet(name: str, label: str, values) -> str:
-    """A filter by one column's value, beside a panel's search box (bench.js
-    matches it against each row's data-<name>)."""
-    opts = "".join(f"<option value='{esc(v)}'>{esc(v)}</option>" for v in sorted(set(values) - {""}))
-    return (f"<label>{esc(label)} <select data-facet='{esc(name)}'><option value=''>any</option>"
-            f"{opts}</select></label>")
-
-
-def facts_cells(alias: str, f: dict | None = None) -> str:
-    """Context window and capabilities, from metrics/catalog.py; a value you
-    entered is marked, and an unknown one says so rather than looking empty."""
-    f = f or catalog.info(alias)
-    ctx = f.get("context_window")
-    src = f["sources"].get("context_window", "")
-    ctx_cell = (f"<td class='num' data-sort='{ctx}' title='{esc(src)}'>"
-                f"{ctx // 1000:,}k{'*' if src == 'you' else ''}</td>" if ctx
-                else "<td class='num muted' data-sort='-1' title='unknown: fill it in the model popup'>?</td>")
-    caps = [CAP_LABELS[c] for c in catalog.CAPS if f.get(c)]
-    return ctx_cell + (f"<td class='caps'>{' '.join(chip(c, '') for c in caps)}</td>" if caps
-                       else "<td class='muted'>—</td>")
-
-
-def roster() -> str:
-    """Every model on one table: its state, what it has done, what it scored.
-
-    Replaces a grid of offload cards that answered only "what was it used
-    for". Status first, because the first question on opening this page is
-    whether anything is broken; real work second; benchmarks after."""
-    try:
-        from offload import summary
-        work = summary()
-    except Exception:                              # noqa: BLE001
-        work = {}
-    try:
-        import auto_retire
-        rows, answers, _ = auto_retire.evidence()
-    except Exception:                              # noqa: BLE001
-        rows, answers = [], {}
-    last = dict(answers)
-    for r in rows:
-        if r["answered"]:
-            last[r["alias"]] = max(last.get(r["alias"], r["date"]), r["date"])
-    suite: dict[str, list[int]] = {}
-    for (_task, model), hit in suite_scores().items():
-        if (m := re.match(r"(\d+)/(\d+)", hit["found"])):
-            got = suite.setdefault(model, [0, 0, 0])
-            got[0] += int(m.group(1)); got[1] += int(m.group(2)); got[2] += 1
-    tiny = {r["model"]: float(r["p50_s"]) for r in perf_rows()
-            if r["prompt"] == "tiny" and int(r.get("answered") or 0) > 0}
-    status = model_status()
-    new = recently_onboarded()
-    stuck = onboard_issues(status)
-    directory = model_directory()
-    severity = {"err": 0, "warn": 1, "": 2, "ok": 3}
-
-    up = uptime_rows()["models"]
-    body = ["<table><thead><tr>", th("Model"), th("Status"), th("Uptime 7d", True), th("Role"),
-            th("Context", True), th("Can"),
-            th("Offloads", True), th("Helped"), th("Suite", True),
-            th("Reply time", True), th("Last answer"), "</tr></thead><tbody>"]
-    # The model browser: each row says its connection, status, role and price
-    # for the toolbar's filters, and the filters offer what the rows hold.
-    offered: dict[str, list[str]] = {"connection": [], "status": [], "role": [], "price": []}
-
-    def browse(**values) -> str:
-        for k, v in values.items():
-            offered[k].append(v)
-        return "".join(f" data-{k}='{esc(v)}'" for k, v in values.items())
-    for alias in sorted(status, key=lambda a: (-work.get(a, {}).get("offloads", 0), a)):
-        label, css, why = status[alias]
-        f = catalog.info(alias)
-        served = directory.get(alias, {}).get("served") or retired().get(alias, {}).get("served", "")
-        w = work.get(alias, {})
-        judged, useful = w.get("judged", 0), w.get("useful", 0)
-        if judged:
-            rate = useful / judged
-            helped = (f"<span class='helped'><span class='meter'><span"
-                      f"{' class=low' if rate < .5 else ''} style='width:{max(4, round(rate * 100))}%'>"
-                      f"</span></span><span class='mono'>{useful}/{judged}</span></span>")
-        else:
-            rate, helped = -1, "<span class='muted'>not judged</span>"
-        s = suite.get(alias)
-        suite_cell = (f"<td class='num' data-sort='{s[0] / s[1]:.3f}'"
-                      f" title='{s[2]} task{'s' * (s[2] != 1)}'>{s[0]}/{s[1]}</td>"
-                      if s and s[1] else "<td class='num muted' data-sort='-1'>—</td>")
-        p50 = tiny.get(alias)
-        seen = last.get(alias)
-        role = directory.get(alias, {}).get("role") or retired().get(alias, {}).get("role", "")
-        conn = catalog.connection_of(alias)
-        if conn == "?":                    # retired: no registration left to say, but its record does
-            conn = retired().get(alias, {}).get("tag", "").split("/")[0] or "unknown"
-        attrs = browse(connection=conn, status=re.sub(r" in \d+d$", "", label),
-                       role=role, price=price_of(alias, served, f))
-        body.append(
-            f"{tr(alias, attrs)}<td>{named(alias)}</td>"
-            f"<td data-sort='{severity[css]}'>{chip(label, css, why)}"
-            + (" " + chip("new", "new", "onboarded this week") if alias in new else "")
-            + (" " + chip("onboard stopped", stuck[alias]["css"],
-                          f"onboarding stopped at the {stuck[alias].get('step', 'probe')}:"
-                          f" {stuck[alias]['label']}. Open the model for the error.")
-               if alias in stuck else "")
-            + "</td>" + uptime_cell(up.get(alias)) + f"<td>{esc(role)}</td>{facts_cells(alias, f)}"
-            f"<td class='num'>{w.get('offloads', 0)}</td>"
-            f"<td data-sort='{rate:.3f}'>{helped}</td>{suite_cell}"
-            + (f"<td class='num' data-sort='{p50}'>{p50:.1f}s</td>" if p50 is not None
-               else "<td class='num muted' data-sort='99999'>—</td>")
-            + (f"<td class='mono' data-sort='{seen}'>{seen}</td>" if seen
-               else "<td class='muted' data-sort='0'>never</td>")
-            + "</tr>")
-    # Decision models are not in the llm yaml, so no probe, suite or reply time
-    # applies; the role column says what they are and what they answer.
-    for alias, d in sorted(decide.load().items()):
-        w = work.get(alias, {})
-        body.append(
-            "<tr" + browse(connection=d.get("via", ""), status="no probe", role="decision",
-                           price="free" if ":free" in d["served"] else "unknown") + ">"
-            f"<td>{named(alias)}</td>"
-            "<td data-sort='2'><span class='muted' title='decision models have no"
-            " availability probe yet'>—</span>"
-            + (" " + chip("new", "new", "onboarded this week") if d.get("onboarded", "") >=
-               (datetime.date.today() - datetime.timedelta(days=7)).isoformat() else "")
-            + "</td>" + uptime_cell(up.get(alias)) + f"<td>decision · {esc(', '.join(d['question_types']))}</td>"
-            "<td class='num muted' data-sort='-1'>—</td><td class='muted'>—</td>"
-            f"<td class='num'>{w.get('offloads', 0)}</td>"
-            "<td data-sort='-1'><span class='muted'>not judged</span></td>"
-            "<td class='num muted' data-sort='-1'>—</td><td class='num muted' data-sort='99999'>—</td>"
-            "<td class='muted' data-sort='0'>—</td></tr>")
-    body.append("</tbody></table>")
-    key = """<dl>
-      <dt>Status</dt><dd>From the latest probe. <em>healthy</em> answered;
-        <em>throttled</em> and <em>slow</em> are rate limits and timeouts, which
-        never retire a model inside 7 days; <em>retiring in Nd</em> is the
-        countdown before the bench retires it on its own. Hover a chip for the
-        provider's own words.</dd>
-      <dt>Uptime 7d</dt><dd>Of its calls in the last 7 days that say anything about the provider,
-        the share answered: busy, unreachable and timed out count against it; our own quota,
-        pacing and setup problems are left out. Benchmarks has it a day at a time.</dd>
-      <dt>Offloads, Helped</dt><dd>Real work handed over, and how much of what
-        was judged actually helped. Benchmarks never count here.</dd>
-      <dt>Suite</dt><dd>Verified findings located across the internal tasks:
-        the tier that decides routing.</dd>
-      <dt>Reply time</dt><dd>Median seconds to answer a one-word prompt: the
-        serving path's overhead, not the model's worth.</dd>
-      <dt>Last answer</dt><dd>The latest real answer from any source: probe,
-        suite or a useful offload. Seven days without one retires a model.</dd>
-      <dt>decision</dt><dd>A decision model: it answers typed questions (yes/no,
-        choice, score) with probabilities through a Decisions API, never chat.
-        The role column lists the question types it takes. No probe, suite or
-        reply time applies to it.</dd>
-      <dt>Filters</dt><dd>Connection is where a model's calls go (its Open WebUI
-        tag, or its own endpoint). Price: <em>free</em> for a <code>:free</code>
-        slug, a local model, a list price of 0 or a free-tier listing;
-        <em>paid</em> for a subscription or a list price; else unknown. Combine
-        them with the search box.</dd>
-    </dl>"""
-    facets = "".join(facet(k, k.title(), v) for k, v in offered.items())
-    return card("At a glance", "Every model on the bench: whether it works right "
-                "now, what it has been used for, and what it scored.",
-                "".join(body), key, facets)
 
 
 def on_bench() -> set[str]:
@@ -3378,15 +3196,6 @@ def _uptime_window(cells: list, days: int) -> dict:
             "median": seconds[len(seconds) // 2] if seconds else None}
 
 
-def uptime_cell(cells: list | None, days: int = UPTIME_DAYS[0]) -> str:
-    """At a glance's Uptime column: answered of counted over the last `days`."""
-    t = _uptime_window(cells or [], days)
-    if t["pct"] is None:
-        return "<td class='num muted' data-sort='-1' title='no counted calls'>—</td>"
-    return (f"<td class='num{' err' if t['pct'] < .8 else ''}' data-sort='{t['pct']:.4f}'"
-            f" title='{t['up']} of {t['up'] + t['down']} answered'>{t['pct'] * 100:.1f}%</td>")
-
-
 def _why(kinds: dict, which) -> str:
     return ", ".join(f"{k} {n}" for k, n in sorted(kinds.items(), key=lambda kv: -kv[1]) if which(k))
 
@@ -3925,12 +3734,12 @@ def favicon(theme: str) -> str:
     return f"<link rel='icon' type='image/svg+xml' href='data:image/svg+xml,{quote(svg)}'>"
 
 
-def render(theme: str | None = None, shown: str = "glance") -> str:
+def render(theme: str | None = None, shown: str = "suite") -> str:
     with locked.snapshot():                    # each file read once a render (metrics/locked.py)
         return _page(theme, shown)
 
 
-def _page(theme: str | None, shown: str = "glance") -> str:
+def _page(theme: str | None, shown: str = "suite") -> str:
     theme = theme if theme in themes() else saved_theme()      # a ?theme preview, else the saved one
     return (
         f"<!doctype html><html lang='en' data-theme='{esc(theme)}'><meta charset='utf-8'>"
@@ -4406,9 +4215,10 @@ def collections_tab() -> str:
 # A grouped sidebar since 2026-10-19 (RELEASE-PLAN "The dashboard"): eight
 # pages were too many for a row of tabs. Collections holds the gateway's
 # requests under the collections they ran; Benchmarks holds Performance.
-SECTIONS = (("Observe", (("glance", "At a glance", "roster"),
+# At a glance (every model's state and uptime) was retired 2026-11-10: Benchmarks,
+# Uptime and Models said it all again. Benchmarks is the home page.
+SECTIONS = (("Observe", (("suite", "Benchmarks", "benchmarks_tab"),
                          ("needs", "Action needed", "actions_page"),
-                         ("suite", "Benchmarks", "benchmarks_tab"),
                          ("quotas", "Quota management", "quotas_page"),
                          ("logs", "Logs", "logs_page"))),
             ("Gateway", (("endpoints", "Endpoints", "endpoints_page"),
@@ -4433,7 +4243,9 @@ def collections_and_gateway() -> str:
 # names an environment variable, or the app asks, or (an MCP header in Zed,
 # Cline or goose, which take no variable) KEY_HOLDER stays for the reader.
 # Only blocks marked `key` (shell lines, fields typed into an app) get the key
-# made on the page, swapped in for KEY_HOLDER by bench.js.
+# made on the page, swapped in for KEY_HOLDER by bench.js. CLIENTS.md is written
+# from client_setups (scripts/clients_doc.py): after a change here, run it, as
+# check.py fails while the file differs.
 KEY_HOLDER = "<your gateway key>"
 KEY_ENV = "BENCHWARMERS_KEY"         # the plugin's and the CLI's name for it too
 CLIENTS_READ = "2026-11-08"
@@ -4729,20 +4541,20 @@ def _snip_html(group: str, i: int, s: dict) -> str:
 def pane(key: str, actions: tuple | None = None) -> str:
     """One tab's page, as its section holds it. The page renders the tab shown
     (tabs); bench.js fetches the others from GET /api/pane when first opened."""
-    if key in ("needs", "glance"):
+    if key == "needs":
         groups, auto = actions or open_actions()
-        return actions_page(groups, auto) if key == "needs" else actions_line(groups) + roster()
+        return actions_page(groups, auto)
     return globals()[next(fn for k, _, fn in TABS if k == key)]()
 
 
-def tabs(shown: str = "glance") -> str:
-    # Read once a render: Action needed's count in the sidebar, and its page or
-    # At a glance's line about it when one of those is shown. Only the tab
-    # shown is rendered (the bench_tab cookie, set by bench.js): rendering every
-    # one took seconds. The rest are empty until opened (data-lazy).
+def tabs(shown: str = "suite") -> str:
+    # Read once a render: Action needed's count in the sidebar, and its page when
+    # shown. Only the tab shown is rendered (the bench_tab cookie, set by bench.js):
+    # rendering every one took seconds. The rest are empty until opened (data-lazy).
+    # A tab that is gone (a cookie still saying glance) shows the home page.
     actions = open_actions()
     count = {"needs": open_count(actions[0])}
-    shown = shown if any(k == shown for k, _, _ in TABS) else "glance"
+    shown = shown if any(k == shown for k, _, _ in TABS) else "suite"
 
     def button(key: str, label: str) -> str:
         n = count.get(key)
@@ -5438,7 +5250,9 @@ def models_page() -> str:
     return ("<div class='panel'><h2>Models</h2><p class='sub'>Every model on the bench by the connection it"
             " comes from, with the endpoint it is reached through and what is known of its limits. A name"
             " opens the model.</p><div class='toolbar'><input type='search' data-filter='page'"
-            " placeholder='Find a model or connection' aria-label='Filter models'></div></div>"
+            " placeholder='Find a model or connection' aria-label='Filter models'>"
+            "<button class='btn small' type='button' data-fold-all='close'>Collapse all</button>"
+            "<button class='btn small' type='button' data-fold-all='open'>Expand all</button></div></div>"
             + "".join(cards))
 
 
@@ -5618,8 +5432,11 @@ def logs_page() -> str:
         return (f"<details class='panel'{' open' if open_ else ''}><summary><b>{esc(title)}</b>"
                 f" <span class='muted'>· {n}</span></summary>{body}</details>")
     return (
-        "<div class='panel'><input data-filter='page' placeholder='Filter every log on this page'"
-        " aria-label='Filter logs'></div>"
+        "<div class='panel'><div class='toolbar'><input data-filter='page' placeholder='Filter every log on this page'"
+        " aria-label='Filter logs'>"
+        # bench.js: what the page shows, filter applied, as one .txt to read offline.
+        "<button class='btn small' type='button' id='logs-export' title='Save the logs on this page, as"
+        " filtered, to a text file'>Export as text</button></div></div>"
         + section("Gateway calls", "<table><thead><tr>" + th("When") + th("Collection") + th("Shape")
                   + th("Seats") + f"</tr></thead><tbody>{''.join(gw)}</tbody></table>", len(gw), True)
         + section("Changes", "<table><thead><tr>" + th("When") + th("By") + th("Model") + th("What")
@@ -5938,8 +5755,7 @@ class Handler(gateway.Handler):
         if self.path == "/api/needs":                  # after an action there: that page, not the whole one
             with locked.snapshot():
                 groups, auto = open_actions()
-                self._json(200, {"html": actions_page(groups, auto), "line": actions_line(groups),
-                                 "count": open_count(groups)})
+                self._json(200, {"html": actions_page(groups, auto), "count": open_count(groups)})
             return
         if path == "/api/pane":                        # a tab's page, when first opened (bench.js load)
             key = q.get("tab", [""])[0]
@@ -6058,7 +5874,7 @@ class Handler(gateway.Handler):
         theme = q.get("theme", [None])[0]               # a preview; else the saved one
         shown = re.search(r"(?:^|;)\s*bench_tab=(\w+)", self.headers.get("Cookie") or "")   # the tab last shown
         try:
-            page = render(theme, shown.group(1) if shown else "glance")
+            page = render(theme, shown.group(1) if shown else "suite")
         except RuntimeError as exc:                    # endpoints.json unreadable: say which and why
             page = f"<!doctype html><meta charset='utf-8'><title>Benchwarmers</title><p>{esc(exc)}</p>"
         self._page(page)                               # gzipped beyond this machine (_length)

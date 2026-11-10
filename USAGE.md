@@ -25,15 +25,14 @@ coding agent doing it with you); the gateway's whole contract is in
 
 | Group | Page | What it is for |
 | --- | --- | --- |
-| Observe | **At a glance** | Every model on the bench: whether it works right now, its uptime over 7 days, its role, and its connection. Click a name for its popup: role, alias, facts, options, retire. |
+| Observe | **Benchmarks** | The home page. How models do on the suite and on real work: bugs found against false alarms, who is confidently wrong, each model against its own earlier scores, uptime, speed, and the decision models. Each report shares as an image or its table. |
 | | **Action needed** | What will not fix itself, by the connection it comes from, with Retry and Retire on each model. |
-| | **Benchmarks** | How models do on the suite and on real work: bugs found against false alarms, who is confidently wrong, each model against its own earlier scores, uptime, speed, and the decision models. Each report shares as an image or its table. |
 | | **Quota management** | A tile per provider: what is left, when it resets, and which of its models are resting. Then the week's resets, and what the bench sent. |
 | | **Logs** | Gateway calls (who sat and how it went, never the prompt), changes made from the dashboard, the scheduler, and onboarding runs. |
 | Gateway | **Endpoints** | Where models are served from. Add an endpoint (a provider's sign-in, or any OpenAI-compatible API key), change a key, and see what each one serves. A model server running on this machine, at its usual port or any other its process is listening on (LM Studio, Jan, llama.cpp, vLLM and the like), is offered under Found on this machine: Add opens the dialog with it filled in, to test and save. Also your own app registrations and rate limits per connection. |
-| | **Models** | Every model on the bench, by the connection it comes from. |
+| | **Models** | Every model on the bench, by the connection it comes from: what it holds, its reply time and its limits. One search above every table, each table folds, and Collapse all / Expand all. Click a name for its popup: role, alias, facts, options, retire. |
 | | **Collections** | The named panels your apps ask for, and the gateway's settings. |
-| | **Clients** | Each popular app's set-up (opencode, VS Code, Codex, Zed, Continue, Cline, Kilo Code, Claude Code, goose, chat apps), filled in from this install, with Copy and a gateway key made on the spot. |
+| | **Clients** | Each popular app's set-up (opencode, VS Code, Codex, Zed, Continue, Cline, Kilo Code, Claude Code, goose, chat apps), filled in from this install, with Copy and a gateway key made on the spot. [CLIENTS.md](CLIENTS.md) has the same, for a fresh install. |
 | | **Discover** | Models worth adding, from public catalogs, with the ways this install can reach each one. |
 | Control | **Settings** | Theme, gateway keys, the scheduler, the model client, providers whose free models work only in their own app, export and import, how the install is reached (shown only), and Restart. |
 | | **Info** | The source repository, the version (linking its release), Python, data folder and counts. |
@@ -52,8 +51,7 @@ clears the alert) and Retire. A group of two or more has Retry all and Retire
 all; a connection held because every model on it fails says so above its
 models, with any link the provider gave. Automatic retirements from the last
 week are folded at the end, each with Restore. Its count sits beside it in the
-sidebar, and At a glance opens on one line saying what is waiting and how
-soon. An alert whose models have all been retired goes at once. A model that
+sidebar. An alert whose models have all been retired goes at once. A model that
 is out of quota is not counting down: days the bench held its calls back until
 a stated reset, an account's shared free quota was spent, or the provider said
 the model's free quota is used up, pause its clock, and while it is still out

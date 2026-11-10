@@ -49,6 +49,7 @@ CHECKS = [
     ("scripts/onboard.py", ["--selftest"], False),
     ("scripts/export_check.py", ["--selftest"], False),
     ("scripts/notice.py", ["--check"], False),
+    ("scripts/clients_doc.py", ["--check"], False),       # CLIENTS.md is what the Clients page shows
     ("scripts/check_themes.py", [], False),
     ("scripts/test_owui.py", [], False),
     ("scripts/test_hubs.py", [], False),

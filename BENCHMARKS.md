@@ -70,7 +70,7 @@ earlier scores on the same tasks, over the last 30 days (or 60).
 
 Whether the provider was there when the bench called it, from the calls the
 bench makes anyway: one cell a day, by provider and then by model, over the
-last 7 days (or 30). At a glance has each model's 7 days too.
+last 7 days (or 30).
 
 - **Down**: the provider was busy or overloaded (a 5xx, high demand, a shared
   pool's 429), unreachable (a broken stream, no reply), timed out (the

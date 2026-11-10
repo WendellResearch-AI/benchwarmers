@@ -213,7 +213,7 @@
   var rendered = document.querySelector('.tab:not([data-lazy])');
   Promise.resolve().then(function () { if (rendered) setUp(rendered.id.slice(4)); });
   var wanted = store('bench.tab');            // else the one rendered: storage blocked or cleared, the cookie kept
-  show(wanted && $('tab-' + wanted) ? wanted : rendered ? rendered.id.slice(4) : 'glance');
+  show(wanted && $('tab-' + wanted) ? wanted : rendered ? rendered.id.slice(4) : 'suite');
 
   // ---- sortable tables -------------------------------------------------
   function key(cell) {
@@ -276,7 +276,39 @@
   document.addEventListener('input', function (ev) { if (ev.target.matches('input[data-filter]')) applyFilter(scopeOf(ev.target)); });
   document.addEventListener('change', function (ev) { if (ev.target.matches('select[data-facet]')) applyFilter(scopeOf(ev.target)); });
 
-  // ---- a link to another page (At a glance's line to Action needed) ----
+  // ---- Collapse all / Expand all: every fold of the page's groups (Models' connections)
+  document.addEventListener('click', function (e) {
+    var b = e.target.closest('[data-fold-all]');
+    if (!b) return;
+    b.closest('.tab').querySelectorAll('details.model-card').forEach(function (d) { d.open = b.dataset.foldAll === 'open'; });
+  });
+
+  // ---- Logs, Export as text: each log on the page as it shows (the filter applied,
+  // folded ones too), a table's rows tab-separated under its header, to one .txt.
+  on('click', 'logs-export', function () {
+    var tab = $('tab-logs'), out = ['Benchwarmers logs, exported ' + new Date().toString()];
+    var q = (tab.querySelector('input[data-filter]') || {}).value;
+    if (q) out.push('Filtered by: ' + q);
+    tab.querySelectorAll('details.panel').forEach(function (d) {
+      out.push('', '== ' + d.querySelector('summary').textContent.trim() + ' ==');
+      var cells = function (tr) {
+        return Array.prototype.map.call(tr.children, function (c) { return c.textContent.trim().replace(/\s+/g, ' '); }).join('\t');
+      };
+      var head = d.querySelector('thead tr');
+      if (head) out.push(cells(head));
+      d.querySelectorAll('tbody tr, .log-line').forEach(function (r) {
+        if (!r.hidden) out.push(r.matches('tr') ? cells(r) : r.textContent.trim());
+      });
+    });
+    var now = new Date(), two = function (n) { return String(n).padStart(2, '0'); };   // local time, as the page shows
+    var stamp = now.getFullYear() + '-' + two(now.getMonth() + 1) + '-' + two(now.getDate()) + '-' + two(now.getHours()) + two(now.getMinutes());
+    var a = el('a', {href: URL.createObjectURL(new Blob([out.join('\n') + '\n'], {type: 'text/plain;charset=utf-8'})),
+                     download: 'benchwarmers-logs-' + stamp + '.txt'});
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+  });
+
+  // ---- a link to another page ----
   document.addEventListener('click', function (e) {
     var b = e.target.closest('[data-go]');
     if (b) { show(b.dataset.go); scrollTo(0, 0); }
@@ -767,8 +799,8 @@
   });
 
   // ---- after an action: the part it changed, not the whole page ----------
-  // Action needed's page, its count in the sidebar and At a glance's line
-  // about it, from the server (GET /api/needs, a few ms): a page reload
+  // Action needed's page and its count in the sidebar, from the server
+  // (GET /api/needs, a few ms): a page reload
   // renders every tab, seconds.
   var needsAsked = 0;
   function refreshNeeds(live) {
@@ -783,10 +815,6 @@
         count.textContent = n.count;
         tab.setAttribute('aria-label', tab.firstChild.textContent + ', ' + n.count + ' open');
       }
-      var line = document.querySelector('#tab-glance > .a-line');
-      if (line) line.remove();
-      // Not into a page not fetched yet: it says Loading… while empty, and comes with its line.
-      if (n.line && $('tab-glance').firstChild) $('tab-glance').insertAdjacentHTML('afterbegin', n.line);
     }).catch(function () { location.reload(); });          // could not ask: the old way
   }
   // A retired model's rows grey out and hide behind Show retired, as the

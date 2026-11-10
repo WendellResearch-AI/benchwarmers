@@ -117,8 +117,6 @@ main { max-width: var(--page, 104rem); margin: 0 auto; padding: 0 var(--gutter) 
 
 /* Action needed: its own page, a panel per connection as on Models, each a
    table (name, state, the provider's words, actions). */
-.a-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: .25rem .6rem; margin: 1.4rem 1.6rem 0;
-          padding: .45rem .75rem; background: var(--err-ground); border-radius: var(--radius); }
 .a-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: .25rem .6rem; }
 .a-head .why { font-size: .875rem; }
 .a-head .why:empty { display: none; }
@@ -594,7 +592,6 @@ dialog .pick { display: flex; gap: 1.5rem; }
   .toolbar input[type=search] { min-width: 0; width: 100%; }
   button.c-row { grid-template-columns: minmax(0, 1fr); }     /* the seats get the width; the whole row opens */
   .c-row .open-hint { display: none; }
-  .a-line { margin: 1rem 1rem 0; }
 }
 /* A narrow page (a phone, or a window with the sidebar beside it): name and
    state on one line, the words and actions under them. No gap between name

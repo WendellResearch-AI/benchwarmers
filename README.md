@@ -419,6 +419,8 @@ collections and MCP server, with a Copy button: opencode, VS Code chat, Codex
 CLI, Zed, Continue, Cline and Kilo Code, Claude Code, goose, and chat apps
 (LobeHub, AnythingLLM, Cherry Studio, Chatbox, LibreChat). Where keys are
 asked for, it makes one and fills it in, never into a file that may sync.
+The same set-ups are in [CLIENTS.md](CLIENTS.md), with a fresh install's
+address and collections, for reading here or handing to an agent.
 
 <!-- The MCP Registry's proof that the PyPI package is this server (server.json):
 mcp-name: io.github.WendellResearch-AI/benchwarmers -->
