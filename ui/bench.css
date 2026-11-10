@@ -538,11 +538,14 @@ h3.chart-head { font-size: 1rem; margin: 1rem 0 .2rem; }
 .chart-label { font-size: .875rem; font-weight: 600; margin: .9rem 0 .1rem; }
 /* Models: each connection a fold, its heading the summary */
 .model-card > summary h3.chart-head { display: inline; margin: 0; }
-/* Collapse all ⊟ / Expand all ⊞: icons beside the search, each only while it applies */
-button.fold-all { border: 1px solid var(--line); background: var(--paper-2); color: var(--ink); cursor: pointer;
-                  font-size: 1.25rem; line-height: 1; width: 2rem; height: 2rem; border-radius: var(--radius); }
-button.fold-all:hover, button.fold-all:focus-visible { border-color: var(--ink); }
-.toolbar button.fold-all + button.fold-all { margin-left: -.85rem; }   /* the pair sits together */
+/* Expand all / Collapse all: a text toggle with a chevron that turns, like a fold's own marker */
+button.fold-all { display: inline-flex; align-items: center; gap: .4rem; margin-left: auto; border: 0; padding: .2rem 0;
+                  background: none; color: var(--link); font: inherit; font-size: .9375rem; cursor: pointer; }
+button.fold-all:hover, button.fold-all:focus-visible { text-decoration: underline; text-underline-offset: .18em; }
+.fold-chev { width: .5rem; height: .5rem; border: solid currentColor; border-width: 0 2px 2px 0;
+             transform: rotate(-45deg); transition: transform .15s; }
+button.fold-all[aria-expanded="true"] .fold-chev { transform: rotate(45deg); margin-top: -.3rem; }
+@media (prefers-reduced-motion: reduce) { .fold-chev { transition: none; } }
 /* the Collections tab: the dialog's form, kept to a readable width */
 .panel.form-panel > :not(#c-list, table) { max-width: 46rem; }
 /* a list of things you open (collections), with its New button above */

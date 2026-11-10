@@ -5251,11 +5251,10 @@ def models_page() -> str:
             " comes from, with the endpoint it is reached through and what is known of its limits. A name"
             " opens the model.</p><div class='toolbar'><input type='search' data-filter='page'"
             " placeholder='Find a model or connection' aria-label='Filter models'>"
-            # Each shown only while it would change something (bench.js foldButtons): all open, no ⊞.
-            "<button class='fold-all' type='button' data-fold-all='close' title='Collapse all'"
-            " aria-label='Collapse all'>⊟</button>"
-            "<button class='fold-all' type='button' data-fold-all='open' title='Expand all'"
-            " aria-label='Expand all' hidden>⊞</button></div></div>"
+            # One labelled toggle, as accordions do it (GOV.UK's "Show all sections"): Collapse all
+            # while every table is open, else Expand all (bench.js foldButtons keeps it right).
+            "<button class='fold-all' type='button' data-fold-all='close' aria-expanded='true'>"
+            "<span class='fold-chev' aria-hidden='true'></span>Collapse all</button></div></div>"
             + "".join(cards))
 
 

@@ -276,14 +276,17 @@
   document.addEventListener('input', function (ev) { if (ev.target.matches('input[data-filter]')) applyFilter(scopeOf(ev.target)); });
   document.addEventListener('change', function (ev) { if (ev.target.matches('select[data-facet]')) applyFilter(scopeOf(ev.target)); });
 
-  // ---- Collapse all / Expand all: every fold of the page's groups (Models' connections).
-  // Each icon shows only while it would change something: ⊟ while any is open, ⊞ while any
-  // is shut. Kept right after any fold opens or shuts, by hand, by these or by a live swap.
+  // ---- Expand all / Collapse all: every fold of the page's groups (Models' connections).
+  // One labelled toggle, as accordions have it: Collapse all while every one is open,
+  // else Expand all. Kept right after any fold opens or shuts, by hand, by it or by a live swap.
   function foldButtons(tab) {
     var folds = tab.querySelectorAll('details.model-card'), open = 0;
     folds.forEach(function (d) { if (d.open) open++; });
+    var all = open === folds.length;
     tab.querySelectorAll('[data-fold-all]').forEach(function (b) {
-      b.hidden = b.dataset.foldAll === 'open' ? open === folds.length : open === 0;
+      b.dataset.foldAll = all ? 'close' : 'open';
+      b.setAttribute('aria-expanded', String(all));
+      b.lastChild.textContent = all ? 'Collapse all' : 'Expand all';
     });
   }
   document.addEventListener('click', function (e) {
