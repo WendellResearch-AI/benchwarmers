@@ -295,7 +295,8 @@ def models(name: str | None = None, timeout: int = 30) -> dict[str, dict]:
 def list_models(entry: dict, secret: str = "", timeout: int = 30) -> dict[str, dict]:
     """What an endpoint entry lists, saved or not yet (the dashboard tests one
     before saving it). `models_url` when the list lives elsewhere (GitHub
-    Models: its catalog, a bare JSON list); entries marked `visibility` other
+    Models: its catalog, a bare JSON list; Cloudflare: its catalog search,
+    {"result": [...]} by `name`); entries marked `visibility` other
     than "list" are left out (ChatGPT's plan lists ones it will not serve)."""
     api = entry.get("api") or "chat"
     headers = dict(entry.get("headers") or {})
@@ -313,6 +314,9 @@ def list_models(entry: dict, secret: str = "", timeout: int = 30) -> dict[str, d
         # what generateContent serves, by its bare name.
         rows = [{**m, "id": str(m.get("name", "")).removeprefix("models/")} for m in data.get("models", [])
                 if isinstance(m, dict) and "generateContent" in (m.get("supportedGenerationMethods") or ())]
+    elif isinstance(data, dict) and isinstance(data.get("result"), list):
+        # Cloudflare's catalog search: {"result": [{"name": "@cf/...", ...}]}.
+        rows = [{**m, "id": m.get("name")} for m in data["result"] if isinstance(m, dict)]
     else:
         rows = data.get("data", []) if isinstance(data, dict) else data
     return {e["id"]: e for e in rows

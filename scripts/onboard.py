@@ -286,7 +286,13 @@ def main() -> None:
             return
         # The passthrough hints are about Open WebUI; anywhere else a 404 is the provider's.
         owui = endpoints.hub(endpoint) == "openwebui"
-        hint = ("  Open WebUI relays decisions only with ENABLE_OPENAI_API_PASSTHROUGH=True"
+        # ponytail: Cloudflare told apart by its @cf/ ids; its partner models (no @cf/) get the generic hint.
+        hint = ("  Cloudflare answers decisions only on its /ai/run route, which no hub relays: add"
+                " Cloudflare as a direct endpoint (decisions .../accounts/<id>/ai/run/{model},"
+                " models_url .../ai/models/search?per_page=1000) and onboard it from there.\n"
+                if "@cf/" in name and endpoint != "cloudflare" and "{model}" not in
+                (endpoints.load()[endpoint].get("decisions") or "") else
+                "  Open WebUI relays decisions only with ENABLE_OPENAI_API_PASSTHROUGH=True"
                 " in its environment.\n" if owui and "passthrough" in why.lower() else
                 "  Its connection has no /decisions under its base. An OpenRouter-hosted decision"
                 " model cannot go through Open WebUI (its Decisions API is outside /api/v1);"

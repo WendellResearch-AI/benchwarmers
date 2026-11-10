@@ -34,6 +34,14 @@ URL, which nothing writes (an Open WebUI hub is given one by hand), and the
 onboarding hints about it show only for an Open WebUI hub (endpoints.hub). OpenRouter's /models omits its decision
 models, so that endpoint names them in `unlisted_models` to make them pickable.
 
+Cloudflare Workers AI answers decisions only on `/ai/run/<model>`, outside its
+OpenAI-compatible `/ai/v1` base, so no hub can relay them: its endpoint's
+`decisions` URL is `.../accounts/<id>/ai/run/{model}`. `{model}` puts the
+served id in the URL and leaves it out of the body (Cloudflare refuses
+`@cf/...` there), and its `{"result": {...}}` wrapper is taken off the reply.
+Its /models answers 405, so that endpoint lists from `models_url`, the
+catalog search (`.../ai/models/search`), read by endpoints.list_models.
+
 WHAT EACH MODEL CAN ANSWER
 --------------------------
 `question_types` lists the types a model accepted when onboarding probed it
@@ -235,7 +243,13 @@ def call(endpoint: str, served: str, state, questions: dict, timeout: int = 60,
         headers = {"Content-Type": "application/json", **(entry.get("headers") or {})}
         if (secret := endpoints.key(endpoint)):
             headers["Authorization"] = f"Bearer {secret}"
-        body = json.dumps({"model": served, "state": state, "questions": questions}).encode()
+        payload = {"model": served, "state": state, "questions": questions}
+        if "{model}" in url:
+            # Cloudflare names the model in the URL (/ai/run/@cf/cloudflare/clef)
+            # and refuses its own id in the body ("clef", not "@cf/...", is valid there).
+            url = url.replace("{model}", served)
+            del payload["model"]
+        body = json.dumps(payload).encode()
         # Inception answers 429 to calls in quick succession (seen 2026-10-16:
         # the second of three onboarding probes), so a 429 waits and retries.
         for wait in ((5, 15, 0) if retry else (0,)):
@@ -243,6 +257,9 @@ def call(endpoint: str, served: str, state, questions: dict, timeout: int = 60,
             try:
                 with urllib.request.urlopen(request, timeout=timeout) as response:
                     reply = json.load(response)
+                    # Cloudflare wraps every reply: {"result": {"answers": ...}, "success": true}.
+                    if isinstance(reply, dict) and "answers" not in reply and isinstance(reply.get("result"), dict):
+                        reply = reply["result"]
                     return reply
             except urllib.error.HTTPError as exc:
                 if exc.code != 429 or not wait:
@@ -358,12 +375,21 @@ def refuses_chat(endpoint: str, served: str) -> bool:
         with urllib.request.urlopen(request, timeout=60):
             return False
     except urllib.error.HTTPError as exc:
-        # OpenRouter says "is a decisions model"; other providers word it their
-        # own way, so any refusal that names decisions or systemone counts.
-        text = error_text(exc).lower()
-        return any(w in text for w in ("decisions model", "decision model", "systemone", "/decisions"))
+        return names_decisions(error_text(exc))
     except Exception:                                  # noqa: BLE001
         return False
+
+
+def names_decisions(text: str) -> bool:
+    """A chat refusal that says the model is a decision model. OpenRouter names
+    it ("is a decisions model"); Cloudflare only lists the fields it wanted
+    ("required properties ... 'model,state,questions'", "Required value
+    missing: questions"). Every Decisions API takes `state` and `questions`,
+    so a refusal asking for both counts, whoever words it."""
+    low = (text or "").lower()
+    if any(w in low for w in ("decisions model", "decision model", "systemone", "/decisions")):
+        return True
+    return "questions" in low and ("state" in low or "required" in low)
 
 
 def question_types(endpoint: str, served: str, path: str = "decisions") -> list[str]:
