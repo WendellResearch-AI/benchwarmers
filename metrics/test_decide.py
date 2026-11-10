@@ -29,7 +29,9 @@ def jsonl(path: str, rows: list[dict]) -> None:
 
 
 write("config/endpoints.json", {"hub": {"base": "http://127.0.0.1:9/api", "key": "hub", "default": True,
-                                        "decisions": "http://127.0.0.1:9/openai/{path}"}})
+                                        "decisions": "http://127.0.0.1:9/openai/{path}"},
+                                "cf": {"base": "http://127.0.0.1:9/ai/v1", "key": "hub",
+                                       "decisions": "http://127.0.0.1:9/ai/run/{model}"}})
 # dm2 first: before any result it is the one asked (the first that takes choice, as before),
 # except per request, where its :free budget is spared while dm1 can answer.
 MODELS = {
@@ -91,6 +93,14 @@ assert "passthrough" in decide.error_text(http_error(b'{"detail": "Direct API pa
 assert decide.error_text(http_error(b'{"error": null, "message": "down"}')).startswith("400")
 assert decide.error_text(http_error(b"not json")) == "400"
 
+# A chat refusal says "decision model" however the provider words it.
+assert decide.names_decisions("400 is a decisions model and cannot be used with chat")             # OpenRouter
+assert decide.names_decisions("400 {'errors': [{'message': \"AiError: Bad input: Error: required properties"
+                              " at '/' are 'model,state,questions' (72ae)\", 'code': 5006}]}")     # Cloudflare
+assert decide.names_decisions("400 Model execution failed (User Input Error): Required value missing: questions.")
+assert not decide.names_decisions("400 messages: Required")       # Cloudflare's v1 refusing a decision body
+assert not decide.names_decisions("429 Rate limit exceeded") and not decide.names_decisions("")
+
 # ask() refuses a type the entry does not list, before any call is made (and logs nothing).
 try:
     decide.ask("yesno", "s", {"q": {"type": "choice", "instructions": "?", "criteria": {"a": None}}})
@@ -124,6 +134,20 @@ def urlopen(request, timeout=0):
     return io.BytesIO(json.dumps({"answers": {name: answer}}).encode())
 
 
+
+
+# Cloudflare: the model in the URL and not the body, the reply in a "result" wrapper.
+def cf_urlopen(request, timeout=0):
+    body = json.loads(request.data)
+    assert request.full_url == "http://127.0.0.1:9/ai/run/@cf/cloudflare/clef-flash" and "model" not in body, body
+    return io.BytesIO(json.dumps({"result": {"model": "clef-flash", "answers": {"probe": {"type": "noul", "noul": 0.98}}},
+                                  "success": True, "errors": []}).encode())
+
+
+decide.urllib.request.urlopen = cf_urlopen
+assert decide.probe("cf", "@cf/cloudflare/clef-flash") == (None, "decisions")
+assert decide.log_rows()[-1]["answers"]["probe"]["noul"] == 0.98
+decide.LOG.unlink()
 decide.urllib.request.urlopen = urlopen
 
 # ---- every call is logged, and an error's body survives the log -------------------------------
