@@ -2763,6 +2763,9 @@
     // the pages share. It was the whole page, which made every chart wider than
     // its column beside the sidebar, scaled down, with smaller text.
     function width() {
+      // Benchmarks shown with its rail beside the reports: a report's own width, not the column's.
+      var report = document.querySelector('.tab.active .panel.report');
+      if (report && report.clientWidth) return Math.max(520, report.clientWidth - 50);
       var col = document.querySelector('.panes') || document.querySelector('main');
       return Math.max(520, (col.clientWidth || 900) - 50);
     }
@@ -3385,7 +3388,8 @@
     if (!nav || !window.IntersectionObserver) return;
     var links = {}, seen = {}, current = null;
     nav.querySelectorAll('a').forEach(function (a) { links[a.getAttribute('href').slice(1)] = a; });
-    // A report counts as in view while it crosses the band just under the bar.
+    // A report counts as in view while it crosses a thin band 15-20% down the window: just
+    // under where a jump lands it, so the one jumped to is the one marked.
     spy = new IntersectionObserver(function (entries) {
       entries.forEach(function (e) { seen[e.target.id] = e.isIntersecting; });
       var id = Object.keys(links).filter(function (k) { return seen[k]; })[0];
@@ -3397,9 +3401,23 @@
       if (a.offsetLeft < nav.scrollLeft || a.offsetLeft + a.offsetWidth > nav.scrollLeft + nav.clientWidth) {
         nav.scrollLeft = a.offsetLeft - 16;
       }
-    }, {rootMargin: '-56px 0px -60% 0px'});
+    }, {rootMargin: '-15% 0px -80% 0px'});
     document.querySelectorAll('#tab-suite .panel.report').forEach(function (p) { spy.observe(p); });
   }
+  // A jump scrolls smoothly (unless motion is reduced) and moves focus to the report, so
+  // a keyboard user carries on from there; the address keeps the report's #, as a link would.
+  document.addEventListener('click', function (e) {
+    var a = e.target.closest('.jump a');
+    if (!a) return;
+    var target = $(a.getAttribute('href').slice(1));
+    if (!target) return;
+    e.preventDefault();
+    var still = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+    target.scrollIntoView({behavior: still ? 'auto' : 'smooth', block: 'start'});
+    target.setAttribute('tabindex', '-1');
+    target.focus({preventScroll: true});
+    history.replaceState(null, '', a.getAttribute('href'));
+  });
   // Uptime's or Trend's window: that window's tables (and Uptime's list) shown, its charts drawn again.
   document.addEventListener('change', function (ev) {
     var s = ev.target, part = s.matches('select[data-uptime-days]') ? 'uptime' : s.matches('select[data-trend-days]') ? 'trend' : '';

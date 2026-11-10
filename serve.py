@@ -3674,7 +3674,7 @@ def benchmarks_tab() -> str:
     links = "".join(f"<a href='#report-{key}'>{esc(label)}</a>" for key, label, _ in reports)
     cards = "".join(card().replace("<div class='panel'", f"<div class='panel report' id='report-{key}'", 1)
                     for key, _, card in reports)
-    return (f"<nav class='jump' aria-label='Reports'>{links}</nav>{cards}"
+    return (f"<nav class='jump' aria-label='On this page'><p class='jump-title'>On this page</p>{links}</nav>{cards}"
             f"<script type='application/json' id='charts-data'>{data}</script>")
 
 

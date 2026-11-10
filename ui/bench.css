@@ -536,16 +536,34 @@ pre.log.answer { max-height: 40vh; }
 .chart.muted { font-size: .875rem; }
 h3.chart-head { font-size: 1rem; margin: 1rem 0 .2rem; }
 .chart-label { font-size: .875rem; font-weight: 600; margin: .9rem 0 .1rem; }
-/* Benchmarks' jump bar: a link per report, held at the top while the page scrolls;
-   the report in view is marked (bench.js jumpSpy). One line, sideways on a phone. */
-.jump { position: sticky; top: 0; z-index: 4; display: flex; gap: .2rem; overflow-x: auto; scrollbar-width: thin;
-        padding: .55rem 1.2rem; background: var(--paper-2); border-bottom: 1px solid var(--line);
-        border-radius: 14px 14px 0 0; }
-.jump a { flex: none; padding: .25rem .6rem; border-radius: 999px; color: var(--ink); text-decoration: none;
-          font-size: .875rem; white-space: nowrap; }
-.jump a:hover { background: var(--band); }
-.jump a[aria-current] { background: var(--ink); color: var(--paper-2); }
-.panel.report { scroll-margin-top: 3.4rem; }        /* a jump lands under the bar, not behind it */
+/* Benchmarks' "On this page": a link per report, the one in view marked (bench.js jumpSpy),
+   after the U.S. Web Design System's in-page navigation. Dressed as the sidebar is: the
+   theme's frosted rail, muted links, the highlighter stroke on the current one.
+   Narrow: a bar floating at the top of the page, sideways when it does not fit.
+   Wide: a rail beside the reports, sticky, every link on its own line. */
+.jump { position: sticky; top: .75rem; z-index: 4; display: flex; align-items: center; gap: 1rem;
+        margin: .9rem 1.2rem 0; padding: .45rem 1.1rem; overflow-x: auto; scrollbar-width: none;
+        background: var(--rail, var(--paper-2)); border: 1px solid var(--line); border-radius: 999px;
+        -webkit-backdrop-filter: var(--glass, blur(10px)); backdrop-filter: var(--glass, blur(10px));
+        box-shadow: 0 10px 28px -16px rgb(0 0 0 / .4); }
+.jump::-webkit-scrollbar { display: none; }
+.jump .jump-title { display: none; margin: 0 0 .2rem; font-size: .75rem; font-weight: 700; letter-spacing: .08em;
+                    text-transform: uppercase; color: color-mix(in oklab, var(--brand) 72%, var(--ink)); }
+.jump a { flex: none; padding: .1rem 0; line-height: 1.15; color: var(--muted); text-decoration: none;
+          font-size: .9375rem; font-weight: 500; white-space: nowrap; }
+.jump a:hover, .jump a:focus-visible { color: var(--ink); }
+.jump a[aria-current] { color: var(--ink); font-weight: 700; box-shadow: inset 0 -.42em 0 var(--signal); }
+.panel.report { scroll-margin-top: 4.2rem; }        /* a jump lands under the bar, not behind it */
+@media (min-width: 75rem) {
+  #tab-suite:has(> .jump) { display: grid; grid-template-columns: minmax(0, 1fr) 11rem; }
+  #tab-suite:has(> .jump) > * { grid-column: 1; }
+  #tab-suite > .jump { grid-column: 2; grid-row: 1 / span 40; align-self: start; top: 1rem;
+                       flex-direction: column; align-items: flex-start; gap: .6rem; overflow: visible;
+                       margin: 1.4rem 1rem 1.4rem 0; padding: 1rem 1.1rem; border-radius: 14px; box-shadow: none; }
+  #tab-suite > .jump .jump-title { display: block; }
+  #tab-suite > .jump a { white-space: normal; }
+  .panel.report { scroll-margin-top: 1rem; }
+}
 /* Models: each connection a fold, its heading the summary */
 .model-card > summary h3.chart-head { display: inline; margin: 0; }
 /* Expand all / Collapse all: a text toggle with a chevron that turns, like a fold's own marker */
