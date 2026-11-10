@@ -2838,14 +2838,67 @@
     // the time; under it, it is surer than it should be. Panels stack on a phone.
     var DC = C.decide;
     if (DC) put('chart-decide', function (w) {
-      if (!DC.points.length) return el('p', {class: 'hint'}, 'No decision model has answered a benchmark question yet.');
+      if (!(DC.scores || []).length) return el('p', {class: 'hint'}, 'No decision model has answered a benchmark question yet.');
       var names = {};
       DC.sets.forEach(function (s) { names[s[0]] = s[1]; });
       var panels = DC.sets.map(function (s) { return s[1]; });
+      // One colour per model across both charts, by name, never by rank.
+      var models = DC.scores.map(function (p) { return p.model; })
+        .filter(function (m, i, all) { return all.indexOf(m) === i; }).sort();
+      var colors = {domain: models, range: [sky, good, signal, warn, muted, ink, err]};
+      var box = el('div');
+      box.appendChild(el('h3', {class: 'chart-head'}, 'Right of asked, per set'));
+      box.appendChild(decideBars(w, names, panels, models, colors));
+      // Calibration only says something once a model's answers spread over two or more
+      // levels of sureness; while each sits in one top bin it is one dot in a corner.
+      var levels = DC.points.some(function (p, i, all) {
+        return all.some(function (q) { return q !== p && q.model === p.model && q.set === p.set; });
+      });
+      if (levels) {
+        box.appendChild(el('h3', {class: 'chart-head'}, 'Calibration: said against right'));
+        box.appendChild(decideCalibration(w, names, panels, models, colors));
+      } else {
+        box.appendChild(el('p', {class: 'hint'}, 'Calibration shows once a model gives answers at two or more levels'
+          + ' of sureness on a set; so far each answers at one, so the table\'s Brier and calibration gap say it.'));
+      }
+      return box;
+    });
+    // Right of asked as bars from 0: a small chart per set, a row per model asked on it,
+    // best first. A model under the ranking floor (DC.low items) is drawn faint: shown,
+    // not yet ranked.
+    function decideBars(w, names, panels, models, colors) {
+      var out = el('div');
+      DC.sets.forEach(function (s) {
+        var rows = DC.scores.filter(function (r) { return r.set === s[0]; }).map(function (r) {
+          return Object.assign({share: r.correct / r.asked, ranked: r.asked >= DC.low}, r);
+        }).sort(function (a, b) { return b.share - a.share || b.asked - a.asked || (a.model < b.model ? -1 : 1); });
+        out.appendChild(el('p', {class: 'chart-label'}, s[1]));
+        if (!rows.length) { out.appendChild(el('p', {class: 'hint'}, 'No model asked on this set yet.')); return; }
+        out.appendChild(Plot.plot({
+          width: w, height: rows.length * 26 + 40, style: style,
+          marginLeft: w < 560 ? 120 : 160, marginRight: 50, marginTop: 4, marginBottom: 30,
+          x: {domain: [0, 1], label: null, tickFormat: '.0%', ticks: 5, grid: true},
+          y: {domain: rows.map(function (r) { return r.model; }), label: null},
+          color: colors,
+          marks: [
+            Plot.barX(rows, {x: 'share', y: 'model', fill: 'model', insetTop: 4, insetBottom: 4, rx: 2,
+              fillOpacity: function (r) { return r.ranked ? 1 : 0.4; },
+              title: function (r) {
+                return r.model + ' · ' + s[1] + '\n' + r.correct + ' right of ' + r.asked + ' asked ('
+                  + Math.round(r.share * 100) + '%)' + (r.brier != null ? '\nBrier ' + r.brier.toFixed(3) : '')
+                  + (r.ranked ? '' : '\nnot ranked yet: under ' + DC.low + ' items');
+              }}),
+            Plot.text(rows, {x: 'share', y: 'model', dx: 6, textAnchor: 'start', fill: ink,
+              text: function (r) { return r.correct + '/' + r.asked; }}),
+            Plot.ruleX([0], {stroke: ink})
+          ]
+        }));
+      });
+      return out;
+    }
+    function decideCalibration(w, names, panels, models, colors) {
       var pts = DC.points.map(function (p) { return Object.assign({panel: names[p.set]}, p); })
         .sort(function (a, b) { return a.said - b.said; });
-      var models = pts.map(function (p) { return p.model; })
-        .filter(function (m, i, all) { return all.indexOf(m) === i; }).sort();
       // Both axes start just under the lowest answer, not at 0%: a decision model is
       // rarely under 50% sure of its own answer, so a 0-100% frame left every dot in
       // one corner under a long empty diagonal. Same floor on both, so it stays 45°.
@@ -2867,7 +2920,7 @@
         x: {domain: [lo, 1], label: 'Probability it gave its answer →', tickFormat: '.0%', ticks: 5, grid: true},
         y: {domain: [lo, 1], label: '↑ Share right', tickFormat: '.0%', ticks: 5, grid: true},
         r: {range: [3, 13]},
-        color: {legend: true, domain: models, range: [sky, good, signal, warn, muted, ink, err]},
+        color: Object.assign({legend: true}, colors),
         marks: [
           Plot.frame({stroke: line}),
           Plot.line(diag, Object.assign({x: 'x', y: 'y', z: 'panel', stroke: muted, strokeDasharray: '4 3'}, by)),
@@ -2876,7 +2929,7 @@
                                        title: tip}, by))
         ]
       }));
-    });
+    }
     // Who to trust: finds real bugs (right) vs makes things up (up = less).
     put('chart-overview', function (w) {
       if (!C.overview.length) return el('p', {class: 'hint'}, 'No model has both suite scores and answers yet.');

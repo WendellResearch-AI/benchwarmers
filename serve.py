@@ -3545,9 +3545,15 @@ DECIDE_KIND = {"errors": "choice of 6", "collection": "choice of the collections
 def decision_data() -> dict:
     """For bench.js: each model's calibration bins per set, [said, right, n]."""
     res = decide.results()
-    return {"sets": [[s, DECIDE_SETS[s]] for s in decide.SETS],
+    models = sorted((res.get("models") or {}).items())
+    return {"sets": [[s, DECIDE_SETS[s]] for s in decide.SETS], "low": decide.MIN_ITEMS,
+            # Right of asked per model and set: the bars, as the tables count it.
+            "scores": [{"model": a, "set": s, "correct": r.get("correct", 0), "asked": r["asked"],
+                        "answered": r.get("answered", 0), "brier": r.get("brier")}
+                       for a, by in models for s, r in by.items()
+                       if s in decide.SETS and isinstance(r, dict) and r.get("asked")],
             "points": [{"model": a, "set": s, "said": b["said"], "right": b["right"], "n": b["n"]}
-                       for a, by in sorted((res.get("models") or {}).items()) for s, r in by.items()
+                       for a, by in models for s, r in by.items()
                        if s in decide.SETS for b in r.get("calibration") or []]}
 
 
@@ -3614,8 +3620,7 @@ def decision_card() -> str:
     extra = (f"<h3 class='chart-head'>Who each use asks now</h3><ul class='links'>{''.join(uses)}</ul>"
              f"<p class='hint'>{'Measured up to ' + esc(when[:16].replace('T', ' ')) + '.' if when else 'Not measured yet.'}"
              " The scheduler's <code>decisions</code> job asks each model one question a set a day;"
-             " <code>python metrics/decide.py bench</code> runs a pass by hand.</p>"
-             "<h3 class='chart-head'>Calibration: said against right</h3>")
+             " <code>python metrics/decide.py bench</code> runs a pass by hand.</p>")
     key = f"""<dl>
       <dt>The sets</dt><dd>Questions with known answers, built from the bench's own data, no hand labelling.
         <b>Error classes</b>: failed calls' error text (redacted: no keys, ids or emails) and the class the
@@ -3627,7 +3632,10 @@ def decision_card() -> str:
         picked, so always saying the commonest option scores low.</dd>
       <dt>Brier</dt><dd>How far its probabilities sat from the truth: 0 is perfect; for a choice it is
         summed over the options, so up to 2. Lower is better, and a sure wrong answer costs most.</dd>
-      <dt>Calibration</dt><dd>The chart: answers grouped by the probability the model gave its answer
+      <dt>The bars</dt><dd>Right of asked for each model on each set, from 0%. A faint bar is a model
+        under {low} items on that set: shown, not ranked yet. Hover a bar for its Brier.</dd>
+      <dt>Calibration</dt><dd>The second chart, once a model answers at two or more levels of sureness
+        on a set: answers grouped by the probability the model gave its answer
         (x), against how often those answers were right (y); both axes start just under the lowest
         answer, not at 0%. On the diagonal, its 80% answers come true
         80% of the time; under it, it is surer than it should be. A bigger dot is more answers. The gap is
