@@ -4956,11 +4956,12 @@ def move_card() -> str:
     """Settings' Export and import (export_zip, import_zip; bench.js)."""
     return ("<div class='panel form-panel'><h2>Export and import</h2><p class='muted'>Take this install to another"
             " machine, or keep a copy of it: one .zip file, imported on the other install's Settings page.</p>"
-            "<div class='pick'><label class='check'><input type='radio' name='x-scope' value='settings' checked"
+            # No wrapper: `.pick` is the onboarding picker's 3-column grid row, and squeezed these into it.
+            "<label class='check'><input type='radio' name='x-scope' value='settings' checked"
             " data-kept> <span><b>Settings only</b>: endpoints, collections, roles, model options, the schedule,"
             " gateway keys, the theme (<code>config/</code>)</span></label>"
             "<label class='check'><input type='radio' name='x-scope' value='all' data-kept> <span><b>Everything</b>:"
-            " the settings, and every result, history, log and saved answer the bench judges by</span></label></div>"
+            " the settings, and every result, history, log and saved answer the bench judges by</span></label>"
             "<label class='check'><input type='checkbox' id='x-keys' data-kept> <span>With the endpoints' API keys."
             " The file then holds them: keep it like a password, and delete it once imported.</span></label>"
             "<div class='actions'><button class='btn' type='button' id='x-export'>Download export</button></div>"
@@ -5005,23 +5006,28 @@ def access_card() -> str:
     body = "".join(f"<tr><th scope='row'>{esc(k)}</th><td>{esc(v)}</td>"
                    f"<td class='mono set-by'>{'<br>'.join(esc(s) for s in src.split(', '))}</td></tr>"
                    for k, v, src in rows)
-    running, disk = on_disk()
-    now = (f"Running {esc(RELEASE)} ({esc(running)}), the code on disk." if running == disk else
-           f"<strong>Newer code is on disk</strong> ({esc(disk)}; running {esc(RELEASE)}, {esc(running)}).")
     return ("<div class='panel'><h2>Server and access</h2><p class='muted'>How this install is reached and who"
             " may call it. Set in the environment, read at start: change one and restart. Shown here, never"
             " set here, since a page that could change its own login could open itself to anyone. No secret"
             " is shown, only whether one is set.</p>"
             f"<table class='facts'><thead><tr>{th('Setting')}{th('Now')}{th('Set by')}</tr></thead>"
-            f"<tbody>{body}</tbody></table>"
-            # restart(): stopped and started again by serve.py's own parent process.
-            f"<h3>Restart</h3><p class='muted'>{now} A restart starts the dashboard again on the code on disk,"
-            " for an update or a setting"
-            " above, whatever runs it (a service, the launcher, a container or a terminal). It waits for"
-            " onboarding, a scheduled job and gateway calls in progress, or cuts them off if you insist; the"
-            " page comes back in a few seconds.</p>"
-            "<p><button class='btn' type='button' id='restart'>Restart Benchwarmers</button>"
-            " <span id='restart-out' role='status'></span></p></div>")
+            f"<tbody>{body}</tbody></table>{restart_block('restart', 'a setting above')}</div>")
+
+
+def restart_block(id_: str, what: str) -> str:
+    """The Restart heading, what runs now, and its button (bench.js restart()).
+    On Settings (Server and access) and Info, each with its own ids, since both
+    tabs can be in the page at once."""
+    running, disk = on_disk()
+    now = (f"Running {esc(RELEASE)} ({esc(running)}), the code on disk." if running == disk else
+           f"<strong>Newer code is on disk</strong> ({esc(disk)}; running {esc(RELEASE)}, {esc(running)}).")
+    # restart(): stopped and started again by serve.py's own parent process.
+    return (f"<h3>Restart</h3><p class='muted'>{now} A restart starts the dashboard again on the code on disk,"
+            f" for an update or {what}, whatever runs it (a service, the launcher, a container or a terminal)."
+            " It waits for onboarding, a scheduled job and gateway calls in progress, or cuts them off if you"
+            " insist; the page comes back in a few seconds.</p>"
+            f"<p><button class='btn' type='button' id='{id_}'>Restart Benchwarmers</button>"
+            f" <span id='{id_}-out' role='status'></span></p>")
 
 
 RESTART = 75                       # the exit code serve.py's parent reads as "start me again"
@@ -5604,6 +5610,7 @@ def info_page() -> str:
         ("Theme", saved_theme())]]
     body = "".join(f"<tr><th scope='row'>{esc(k)}</th><td class='mono'>{v}</td></tr>" for k, v in rows)
     return (f"<div class='panel'><h2>Info</h2><table class='facts'><tbody>{body}</tbody></table>"
+            f"{restart_block('restart-info', 'a setting')}"
             "<p class='muted'>Benchwarmers · by Wendell Research · MIT licence"
             " (<code>LICENSE</code>, credits in <code>NOTICE</code>). Every response carries"
             " <code>X-Benchwarmers-Version</code>.</p></div>")

@@ -55,30 +55,33 @@
   askD.addEventListener('close', function () { answer(false); });   // Escape
 
   // ---- restart (serve.restart): the page reloads once the new one answers ----
-  function restart(force) {
-    var rs = $('restart'), out = $('restart-out');
+  // One button on Settings (restart) and one on Info (restart-info), each with its own status line.
+  function restart(id, force) {
+    var rs = $(id), out = $(id + '-out');
     rs.disabled = true; out.textContent = 'Restarting…';
     post('/api/restart', {force: force}).then(function (res) {
-      if (res.ok) return back(Date.now());
+      if (res.ok) return back(out, Date.now());
       rs.disabled = false; out.textContent = '';
       if (!res.busy) { listErrors(out, res.errors); return; }
       ask('Still in progress: ' + res.errors.join('; ') + '. Restart anyway and cut them off?', 'Restart anyway', true)
-        .then(function (yes) { if (yes) restart(true); });
+        .then(function (yes) { if (yes) restart(id, true); });
     }).catch(function (err) { rs.disabled = false; out.textContent = String(err); });
   }
   // The old one stops half a second after answering; /health answers again once the new one is up.
-  function back(since) {
+  function back(out, since) {
     setTimeout(function () {
       fetch('/health', {cache: 'no-store'}).then(function (r) { if (!r.ok) throw r.status; location.reload(); })
         .catch(function () {
-          if (Date.now() - since < 120000) back(since);
-          else $('restart-out').textContent = 'Not back after two minutes: look at whatever runs it.';
+          if (Date.now() - since < 120000) back(out, since);
+          else out.textContent = 'Not back after two minutes: look at whatever runs it.';
         });
     }, 1500);
   }
-  on('click', 'restart', function () {
-    ask('Restart Benchwarmers? The dashboard and the gateway on this port stop for a few seconds.', 'Restart')
-      .then(function (yes) { if (yes) restart(false); });
+  ['restart', 'restart-info'].forEach(function (id) {
+    on('click', id, function () {
+      ask('Restart Benchwarmers? The dashboard and the gateway on this port stop for a few seconds.', 'Restart')
+        .then(function (yes) { if (yes) restart(id, false); });
+    });
   });
 
   // ---- Export and import (serve.export_zip, import_zip) ----------------
