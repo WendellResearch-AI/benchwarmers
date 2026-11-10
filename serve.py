@@ -2640,7 +2640,7 @@ def charts_data() -> dict:
                          "rate": int(hit[1]) / max(1, int(hit[2])) if hit else None, "invented": bool(v["invented"])})
     bars = [{"model": m, "kind": k, "rate": w / r["answers"], "n": f"{w}/{n}"}
             for m, r in sorted(wr.items()) if m in live and r["answers"] for k, (w, n) in r["by"].items() if w]
-    totals = {m: {"rate": r["wrong"] / r["answers"], "answers": r["answers"]}
+    totals = {m: {"rate": r["wrong"] / r["answers"], "answers": r["answers"], "wrong": r["wrong"]}
               for m, r in wr.items() if m in live and r["answers"]}
     hunt = [{"model": m, **r["hunt"]} for m, r in sorted(wr.items()) if m in live and any(r["hunt"].values())]
     return {"overview": overview, "heat": heat, "families": ["hand-built", "claims", "seeded, function",
@@ -2901,16 +2901,10 @@ def vision_card() -> str:
 
 
 def perf_charts() -> dict:
-    """Reliability over the last 14 days of probes, and speed on real tasks
-    against how much a model finds, for the Performance panel of Benchmarks."""
+    """Speed on real tasks against how much a model finds, for the Performance
+    panel of Benchmarks. (Whether probes answered is Uptime's.)"""
     import route
     live = on_bench()
-    since = (datetime.date.today() - datetime.timedelta(days=14)).isoformat()
-    outcomes: dict[tuple[str, str], int] = {}
-    for r in perf_rows():
-        if r["model"] in live and r.get("timestamp", "") >= since:
-            o = "answered" if int(r.get("answered") or 0) > 0 else (r.get("failure") or "error")
-            outcomes[(r["model"], o)] = outcomes.get((r["model"], o), 0) + 1
     seconds: dict[str, list[float]] = {}
     for (_task, m), v in suite_scores().items():
         if m in live and re.match(r"\d+/\d+", v["found"]):
@@ -2918,8 +2912,7 @@ def perf_charts() -> dict:
     recall = route.suite_recall()
     speed = [{"model": m, "seconds": sorted(s)[len(s) // 2], "recall": recall[m][0] / recall[m][1], "tasks": len(s)}
              for m, s in sorted(seconds.items()) if recall.get(m) and recall[m][1]]
-    return {"reliability": [{"model": m, "outcome": o, "count": n} for (m, o), n in sorted(outcomes.items())],
-            "speed": speed}
+    return {"speed": speed}
 
 
 # ---- Trend: does a model score lower, or higher, than it used to? ----------
@@ -3679,7 +3672,10 @@ def bughunt_card() -> str:
         grey said there was no bug.</dd>
       <dt>Left of the line</dt><dd>The same files untouched: red is a false alarm, claiming a
         bug in clean code. The longer the red, the less to trust its "there's a bug here".</dd>
-      <dt>Order</dt><dd>Found share minus false-alarm share, best at the top.</dd>
+      <dt>Order</dt><dd>On what is proven, best at the top: the low end of the found share's likely
+        range (95%) less the high end of the false alarms'. A few tasks give wide ranges, so they
+        rank low; a model never shown clean code could be raising alarms on all of it.</dd>
+      <dt>Faint bars</dt><dd>Under 10 tasks: shown, but little to go on.</dd>
     </dl>"""
     return chart_card("Bug hunt", "Every task with an answer key: bugs found against false alarms on the"
                       " same files left clean. Right is good, left is bad.", "chart-hunt", "".join(body), key)
@@ -3724,7 +3720,8 @@ def work_card() -> str:
 def overview_card() -> str:
     return (f"<div class='panel'>{SHARE}<h2>Who to trust with a review</h2><p class='sub'>Each dot is a model."
             " Right: finds more of the real bugs in our own code. Up: makes fewer things up (confidently"
-            " wrong on clean code, wrong lines, false claims, traps). Top right is where a reviewer should be.</p>"
+            " wrong on clean code, wrong lines, false claims, traps). Top right is where a reviewer should be."
+            " The models in or near the box, and the three that make most up, are named; hover for the rest.</p>"
             "<div class='chart' id='chart-overview'></div></div>")
 
 
@@ -3837,6 +3834,10 @@ def wrong_card() -> str:
       <dt>Reviews</dt><dd>False claims recorded in verdicts (<code>offload.py verdict|add
         --false "..."</code>), over judged offloads. Recorded in structured form only since
         2026-10-17, so older reviews show none.</dd>
+      <dt>The thin line</dt><dd>Where the true share likely sits (95% range). Long for a few
+        answers: 0 of 2 is not a clean record, and the line shows how bad it could be.</dd>
+      <dt>Order</dt><dd>Worst proven at the top: by the low end of that line. Under 10 answers a
+        model's bar is faint.</dd>
     </dl>"""
     return chart_card("Confidently wrong", "Who asserts things that are not true: false alarms on clean"
                       " code, wrong lines, false claims confirmed, traps taken. Shorter is better.",
@@ -3900,18 +3901,14 @@ def perf_card() -> str:
         when it is slow enough to change how you work.</dd>
     </dl>"""
     key = key.replace("</dl>", """
-      <dt>Did it answer?</dt><dd>Each probe of the last 14 days, by what came back: an answer, a
-        rate limit (capacity), a timeout, or a failure the bench classifies (structural, paywalled,
-        entitlement, other).</dd>
+      <dt>Did it answer?</dt><dd>Is on Uptime, by day, with our own quota and setup problems left out.</dd>
       <dt>Speed vs quality</dt><dd>Median seconds per answer on our own suite tasks (real prompts,
         not the one-word probe) against the share of findings located. Top left is fast and good:
         the green box is the faster half and the top quarter of findings.</dd>
     </dl>""")
     return chart_card("Performance", "What the serving path does — not what the models are worth. One"
                       " reading is weather; the history is climate.", "chart-speed", body, key,
-                      extra="<h3 class='chart-head'>Did it answer? Last 14 days of probes</h3>"
-                            "<div class='chart' id='chart-reliability'></div>"
-                            "<h3 class='chart-head'>Speed vs quality on our own tasks</h3>")
+                      extra="<h3 class='chart-head'>Speed vs quality on our own tasks</h3>")
 
 
 def favicon(theme: str) -> str:
@@ -5358,6 +5355,28 @@ def endpoints_page() -> str:
         "<div class='done' id='l-done'></div></div>")
 
 
+def _reply_cell(by_prompt: dict) -> str:
+    """Models' Reply: the daily probe's median seconds to a one-word answer (tiny),
+    with the 18 KB prompt's (large) and tokens a second on hover. Was on Benchmarks'
+    Performance, beside whether it answered, which is Uptime's now."""
+    def p50(r):
+        try:
+            return float(r["p50_s"]) if r and int(r.get("answered") or 0) > 0 else None
+        except (KeyError, TypeError, ValueError):
+            return None
+    tiny, large = p50(by_prompt.get("tiny")), p50(by_prompt.get("large"))
+    if tiny is None and large is None:
+        return "<td class='num muted' data-sort='999999'>—</td>"
+    shown = tiny if tiny is not None else large
+    why = "; ".join(b for b in (
+        f"one-word prompt {tiny:.1f}s" if tiny is not None else "",
+        f"18 KB prompt {large:.1f}s" if large is not None else "",
+        f"{(by_prompt.get('large') or {}).get('tokens_per_s')} tok/s"
+        if (by_prompt.get("large") or {}).get("tokens_per_s") else "") if b)
+    return (f"<td class='num' data-sort='{shown:.2f}' title='median, the daily probe: {esc(why)}'>"
+            f"{shown:.1f}s</td>")
+
+
 def models_page() -> str:
     """Every model on the bench by the connection it comes from."""
     cards = []
@@ -5371,6 +5390,10 @@ def models_page() -> str:
     # for what a collection may hold): they are on the bench like any other.
     by: dict[str, list[str]] = {}
     directory = model_directory()
+    # The daily probe's latest reading per model and prompt (perf/history.csv), for Reply.
+    speed: dict[str, dict] = {}
+    for r in perf_rows():
+        speed.setdefault(r["model"], {})[r.get("prompt", "")] = r
     for a in directory:
         by.setdefault(catalog.connection_of(a), []).append(a)
     for c in ({"name": n, "models": sorted(m)} for n, m in sorted(by.items())):
@@ -5391,17 +5414,18 @@ def models_page() -> str:
                         f"<td class='num' data-sort='{f.get('context_window') or 0}'>{num(f.get('context_window'))}</td>"
                         f"<td class='num' data-sort='{f.get('max_output') or 0}'>{num(f.get('max_output'))}</td>"
                         f"<td>{esc(', '.join(f.get('input_modalities') or []) or '—')}</td>"
+                        + _reply_cell(speed.get(a, {}))
                         + "".join(f"<td class='num'>{num(lim.get(k))}</td>" for k in catalog.LIMIT_KEYS) + "</tr>")
         # One column plan for every card, so the cards line up under each other
         # (each table sized its own columns, so they drifted from card to card).
         cols = "<colgroup><col class='c-model'><col class='c-via'><col class='c-n'><col class='c-n'>" \
-               "<col class='c-input'>" + "<col class='c-lim'>" * len(catalog.LIMIT_KEYS) + "</colgroup>"
+               "<col class='c-input'><col class='c-reply'>" + "<col class='c-lim'>" * len(catalog.LIMIT_KEYS) + "</colgroup>"
         # Each connection folds; the page's one box filters them all (bench.js applyFilter, data-conn).
         cards.append(f"<details class='panel model-card' open data-conn='{esc(c['name'])}'><summary>"
                      f"<h3 class='chart-head'>{esc(c['name'])} · {len(c['models'])} models</h3></summary>"
                      f"<table class='model-cards'>{cols}<thead><tr>" + th("Model") + th("Through")
                      + th("Context", True) + th("Max output", True)
-                     + th("Input") + "".join(th(k, True) for k in catalog.LIMIT_KEYS)
+                     + th("Input") + th("Reply", True) + "".join(th(k, True) for k in catalog.LIMIT_KEYS)
                      + f"</tr></thead><tbody>{''.join(rows)}</tbody></table></details>")
     return ("<div class='panel'><h2>Models</h2><p class='sub'>Every model on the bench by the connection it"
             " comes from, with the endpoint it is reached through and what is known of its limits. A name"

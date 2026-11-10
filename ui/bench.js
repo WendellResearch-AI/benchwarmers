@@ -2668,7 +2668,8 @@
       try { box.appendChild(make(width())); } catch (e) { box.textContent = 'Chart failed: ' + e; }
     }
     // Pixel offsets that keep scatter labels apart: each label, in order, moves
-    // up or down until it clears the ones already placed.
+    // up or down until it clears the ones already placed; null when no place is
+    // free (that one is left to its hover, not drawn over another).
     function spread(points, xpx, ypx) {
       var boxes = [], tries = [-12, 14, -26, 28, -40, 42, -54, 56];
       return points.map(function (d) {
@@ -2680,7 +2681,7 @@
             return tries[k];
           }
         }
-        return tries[0];
+        return null;
       });
     }
     function rows(n) { return 20 * n + 80; }
@@ -2691,6 +2692,7 @@
       return over <= 0 ? s : s.slice(0, Math.ceil(keep / 2)) + '…' + s.slice(s.length - Math.floor(keep / 2));
     }
     function fit(s, max) { return middle(s, s.length - max); }
+    var FEW = 10;                        // under this many tasks or answers, a row is drawn faint
     // The 95% Wilson interval of k successes in n: [low, high]. Honest at small n and at
     // 0 or n of n, where k/n ± 1.96·se says nothing (3 of 3 is not "100% ± 0").
     function wilson(k, n) {
@@ -2745,7 +2747,9 @@
       var nameW = Math.min(260, Math.max(150, 7 * Math.max.apply(null, M.map(function (r) { return r.key.length; })) + 24));
       var evW = 320;
       w = $('chart-trend').clientWidth || w;          // its own box: a phone's is narrower than width()'s 520
-      if (w < nameW + evW + 260) { evW = 0; nameW = Math.min(nameW, 130); }
+      // Without the evidence column the names take what the bars do not need (260 px), not a
+      // fixed 130 px: at the dashboard's width that cut "muse-glimmer-30b" to "muse-gl…mer-30b".
+      if (w < nameW + evW + 260) { evW = 0; nameW = Math.min(nameW, Math.max(130, w - 280)); }
       var fits = Math.floor((nameW - 24) / 7), right = evW || 20, wide = w < nameW + right + 140;
       w = Math.max(w, nameW + right + 140);
       // Symmetric, to the biggest bar and room for its number; 20 pts at least.
@@ -2945,10 +2949,17 @@
       var worst = Math.max(0.1, Math.max.apply(null, C.overview.map(function (d) { return d.wrong; })));
       var x0 = Math.max(0, Math.floor((Math.min.apply(null, C.overview.map(function (d) { return d.recall; })) - 0.05) * 20) / 20);
       var pxW = w - 110, pxH = 370;
-      var pts = C.overview.slice().sort(function (a, b) { return a.wrong - b.wrong || b.recall - a.recall; });
+      // Named: the models in or next to the zone (the ones to pick from), then the clearest
+      // warnings (most made up). The rest are on hover: named all at once they ran together.
+      var zoneX = x0 + (1 - x0) / 2, zoneY = worst / 4;
+      var near = function (d) { return d.recall >= zoneX - (1 - x0) * 0.08 && d.wrong <= zoneY * 1.4; };
+      var worstFew = C.overview.slice().sort(function (a, b) { return b.wrong - a.wrong; }).slice(0, 3);
+      var pts = C.overview.filter(function (d) { return near(d) || worstFew.indexOf(d) !== -1; })
+        .sort(function (a, b) { return a.wrong - b.wrong || b.recall - a.recall; });
       var offs = spread(pts, function (d) { return (d.recall - x0) / (1 - x0) * pxW; },
                         function (d) { return d.wrong / worst * pxH; });
-      var labels = pts.map(function (d, i) { return {model: d.model, recall: d.recall, ty: d.wrong + offs[i] * worst / pxH}; });
+      var labels = pts.map(function (d, i) { return offs[i] == null ? null : {model: d.model, recall: d.recall, ty: d.wrong + offs[i] * worst / pxH}; })
+        .filter(Boolean);
       return Plot.plot({
         width: w, height: 440, style: style, grid: true, inset: 16, marginRight: 50, marginTop: 30,
         x: {label: 'Finds real bugs in our code →', domain: [x0, 1], tickFormat: '.0%'},
@@ -2976,22 +2987,27 @@
         tasks[h.model] = bugs + clean;
         var f = bugs ? h.found / bugs : 0, wl = bugs ? h['wrong line'] / bugs : 0, ms = bugs ? h.missed / bugs : 0;
         var fa = clean ? h['false alarm'] / clean : 0;
-        score[h.model] = f - fa;
+        // Ranked on what is proven: the low end of the found share's 95% range less the HIGH
+        // end of the false alarms' (never shown clean files: up to 100%), so a few tasks, or
+        // none on clean code, cannot top the chart.
+        score[h.model] = wilson(h.found, bugs)[0] - wilson(h['false alarm'], clean)[1];
         segs.push({model: h.model, part: 'false alarm', x1: -fa, x2: 0, n: h['false alarm'] + ' of ' + clean + ' clean files'});
         segs.push({model: h.model, part: 'found', x1: 0, x2: f, n: h.found + ' of ' + bugs + ' bugs'});
         segs.push({model: h.model, part: 'wrong line', x1: f, x2: f + wl, n: h['wrong line'] + ' of ' + bugs + ' bugs'});
         segs.push({model: h.model, part: 'missed', x1: f + wl, x2: f + wl + ms, n: h.missed + ' of ' + bugs + ' bugs'});
       });
-      var models = Object.keys(score).sort(function (a, b) { return score[b] - score[a]; });
+      var models = Object.keys(score).sort(function (a, b) { return score[b] - score[a] || tasks[b] - tasks[a]; });
       return Plot.plot({
-        width: w, height: rows(models.length), style: style, marginLeft: 250,
+        width: w, height: rows(models.length), style: style, marginLeft: w < 560 ? 150 : 250,
         x: {domain: [-1, 1], label: '← false alarms on clean files · bugs found →', grid: true,
             tickFormat: function (d) { return Math.abs(Math.round(d * 100)) + '%'; }},
-        y: {domain: models, label: null, tickFormat: function (m) { return m + '  (' + tasks[m] + ')'; }},
+        y: {domain: models, label: null, tickFormat: function (m) { return fit(m, w < 560 ? 16 : 28) + '  (' + tasks[m] + ')'; }},
         color: {legend: true, domain: ['found', 'wrong line', 'missed', 'false alarm'], range: [good, signal, line, err]},
         marks: [
+          // Under FEW tasks a model's bars are faint: shown, not much to go on.
           Plot.barX(segs.filter(function (s) { return s.x2 > s.x1; }), {x1: 'x1', x2: 'x2', y: 'model', fill: 'part',
-            title: function (d) { return d.model + ': ' + d.part + ', ' + d.n; }}),
+            fillOpacity: function (d) { return tasks[d.model] < FEW ? 0.4 : 1; },
+            title: function (d) { return d.model + ': ' + d.part + ', ' + d.n + (tasks[d.model] < FEW ? '\nfew tasks: little to go on' : ''); }}),
           Plot.ruleX([0], {stroke: ink, strokeWidth: 1.5})
         ]
       });
@@ -3037,28 +3053,6 @@
       });
     });
 
-    // Did it answer: each probe of the last 14 days, by what came back.
-    put('chart-reliability', function (w) {
-      if (!C.reliability.length) return el('p', {class: 'hint'}, 'No probes in the last 14 days.');
-      var total = {}, ok = {};
-      C.reliability.forEach(function (d) {
-        total[d.model] = (total[d.model] || 0) + d.count;
-        if (d.outcome === 'answered') ok[d.model] = d.count;
-      });
-      var models = Object.keys(total).sort(function (a, b) { return (ok[b] || 0) / total[b] - (ok[a] || 0) / total[a]; });
-      var colour = {answered: good, capacity: signal, timeout: sky, structural: err, paywalled: warn,
-                    entitlement: '#c0563f', other: muted, error: ink};
-      var order = Object.keys(colour).filter(function (o) { return C.reliability.some(function (d) { return d.outcome === o; }); });
-      return Plot.plot({
-        width: w, height: rows(models.length), style: style, marginLeft: 250,
-        x: {label: 'Share of probes →', tickFormat: '.0%', grid: true},
-        y: {domain: models, label: null},
-        color: {legend: true, domain: order, range: order.map(function (o) { return colour[o]; })},
-        marks: [Plot.barX(C.reliability, Plot.stackX({x: 'count', y: 'model', fill: 'outcome', offset: 'normalize', order: order,
-          title: function (d) { return d.model + ': ' + d.outcome + ' ' + d.count + ' of ' + total[d.model] + ' probes'; }}))]
-      });
-    });
-
     // Speed vs quality: median seconds on our own tasks against findings located.
     put('chart-speed', function (w) {
       if (!C.speed.length) return el('p', {class: 'hint'}, 'No suite timings yet.');
@@ -3069,7 +3063,8 @@
       var pts = C.speed.slice().sort(function (a, b) { return b.recall - a.recall; });
       var offs = spread(pts, function (d) { return (Math.log(d.seconds) - Math.log(lo)) / (Math.log(hi) - Math.log(lo)) * pxW; },
                         function (d) { return (1 - d.recall) / (1 - y0) * pxH; });
-      var labels = pts.map(function (d, i) { return {model: d.model, seconds: d.seconds, ty: d.recall - offs[i] * (1 - y0) / pxH}; });
+      var labels = pts.map(function (d, i) { return offs[i] == null ? null : {model: d.model, seconds: d.seconds, ty: d.recall - offs[i] * (1 - y0) / pxH}; })
+        .filter(Boolean);
       return Plot.plot({
         width: w, height: 420, style: style, grid: true, inset: 16, marginRight: 50, marginTop: 30,
         x: {type: 'log', domain: [lo, hi], label: 'Median seconds per answer on our tasks →'},
@@ -3096,25 +3091,41 @@
         return C.families.indexOf(fam[a]) - C.families.indexOf(fam[b]) || (a < b ? -1 : 1);
       });
       tasks.forEach(function (t) { if (!(fam[t] in first)) first[fam[t]] = t; });
-      var label = {};
-      Object.keys(first).forEach(function (f) { label[first[f]] = f; });
+      // Each group's name over its first task, on two staggered rows: side by side they
+      // ran into one another wherever a group is only a few tasks wide.
+      var heads = C.families.filter(function (f) { return f in first; })
+        .map(function (f, i) { return {task: first[f], name: f, row: i % 2}; });
       // By total found, so a model that played three tasks does not top one that played forty.
-      var sum = {};
-      C.heat.forEach(function (d) { sum[d.model] = (sum[d.model] || 0) + (d.rate || 0); });
-      var models = Object.keys(sum).sort(function (a, b) { return sum[b] - sum[a]; });
+      // A model with no scored task (only grey) gets no row: it is named under the chart.
+      var sum = {}, scored = {};
+      C.heat.forEach(function (d) {
+        sum[d.model] = (sum[d.model] || 0) + (d.rate || 0);
+        if (d.rate != null) scored[d.model] = true;
+      });
+      var models = Object.keys(sum).filter(function (m) { return scored[m]; }).sort(function (a, b) { return sum[b] - sum[a]; });
+      var idle = Object.keys(sum).filter(function (m) { return !scored[m]; }).sort();
+      var shown = C.heat.filter(function (d) { return scored[d.model]; });
+      var nameW = w < 560 ? 130 : 230;
       function tip(d) { return d.model + '\n' + d.task + ' (' + d.family + ')\n' + d.label + (d.invented ? '\ninvented something' : ''); }
-      return Plot.plot({
-        width: w, height: 22 * models.length + 70, style: style, marginLeft: 230, marginTop: 30, padding: 0.08,
-        x: {domain: tasks, axis: 'top', label: null, tickSize: 0, tickFormat: function (t) { return label[t] || ''; }},
-        y: {domain: models, label: null, tickSize: 0},
+      var box = el('div');
+      box.appendChild(Plot.plot({
+        width: w, height: 22 * models.length + 84, style: style, marginLeft: nameW, marginTop: 44, padding: 0.08,
+        x: {domain: tasks, axis: null},
+        y: {domain: models, label: null, tickSize: 0, tickFormat: function (m) { return fit(m, w < 560 ? 16 : 30); }},
         color: {type: 'linear', domain: [0, 0.5, 1], range: [err, signal, good]},
         marks: [
-          Plot.cell(C.heat.filter(function (d) { return d.rate == null; }), {x: 'task', y: 'model', fill: line, title: tip}),
-          Plot.cell(C.heat.filter(function (d) { return d.rate != null; }), {x: 'task', y: 'model', fill: 'rate', title: tip}),
-          Plot.dot(C.heat.filter(function (d) { return d.invented; }), {x: 'task', y: 'model', r: 2.4, fill: ink}),
-          Plot.ruleX(Object.keys(label), {x: function (t) { return t; }, stroke: ink, strokeOpacity: 0.25, dx: -2})
+          Plot.cell(shown.filter(function (d) { return d.rate == null; }), {x: 'task', y: 'model', fill: line, title: tip}),
+          Plot.cell(shown.filter(function (d) { return d.rate != null; }), {x: 'task', y: 'model', fill: 'rate', title: tip}),
+          Plot.dot(shown.filter(function (d) { return d.invented; }), {x: 'task', y: 'model', r: 2.4, fill: ink}),
+          Plot.ruleX(heads, {x: 'task', stroke: ink, strokeOpacity: 0.25, dx: -2}),
+          Plot.text(heads.filter(function (h) { return !h.row; }), {x: 'task', frameAnchor: 'top', dy: -30, dx: -2,
+            text: 'name', textAnchor: 'start', fontSize: 11, fill: ink}),
+          Plot.text(heads.filter(function (h) { return h.row; }), {x: 'task', frameAnchor: 'top', dy: -14, dx: -2,
+            text: 'name', textAnchor: 'start', fontSize: 11, fill: ink})
         ]
-      });
+      }));
+      if (idle.length) box.appendChild(el('p', {class: 'hint'}, 'No scored task yet, so no row: ' + idle.join(', ') + '.'));
+      return box;
     });
 
     // Vision tasks: one square per field and model, the task's name over its first field.
@@ -3161,39 +3172,66 @@
         kinds.forEach(function (k) { if (W[m][k]) data.push({model: m, kind: k, count: W[m][k]}); total[m] = (total[m] || 0) + W[m][k]; });
       });
       if (!data.length) return el('p', {class: 'hint'}, 'No vision panels through the gateway yet.');
-      // The models doing the most image work first: their bars are the evidence.
-      var models = Object.keys(total).sort(function (a, b) { return total[b] - total[a] || (a < b ? -1 : 1); });
+      // The models doing the most image work first: their bars are the evidence. Under FEW
+      // seats a row was mostly "no answer" and said little: those are listed under the chart.
+      var all = Object.keys(total).sort(function (a, b) { return total[b] - total[a] || (a < b ? -1 : 1); });
+      var models = all.filter(function (m) { return total[m] >= FEW; });
+      var few = all.filter(function (m) { return total[m] < FEW; });
+      if (!models.length) { models = all; few = []; }
+      data = data.filter(function (d) { return models.indexOf(d.model) !== -1; });
       var colour = {'checked, helped': good, 'checked, did not help': err, 'useful, no claims': sky,
                     'no use, no claims': warn, 'not judged': line, 'no answer': muted};
       // The claims checked by hand, beside the bar: the only right-or-wrong count real work has.
       var claims = models.filter(function (m) { return W[m].real + W[m].false; }).map(function (m) {
         return {model: m, text: W[m].real + ' of ' + (W[m].real + W[m].false) + ' claims right'};
       });
-      return Plot.plot({
-        width: w, height: rows(models.length), style: style, marginLeft: 300, marginRight: 150,
+      var narrowV = w < 560, box = el('div');
+      box.appendChild(Plot.plot({
+        width: w, height: rows(models.length), style: style, marginLeft: narrowV ? 150 : 260, marginRight: narrowV ? 20 : 150,
         x: {label: 'Share of its seats on image panels →', tickFormat: '.0%', grid: true, domain: [0, 1]},
-        y: {domain: models, label: null, tickFormat: function (m) { return m + '  (' + total[m] + ')'; }},
+        y: {domain: models, label: null, tickFormat: function (m) { return fit(m, narrowV ? 16 : 30) + '  (' + total[m] + ')'; }},
         color: {legend: true, domain: kinds, range: kinds.map(function (k) { return colour[k]; })},
         marks: [
           Plot.barX(data, Plot.stackX({x: 'count', y: 'model', fill: 'kind', offset: 'normalize', order: kinds,
             title: function (d) { return d.model + ': ' + d.kind + ', ' + d.count + ' of ' + total[d.model] + ' seats'; }})),
-          Plot.text(claims, {x: 1, y: 'model', text: 'text', dx: 8, textAnchor: 'start', fill: ink})
+          Plot.text(narrowV ? [] : claims.filter(function (c) { return models.indexOf(c.model) !== -1; }),
+            {x: 1, y: 'model', text: 'text', dx: 8, textAnchor: 'start', fill: ink})
         ]
-      });
+      }));
+      if (few.length) box.appendChild(el('p', {class: 'hint'}, 'Under ' + FEW + ' seats, so no bar: '
+        + few.map(function (m) { return m + ' (' + total[m] + ')'; }).join(', ') + '. The table has them all.'));
+      return box;
     });
 
-    // Confidently wrong: stacked by kind, worst at the top.
+    // Confidently wrong: stacked by kind. A thin line runs over each bar for the range the
+    // true share likely sits in (95% Wilson), so 0 of 2 shows how bad it could be, not a
+    // clean record. Worst proven at the top: by the low end of that range. Few answers: faint.
     put('chart-wrong', function (w) {
-      var T = C.wrongTotals;
-      var models = Object.keys(T).sort(function (a, b) { return T[b].rate - T[a].rate || T[b].answers - T[a].answers; });
+      var T = C.wrongTotals, R = {};
+      Object.keys(T).forEach(function (m) {
+        var b = wilson(T[m].wrong, T[m].answers);
+        R[m] = {model: m, lo: b[0], hi: b[1], few: T[m].answers < FEW};
+      });
+      var models = Object.keys(T).sort(function (a, b) {
+        return R[b].lo - R[a].lo || T[b].rate - T[a].rate || T[b].answers - T[a].answers;
+      });
+      var ranges = models.map(function (m) { return R[m]; });
+      var top = Math.min(1, Math.max.apply(null, ranges.map(function (r) { return r.hi; })) + 0.02);
       return Plot.plot({
-        width: w, height: 20 * models.length + 70, style: style, marginLeft: 250,
-        x: {label: 'Confidently wrong, share of answers that could have been →', tickFormat: '.0%', grid: true},
+        width: w, height: 20 * models.length + 70, style: style, marginLeft: w < 560 ? 150 : 250,
+        x: {domain: [0, top], label: 'Confidently wrong, share of answers that could have been →', tickFormat: '.0%', grid: true},
         // The count beside each name: 1 of 2 is not the same evidence as 17 of 26.
-        y: {domain: models, label: null, tickFormat: function (m) { return m + '  (' + T[m].answers + ')'; }},
+        y: {domain: models, label: null, tickFormat: function (m) { return fit(m, w < 560 ? 16 : 28) + '  (' + T[m].answers + ')'; }},
         color: {legend: true, domain: C.kinds, range: [err, signal, sky, muted]},
         marks: [
-          Plot.barX(C.wrong, {x: 'rate', y: 'model', fill: 'kind', title: function (d) { return d.model + ': ' + d.kind + ' ' + d.n; }}),
+          Plot.barX(C.wrong, {x: 'rate', y: 'model', fill: 'kind', insetTop: 3, insetBottom: 3,
+            fillOpacity: function (d) { return R[d.model].few ? 0.4 : 1; },
+            title: function (d) { return d.model + ': ' + d.kind + ' ' + d.n; }}),
+          Plot.ruleY(ranges, {y: 'model', x1: 'lo', x2: 'hi', stroke: ink, strokeOpacity: 0.45, strokeWidth: 1.5,
+            title: function (r) {
+              return r.model + ': ' + T[r.model].wrong + ' of ' + T[r.model].answers + ' confidently wrong\nlikely between '
+                + Math.round(r.lo * 100) + '% and ' + Math.round(r.hi * 100) + '%' + (r.few ? '\nfew answers: little to go on' : '');
+            }}),
           Plot.ruleX([0], {stroke: ink})
         ]
       });

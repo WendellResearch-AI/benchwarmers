@@ -293,10 +293,11 @@ td.num, th.num { text-align: right; }
 table.model-cards { table-layout: fixed; min-width: 52rem; }
 .panel:has(> table.model-cards) { overflow-x: auto; }        /* scrolls on a narrow window instead of wrapping numbers */
 table.model-cards td.num { white-space: nowrap; }
-table.model-cards col.c-model { width: 24%; }
-table.model-cards col.c-via { width: 13%; }
+table.model-cards col.c-model { width: 23%; }
+table.model-cards col.c-via { width: 11%; }
 table.model-cards col.c-n { width: 10%; }
-table.model-cards col.c-input { width: 19%; }
+table.model-cards col.c-input { width: 15%; }
+table.model-cards col.c-reply { width: 7%; }
 table.model-cards col.c-lim { width: 6%; }
 table.model-cards td { overflow-wrap: anywhere; }
 tbody tr:hover > td { background: var(--step-1); }
