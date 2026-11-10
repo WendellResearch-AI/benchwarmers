@@ -3628,7 +3628,8 @@ def decision_card() -> str:
       <dt>Brier</dt><dd>How far its probabilities sat from the truth: 0 is perfect; for a choice it is
         summed over the options, so up to 2. Lower is better, and a sure wrong answer costs most.</dd>
       <dt>Calibration</dt><dd>The chart: answers grouped by the probability the model gave its answer
-        (x), against how often those answers were right (y). On the diagonal, its 80% answers come true
+        (x), against how often those answers were right (y); both axes start just under the lowest
+        answer, not at 0%. On the diagonal, its 80% answers come true
         80% of the time; under it, it is surer than it should be. A bigger dot is more answers. The gap is
         the average distance from the diagonal, weighted by answers.</dd>
       <dt>At {decide.CONFIDENT}</dt><dd>The gateway acts on a choice only when the model is this sure: how
@@ -5356,7 +5357,7 @@ def models_page() -> str:
             kind = (" " + chip("decision", "", "a decision model: answers typed questions, not chat")
                     if a in decisions else "")
             if directory[a].get("ad_hoc"):
-                kind += " " + chip("ad hoc", "", "ad hoc only: never chosen by the bench on its own, only when you"
+                kind += " " + chip("ad hoc", "adhoc", "ad hoc only: never chosen by the bench on its own, only when you"
                                    " name it (a collection member, with, --model)")
             rows.append(f"<tr><td><a href='#' class='model' data-alias='{esc(a)}'>"
                         f"<span class='alias'>{esc(a)}</span></a>{kind}</td>"
@@ -5369,14 +5370,17 @@ def models_page() -> str:
         # (each table sized its own columns, so they drifted from card to card).
         cols = "<colgroup><col class='c-model'><col class='c-via'><col class='c-n'><col class='c-n'>" \
                "<col class='c-input'>" + "<col class='c-lim'>" * len(catalog.LIMIT_KEYS) + "</colgroup>"
-        cards.append(f"<div class='panel'><h3 class='chart-head'>{esc(c['name'])} · {len(c['models'])} models</h3>"
+        # Each connection folds; the page's one box filters them all (bench.js applyFilter, data-conn).
+        cards.append(f"<details class='panel model-card' open data-conn='{esc(c['name'])}'><summary>"
+                     f"<h3 class='chart-head'>{esc(c['name'])} · {len(c['models'])} models</h3></summary>"
                      f"<table class='model-cards'>{cols}<thead><tr>" + th("Model") + th("Through")
                      + th("Context", True) + th("Max output", True)
                      + th("Input") + "".join(th(k, True) for k in catalog.LIMIT_KEYS)
-                     + f"</tr></thead><tbody>{''.join(rows)}</tbody></table></div>")
+                     + f"</tr></thead><tbody>{''.join(rows)}</tbody></table></details>")
     return ("<div class='panel'><h2>Models</h2><p class='sub'>Every model on the bench by the connection it"
             " comes from, with the endpoint it is reached through and what is known of its limits. A name"
-            " opens the model.</p></div>"
+            " opens the model.</p><div class='toolbar'><input type='search' data-filter='page'"
+            " placeholder='Find a model or connection' aria-label='Filter models'></div></div>"
             + "".join(cards))
 
 

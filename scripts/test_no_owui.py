@@ -236,6 +236,14 @@ def owner(fake: str) -> None:
     assert tags["fast-1"] == "groq" and tags["llm7.codestral"] == "llm7-api" and tags["vendor/x:free"] == "openrouter", tags
     assert "never-read" not in json.dumps(tags)
     assert route.connection_of("fast-1") == "groq" and route.connection_of("x-free") == "openrouter"
+    # A provider also on a direct endpoint of its own is one connection: the hub's takes the endpoint's name.
+    real_load, both = endpoints.load, dict(endpoints.load())
+    both["groq-direct"] = {"base": "https://api.groq.com/openai/v1", "key": "groq-direct"}
+    endpoints.load = lambda *a, **k: both
+    try:
+        assert provider_tags.connection_names("openwebui") == ["groq-direct", "llm7-api"]
+    finally:
+        endpoints.load = real_load
     # A decision model onboarded from the direct endpoint: in no registration, untagged, its `via` is its connection.
     write("decision-models.json", {"dec-1": {"served": "vendor/decide:free", "endpoint": "openrouter", "via": "openrouter"},
                                    "dec-hub": {"served": "hub-decide", "endpoint": "openwebui", "via": "openwebui"}})

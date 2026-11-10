@@ -319,6 +319,7 @@ a.model:hover .alias { box-shadow: inset 0 -.3em 0 var(--signal); }
 .chip.err { background: var(--err-ground); color: var(--err); }
 .chip.new { background: var(--sky); color: var(--ink-deep); }
 /* an endpoint a model is reached through: outlined, so it reads as a place, not a state */
+.chip.adhoc { background: color-mix(in oklab, var(--sky) 55%, var(--paper-2)); color: var(--ink-deep); }
 .chip.via { background: transparent; border: 1px solid var(--line); color: var(--ink); font-family: var(--font-mono); }
 button.chip { font-family: inherit; border: 0; cursor: pointer; }
 button.chip:hover { outline: 1px solid currentColor; }
@@ -519,6 +520,8 @@ pre.log.answer { max-height: 40vh; }
 .chart { margin: .5rem 0 .75rem; overflow-x: auto; }
 .chart.muted { font-size: .875rem; }
 h3.chart-head { font-size: 1rem; margin: 1rem 0 .2rem; }
+/* Models: each connection a fold, its heading the summary */
+.model-card > summary h3.chart-head { display: inline; margin: 0; }
 /* the Collections tab: the dialog's form, kept to a readable width */
 .panel.form-panel > :not(#c-list, table) { max-width: 46rem; }
 /* a list of things you open (collections), with its New button above */

@@ -68,13 +68,29 @@ def get(hub: str, path: str) -> dict:
         return json.load(response)
 
 
+def _host(url: str) -> str:
+    return (url or "").split("//", 1)[-1].split("/", 1)[0].split(":", 1)[0].lower()
+
+
 def connection_names(hub: str) -> list[str]:
-    """One short name per connection index. URLs only — never the keys."""
+    """One short name per connection index. URLs only — never the keys.
+
+    A provider reached both through the hub and on a direct endpoint of its
+    own (Cloudflare: chat through Open WebUI, decisions only direct) is ONE
+    connection: the hub's connection to that host takes the direct endpoint's
+    name, which is what its directly registered models are tagged (main). Any
+    provider, by host; other hubs (CLI Proxy API) are not direct endpoints."""
     urls = get(hub, "/openai/config").get("OPENAI_API_BASE_URLS", [])
+    direct: dict[str, str] = {}
+    for name, entry in endpoints.load().items():
+        if name != hub and not endpoints.hub(name):
+            direct.setdefault(_host(entry.get("base", "")), name)
     names = []
     for url in urls:
-        host = url.split("//", 1)[-1].split("/", 1)[0].split(":", 1)[0]
-        if host.replace(".", "").isdigit():
+        host = _host(url)
+        if host in direct and host not in (endpoints.connections().get("hosts") or {}):
+            names.append(direct[host])
+        elif host.replace(".", "").isdigit():
             # A BARE IP NAMES NOTHING, and guessing from it was worse than
             # useless: a proxy labelled `lan-proxy` is described by where it
             # sits rather than what it is, and Open WebUI does not expose

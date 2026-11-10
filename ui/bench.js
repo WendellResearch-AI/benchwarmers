@@ -253,12 +253,20 @@
     var box = scope.querySelector('input[data-filter]'), q = box ? box.value.trim().toLowerCase() : '';
     var facets = Array.prototype.filter.call(scope.querySelectorAll('select[data-facet]'), function (s) { return s.value; });
     scope.querySelectorAll('tbody tr, .log-line').forEach(function (r) {
-      r.hidden = (q && r.textContent.toLowerCase().indexOf(q) === -1)
+      // A group's name (data-conn: Models' connection) counts as text of each of its rows.
+      var g = r.closest('[data-conn]'), text = r.textContent + (g ? ' ' + g.dataset.conn : '');
+      r.hidden = (q && text.toLowerCase().indexOf(q) === -1)
         || facets.some(function (s) { return r.dataset[s.dataset.facet] !== s.value; });
     });
     // A match inside a folded list (an endpoint's models) opens it.
     if (q) scope.querySelectorAll('details.models').forEach(function (d) {
       if (d.querySelector('tbody tr:not([hidden])')) d.open = true;
+    });
+    // A group with no row left is hidden; one with a match opens.
+    scope.querySelectorAll('[data-conn]').forEach(function (g) {
+      var any = !!g.querySelector('tbody tr:not([hidden])');
+      g.hidden = !!q && !any;
+      if (q && any && g.tagName === 'DETAILS') g.open = true;
     });
   }
   function scopeOf(c) {
@@ -2838,8 +2846,13 @@
         .sort(function (a, b) { return a.said - b.said; });
       var models = pts.map(function (p) { return p.model; })
         .filter(function (m, i, all) { return all.indexOf(m) === i; }).sort();
+      // Both axes start just under the lowest answer, not at 0%: a decision model is
+      // rarely under 50% sure of its own answer, so a 0-100% frame left every dot in
+      // one corner under a long empty diagonal. Same floor on both, so it stays 45°.
+      var low = Math.min.apply(null, pts.map(function (p) { return Math.min(p.said, p.right); }));
+      var lo = Math.max(0, Math.min(0.9, Math.floor((low - 0.05) * 20) / 20));
       var diag = [];
-      panels.forEach(function (s) { diag.push({panel: s, x: 0, y: 0}, {panel: s, x: 1, y: 1}); });
+      panels.forEach(function (s) { diag.push({panel: s, x: lo, y: lo}, {panel: s, x: 1, y: 1}); });
       function tip(p) {
         return p.model + ' · ' + names[p.set] + '\n' + plural(p.n, 'answer') + ' it was about '
           + Math.round(p.said * 100) + '% sure of\n' + Math.round(p.right * 100) + '% of them right';
@@ -2850,8 +2863,9 @@
       return Plot.plot(Object.assign(opts, {
         width: narrow ? Math.min(w, 520) : w, height: narrow ? 3 * 230 + 70 : 320, style: style,
         marginLeft: 52, marginRight: narrow ? 90 : 20, marginBottom: 44, marginTop: 28,
-        x: {domain: [0, 1], label: 'Probability it gave its answer →', tickFormat: '.0%', ticks: 5, grid: true},
-        y: {domain: [0, 1], label: '↑ Share right', tickFormat: '.0%', ticks: 5, grid: true},
+        inset: 14,                         // a dot at 100% clear of the frame
+        x: {domain: [lo, 1], label: 'Probability it gave its answer →', tickFormat: '.0%', ticks: 5, grid: true},
+        y: {domain: [lo, 1], label: '↑ Share right', tickFormat: '.0%', ticks: 5, grid: true},
         r: {range: [3, 13]},
         color: {legend: true, domain: models, range: [sky, good, signal, warn, muted, ink, err]},
         marks: [
