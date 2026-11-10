@@ -249,7 +249,10 @@ def _axis(text: str, found: dict) -> str | None:
     wait = found.get("retry_after_s")
     if DAY.search(low) or (wait or 0) >= 3600:
         return "rpd"
-    if MINUTE.search(low) or (wait is not None and wait <= 120):
+    # A short wait alone is not enough for rpm: calls in flight are not in the
+    # ledger yet, so a minute's count undercounts, and two passing 429s could
+    # pin a connection at rpm 3 for 14 days. Only a named minute window counts.
+    if MINUTE.search(low):
         return "rpm"
     return None
 
@@ -392,7 +395,7 @@ def _selftest() -> None:
     assert axis(neurons) == "rpd" and "limits" not in parse(neurons)
     assert axis("Rate limit exceeded: free-models-per-day. Try again in 3 minutes") == "rpd"
     assert axis("429 Too Many Requests, retry-after: 7200") == "rpd"
-    assert axis("429 Too Many Requests, retry-after: 30") == "rpm"
+    assert axis("429 Too Many Requests, retry-after: 30") is None        # a short wait alone: no window
     assert axis("429: too many requests per minute") == "rpm"
     assert axis("429 Too Many Requests") is None                         # no window named
     assert axis("Rate limit exceeded. Try again in 3 minutes") is None    # a wait, not a window
