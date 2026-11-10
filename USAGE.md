@@ -314,7 +314,8 @@ limit is that model's own:
 - **Pool**: OpenRouter's free requests a day, shared by its models, with a bar
   per key, against the limit OpenRouter stated in a rate-limit reply.
 - **Caps**: a day or month cap, counted from the bench's own calls: one you set
-  on Endpoints (Rate limits per connection), else one the provider states in
+  on Endpoints (Rate limits per connection), else a day cap the bench learned
+  for the connection (below), else one the provider states in
   its replies without saying what is left (a Cohere trial key's 1,000 calls a
   month), shown but not enforced until you set it. Calls made elsewhere with
   the same key are not in the count.
@@ -323,7 +324,14 @@ limit is that model's own:
 
 Nothing is taken from a provider's docs, which can change without notice; a
 limit a provider states in a rate-limit error (UnoRouter's "allows 1
-request(s) every 1 min" for a model) is learned and kept to. One exception,
+request(s) every 1 min" for a model) is learned and kept to. When the error
+names no number (Cloudflare Workers AI's, once the day's free Neurons are
+gone), the requests the bench had sent on that connection in that minute or
+day are taken as the connection's limit: noted the first time, kept to once a
+second refusal lands near the same count, unless you set your own for that
+connection on Endpoints, where each learned limit is shown with a Forget
+button. A learned rate limit not met again for 14 days is forgotten, so a
+raised limit is found. One exception,
 watched: NVIDIA states no limit per key, so its tile reads the file
 build.nvidia.com's own badge reads (10,000 requests a day, up to 40 a minute,
 the same for every account) daily and on Refresh, and counts the bench's

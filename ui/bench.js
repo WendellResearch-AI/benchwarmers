@@ -1545,6 +1545,29 @@
           lab.appendChild(box); inputs.appendChild(lab);
         });
         left.appendChild(inputs);
+        // What the bench worked out from this connection's 429s (learn.py):
+        // kept to where no value of yours is set, until Forget or 14 days.
+        res.keys.forEach(function (k) {
+          var ev = (c.learned || {})[k], once = (c.pending || {})[k];
+          if (!ev && !once) return;
+          var on = function (iso) { return new Date(iso).toLocaleDateString(undefined, {day: 'numeric', month: 'short'}); };
+          var note = el('div', {class: 'base'}, ev
+            ? 'learned ' + ev.value + ' ' + k + ' · 429s on ' + on(ev.at)
+              + (ev.confirmed_at && on(ev.confirmed_at) !== on(ev.at) ? ', last on ' + on(ev.confirmed_at) : '')
+              + ' · ' + (c.limits[k] ? 'not enforced: yours wins' : 'enforced (yours wins)') + ' '
+            : 'met once: ' + once.n + ' ' + k + ' · a 429 on ' + on(once.at) + ' · not enforced unless met again ');
+          var forget = el('button', {class: 'btn small', type: 'button',
+                                     'aria-label': 'Forget the learned ' + k + ' for ' + c.name}, 'Forget');
+          forget.addEventListener('click', function () {
+            $('l-errors').textContent = ''; $('l-done').textContent = '';
+            post('/api/connection-learned/forget', {connection: c.name, axis: k}).then(function (r) {
+              if (!r.ok) { listErrors($('l-errors'), r.errors); return; }
+              $('l-done').textContent = 'Forgot the learned ' + k + ' for ' + c.name + '.';
+              loadLimits();
+            });
+          });
+          note.appendChild(forget); left.appendChild(note);
+        });
         row.appendChild(left);
         var save = el('button', {class: 'btn small', type: 'button'}, 'Save');
         save.addEventListener('click', function () {

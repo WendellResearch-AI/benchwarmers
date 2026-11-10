@@ -20,6 +20,8 @@ not mix. Covered:
   a Gemini 429 body's daily quota learned as a limit;
 - an rpm limit across six threads at once and across two processes (calls in
   flight count), a monthly cap (rpmo), and both refusals classed as capacity;
+- a connection's learned limit (metrics/learn.py) enforced, its refusal not
+  learned from, your own value winning over it, and Forget;
 - the free-tier guard holding a model that went paid, until it is allowed;
 - metrics/cost.py reading the ledger.
 """
@@ -331,6 +333,31 @@ def main() -> int:
     check(not bad["ok"] and serve.save_model_facts("t-ok", {"limits": {"rpmo": 5}}).get("ok") is not None
           and "rpmo" not in ((serve.catalog.overrides().get("t-ok") or {}).get("limits") or {}),
           "a bad rpmo is refused; a model's own limits have none", bad)
+    # A connection's learned limit (learn.py: 429s that named no number) is kept to like one of yours, which wins.
+    import datetime as dt
+    at = dt.datetime.now().astimezone()
+    learn._learn_connection("monthprov", "rpd", 3, "test", "429", at - dt.timedelta(days=2))
+    got = learn._learn_connection("monthprov", "rpd", 3, "test", "429", at - dt.timedelta(days=1))
+    rule = [x for x in pacing.rules("t-month", "monthprov") if x["axis"] == "rpd"]
+    h = pacing.held("t-month", "monthprov")
+    check(got == {"rpd": 3} and len(rule) == 1 and rule[0]["scope"] == "connection" and rule[0]["limit"] == 3
+          and rule[0]["source"].startswith("learned ") and h is not None and h[0] > 3600 and "learned" in h[1],
+          "a connection's learned rpd is enforced", (got, rule, h))
+    r = client.chat("t-month", "hi", timeout=5)
+    learn.record("t-month", client.output(r, 5), "test")
+    kept = learn.connection_learned()["monthprov"]["rpd"]
+    check("rate limit (not sent" in r["error"] and "connection-learned.json" in r["error"]
+          and kept["confirmed_at"] == kept["at"] and not learn.connection_learned(pending=True),
+          "its refusal names where the limit is from, and is not learned from", (r["error"], kept))
+    view = {c["name"]: c for c in serve.connections_view()["connections"]}
+    serve.save_connection_limits("monthprov", {"rpm": 20, "rpmo": 1000, "rpd": 100})
+    rule = [x for x in pacing.rules("t-month", "monthprov") if x["axis"] == "rpd"]
+    check(view["monthprov"]["learned"] == {"rpd": {k: kept[k] for k in ("value", "at", "confirmed_at")}}
+          and len(rule) == 1 and rule[0]["limit"] == 100 and rule[0]["source"].startswith("you"),
+          "the Endpoints dialog shows it; your own value for that connection wins", (view["monthprov"], rule))
+    gone = serve.forget_connection_learned("monthprov", "rpd")
+    check(gone["ok"] and learn.connection_learned() == {} and not serve.forget_connection_learned("monthprov", "rpd")["ok"],
+          "Forget drops a learned limit", gone)
     page = serve.quotas_page()
     check("id='quota-data'" in page and "fakeprov" in page and "What the bench sent" in page,
           "the Quotas page carries its tiles and the ledger's counts")

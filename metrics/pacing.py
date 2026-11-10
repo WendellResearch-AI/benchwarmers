@@ -28,7 +28,9 @@ WHAT IS COUNTED
   deadline is dropped, so a killed process cannot hold a slot.
 - A connection's limits count every model on it (a key's limits are the
   key's); a model's own or learned limits count that model alone, its own
-  beating the learned (as everywhere: your values win).
+  beating the learned (as everywhere: your values win). Where you set none
+  for a connection, the rpm or rpd learn.py worked out from its 429s is kept
+  to (config/connection-learned.json), until it expires.
 - Quota records (metrics/quota.py): what a provider last said was left, less
   the calls sent since, until its reset.
 
@@ -77,6 +79,7 @@ def rules(alias: str, connection: str) -> list[dict]:
     conn = catalog.connection_limits().get(connection) or {}
     mine = (catalog.overrides().get(alias) or {}).get("limits") or {}
     seen = (learn.learned().get(alias) or {}).get("limits") or {}
+    met = learn.connection_learned().get(connection) or {}
     out = []
 
     def ok(n) -> bool:
@@ -85,6 +88,10 @@ def rules(alias: str, connection: str) -> list[dict]:
         if ok(n := conn.get(axis)):
             out.append({"scope": "connection", "axis": axis, "limit": n,
                         "source": f"you, for {connection} (config/connection-limits.json)"})
+        elif ok(n := (met.get(axis) or {}).get("value")):
+            out.append({"scope": "connection", "axis": axis, "limit": n,
+                        "source": f"learned {str(met[axis].get('at', ''))[:10]} from 429s on {connection}"
+                                  " (config/connection-learned.json)"})
         if axis == "rpmo":
             continue
         if ok(n := mine.get(axis)):

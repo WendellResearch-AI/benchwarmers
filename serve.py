@@ -1544,15 +1544,42 @@ def save_connection_limits(connection: str, limits: dict, who: str = "ui") -> di
     return {"ok": True, "errors": [], "changed": ["config/connection-limits.json"]}
 
 
+def forget_connection_learned(connection: str, axis: str, who: str = "ui") -> dict:
+    """Drop what the bench learned for one connection's axis (metrics/learn.py):
+    its limit and its candidates, so the next 429 starts over."""
+    import learn
+
+    def drop(data: dict):
+        axes = data.get(connection)
+        old = axes.pop(axis, None) if isinstance(axes, dict) else None
+        if axes == {}:
+            del data[connection]
+        return old
+    old = locked.update(learn.CONN_LEARNED, drop, ensure_ascii=False)
+    if old is None:
+        return {"ok": False, "errors": [f"nothing is learned for {axis or '?'} on {connection or '?'}"]}
+    _log_change(datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+                who, "", f"learned limits {connection}", {axis: old}, None)
+    return {"ok": True, "errors": [], "changed": ["config/connection-learned.json"]}
+
+
 def connections_view() -> dict:
-    """Each connection the chat models use, its models, and its limits."""
+    """Each connection the chat models use, its models, its limits, and what
+    the bench learned from its 429s (`learned`: enforced where you set none;
+    `pending`: met once, not enforced). Without the 429's text: it can carry
+    an account id."""
+    import learn
     by = {}
     for a in _chat_aliases():
         by.setdefault(catalog.connection_of(a), []).append(a)
     lim = catalog.connection_limits()
+    met, once = learn.connection_learned(), learn.connection_learned(pending=True)
     return {"ok": True, "errors": [], "keys": list(catalog.CONNECTION_LIMIT_KEYS),
             "labels": {k: catalog.LIMIT_LABELS[k] for k in catalog.CONNECTION_LIMIT_KEYS},
-            "connections": [{"name": c, "models": sorted(m), "limits": lim.get(c, {})}
+            "connections": [{"name": c, "models": sorted(m), "limits": lim.get(c, {}),
+                             "learned": {k: {f: ev.get(f) for f in ("value", "at", "confirmed_at")}
+                                         for k, ev in met.get(c, {}).items()},
+                             "pending": once.get(c, {})}
                             for c, m in sorted(by.items())]}
 
 
@@ -5288,6 +5315,12 @@ def endpoints_page() -> str:
         " popup) win, and limits the bench learns from errors only ever lower these. rpmo is calls"
         " a calendar month (UTC), for a trial key's monthly cap. The built-in client keeps to them:"
         " when one is used up it waits if the call can still finish in time, else it does not send.</p>"
+        "<p class='sub'>The bench also learns a connection's own rpm and rpd: when a provider refuses"
+        " with a 429 that names no number, the requests the bench had sent in that minute or day are the"
+        " limit, near enough. Met once it is only noted; met again at about the same count, a minute or a"
+        " day later, it is kept to like a limit of yours, unless you set your own here, which always wins."
+        " A learned limit not met again for 14 days is forgotten, so a raised limit is found; Forget drops"
+        " one now.</p>"
         "<div id='l-list'></div><div class='errors' id='l-errors' role='alert'></div>"
         "<div class='done' id='l-done'></div></div>")
 
@@ -5405,6 +5438,14 @@ def quotas_page() -> str:
                                 + "".join(f"<td class='num'>{ev['value']:,}</td>" if kk == k
                                           else "<td class='num muted'>—</td>" for kk in keys)
                                 + f"<td>learned {esc(ev.get('at', '')[:10])} ({esc(ev.get('where', ''))})</td></tr>")
+    # And per connection, from 429s that named no number, where you set none.
+    for conn, axes in sorted(learn.connection_learned().items()):
+        for k, ev in axes.items():
+            if not (entered.get(conn) or {}).get(k):
+                lim_rows.append(f"<tr><td>{esc(conn)}</td>"
+                                + "".join(f"<td class='num'>{ev['value']:,}</td>" if kk == k
+                                          else "<td class='num muted'>—</td>" for kk in keys)
+                                + f"<td>learned {esc(ev.get('at', '')[:10])} (its 429s)</td></tr>")
     sent_table = ("<table><thead><tr>" + th("Connection") + th("Requests, 24 h", True) + th("Tokens, 24 h", True)
                   + th("Requests, this month", True) + th("Tokens, this month", True)
                   + f"</tr></thead><tbody>{''.join(sent_rows)}</tbody></table>"
@@ -5432,8 +5473,10 @@ def quotas_page() -> str:
         + "<details class='panel'><summary><b>Known limits</b></summary><p class='sub'>How much each"
         " connection or model allows (tokens or requests per minute or day), so the bench can space its"
         " calls. Two sources: what you enter per connection (Endpoints, Rate limits per connection), and"
-        " what a provider states in a rate-limit error, which the bench writes down by itself. A model's"
-        " own limits (its popup) win, and learned ones only ever lower a limit.</p>"
+        " what a provider states in a rate-limit error, which the bench writes down by itself (or, when the"
+        " error names no number, works out for the connection from the requests it had sent). A model's"
+        " own limits (its popup) win, and learned ones only ever lower a limit, until they have not been"
+        " met again for 14 days and are forgotten.</p>"
         + ("<table><thead><tr>" + th("Connection or model") + "".join(th(k, True) for k in keys) + th("From")
            + f"</tr></thead><tbody>{''.join(lim_rows)}</tbody></table>" if lim_rows
            else "<p class='muted'>None known yet.</p>")
@@ -6037,6 +6080,8 @@ class Handler(gateway.Handler):
                "/api/own-client-free": lambda p: save_own_client_free(p.get("providers")),
                "/api/connection-limits": lambda p: save_connection_limits(str(p.get("connection") or ""),
                                                                           p.get("limits")),
+               "/api/connection-learned/forget": lambda p: forget_connection_learned(
+                   str(p.get("connection") or ""), str(p.get("axis") or "")),
                "/api/verdict": lambda p: record_verdict(str(p.get("call") or ""), p.get("useful"),
                                                         str(p.get("note") or ""), p.get("real"),
                                                         p.get("false")),

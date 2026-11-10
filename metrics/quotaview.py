@@ -512,14 +512,21 @@ def _limit_text(lim: dict) -> str:
     return ", ".join(f"{v:,} {words[k]}" for k, v in lim.items() if k in words and v)
 
 
-def caps(host: str, entered: dict, stated: dict, day_rows: list, month_rows, now: float) -> list[dict]:
+def caps(host: str, entered: dict, stated: dict, day_rows: list, month_rows, now: float,
+         learned: dict | None = None) -> list[dict]:
     """The connection's day and month caps as groups of windows, each counted
     from the bench's ledger since midnight UTC or the month's start (what a
-    provider's calendar counts): yours, else `stated` ({axis: (limit, source,
-    detail)}: what its replies say with nothing left given, or NVIDIA's site).
+    provider's calendar counts): yours, else `learned` (learn.py's, from this
+    connection's 429s), else `stated` ({axis: (limit, source, detail)}: what
+    its replies say with nothing left given, or NVIDIA's site).
     `month_rows` is called only when a month cap needs it."""
     mine = {k: (v, "your cap", "Set on Endpoints, Rate limits per connection; the bench keeps to it.")
             for k, v in (entered.get(host) or {}).items() if k in COUNTED and v}
+    for axis, ev in (learned or {}).items():
+        if axis in COUNTED:
+            mine.setdefault(axis, (ev["value"], "learned", f"Worked out {str(ev.get('at'))[:10]} from this connection's"
+                                   " 429s, which named no number; the bench keeps to it until you set your own"
+                                   " on Endpoints, or it has not been met again for 14 days."))
     for axis, (n, source, detail) in stated.items():
         mine.setdefault(axis, (n, source, detail + " Shown, not enforced: set it on Endpoints to have the bench"
                                                    " keep to it."))
@@ -554,7 +561,7 @@ def tiles(now: float | None = None) -> list[dict]:
     resting, learned = learn.cooldowns(), learn.learned()
     day_rows = list(ledger.rows(now - 86400))
     utc_rows = [r for r in day_rows if r["t"] >= _utc_midnight(now)]
-    entered = catalog.connection_limits()
+    entered, met = catalog.connection_limits(), learn.connection_learned()
     regs = __import__("endpoints").registrations()
     month: list = []                                   # this month's ledger, read once if a month cap asks
 
@@ -589,7 +596,7 @@ def tiles(now: float | None = None) -> list[dict]:
         t = {"id": tag, "tag": tag, "host": host, "bench": len(aliases), "kind": "models", "groups": [],
              "pool": [], "notes": [],          # a day or month cap is a meter (caps), a minute one is said
              "conn_limit": _limit_text({k: v for k, v in (entered.get(host) or {}).items() if k in ("rpm", "tpm")}),
-             "caps": caps(host, entered, stated, day_rows, month_rows, now),
+             "caps": caps(host, entered, stated, day_rows, month_rows, now, met.get(host)),
              "models": _model_rows(aliases, rows, resting, limits),
              "refresh": how_refreshed(tag), "plan": "", "name": ""}
         got = live.get(tag) or {}
@@ -743,6 +750,13 @@ def _selftest() -> None:
     g = caps("router.requesty.ai", {"router.requesty.ai": {"rpd": 10, "rpm": 5}}, {"rpd": said}, day, lambda: [], now)
     assert g[0]["label"] == "your cap · counted by the bench" and g[0]["windows"] == [
         {"label": "requests · day", "left": 80, "remaining": 8, "of": 10, "reset_at": _iso(mid + 86400)}], g
+    # A learned day cap (learn.py, from 429s) beats a stated one, and yours beats it; a learned rpm is no meter.
+    met = {"rpd": {"value": 20, "at": "2026-11-10T09:00:00+00:00"}, "rpm": {"value": 4, "at": ""}}
+    g = caps("router.requesty.ai", {}, {"rpd": said}, day, lambda: [], now, met)
+    assert len(g) == 1 and g[0]["label"] == "learned · counted by the bench" and "2026-11-10" in g[0]["title"] \
+        and g[0]["windows"][0]["of"] == 20 and g[0]["windows"][0]["remaining"] == 18, g
+    g = caps("router.requesty.ai", {"router.requesty.ai": {"rpd": 10}}, {}, day, lambda: [], now, met)
+    assert len(g) == 1 and g[0]["label"] == "your cap · counted by the bench", g
     asked = []
     g = caps("api.cohere.ai", {}, {"rpmo": (1000, "its replies", "")}, day, lambda: asked.append(1) or day, now)
     assert asked and g[0]["windows"][0]["remaining"] == 999 and g[0]["windows"][0]["label"] == "requests · month", g
