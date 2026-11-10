@@ -4324,13 +4324,21 @@ def collections_tab() -> str:
         " the paid ones. Click a suggestion or type your own: comma-separated lower-case words, up to 8.</p>"
         # Not data-filter: that binds to the whole panel. The same match (any
         # text, case-insensitive), on the member list only; the seats show who is ticked.
-        "<label class='field' for='c-member-filter'>Members</label>"
+        "<div class='members-head'><label class='field' for='c-member-filter'>Members</label>"
+        # Model details as they are now (a fact set in a model's popup, a refresh of the
+        # catalog), the ticks and the search kept; also done when a model popup opened from here closes.
+        "<button class='btn small' type='button' id='c-refresh' title='Fetch the models and their details again;"
+        " what is ticked stays ticked'>Refresh model details</button>"
+        "<span class='done' id='c-refresh-out' role='status'></span></div>"
         # The panel as it will sit, drawn as the Collections list draws it
         # (bench.js recount): a seat per ticked member, explorer seats dashed.
         "<div id='c-seats' class='seats' aria-live='polite'></div>"
         "<div class='member-find'><input type='search' id='c-member-filter' class='member-filter' spellcheck='false'"
         " autocomplete='off' placeholder='Filter by model, provider or served name' aria-controls='c-members'"
-        " aria-describedby='c-count'><select id='c-member-provider' aria-label='Provider' aria-controls='c-members'>"
+        " aria-describedby='c-count'><select id='c-member-show' aria-label='Show' aria-controls='c-members'>"
+        "<option value=''>Every model</option><option value='ticked'>Ticked</option>"
+        "<option value='fits'>Fits the tags</option></select>"
+        "<select id='c-member-provider' aria-label='Provider' aria-controls='c-members'>"
         "<option value=''>Every provider</option></select></div>"
         "<div id='c-members' class='members' role='group' aria-label='Members'></div>"
         "<p class='rules' id='c-count'></p>"

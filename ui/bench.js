@@ -1888,7 +1888,7 @@
          pick: $('g-pick'), pickConf: $('g-pick-conf'),
          gErrors: $('g-errors'), gDone: $('g-done'), form: $('c-form'), status: $('c-status'),
          del: $('c-delete'), reply: $('c-reply'), merger: $('c-merger'), find: $('c-member-filter'),
-         seats: $('c-seats'), prov: $('c-member-provider'), adHoc: $('c-ad-hoc'),
+         seats: $('c-seats'), prov: $('c-member-provider'), show: $('c-member-show'), adHoc: $('c-ad-hoc'),
          ownCalls: $('c-max-calls'), ownExp: $('c-max-explorers')};
     return loadCollections();
   };
@@ -2002,7 +2002,7 @@
   // the seats above the list always show what is picked, each with its ×, and
   // every count still includes it. A row goes when all its chips do.
   function filterMembers() {
-    var q = c.find.value.trim().toLowerCase(), prov = c.prov.value;
+    var q = c.find.value.trim().toLowerCase(), prov = c.prov.value, show = c.show.value;
     c.members.querySelectorAll('.m-row').forEach(function (row) {
       var named = !q || row.dataset.name.toLowerCase().indexOf(q) !== -1, any = false;
       row.querySelectorAll('label.check').forEach(function (lab) {
@@ -2010,7 +2010,8 @@
         var text = (box.value + ' ' + (lab.dataset.served || '') + ' ' + (fact(box.value).connection || '') + ' ' +
                     lab.textContent).toLowerCase();
         lab.hidden = !box.checked && !!lab.dataset.paid || !named && text.indexOf(q) === -1
-                     || !!prov && (fact(box.value).provider || '') !== prov;
+                     || !!prov && (fact(box.value).provider || '') !== prov
+                     || show === 'ticked' && !box.checked || show === 'fits' && !!box.dataset.blocked;
         any = any || !lab.hidden;
       });
       row.hidden = !any;
@@ -2019,6 +2020,23 @@
   }
   on('input', 'c-member-filter', filterMembers);
   on('change', 'c-member-provider', filterMembers);
+  on('change', 'c-member-show', filterMembers);
+  // Refresh model details: the models and their facts fetched again, the list drawn
+  // anew with the same ticks, search and choices. The model popup's directory too.
+  function refreshMembers() {
+    var chosen = picked(), out = $('c-refresh-out'), btn = $('c-refresh');
+    btn.disabled = true; out.textContent = 'Refreshing…';
+    return Promise.all([get('/api/collections'), directory()]).then(function (res) {
+      C = res[0];
+      drawMembers(chosen);
+      applyTags();
+      out.textContent = 'Up to date.';
+    }).catch(function (err) { out.textContent = String(err); })
+      .then(function () { btn.disabled = false; });
+  }
+  on('click', 'c-refresh', refreshMembers);
+  // A model opened from the list may have been changed in its popup: what it now is, on close.
+  md.addEventListener('close', function () { if (c.form && c.form.open) refreshMembers(); });
   // Escape in a box with text clears it; only an empty box lets Escape close the popup.
   on('keydown', 'c-member-filter', function (e) {
     if (e.key === 'Escape' && c.find.value) { e.preventDefault(); e.stopPropagation(); c.find.value = ''; filterMembers(); }
@@ -2067,42 +2085,9 @@
     c.ownExp.value = row && row.max_explorers !== undefined ? row.max_explorers : '';
     c.ownCalls.placeholder = C.settings.max_calls; c.ownExp.placeholder = C.settings.max_explorers;
     drawTagPicks();
-    c.members.textContent = ''; c.find.value = '';
-    c.prov.length = 1;                                 // "Every provider", then each one a model is on
-    Array.from(new Set(C.models.map(function (a) { return fact(a).provider; }).filter(Boolean))).sort()
-      .forEach(function (p) { c.prov.appendChild(el('option', {value: p}, p)); });
-    // One row per model, named by its shortest alias, with what the first
-    // route says it holds and can do; each provider it is on is a chip that
-    // ticks that alias. A chip whose window differs from the row's says its own.
-    var groups = {};
-    C.models.forEach(function (a) { var f = fact(a).family || a; (groups[f] = groups[f] || []).push(a); });
-    Object.keys(groups).map(function (f) {
-      var routes = groups[f].slice().sort(function (x, y) { return x.length - y.length || (x < y ? -1 : 1); });
-      return {family: f, name: routes[0], routes: routes};
-    }).sort(function (x, y) { return x.name.toLowerCase() < y.name.toLowerCase() ? -1 : 1; }).forEach(function (g) {
-      var first = fact(g.name), caps = first.caps || {};
-      var can = ['vision', 'tools'].filter(function (k) { return caps[k]; });
-      var line = el('div', {class: 'm-row', role: 'group', 'aria-label': g.name, 'data-family': g.family, 'data-name': g.name});
-      var name = el('div', {class: 'm-name'});
-      name.appendChild(el('span', {class: 'mono'}, g.name));
-      name.appendChild(el('span', {class: 'm-facts'}, [first.context ? tokens(first.context) : '', can.join(', '),
-        first.price === 'unknown' ? '' : first.price].filter(Boolean).join(' · ')));
-      line.appendChild(name);
-      var chips = el('div', {class: 'm-routes'});
-      g.routes.forEach(function (alias) {
-        var f = fact(alias);
-        var box = el('input', {type: 'checkbox', value: alias, 'aria-label': alias + ' on ' + (f.provider || 'its endpoint')});
-        box.checked = !!row && row.members.indexOf(alias) !== -1;
-        box.addEventListener('change', applyTags);      // ticked or not changes what a misfit shows as
-        var lab = el('label', {class: 'check', 'data-served': (C.served || {})[alias] || ''});
-        lab.appendChild(box);
-        lab.appendChild(el('span', null, (f.provider || alias) +
-          (f.context && first.context && f.context !== first.context ? ' · ' + tokens(f.context) : '')));
-        chips.appendChild(lab);
-      });
-      line.appendChild(chips);
-      c.members.appendChild(line);
-    });
+    c.find.value = ''; c.show.value = ''; c.prov.value = '';
+    $('c-refresh-out').textContent = '';
+    drawMembers(row ? row.members : []);
     c.shape.textContent = '';
     c.shape.appendChild(el('option', {value: ''}, 'automatic'));
     C.shapes.forEach(function (s) {
@@ -2116,6 +2101,54 @@
       if (row && row.merger === alias) o.selected = true; c.merger.appendChild(o);
     });
     showMerger(); applyTags();
+  }
+  // The member list: a table to scan down, one row per model (named by its shortest
+  // alias; the name opens its popup, as everywhere), its context and what it can do
+  // in columns of their own, then a chip per provider it is on, each ticking that
+  // alias. A chip whose window differs from the row's says its own. `chosen`: ticked.
+  function drawMembers(chosen) {
+    var keepProv = c.prov.value;
+    c.members.textContent = '';
+    c.prov.length = 1;                                 // "Every provider", then each one a model is on
+    Array.from(new Set(C.models.map(function (a) { return fact(a).provider; }).filter(Boolean))).sort()
+      .forEach(function (p) { c.prov.appendChild(el('option', {value: p}, p)); });
+    c.prov.value = keepProv;
+    var head = el('div', {class: 'm-head', 'aria-hidden': 'true'});
+    ['Model', 'Context', 'Can', 'On, tick one'].forEach(function (h) { head.appendChild(el('span', null, h)); });
+    c.members.appendChild(head);
+    var groups = {};
+    C.models.forEach(function (a) { var f = fact(a).family || a; (groups[f] = groups[f] || []).push(a); });
+    Object.keys(groups).map(function (f) {
+      var routes = groups[f].slice().sort(function (x, y) { return x.length - y.length || (x < y ? -1 : 1); });
+      return {family: f, name: routes[0], routes: routes};
+    }).sort(function (x, y) { return x.name.toLowerCase() < y.name.toLowerCase() ? -1 : 1; }).forEach(function (g) {
+      var first = fact(g.name), caps = first.caps || {};
+      var line = el('div', {class: 'm-row', role: 'group', 'aria-label': g.name, 'data-family': g.family, 'data-name': g.name});
+      var name = el('div', {class: 'm-name'});
+      name.appendChild(el('a', {href: '#', class: 'model mono', 'data-alias': g.name, title: 'Open ' + g.name}, g.name));
+      line.appendChild(name);
+      line.appendChild(el('span', {class: 'm-ctx'}, first.context ? tokens(first.context) : '—'));
+      var can = el('span', {class: 'm-can'});
+      [['vision', 'vision'], ['tools', 'tools'], ['reasoning', 'reasons']].forEach(function (k) {
+        if (caps[k[0]]) can.appendChild(el('span', {class: 'chip'}, k[1]));
+      });
+      if (first.price === 'free') can.appendChild(el('span', {class: 'chip ok'}, 'free'));
+      line.appendChild(can);
+      var chips = el('div', {class: 'm-routes'});
+      g.routes.forEach(function (alias) {
+        var f = fact(alias);
+        var box = el('input', {type: 'checkbox', value: alias, 'aria-label': alias + ' on ' + (f.provider || 'its endpoint')});
+        box.checked = chosen.indexOf(alias) !== -1;
+        box.addEventListener('change', applyTags);      // ticked or not changes what a misfit shows as
+        var lab = el('label', {class: 'check', 'data-served': (C.served || {})[alias] || ''});
+        lab.appendChild(box);
+        lab.appendChild(el('span', null, (f.provider || alias) +
+          (f.context && first.context && f.context !== first.context ? ' · ' + tokens(f.context) : '')));
+        chips.appendChild(lab);
+      });
+      line.appendChild(chips);
+      c.members.appendChild(line);
+    });
   }
   // What a collection's members can all do, in the words the tag checks use.
   var CAN = {reasoning: 'reason'};

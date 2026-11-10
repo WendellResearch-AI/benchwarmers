@@ -336,6 +336,8 @@ td.why { white-space: nowrap; }                     /* Uptime's down / left out,
 dialog { border: 1px solid var(--ink); border-radius: var(--radius); padding: 1.25rem 1.4rem;
          width: min(40rem, calc(100vw - 2rem)); max-height: calc(100vh - 2rem);
          background: var(--paper-2); color: var(--ink); box-shadow: 6px 6px 0 var(--ink); }
+/* The collection popup holds the member table: wider, so names and chips sit on one line. */
+dialog#c-form { width: min(54rem, calc(100vw - 2rem)); }
 dialog::backdrop { background: color-mix(in oklab, var(--ink-deep) 45%, transparent); }
 dialog h2 { margin: 0 0 .2rem; font-size: 1.375rem; font-weight: 700; }
 :is(dialog, .form-panel) .served { color: var(--muted); font-size: .9375rem; margin: 0 0 .9rem; overflow-wrap: anywhere; }
@@ -346,11 +348,24 @@ dialog h2 { margin: 0 0 .2rem; font-size: 1.375rem; font-weight: 700; }
 :is(dialog, .form-panel) .rules { font-size: .875rem; color: var(--muted); margin: .35rem 0 0; }
 :is(dialog, .form-panel) label.check { display: flex; align-items: center; gap: .5rem; margin-top: 1rem; cursor: pointer; }
 :is(dialog, .form-panel) fieldset { border: 0; padding: 0; margin: 1rem 0 0; }
-:is(dialog, .form-panel) .members { max-height: 18rem; overflow: auto; border-top: 1px solid var(--line); }
-/* One row per model: its name and what it holds, then a chip per provider it
-   is on, each ticking that alias (bench.js fillForm). */
-:is(dialog, .form-panel) .members .m-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .2rem 1rem;
-                  align-items: center; padding: .4rem 0; border-bottom: 1px solid var(--line); }
+:is(dialog, .form-panel) .members { max-height: min(30rem, 55vh); overflow: auto; border: 1px solid var(--line);
+                  border-radius: var(--radius); }
+/* A table to scan: the model (its name opens it), context, what it can do, then a
+   chip per provider it is on, each ticking that alias (bench.js drawMembers). */
+:is(dialog, .form-panel) .members :is(.m-row, .m-head) { display: grid; gap: .2rem .8rem; align-items: center;
+                  grid-template-columns: minmax(9rem, 1.4fr) 3.6rem minmax(0, 1fr) minmax(0, 1.3fr); padding: .4rem .6rem; }
+:is(dialog, .form-panel) .members .m-head { position: sticky; top: 0; z-index: 1; background: var(--paper-2);
+                  border-bottom: 1px solid var(--ink); font-size: .75rem; font-weight: 600; color: var(--muted); }
+:is(dialog, .form-panel) .members .m-row { border-bottom: 1px solid var(--line); }
+:is(dialog, .form-panel) .members .m-row:nth-child(odd) { background: color-mix(in oklab, var(--band) 45%, transparent); }
+:is(dialog, .form-panel) .members .m-row:has(input:checked) { box-shadow: inset 3px 0 0 var(--bench-seat, var(--brand)); }
+:is(dialog, .form-panel) .members .m-name a.model { color: var(--ink); text-decoration: none; font-size: .875rem; }
+:is(dialog, .form-panel) .members .m-name a.model:hover { text-decoration: underline; }
+:is(dialog, .form-panel) .members .m-ctx { font-family: var(--font-mono); font-size: .8125rem; color: var(--muted); text-align: right; }
+:is(dialog, .form-panel) .members .m-can { display: flex; flex-wrap: wrap; gap: .2rem; }
+:is(dialog, .form-panel) .members .m-can .chip { font-size: .6875rem; padding: 0 .4rem; }
+#c-form .members-head { display: flex; align-items: baseline; gap: .6rem; flex-wrap: wrap; }
+#c-form .members-head .field { margin-right: auto; }
 :is(dialog, .form-panel) .members .m-name { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 .5rem;
                   font-size: .875rem; overflow-wrap: anywhere; }
 :is(dialog, .form-panel) .members .m-facts { color: var(--muted); font-size: .8125rem; }
@@ -382,6 +397,8 @@ dialog h2 { margin: 0 0 .2rem; font-size: 1.375rem; font-weight: 700; }
 :is(dialog, .form-panel) .profile .src { font-size: .75rem; color: var(--muted); }
 :is(dialog, .form-panel) .settings { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 1rem; }
 @media (max-width: 40rem) { :is(dialog, .form-panel) :is(.settings, .members .m-row) { grid-template-columns: minmax(0, 1fr); }
+                            :is(dialog, .form-panel) .members .m-head { display: none; }
+                            :is(dialog, .form-panel) .members .m-ctx { text-align: left; }
                             :is(dialog, .form-panel) .members .m-routes { justify-content: flex-start; } }
 :is(dialog, .form-panel) fieldset label.check { margin-top: .4rem; flex-wrap: wrap; }
 :is(dialog, .form-panel) fieldset label.check .muted { font-size: .875rem; }
