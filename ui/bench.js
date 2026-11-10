@@ -2125,7 +2125,10 @@
       var first = fact(g.name), caps = first.caps || {};
       var line = el('div', {class: 'm-row', role: 'group', 'aria-label': g.name, 'data-family': g.family, 'data-name': g.name});
       var name = el('div', {class: 'm-name'});
-      name.appendChild(el('a', {href: '#', class: 'model mono', 'data-alias': g.name, title: 'Open ' + g.name}, g.name));
+      // The same link as every model name elsewhere (a.model > .alias: the highlight on hover).
+      var link = el('a', {href: '#', class: 'model', 'data-alias': g.name, title: 'Open ' + g.name});
+      link.appendChild(el('span', {class: 'alias'}, g.name));
+      name.appendChild(link);
       line.appendChild(name);
       line.appendChild(el('span', {class: 'm-ctx'}, first.context ? tokens(first.context) : '—'));
       var can = el('span', {class: 'm-can'});

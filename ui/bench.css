@@ -359,8 +359,7 @@ dialog h2 { margin: 0 0 .2rem; font-size: 1.375rem; font-weight: 700; }
 :is(dialog, .form-panel) .members .m-row { border-bottom: 1px solid var(--line); }
 :is(dialog, .form-panel) .members .m-row:nth-child(odd) { background: color-mix(in oklab, var(--band) 45%, transparent); }
 :is(dialog, .form-panel) .members .m-row:has(input:checked) { box-shadow: inset 3px 0 0 var(--bench-seat, var(--brand)); }
-:is(dialog, .form-panel) .members .m-name a.model { color: var(--ink); text-decoration: none; font-size: .875rem; }
-:is(dialog, .form-panel) .members .m-name a.model:hover { text-decoration: underline; }
+:is(dialog, .form-panel) .members .m-name a.model { font-size: .875rem; }
 :is(dialog, .form-panel) .members .m-ctx { font-family: var(--font-mono); font-size: .8125rem; color: var(--muted); text-align: right; }
 :is(dialog, .form-panel) .members .m-can { display: flex; flex-wrap: wrap; gap: .2rem; }
 :is(dialog, .form-panel) .members .m-can .chip { font-size: .6875rem; padding: 0 .4rem; }
