@@ -3375,7 +3375,31 @@
     });
 
   }
-  onLoad.suite = function () { drawCharts('suite'); };
+  onLoad.suite = function () { drawCharts('suite'); jumpSpy(); };
+  // Benchmarks' jump bar: the report in view is marked (aria-current) and its link kept in
+  // sight in a bar that scrolls sideways. Set up again after a live swap (setUp, onLoad).
+  var spy = null;
+  function jumpSpy() {
+    if (spy) spy.disconnect();
+    var nav = document.querySelector('#tab-suite .jump');
+    if (!nav || !window.IntersectionObserver) return;
+    var links = {}, seen = {}, current = null;
+    nav.querySelectorAll('a').forEach(function (a) { links[a.getAttribute('href').slice(1)] = a; });
+    // A report counts as in view while it crosses the band just under the bar.
+    spy = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) { seen[e.target.id] = e.isIntersecting; });
+      var id = Object.keys(links).filter(function (k) { return seen[k]; })[0];
+      if (!id || id === current) return;
+      if (current) links[current].removeAttribute('aria-current');
+      current = id;
+      links[id].setAttribute('aria-current', 'true');
+      var a = links[id];
+      if (a.offsetLeft < nav.scrollLeft || a.offsetLeft + a.offsetWidth > nav.scrollLeft + nav.clientWidth) {
+        nav.scrollLeft = a.offsetLeft - 16;
+      }
+    }, {rootMargin: '-56px 0px -60% 0px'});
+    document.querySelectorAll('#tab-suite .panel.report').forEach(function (p) { spy.observe(p); });
+  }
   // Uptime's or Trend's window: that window's tables (and Uptime's list) shown, its charts drawn again.
   document.addEventListener('change', function (ev) {
     var s = ev.target, part = s.matches('select[data-uptime-days]') ? 'uptime' : s.matches('select[data-trend-days]') ? 'trend' : '';

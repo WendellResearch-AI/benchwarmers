@@ -3663,10 +3663,19 @@ def wrong_card() -> str:
 def benchmarks_tab() -> str:
     data = json.dumps(charts_data(), ensure_ascii=False).replace("</", "<\\/")
     # Who to trust, then what moves day to day (Uptime, Trend, Performance), then Real work,
-    # then the rest in the order they had.
-    return (overview_card() + uptime_card() + trend_card() + perf_card() + work_card() + bughunt_card()
-            + wrong_card() + suite_card() + vision_card() + decision_card() + external_card()
-            + f"<script type='application/json' id='charts-data'>{data}</script>")
+    # then the rest in the order they had. Each report gets an id; a bar of links to them
+    # stays at the top while the page scrolls, the one in view marked (bench.js jumpSpy).
+    reports = (("trust", "Who to trust", overview_card), ("uptime", "Uptime", uptime_card),
+               ("trend", "Trend", trend_card), ("performance", "Performance", perf_card),
+               ("work", "Real work", work_card), ("hunt", "Bug hunt", bughunt_card),
+               ("wrong", "Confidently wrong", wrong_card), ("code", "Our code", suite_card),
+               ("vision", "Vision", vision_card), ("decisions", "Decision models", decision_card),
+               ("external", "External", external_card))
+    links = "".join(f"<a href='#report-{key}'>{esc(label)}</a>" for key, label, _ in reports)
+    cards = "".join(card().replace("<div class='panel'", f"<div class='panel report' id='report-{key}'", 1)
+                    for key, _, card in reports)
+    return (f"<nav class='jump' aria-label='Reports'>{links}</nav>{cards}"
+            f"<script type='application/json' id='charts-data'>{data}</script>")
 
 
 def perf_card() -> str:
@@ -5452,10 +5461,8 @@ def logs_page() -> str:
                     for t in ("Gateway calls", "Changes", "Scheduler", "Onboarding runs"))
     export = ("<dialog id='logs-export-dialog' aria-labelledby='lx-title'><h2 id='lx-title'>Export logs</h2>"
               "<fieldset><legend class='field'>Format</legend>"
-              "<label class='check'><input type='radio' name='lx-format' value='txt' checked> <span><b>Text</b>"
-              " (.txt): every log chosen in one file, to read offline</span></label>"
-              "<label class='check'><input type='radio' name='lx-format' value='csv'> <span><b>CSV</b>"
-              " (.csv): a file per log, each with its own columns, for a spreadsheet</span></label></fieldset>"
+              "<label class='check'><input type='radio' name='lx-format' value='txt' checked> Text (.txt)</label>"
+              "<label class='check'><input type='radio' name='lx-format' value='csv'> CSV (.csv)</label></fieldset>"
               f"<fieldset><legend class='field'>Logs</legend>{picks}</fieldset>"
               "<p class='rules' id='lx-note'></p><div class='errors' id='lx-errors' role='alert'></div>"
               "<div class='actions'><button class='btn' type='button' id='lx-cancel'>Cancel</button>"

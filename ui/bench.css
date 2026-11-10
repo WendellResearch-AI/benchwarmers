@@ -536,6 +536,16 @@ pre.log.answer { max-height: 40vh; }
 .chart.muted { font-size: .875rem; }
 h3.chart-head { font-size: 1rem; margin: 1rem 0 .2rem; }
 .chart-label { font-size: .875rem; font-weight: 600; margin: .9rem 0 .1rem; }
+/* Benchmarks' jump bar: a link per report, held at the top while the page scrolls;
+   the report in view is marked (bench.js jumpSpy). One line, sideways on a phone. */
+.jump { position: sticky; top: 0; z-index: 4; display: flex; gap: .2rem; overflow-x: auto; scrollbar-width: thin;
+        padding: .55rem 1.2rem; background: var(--paper-2); border-bottom: 1px solid var(--line);
+        border-radius: 14px 14px 0 0; }
+.jump a { flex: none; padding: .25rem .6rem; border-radius: 999px; color: var(--ink); text-decoration: none;
+          font-size: .875rem; white-space: nowrap; }
+.jump a:hover { background: var(--band); }
+.jump a[aria-current] { background: var(--ink); color: var(--paper-2); }
+.panel.report { scroll-margin-top: 3.4rem; }        /* a jump lands under the bar, not behind it */
 /* Models: each connection a fold, its heading the summary */
 .model-card > summary h3.chart-head { display: inline; margin: 0; }
 /* Expand all / Collapse all: a text toggle with a chevron that turns, like a fold's own marker */
