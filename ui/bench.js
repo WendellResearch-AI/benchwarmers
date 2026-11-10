@@ -493,7 +493,7 @@
            reason: $('m-reason'), remove: $('m-remove'), onboard: $('m-onboard'),
            qtypes: $('m-qtypes'), aliasWhy: $('m-alias-why'), roleHint: $('m-role-hint')};
   m.aliasWhy.dataset.chat = m.aliasWhy.textContent;
-  var editing = null;
+  var editing = null, shown = {};
 
   function openModel(alias) {
     var model = D.models[alias], gone = (D.retired || {})[alias];
@@ -542,6 +542,8 @@
         + (hint.at || '').slice(0, 10) + '). Only a suggestion: the role is the one you pick above.' : '';
       m.save.disabled = false; m.save.textContent = 'Save';
       m.reason.value = ''; m.removeBox.open = false; m.remove.disabled = false; refresh();
+      // What the popup opened with: Save sends only the parts that differ from it.
+      shown = {model: JSON.stringify(modelBody()), facts: factsBody(), opts: optsBody()};
     }
     if (!md.open) md.showModal();      // open already: shown again as it now is (shownAgain)
   }
@@ -580,7 +582,7 @@
     var box = $('m-facts'), f = (D.facts || {})[alias], profile = $('m-profile');
     box.hidden = profile.hidden = decision || !f;
     profile.textContent = '';
-    $('f-errors').textContent = ''; $('f-done').textContent = '';
+    $('f-errors').textContent = '';
     if (box.hidden) return;
     var src = f.sources || {}, mine = function (k) { return src[k] === 'you'; };
     // At a glance, as models.dev shows a model: what goes in, what comes out.
@@ -624,40 +626,25 @@
     var lsrc = Object.keys(src).filter(function (k) { return k.indexOf('limits') === 0; }).map(function (k) { return src[k]; });
     $('s-limits').textContent = lsrc.length ? lsrc.join(' · ') : 'none known';
   }
-  $('f-save').addEventListener('click', function () {
-    if (!editing) return;
+  // The facts as typed, as /api/model-facts takes them; null when the box is not shown.
+  function factsBody() {
+    if ($('m-facts').hidden) return null;
     var facts = {limits: {}};
     FACT_NUM.forEach(function (k) { if ($('f-' + k).value) facts[k] = parseInt($('f-' + k).value, 10); });
     FACT_CAP.forEach(function (k) { var v = $('f-' + k).value; if (v) facts[k] = v === 'yes'; });
     if ($('f-knowledge_cutoff').value.trim()) facts.knowledge_cutoff = $('f-knowledge_cutoff').value.trim();
     document.querySelectorAll('#f-limits input').forEach(function (b) { if (b.value) facts.limits[b.dataset.k] = parseInt(b.value, 10); });
-    $('f-errors').textContent = ''; $('f-done').textContent = '';
-    var alias = editing;
-    post('/api/model-facts', {alias: alias, facts: facts}).then(function (r) {
-      if (!r.ok) { listErrors($('f-errors'), r.errors); return; }
-      // The tables that show facts (At a glance, Models, Quotas) follow once the popup closes (live).
-      shownAgain(alias, 'f-done', 'Saved. The tables show it once this closes.');
-    });
-  });
+    return JSON.stringify(facts);
+  }
   // ---- call options: how the bench asks this model (serve.save_model_options)
   function fillOptions(alias, decision) {
     var o = (D.options || {})[alias] || {}, ceiling = ((D.facts || {})[alias] || {}).max_output;
     $('m-opts').hidden = decision;
-    $('co-errors').textContent = ''; $('co-done').textContent = '';
+    $('co-errors').textContent = '';
     $('co-max').value = o.max_tokens || ''; $('co-max').placeholder = "the endpoint's default";
     $('co-ceiling').textContent = ceiling ? 'At most its max output, ' + Number(ceiling).toLocaleString() + '.' : '';
   }
-  $('co-save').addEventListener('click', function () {
-    if (!editing) return;
-    var v = $('co-max').value.trim();
-    $('co-errors').textContent = ''; $('co-done').textContent = 'Saving…';   // the llm CLI is told too: seconds
-    var alias = editing;
-    post('/api/model-options', {alias: alias, max_tokens: v ? Number(v) : null}).then(function (r) {
-      if (!r.ok) { $('co-done').textContent = ''; listErrors($('co-errors'), r.errors); return; }
-      ownChange();                         // only this popup shows them
-      shownAgain(alias, 'co-done', 'Saved' + (r.note ? '; ' + r.note : '') + '.');
-    });
-  });
+  function optsBody() { return $('m-opts').hidden ? null : $('co-max').value.trim(); }
 
   function refresh() {
     m.danger.hidden = !(editing && m.alias.value.trim() !== editing);
@@ -693,22 +680,57 @@
       then(res);
     };
   }
-  m.save.addEventListener('click', function () {
-    if (!editing) return;
-    var body = {alias: editing, new_alias: m.alias.value.trim(), new_role: m.role.value, new_ad_hoc: m.adhoc.checked};
+  function modelBody() {
+    var body = {new_alias: m.alias.value.trim(), new_role: m.role.value, new_ad_hoc: m.adhoc.checked};
     if (!m.qtypes.hidden) {
       body.new_question_types = Array.prototype.filter.call(m.qtypes.querySelectorAll('input'),
         function (c) { return c.checked; }).map(function (c) { return c.value; });
     }
-    (body.new_alias === editing ? Promise.resolve(true)
-      : ask('Rename ' + editing + ' to ' + body.new_alias + '? Every record keyed by the old alias follows it.', 'Rename')
+    return body;
+  }
+  // The one Save: facts, then call options, then the model itself (alias, role, ad hoc,
+  // question types), each only if changed. The model goes last: a rename moves the
+  // facts and options saved under the old alias with it. The first refusal stops it.
+  m.save.addEventListener('click', function () {
+    if (!editing) return;
+    var alias = editing, body = modelBody(), facts = factsBody(), opts = optsBody(), said = [];
+    var steps = [];
+    if (facts !== shown.facts) steps.push(function () {
+      return post('/api/model-facts', {alias: alias, facts: JSON.parse(facts)}).then(function (r) {
+        if (!r.ok) { listErrors($('f-errors'), r.errors); $('m-facts').open = true; throw 'refused'; }
+        said.push('model facts');
+      });
+    });
+    if (opts !== shown.opts) steps.push(function () {   // the llm CLI is told too: seconds
+      return post('/api/model-options', {alias: alias, max_tokens: opts ? Number(opts) : null}).then(function (r) {
+        if (!r.ok) { listErrors($('co-errors'), r.errors); $('m-opts').open = true; throw 'refused'; }
+        ownChange();                         // only this popup shows them
+        said.push('call options' + (r.note ? ' (' + r.note + ')' : ''));
+      });
+    });
+    if (JSON.stringify(body) !== shown.model) steps.push(function () {
+      body.alias = alias;
+      return post('/api/model', body).then(function (r) {
+        if (!r.ok) { listErrors(m.errors, r.errors); throw 'refused'; }
+        said.push('the model (' + done(r).replace(/^Done: |\.$/g, '') + ')');
+        if (body.new_alias !== alias) { m.title.textContent = body.new_alias; refreshPanes(); }
+      });
+    });
+    m.errors.textContent = ''; m.done.textContent = ''; $('f-errors').textContent = ''; $('co-errors').textContent = '';
+    if (!steps.length) { m.done.textContent = 'Nothing changed.'; return; }
+    (body.new_alias === alias ? Promise.resolve(true)
+      : ask('Rename ' + alias + ' to ' + body.new_alias + '? Every record keyed by the old alias follows it.', 'Rename')
     ).then(function (yes) {
       if (!yes) return;
-      m.save.disabled = true; m.save.textContent = 'Saving…'; m.errors.textContent = '';
-      post('/api/model', body).then(after(m.save, 'Save', function (res) {
-        if (body.new_alias !== body.alias) { m.title.textContent = body.new_alias; refreshPanes(); }
-        shownAgain(body.new_alias, 'm-done', done(res));
-      })).catch(function (err) { m.errors.textContent = String(err); m.save.disabled = false; m.save.textContent = 'Save'; });
+      m.save.disabled = true; m.save.textContent = 'Saving…';
+      steps.reduce(function (p, step) { return p.then(step); }, Promise.resolve()).then(function () {
+        // The tables that show facts follow once the popup closes (live).
+        shownAgain(body.new_alias, 'm-done', 'Saved: ' + said.join(' · ') + '.');
+      }).catch(function (err) {
+        if (err !== 'refused') m.errors.textContent = String(err);
+        if (said.length) m.done.textContent = 'Saved before that: ' + said.join(' · ') + '.';
+        m.save.disabled = false; m.save.textContent = 'Save';
+      });
     });
   });
   // The confirm is the last word: the popup closes at once and the page

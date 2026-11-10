@@ -5343,7 +5343,8 @@ def models_page() -> str:
     # Every model, decision models too (connections_view is chat models only,
     # for what a collection may hold): they are on the bench like any other.
     by: dict[str, list[str]] = {}
-    for a in model_directory():
+    directory = model_directory()
+    for a in directory:
         by.setdefault(catalog.connection_of(a), []).append(a)
     for c in ({"name": n, "models": sorted(m)} for n, m in sorted(by.items())):
         rows = []
@@ -5354,6 +5355,9 @@ def models_page() -> str:
             ep = through.get(a, "?")
             kind = (" " + chip("decision", "", "a decision model: answers typed questions, not chat")
                     if a in decisions else "")
+            if directory[a].get("ad_hoc"):
+                kind += " " + chip("ad hoc", "", "ad hoc only: never chosen by the bench on its own, only when you"
+                                   " name it (a collection member, with, --model)")
             rows.append(f"<tr><td><a href='#' class='model' data-alias='{esc(a)}'>"
                         f"<span class='alias'>{esc(a)}</span></a>{kind}</td>"
                         f"<td data-sort='{esc(ep)}'>{chip(ep, 'via', f'reached through the {ep} endpoint')}</td>"
@@ -5675,8 +5679,7 @@ def editor() -> str:
         + "".join(f"<label>{k} <input type='number' min='1' data-k='{k}' placeholder='—'></label>"
                   for k in ("rpm", "rpd", "tpm", "tpd"))
         + "</div><div class='src' id='s-limits'></div></div>"
-        "</div><div class='errors' id='f-errors' role='alert'></div><div class='done' id='f-done'></div>"
-        "<div class='actions'><button class='btn' id='f-save' type='button'>Save facts</button></div>"
+        "</div><div class='errors' id='f-errors' role='alert'></div>"
         "</details>"
         # How the bench calls it (serve.save_model_options): every caller, gateway, suite and probes.
         "<details id='m-opts' class='facts-box'><summary>Call options</summary>"
@@ -5686,8 +5689,7 @@ def editor() -> str:
         " makes to it. A reasoning model thinks out of the same budget and answers with an empty string"
         " when it runs out, which looks like a dead model: raise it then. Blank leaves it to the"
         " endpoint. <span id='co-ceiling'></span></p>"
-        "<div class='errors' id='co-errors' role='alert'></div><div class='done' id='co-done'></div>"
-        "<div class='actions'><button class='btn' id='co-save' type='button'>Save options</button></div>"
+        "<div class='errors' id='co-errors' role='alert'></div>"
         "</details>"
         "<label class='check'><input type='checkbox' id='m-adhoc'> Ad hoc only</label>"
         "<p class='rules'>Never chosen by the bench on its own: no explorer seat, no router"
