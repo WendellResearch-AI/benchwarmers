@@ -2701,7 +2701,14 @@ def vision_card() -> str:
         come from these alone. <b>Useful, no claims</b> is a verdict without them, which on thicken's
         photos means the seat agreed with another seat. Agreement is not a check, since seats fail
         together, so it is never counted as right.</dd>
-      <dt>The number beside a name</dt><dd>How much there is: fields asked on the tasks, seats on real work.</dd>
+      <dt>The real-work chart</dt><dd>Read as Real work is. The dot is the share of its judged seats your
+        verdict called useful (checked and helped, or useful with no claims), bigger for more judged; the
+        line is where that share likely sits (95%), and the order is by its low end, so a lot of evidence
+        outranks a little. Green when even the low end is over half, red when even the high end is under,
+        grey when there are too few to say. Beside it: useful of judged, how often it answered at all, and
+        the claims checked by hand, the only count of right and wrong. Seats not judged or not answered
+        are in those words and the table, not the dot.</dd>
+      <dt>The number beside a name</dt><dd>How much there is: fields asked on the tasks.</dd>
     </dl>"""
     held = (f"<p class='hint'>The vision tasks wait until {esc(v['held'])}: no run picks them before then"
             " (<code>vision_from</code> in <code>config/suite.json</code>; remove it to start them now).</p>"
@@ -2709,7 +2716,7 @@ def vision_card() -> str:
     return (f"<div class='panel'>{SHARE}<h2>Vision</h2><p class='sub'>Reading images: fields read right on pictures with"
             " a known answer, then real work on images and how much of it was actually checked.</p>" + held +
             "<h3 class='chart-head'>On the vision tasks, field by field</h3><div class='chart' id='chart-vision-fields'></div>"
-            "<h3 class='chart-head'>On real work with images, by how each seat was judged</h3>"
+            "<h3 class='chart-head'>On real work with images: judged useful, and how sure that is</h3>"
             "<div class='chart' id='chart-vision-work'></div>"
             "<details class='key'><summary>Table</summary><div class='toolbar'><input type='search'"
             " data-filter placeholder='Filter by model or connection' aria-label='Filter rows'>"
@@ -3224,7 +3231,7 @@ def uptime_data() -> dict:
 
 def uptime_card() -> str:
     """Was the provider there when the bench called it: a cell a day, by
-    provider then by model; 7 days, or 30 on choice (bench.js swaps them)."""
+    provider or by model, as its By says; 7 days, or 30 on choice (bench.js swaps them)."""
     u = uptime_rows()
     first, gone, names = UPTIME_DAYS[0], retired(), {}
 
@@ -3298,9 +3305,11 @@ def uptime_card() -> str:
               "<span><i style='background:var(--signal)'></i>some down, 80% or more answered</span>"
               "<span><i style='background:var(--err)'></i>under 80% answered</span>"
               "<span><i style='background:none;border:1px solid var(--line)'></i>no counted calls</span></div>")
+    # The window and one view at a time: by provider (shorter, the default) or by model (bench.js).
     pick = ("<div class='toolbar'><label>Days <select data-uptime-days>"
             + "".join(f"<option value='{w}'>last {w}</option>" for w in UPTIME_DAYS)
-            + f"</select></label></div>{legend}")
+            + "</select></label><label>By <select data-uptime-by><option value='providers'>provider</option>"
+            f"<option value='models'>model</option></select></label></div>{legend}")
     key = """<dl>
       <dt>Down</dt><dd>The provider was busy or overloaded (a 5xx, high demand, a shared pool's
         429), unreachable (a broken stream, no reply), timed out (the gateway's 420 s included), or
@@ -3326,9 +3335,7 @@ def uptime_card() -> str:
                       " and every real call, one cell a day. Busy, unreachable and timed out count as down;"
                       " our own quota, our own pacing and setup problems are left out.",
                       "chart-uptime-models", "".join(window(w) for w in UPTIME_DAYS), key,
-                      extra=pick + "<h3 class='chart-head'>By provider</h3>"
-                                   "<div class='chart' id='chart-uptime-providers'></div>"
-                                   "<h3 class='chart-head'>By model</h3>",
+                      extra=pick + "<div class='chart' id='chart-uptime-providers'></div>",
                       after="".join(odd(w) for w in UPTIME_DAYS))
 
 
@@ -3655,9 +3662,10 @@ def wrong_card() -> str:
 
 def benchmarks_tab() -> str:
     data = json.dumps(charts_data(), ensure_ascii=False).replace("</", "<\\/")
-    # Trend, Uptime and Performance side by side: what moves over time, in one stretch.
-    return (overview_card() + bughunt_card() + work_card() + wrong_card() + suite_card() + vision_card()
-            + trend_card() + uptime_card() + perf_card() + decision_card() + external_card()
+    # Who to trust, then what moves day to day (Uptime, Trend, Performance), then Real work,
+    # then the rest in the order they had.
+    return (overview_card() + uptime_card() + trend_card() + perf_card() + work_card() + bughunt_card()
+            + wrong_card() + suite_card() + vision_card() + decision_card() + external_card()
             + f"<script type='application/json' id='charts-data'>{data}</script>")
 
 
@@ -5251,11 +5259,16 @@ def models_page() -> str:
             " comes from, with the endpoint it is reached through and what is known of its limits. A name"
             " opens the model.</p><div class='toolbar'><input type='search' data-filter='page'"
             " placeholder='Find a model or connection' aria-label='Filter models'>"
-            # One labelled toggle, as accordions do it (GOV.UK's "Show all sections"): Collapse all
-            # while every table is open, else Expand all (bench.js foldButtons keeps it right).
-            "<button class='fold-all' type='button' data-fold-all='close' aria-expanded='true'>"
-            "<span class='fold-chev' aria-hidden='true'></span>Collapse all</button></div></div>"
-            + "".join(cards))
+            f"{fold_toggle(True)}</div></div>" + "".join(cards))
+
+
+def fold_toggle(all_open: bool) -> str:
+    """One labelled toggle over a page's folds (Models' connections, Logs' logs), as
+    accordions do it (GOV.UK's "Show all sections"): Collapse all while every one is
+    open, else Expand all. bench.js foldButtons keeps it right as folds change."""
+    return (f"<button class='fold-all' type='button' data-fold-all='{'close' if all_open else 'open'}'"
+            f" aria-expanded='{str(all_open).lower()}'><span class='fold-chev' aria-hidden='true'></span>"
+            f"{'Collapse all' if all_open else 'Expand all'}</button>")
 
 
 def quota_tiles() -> list[dict]:
@@ -5431,16 +5444,27 @@ def logs_page() -> str:
                       for p in sorted((DATA / "runs").glob("onboard-*.log"), reverse=True)[:30])
 
     def section(title, body, n, open_=False):
-        # CSV: this log alone, its own columns, the filter applied (bench.js); for a spreadsheet.
         return (f"<details class='panel'{' open' if open_ else ''} data-log='{esc(title)}'><summary><b>{esc(title)}</b>"
-                f" <span class='muted'>· {n}</span> <button class='btn small' type='button' data-csv"
-                f" title='Save this log, as filtered, as a CSV file'>CSV</button></summary>{body}</details>")
+                f" <span class='muted'>· {n}</span></summary>{body}</details>")
+    # Export: a popup for the format and the logs (bench.js), each as the page shows it,
+    # the filter applied. Text, every log chosen in one file to read; CSV, a file per log.
+    picks = "".join(f"<label class='check'><input type='checkbox' name='lx-log' value='{esc(t)}' checked> {esc(t)}</label>"
+                    for t in ("Gateway calls", "Changes", "Scheduler", "Onboarding runs"))
+    export = ("<dialog id='logs-export-dialog' aria-labelledby='lx-title'><h2 id='lx-title'>Export logs</h2>"
+              "<fieldset><legend class='field'>Format</legend>"
+              "<label class='check'><input type='radio' name='lx-format' value='txt' checked> <span><b>Text</b>"
+              " (.txt): every log chosen in one file, to read offline</span></label>"
+              "<label class='check'><input type='radio' name='lx-format' value='csv'> <span><b>CSV</b>"
+              " (.csv): a file per log, each with its own columns, for a spreadsheet</span></label></fieldset>"
+              f"<fieldset><legend class='field'>Logs</legend>{picks}</fieldset>"
+              "<p class='rules' id='lx-note'></p><div class='errors' id='lx-errors' role='alert'></div>"
+              "<div class='actions'><button class='btn' type='button' id='lx-cancel'>Cancel</button>"
+              "<button class='btn primary' type='button' id='lx-go'>Export</button></div></dialog>")
     return (
         "<div class='panel'><div class='toolbar'><input data-filter='page' placeholder='Filter every log on this page'"
         " aria-label='Filter logs'>"
-        # bench.js: what the page shows, filter applied, as one .txt to read offline.
-        "<button class='btn small' type='button' id='logs-export' title='Save the logs on this page, as"
-        " filtered, to a text file'>Export as text</button></div></div>"
+        "<button class='btn small' type='button' id='logs-export'>Export…</button>"
+        f"{fold_toggle(False)}</div></div>{export}"
         + section("Gateway calls", "<table><thead><tr>" + th("When") + th("Collection") + th("Shape")
                   + th("Seats") + f"</tr></thead><tbody>{''.join(gw)}</tbody></table>", len(gw), True)
         + section("Changes", "<table><thead><tr>" + th("When") + th("By") + th("Model") + th("What")

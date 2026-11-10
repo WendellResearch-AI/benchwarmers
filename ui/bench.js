@@ -279,8 +279,9 @@
   // ---- Expand all / Collapse all: every fold of the page's groups (Models' connections).
   // One labelled toggle, as accordions have it: Collapse all while every one is open,
   // else Expand all. Kept right after any fold opens or shuts, by hand, by it or by a live swap.
+  var FOLDS = 'details.model-card, details[data-log]';      // the groups a page folds: Models' connections, Logs' logs
   function foldButtons(tab) {
-    var folds = tab.querySelectorAll('details.model-card'), open = 0;
+    var folds = tab.querySelectorAll(FOLDS), open = 0;
     folds.forEach(function (d) { if (d.open) open++; });
     var all = open === folds.length;
     tab.querySelectorAll('[data-fold-all]').forEach(function (b) {
@@ -293,11 +294,11 @@
     var b = e.target.closest('[data-fold-all]');
     if (!b) return;
     var tab = b.closest('.tab');
-    tab.querySelectorAll('details.model-card').forEach(function (d) { d.open = b.dataset.foldAll === 'open'; });
+    tab.querySelectorAll(FOLDS).forEach(function (d) { d.open = b.dataset.foldAll === 'open'; });
     foldButtons(tab);
   });
   document.addEventListener('toggle', function (e) {            // toggle does not bubble: caught on its way down
-    if (e.target.matches && e.target.matches('details.model-card')) foldButtons(e.target.closest('.tab'));
+    if (e.target.matches && e.target.matches(FOLDS)) foldButtons(e.target.closest('.tab'));
   }, true);
 
   // ---- Logs: Export as text (every log in one .txt, to read) and CSV (one log, its
@@ -306,42 +307,54 @@
     var now = new Date(), two = function (n) { return String(n).padStart(2, '0'); };
     return now.getFullYear() + '-' + two(now.getMonth() + 1) + '-' + two(now.getDate()) + '-' + two(now.getHours()) + two(now.getMinutes());
   }
-  // The file itself: Share's saveFile(blob, name) and csv(rows) (RFC 4180, with a BOM).
-  document.addEventListener('click', function (e) {
-    var b = e.target.closest('[data-csv]');
-    if (!b) return;
-    e.preventDefault();                                     // in the summary: no fold
-    var d = b.closest('details'), rows = [];
+  // A log as the page shows it (the filter applied): its header and rows, as cells.
+  // A log of lines (Scheduler, Onboarding runs) is one column, Line.
+  function logRows(d) {
     var cells = function (tr) {
       return Array.prototype.map.call(tr.children, function (c) { return c.textContent.trim().replace(/\s+/g, ' '); });
     };
-    var head = d.querySelector('thead tr');
-    if (head) {
-      rows.push(cells(head));
-      d.querySelectorAll('tbody tr').forEach(function (r) { if (!r.hidden) rows.push(cells(r)); });
-    } else {
-      rows.push(['Line']);
-      d.querySelectorAll('.log-line').forEach(function (r) { if (!r.hidden) rows.push([r.textContent.trim()]); });
-    }
-    var slug = d.dataset.log.toLowerCase().replace(/[^a-z0-9]+/g, '-');
-    saveFile(new Blob([csv(rows)], {type: 'text/csv;charset=utf-8'}), 'benchwarmers-' + slug + '-' + stampNow() + '.csv');
-  });
-  on('click', 'logs-export', function () {
-    var tab = $('tab-logs'), out = ['Benchwarmers logs, exported ' + new Date().toString()];
-    var q = (tab.querySelector('input[data-filter]') || {}).value;
-    if (q) out.push('Filtered by: ' + q);
-    tab.querySelectorAll('details.panel').forEach(function (d) {
-      out.push('', '== ' + d.dataset.log + ' ==');
-      var cells = function (tr) {
-        return Array.prototype.map.call(tr.children, function (c) { return c.textContent.trim().replace(/\s+/g, ' '); }).join('\t');
-      };
-      var head = d.querySelector('thead tr');
-      if (head) out.push(cells(head));
-      d.querySelectorAll('tbody tr, .log-line').forEach(function (r) {
-        if (!r.hidden) out.push(r.matches('tr') ? cells(r) : r.textContent.trim());
-      });
+    var head = d.querySelector('thead tr'), rows = [head ? cells(head) : ['Line']];
+    d.querySelectorAll(head ? 'tbody tr' : '.log-line').forEach(function (r) {
+      if (!r.hidden) rows.push(head ? cells(r) : [r.textContent.trim()]);
     });
-    saveFile(new Blob([out.join('\n') + '\n'], {type: 'text/plain;charset=utf-8'}), 'benchwarmers-logs-' + stampNow() + '.txt');
+    return rows;
+  }
+  // Export…: the popup picks the format and the logs. Text: every log chosen in one
+  // .txt to read, tab-separated. CSV: a .csv per log (its own columns), through Share's
+  // saveFile(blob, name) and csv(rows) (RFC 4180, with a BOM).
+  on('click', 'logs-export', function () {
+    var q = ($('tab-logs').querySelector('input[data-filter]') || {}).value;
+    $('lx-note').textContent = q ? 'Only the lines that match the filter, "' + q + '", as the page shows them.'
+      : 'Every line the page shows: the last 200 of each log.';
+    $('lx-errors').textContent = '';
+    $('logs-export-dialog').showModal();
+  });
+  on('click', 'lx-cancel', function () { $('logs-export-dialog').close(); });
+  on('click', 'lx-go', function () {
+    var tab = $('tab-logs'), dlg = $('logs-export-dialog');
+    var format = dlg.querySelector('input[name=lx-format]:checked').value;
+    var want = Array.prototype.filter.call(dlg.querySelectorAll('input[name=lx-log]'), function (x) { return x.checked; })
+      .map(function (x) { return x.value; });
+    if (!want.length) { $('lx-errors').textContent = 'Choose at least one log.'; return; }
+    var logs = Array.prototype.filter.call(tab.querySelectorAll('details[data-log]'), function (d) {
+      return want.indexOf(d.dataset.log) !== -1;
+    });
+    var stamp = stampNow(), q = (tab.querySelector('input[data-filter]') || {}).value;
+    if (format === 'csv') {
+      logs.forEach(function (d) {
+        var slug = d.dataset.log.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+        saveFile(new Blob([csv(logRows(d))], {type: 'text/csv;charset=utf-8'}), 'benchwarmers-' + slug + '-' + stamp + '.csv');
+      });
+    } else {
+      var out = ['Benchwarmers logs, exported ' + new Date().toString()];
+      if (q) out.push('Filtered by: ' + q);
+      logs.forEach(function (d) {
+        out.push('', '== ' + d.dataset.log + ' ==');
+        logRows(d).forEach(function (r) { out.push(r.join('\t')); });
+      });
+      saveFile(new Blob([out.join('\n') + '\n'], {type: 'text/plain;charset=utf-8'}), 'benchwarmers-logs-' + stamp + '.txt');
+    }
+    dlg.close();
   });
 
   // ---- a link to another page ----
@@ -2941,8 +2954,14 @@
           ]
         });
       };
-      put('chart-uptime-providers', function (w) { return uptime(U.providers, w); });
-      put('chart-uptime-models', function (w) { return uptime(U.models, w); });
+      // One view at a time, as the card's By says: by provider (the default) or by model.
+      var view = (document.querySelector('select[data-uptime-by]') || {}).value || 'providers';
+      ['providers', 'models'].forEach(function (k) {
+        var box = $('chart-uptime-' + k);
+        if (!box) return;
+        box.hidden = k !== view;
+        if (k === view) put('chart-uptime-' + k, function (w) { return uptime(U[k], w); });
+      });
     }
     if (part === 'uptime') return;
     // Decision models: each model's answers grouped by the probability it gave
@@ -3265,41 +3284,59 @@
       });
     });
 
-    // Vision, real work: each model's seats on image panels by how they were judged.
+    // Vision, real work: read as Real work is. The one question: when its seat was judged,
+    // did it help? The dot is the share judged useful (checked and helped, or useful with no
+    // claims to check), sized by how many were judged; the line where that share likely sits
+    // (95% Wilson), ranked by its low end. Beside it, in words: how often it answered at all,
+    // and the claims checked by hand. Seats never judged or never answered say nothing of
+    // its worth: they are in the words and the table, not the dot.
     put('chart-vision-work', function (w) {
-      var W = C.vision.work, kinds = C.vision.seatKinds, data = [], total = {};
+      var W = C.vision.work, kinds = C.vision.seatKinds, R = [], none = [];
       Object.keys(W).forEach(function (m) {
-        kinds.forEach(function (k) { if (W[m][k]) data.push({model: m, kind: k, count: W[m][k]}); total[m] = (total[m] || 0) + W[m][k]; });
+        var v = W[m], n = function (k) { return v[k] || 0; }, total = 0;
+        kinds.forEach(function (k) { total += n(k); });
+        if (!total) return;
+        var judged = n('checked, helped') + n('checked, did not help') + n('useful, no claims') + n('no use, no claims');
+        var useful = n('checked, helped') + n('useful, no claims');
+        var r = {model: m, total: total, judged: judged, useful: useful, answered: total - n('no answer'),
+                 real: v.real || 0, wrongC: v.false || 0};
+        if (!judged) { none.push(r); return; }
+        var b = wilson(useful, judged);
+        r.p = useful / judged; r.lo = b[0]; r.hi = b[1];
+        r.verdict = b[0] >= 0.5 ? 'helps' : b[1] < 0.5 ? 'does not help' : 'too few to say';
+        R.push(r);
       });
-      if (!data.length) return el('p', {class: 'hint'}, 'No vision panels through the gateway yet.');
-      // The models doing the most image work first: their bars are the evidence. Under FEW
-      // seats a row was mostly "no answer" and said little: those are listed under the chart.
-      var all = Object.keys(total).sort(function (a, b) { return total[b] - total[a] || (a < b ? -1 : 1); });
-      var models = all.filter(function (m) { return total[m] >= FEW; });
-      var few = all.filter(function (m) { return total[m] < FEW; });
-      if (!models.length) { models = all; few = []; }
-      data = data.filter(function (d) { return models.indexOf(d.model) !== -1; });
-      var colour = {'checked, helped': good, 'checked, did not help': err, 'useful, no claims': sky,
-                    'no use, no claims': warn, 'not judged': line, 'no answer': muted};
-      // The claims checked by hand, beside the bar: the only right-or-wrong count real work has.
-      var claims = models.filter(function (m) { return W[m].real + W[m].false; }).map(function (m) {
-        return {model: m, text: W[m].real + ' of ' + (W[m].real + W[m].false) + ' claims right'};
-      });
+      if (!R.length && !none.length) return el('p', {class: 'hint'}, 'No vision panels through the gateway yet.');
+      R.sort(function (a, b) { return b.lo - a.lo || b.judged - a.judged; });
       var narrowV = w < 560, box = el('div');
-      box.appendChild(Plot.plot({
-        width: w, height: rows(models.length), style: style, marginLeft: narrowV ? 150 : 260, marginRight: narrowV ? 20 : 150,
-        x: {label: 'Share of its seats on image panels →', tickFormat: '.0%', grid: true, domain: [0, 1]},
-        y: {domain: models, label: null, tickFormat: function (m) { return fit(m, narrowV ? 16 : 30) + '  (' + total[m] + ')'; }},
-        color: {legend: true, domain: kinds, range: kinds.map(function (k) { return colour[k]; })},
+      function words(r) {
+        return r.useful + '/' + r.judged + (narrowV ? '' : ' · ' + Math.round(r.answered / r.total * 100) + '% answered'
+          + (r.real + r.wrongC ? ' · claims ' + r.real + '/' + (r.real + r.wrongC) : ''));
+      }
+      if (R.length) box.appendChild(Plot.plot({
+        width: w, height: 24 * R.length + 90, style: style, marginLeft: narrowV ? 130 : 190,
+        marginRight: narrowV ? 50 : 260, marginTop: 34,
+        x: {domain: [0, 1], label: 'Judged useful, share of its judged seats →', tickFormat: '.0%', ticks: 5, grid: true},
+        y: {domain: R.map(function (r) { return r.model; }), label: null,
+            tickFormat: function (m) { return fit(m, narrowV ? 16 : 26); }},
+        r: {domain: [0, Math.max.apply(null, R.map(function (r) { return r.judged; }))], range: [3, 11]},
+        color: {domain: ['helps', 'too few to say', 'does not help'], range: [good, muted, err], legend: true},
         marks: [
-          Plot.barX(data, Plot.stackX({x: 'count', y: 'model', fill: 'kind', offset: 'normalize', order: kinds,
-            title: function (d) { return d.model + ': ' + d.kind + ', ' + d.count + ' of ' + total[d.model] + ' seats'; }})),
-          Plot.text(narrowV ? [] : claims.filter(function (c) { return models.indexOf(c.model) !== -1; }),
-            {x: 1, y: 'model', text: 'text', dx: 8, textAnchor: 'start', fill: ink})
+          Plot.ruleX([0.5], {stroke: line}),
+          Plot.ruleY(R, {y: 'model', x1: 'lo', x2: 'hi', stroke: 'verdict', strokeWidth: 2, strokeOpacity: 0.55}),
+          Plot.dot(R, {x: 'p', y: 'model', r: 'judged', fill: 'verdict', stroke: halo, strokeWidth: 1.5,
+            title: function (r) {
+              return r.model + '\njudged useful ' + r.useful + ' of ' + r.judged + ' judged seats ('
+                + Math.round(r.p * 100) + '%), likely between ' + Math.round(r.lo * 100) + '% and ' + Math.round(r.hi * 100)
+                + '%\nanswered ' + r.answered + ' of ' + r.total + ' seats on image panels'
+                + (r.real + r.wrongC ? '\nclaims checked by hand: ' + r.real + ' right of ' + (r.real + r.wrongC) : '');
+            }}),
+          Plot.text(R, {x: 1, y: 'model', dx: 10, textAnchor: 'start', fill: ink, fontSize: 11, text: words})
         ]
       }));
-      if (few.length) box.appendChild(el('p', {class: 'hint'}, 'Under ' + FEW + ' seats, so no bar: '
-        + few.map(function (m) { return m + ' (' + total[m] + ')'; }).join(', ') + '. The table has them all.'));
+      if (none.length) box.appendChild(el('p', {class: 'hint'}, 'No seat judged yet, so no dot: '
+        + none.map(function (r) { return r.model + ' (' + r.total + ' seats, answered ' + r.answered + ')'; }).join(', ')
+        + '. The table has every seat.'));
       return box;
     });
 
@@ -3342,6 +3379,7 @@
   // Uptime's or Trend's window: that window's tables (and Uptime's list) shown, its charts drawn again.
   document.addEventListener('change', function (ev) {
     var s = ev.target, part = s.matches('select[data-uptime-days]') ? 'uptime' : s.matches('select[data-trend-days]') ? 'trend' : '';
+    if (s.matches('select[data-uptime-by]')) { drawCharts('uptime'); return; }      // the other view, same window
     if (!part) return;
     s.closest('.panel').querySelectorAll('[data-' + part + '-window]').forEach(function (d) {
       d.hidden = d.getAttribute('data-' + part + '-window') !== s.value;
