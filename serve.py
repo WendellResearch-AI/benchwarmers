@@ -5791,7 +5791,9 @@ class Handler(gateway.Handler):
         if self.path == "/api/needs":                  # after an action there: that page, not the whole one
             with locked.snapshot():
                 groups, auto = open_actions()
-                self._json(200, {"html": actions_page(groups, auto), "count": open_count(groups)})
+                # `first`: first run's next step now ("" when set up), so a step done goes at once.
+                self._json(200, {"html": actions_page(groups, auto), "count": open_count(groups),
+                                 "first": first_run()})
             return
         if path == "/api/pane":                        # a tab's page, when first opened (bench.js load)
             key = q.get("tab", [""])[0]

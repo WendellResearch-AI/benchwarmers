@@ -864,6 +864,7 @@
         count.textContent = n.count;
         tab.setAttribute('aria-label', tab.firstChild.textContent + ', ' + n.count + ' open');
       }
+      if ('first' in n) showFirst(n.first);
     }).catch(function () { location.reload(); });          // could not ask: the old way
   }
   // A retired model's rows grey out and hide behind Show retired, as the
@@ -1945,6 +1946,15 @@
   // ---- first run: no endpoint yet, no model, no collection (serve.first_run) -
   // Each waits for its page: it may not have arrived yet.
   var first = $('first-run');
+  // A step done (an endpoint added, a model onboarded, a collection saved) moves first run on
+  // at once: refreshNeeds hands its next step, or "" when the install is set up.
+  function showFirst(html) {
+    var now = $('first-run');
+    if ((now ? now.outerHTML : '') === (html || '')) return;
+    if (now) now.remove();
+    if (html) document.querySelector('main').insertAdjacentHTML('afterbegin', html);
+    first = $('first-run');
+  }
   function firstStep() {
     if (first.dataset.step === 'onboard') { $('onboard-open').click(); return; }
     // The first collection comes filled in as bench/core, the name the docs, CLIENTS.md and
@@ -1961,10 +1971,8 @@
     }
     show('endpoints').then(function () { openEndpoint('add'); });
   }
-  if (first) {
-    $('first-go').addEventListener('click', firstStep);
-    if (first.dataset.step === 'endpoint') firstStep();   // straight into Add: an empty bench offers nothing else
-  }
+  on('click', 'first-go', firstStep);                     // on the document: a new step brings a new button
+  if (first && first.dataset.step === 'endpoint') firstStep();   // straight into Add: an empty bench offers nothing else
 
   // ---- collections: what the bench gateway runs together (its own tab) -----
   // Its elements, the popup's too, are in the page: found again each time it arrives.
@@ -2313,6 +2321,7 @@
   // above the list, as onboarding and retiring do.
   function finished(message) {
     c.done.textContent = message; c.status.textContent = message; loadCollections(true);
+    refreshNeeds();                                       // first run's last step may be done
     setTimeout(closeForm, 1200);
   }
   on('click', 'c-delete', function () {
