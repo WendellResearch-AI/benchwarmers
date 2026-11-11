@@ -2150,9 +2150,10 @@ def first_run() -> str:
         text = ("Pick a model your endpoints serve. Onboarding registers it, probes it (4 calls) and runs"
                 " the internal suite, so it takes minutes and spends calls.")
     elif not bench_collections.load():
-        step, head, label = "collection", "Make your first collection", "New collection"
-        text = ("The models a panel always asks, and what it is for. Callers then ask for"
-                f" bench/&lt;name&gt; through the gateway at {esc(gateway_url())}.")
+        step, head, label = "collection", "Make your first collection", "Make bench/core"
+        text = ("The models a panel always asks, and what it is for. It opens filled in as bench/core, the"
+                " name the set-ups on Clients use, with the models you onboarded ticked: change anything,"
+                f" then save. Callers ask for it through the gateway at {esc(gateway_url())}.")
     else:
         return ""
     return (f"<section class='problems' id='first-run' data-step='{step}' aria-labelledby='first-head'>"

@@ -1947,7 +1947,18 @@
   var first = $('first-run');
   function firstStep() {
     if (first.dataset.step === 'onboard') { $('onboard-open').click(); return; }
-    if (first.dataset.step === 'collection') { show('collections').then(function () { $('c-new').click(); }); return; }
+    // The first collection comes filled in as bench/core, the name the docs, CLIENTS.md and
+    // the Clients page use: up to four of the models just onboarded ticked (two to four is
+    // what a panel wants), never an image generator. Nothing is made until it is saved.
+    if (first.dataset.step === 'collection') {
+      show('collections').then(function () {
+        var members = C.models.filter(function (a) { return fact(a).role !== 'image'; }).slice(0, 4);
+        fillForm(null, {name: 'core', description: 'General second opinions: any question, several models at once.',
+                        tags: ['general', 'second-opinion'], members: members});
+        c.name.focus();
+      });
+      return;
+    }
     show('endpoints').then(function () { openEndpoint('add'); });
   }
   if (first) {
@@ -2150,13 +2161,16 @@
     open = null;
   }
   on('close', 'c-form', function () { open = null; });
-  function fillForm(row) {
+  // `row`: a saved collection, opened to edit. `draft`: a new one's values filled in
+  // beforehand (first run's core), still new until saved.
+  function fillForm(row, draft) {
     c.errors.textContent = ''; c.done.textContent = ''; c.status.textContent = '';
     open = row ? row.name : null; c.del.hidden = !row;
     c.head.textContent = row ? 'bench/' + row.name : 'New collection';
     if (!c.form.open) c.form.showModal();
-    c.name.value = row ? row.name : ''; c.name.readOnly = !!row;
-    c.desc.value = row ? row.description : ''; c.tags.value = row ? row.tags.join(', ') : '';
+    var src = row || draft;
+    c.name.value = src ? src.name : ''; c.name.readOnly = !!row;
+    c.desc.value = src ? src.description : ''; c.tags.value = src ? src.tags.join(', ') : '';
     c.adHoc.checked = !!row && row.ad_hoc;
     c.ownCalls.value = row && row.max_calls !== undefined ? row.max_calls : '';
     c.ownExp.value = row && row.max_explorers !== undefined ? row.max_explorers : '';
@@ -2164,7 +2178,7 @@
     drawTagPicks();
     c.find.value = ''; c.show.value = ''; c.prov.value = '';
     $('c-refresh-out').textContent = '';
-    drawMembers(row ? row.members : []);
+    drawMembers(src ? src.members : []);
     c.shape.textContent = '';
     c.shape.appendChild(el('option', {value: ''}, 'automatic'));
     C.shapes.forEach(function (s) {
