@@ -123,7 +123,7 @@
   var onShow = {};                     // a page's loader, run each time it is shown
   var onLoad = {};                     // a page's set-up, run each time its HTML arrives
   var shown = null, fetching = {}, ready = {}, marks = 0, last = {}, edited = {};
-  var KEPT = 'input[data-filter], select[data-facet], input[data-retired], input[data-paid], [data-kept]';    // controls a swap keeps (or may reset)
+  var KEPT = 'input[data-filter], select[data-facet], input[data-retired], input[data-df], #d-q, [data-kept]';    // controls a swap keeps (or may reset)
   function show(id) {
     shown = id;
     tabs.forEach(function (b) { b.setAttribute('aria-selected', String(b.dataset.tab === id)); });
@@ -204,7 +204,7 @@
   function headKey(tr) { return tr.textContent; }
   function setUp(id) {
     delete edited['tab-' + id];
-    applyRetired(); applyPaid();
+    applyRetired();
     return (ready[id] = Promise.resolve(onLoad[id] && onLoad[id]()));
   }
   tabs.forEach(function (b) { b.addEventListener('click', function () { show(b.dataset.tab); }); });
@@ -527,17 +527,67 @@
     }, failed);
   });
 
-  // ---- Discover: paid models hidden unless asked for -------------------
-  var showPaid = store('bench.paid') === '1';
-  function applyPaid() {
-    document.body.classList.toggle('show-paid', showPaid);
-    document.querySelectorAll('input[data-paid]').forEach(function (c) { c.checked = showPaid; });
+  // ---- Discover: the facet rail -----------------------------------------
+  // A row shows when it matches the search box and every facet with a box ticked: any of
+  // the ticked values (for Can: all of them, since a model has several). Each box's count
+  // is what ticking it would leave, given the other facets. Free only until asked otherwise.
+  var D_FACETS = ['new', 'price', 'reach', 'caps', 'provider'], D_PAGE = 100;
+  var dPick = {price: ['free']}, dQ = '', dLimit = D_PAGE;
+  try { dPick = JSON.parse(store('bench.discover')) || dPick; } catch (e) { /* not ours: the default */ }
+  // The list is paged in CSS, so the first rows shown stay the first after a sort by a column.
+  var dPageCss = document.head.appendChild(el('style'));
+  function dHas(r, k, v) { return k === 'caps' ? r.dataset.caps.split(' ').indexOf(v) !== -1 : r.dataset[k] === v; }
+  function dApply() {
+    var rail = $('d-facets');
+    if (!rail) return;
+    var picked = D_FACETS.filter(function (k) { return (dPick[k] || []).length; });
+    var q = dQ.trim().toLowerCase(), counts = {}, hits = 0;
+    $('tab-discover').querySelectorAll('tr.pick-row').forEach(function (r) {
+      var fails = picked.filter(function (k) {
+        return !dPick[k][k === 'caps' ? 'every' : 'some'](function (v) { return dHas(r, k, v); });
+      });
+      var text = !q || r.textContent.toLowerCase().indexOf(q) !== -1;
+      r.hidden = !text || fails.length > 0;
+      if (!r.hidden) hits++;
+      if (!text || fails.length > 1) return;
+      D_FACETS.forEach(function (k) {
+        // Failing only this facet, another of its boxes would show the row (not Can: it wants all).
+        if (fails.length && (fails[0] !== k || k === 'caps')) return;
+        (k === 'caps' ? r.dataset.caps.split(' ') : [r.dataset[k]]).forEach(function (v) {
+          counts[k + '|' + v] = (counts[k + '|' + v] || 0) + 1;
+        });
+      });
+    });
+    rail.querySelectorAll('input[data-df]').forEach(function (c) {
+      var n = counts[c.dataset.df + '|' + c.value] || 0;
+      c.parentNode.querySelector('.n').textContent = n.toLocaleString();
+      c.parentNode.classList.toggle('none', !n && !c.checked);
+    });
+    $('d-count').textContent = hits.toLocaleString() + (hits === 1 ? ' model' : ' models')
+      + (hits > dLimit ? ', the first ' + dLimit.toLocaleString() + ' shown' : '');
+    $('d-more').hidden = hits <= dLimit;
+    dPageCss.textContent = '#tab-discover tr.pick-row:nth-child(n+' + (dLimit + 1) + ' of :not([hidden])) { display: none; }';
   }
+  onLoad.discover = function () {
+    $('d-q').value = dQ;
+    $('d-facets').querySelectorAll('input[data-df]').forEach(function (c) {
+      c.checked = (dPick[c.dataset.df] || []).indexOf(c.value) !== -1;
+    });
+    dApply();
+  };
   document.addEventListener('change', function (ev) {
-    var c = ev.target;
-    if (c.matches('input[data-paid]')) { showPaid = c.checked; store('bench.paid', showPaid ? '1' : '0'); applyPaid(); }
+    if (!ev.target.matches('input[data-df]')) return;
+    dPick = {};
+    $('d-facets').querySelectorAll('input[data-df]:checked').forEach(function (c) {
+      (dPick[c.dataset.df] = dPick[c.dataset.df] || []).push(c.value);
+    });
+    store('bench.discover', JSON.stringify(dPick));
+    dLimit = D_PAGE; dApply();
   });
-  applyPaid();
+  document.addEventListener('input', function (ev) {
+    if (ev.target.id === 'd-q') { dQ = ev.target.value; dLimit = D_PAGE; dApply(); }
+  });
+  on('click', 'd-more', function () { dLimit += D_PAGE; dApply(); });
 
   // ---- live: the page follows the data ---------------------------------
   // The data's stamp (serve.data_stamp) is asked every 10 s while the page is
@@ -3091,12 +3141,13 @@
     // Who to trust: finds real bugs (right) vs makes things up (up = less).
     put('chart-overview', function (w) {
       if (!C.overview.length) return el('p', {class: 'hint'}, 'No model has both suite scores and answers yet.');
-      var worst = Math.max(0.1, Math.max.apply(null, C.overview.map(function (d) { return d.wrong; })));
+      var worst = Math.max(0.15, Math.max.apply(null, C.overview.map(function (d) { return d.wrong; })));
       var x0 = Math.max(0, Math.floor((Math.min.apply(null, C.overview.map(function (d) { return d.recall; })) - 0.05) * 20) / 20);
       var pxW = w - 110, pxH = 370;
       // Named: the models in or next to the zone (the ones to pick from), then the clearest
       // warnings (most made up). The rest are on hover: named all at once they ran together.
-      var zoneX = x0 + (1 - x0) / 2, zoneY = worst / 4;
+      // The zone: finds 90% or more of the real bugs, makes up 15% or less.
+      var zoneX = Math.max(x0, 0.9), zoneY = 0.15;
       var near = function (d) { return d.recall >= zoneX - (1 - x0) * 0.08 && d.wrong <= zoneY * 1.4; };
       var worstFew = C.overview.slice().sort(function (a, b) { return b.wrong - a.wrong; }).slice(0, 3);
       var pts = C.overview.filter(function (d) { return near(d) || worstFew.indexOf(d) !== -1; })
@@ -3106,12 +3157,13 @@
       var labels = pts.map(function (d, i) { return offs[i] == null ? null : {model: d.model, recall: d.recall, ty: d.wrong + offs[i] * worst / pxH}; })
         .filter(Boolean);
       return Plot.plot({
-        width: w, height: 440, style: style, grid: true, inset: 16, marginRight: 50, marginTop: 30,
+        // marginBottom: room for the axis label under the tick labels, which it ran into.
+        width: w, height: 456, style: style, grid: true, inset: 16, marginRight: 50, marginTop: 30, marginBottom: 46,
         x: {label: 'Finds real bugs in our code →', domain: [x0, 1], tickFormat: '.0%'},
         y: {label: '↑ Makes fewer things up', domain: [0, worst], reverse: true, tickFormat: '.0%'},
         marks: [
           // The zone a reviewer should be in: outlined, so it reads on a dark ground too.
-          Plot.rect([{x1: x0 + (1 - x0) / 2, x2: 1, y1: 0, y2: worst / 4}], {x1: 'x1', x2: 'x2', y1: 'y1', y2: 'y2',
+          Plot.rect([{x1: zoneX, x2: 1, y1: 0, y2: zoneY}], {x1: 'x1', x2: 'x2', y1: 'y1', y2: 'y2',
             fill: good, fillOpacity: 0.12, stroke: good, strokeOpacity: 0.5, strokeDasharray: '4 3'}),
           Plot.dot(C.overview, {x: 'recall', y: 'wrong', r: 6, fill: good, stroke: ink, strokeWidth: 0.5}),
           // A halo in the panel's colour keeps each name legible over dots, grid lines and the zone.
@@ -3205,19 +3257,22 @@
       var lo = Math.max(1, Math.min.apply(null, s) * 0.8), hi = Math.max.apply(null, s) * 1.25;
       var y0 = Math.max(0, Math.floor((Math.min.apply(null, C.speed.map(function (d) { return d.recall; })) - 0.05) * 20) / 20);
       var pxW = w - 110, pxH = 340;
-      var pts = C.speed.slice().sort(function (a, b) { return b.recall - a.recall; });
+      // The zone: 90% or more of the findings, in 40 seconds or less. Named: the models in
+      // or next to it, as on Who to trust; the rest are on hover.
+      var zoneS = Math.min(hi, Math.max(lo, 40)), zoneR = Math.max(y0, 0.9);
+      var pts = C.speed.filter(function (d) { return d.seconds <= zoneS * 1.25 && d.recall >= zoneR - (1 - y0) * 0.08; })
+        .sort(function (a, b) { return b.recall - a.recall; });
       var offs = spread(pts, function (d) { return (Math.log(d.seconds) - Math.log(lo)) / (Math.log(hi) - Math.log(lo)) * pxW; },
                         function (d) { return (1 - d.recall) / (1 - y0) * pxH; });
       var labels = pts.map(function (d, i) { return offs[i] == null ? null : {model: d.model, seconds: d.seconds, ty: d.recall - offs[i] * (1 - y0) / pxH}; })
         .filter(Boolean);
       return Plot.plot({
-        width: w, height: 420, style: style, grid: true, inset: 16, marginRight: 50, marginTop: 30,
+        width: w, height: 436, style: style, grid: true, inset: 16, marginRight: 50, marginTop: 30, marginBottom: 46,
         x: {type: 'log', domain: [lo, hi], label: 'Median seconds per answer on our tasks →'},
         y: {domain: [y0, 1], label: '↑ Findings located', tickFormat: '.0%'},
         marks: [
-          // The zone to be in, as on Who to trust: the faster half (on the log scale) and the
-          // top quarter of findings. Outlined, so it reads on a dark ground too.
-          Plot.rect([{x1: lo, x2: Math.sqrt(lo * hi), y1: y0 + (1 - y0) * 3 / 4, y2: 1}], {x1: 'x1', x2: 'x2', y1: 'y1', y2: 'y2',
+          // Outlined, so it reads on a dark ground too.
+          Plot.rect([{x1: lo, x2: zoneS, y1: zoneR, y2: 1}], {x1: 'x1', x2: 'x2', y1: 'y1', y2: 'y2',
             fill: good, fillOpacity: 0.12, stroke: good, strokeOpacity: 0.5, strokeDasharray: '4 3'}),
           Plot.dot(C.speed, {x: 'seconds', y: 'recall', r: 6, fill: sky, stroke: ink, strokeWidth: 0.5}),
           Plot.text(labels, {x: 'seconds', y: 'ty', text: 'model', fontSize: 11, fill: ink,

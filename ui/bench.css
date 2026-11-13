@@ -302,7 +302,24 @@ tbody tr:hover > td { background: var(--step-1); }
 tr.retired > td { color: var(--muted); }
 tr.retired .alias { text-decoration: line-through; }
 body:not(.show-retired) tr.retired { display: none; }
-body:not(.show-paid) tr.paid { display: none; }
+/* Discover: the facet rail beside the list. It stays in view and scrolls by itself. */
+.discover { display: grid; grid-template-columns: 13.5rem minmax(0, 1fr); gap: 1.5rem; align-items: start; }
+.facets { position: sticky; top: 1rem; max-height: calc(100vh - 2rem); overflow-y: auto; font-size: .875rem;
+          padding-right: .5rem; }
+.facets input[type=search] { font: inherit; width: 100%; padding: .4rem .6rem; border: 1px solid var(--line);
+                             border-radius: var(--radius); background: var(--paper); color: var(--ink); }
+.facets fieldset { border: 0; padding: 0; margin: .9rem 0 0; min-width: 0; }
+.facets legend { padding: 0; margin-bottom: .2rem; font-size: .8125rem; font-weight: 700; color: var(--muted); }
+.facets label { display: flex; align-items: center; gap: .4rem; padding: .12rem 0; cursor: pointer; }
+.facets label .n { margin-left: auto; padding-left: .5rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.facets label.none { color: var(--muted); }
+.discover td:nth-child(n+2) { white-space: nowrap; }     /* one line a model: the table scrolls sideways instead */
+.d-count { margin: 0 0 .5rem; }
+#d-more { margin-top: .9rem; }
+@media (max-width: 900px) {
+  .discover { grid-template-columns: minmax(0, 1fr); }
+  .facets { position: static; max-height: 45vh; }
+}
 .muted { color: var(--muted); }
 .ok { color: var(--ok); } .warn { color: var(--warn); } .err { color: var(--err); }
 

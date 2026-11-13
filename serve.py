@@ -2370,10 +2370,11 @@ SHARE = ("<details class='share'><summary>Share</summary><div class='share-menu'
          + "</span></div></details>")
 
 
-def chart_card(title: str, sub: str, chart_id: str, table: str, key: str, extra: str = "",
+def chart_card(title: str, sub: str, chart_id: str, table: str, key: str = "", extra: str = "",
                retired: bool = True, after: str = "") -> str:
     """A Benchmarks panel: the chart first (drawn by bench.js with Observable
-    Plot), the table folded under it, the key under that. `extra` goes above
+    Plot), the table folded under it, then a key if one is given (the reports
+    have none: the name, the chart and one line say it). `extra` goes above
     the chart, `after` right under it."""
     return (f"<div class='panel'>{SHARE}<h2>{title}</h2><p class='sub'>{sub}</p>{extra}"
             f"<div class='chart' id='{chart_id}'></div>{after}"
@@ -2381,7 +2382,7 @@ def chart_card(title: str, sub: str, chart_id: str, table: str, key: str, extra:
             " data-filter placeholder='Filter by model or connection' aria-label='Filter rows'>"
             + ("<label><input type='checkbox' data-retired> Show retired</label>" if retired else "") + "</div>"
             f"<div class='scroll'>{table}</div></details>"
-            f"<details class='key'><summary>How to read this</summary>{key}</details></div>")
+            + (f"<details class='key'><summary>How to read this</summary>{key}</details>" if key else "") + "</div>")
 
 
 def _family(task: str) -> str:
@@ -2441,16 +2442,22 @@ def wrong_table() -> dict:
     return seen[1]
 
 
+def overview_rows() -> list[dict]:
+    """Who to trust, a row per registered model with both suite scores and answers:
+    the share of real findings located, and the share of answers confidently wrong."""
+    import route
+    recall, wr = route.suite_recall(), wrong_table()
+    return [{"model": m, "recall": recall[m][0] / recall[m][1], "wrong": wr[m]["wrong"] / wr[m]["answers"],
+             "found": f"{recall[m][0]}/{recall[m][1]}", "wrongN": f"{wr[m]['wrong']}/{wr[m]['answers']}"}
+            for m in sorted(on_bench()) if recall.get(m) and recall[m][1] and wr.get(m, {}).get("answers")]
+
+
 def charts_data() -> dict:
     """Everything the Benchmarks charts draw, for bench.js. Registered models
     only: the tables keep retired ones behind "Show retired", a chart has no toggle."""
-    import route
     import wrong
     live = on_bench()
-    recall, wr = route.suite_recall(), wrong_table()
-    overview = [{"model": m, "recall": recall[m][0] / recall[m][1], "wrong": wr[m]["wrong"] / wr[m]["answers"],
-                 "found": f"{recall[m][0]}/{recall[m][1]}", "wrongN": f"{wr[m]['wrong']}/{wr[m]['answers']}"}
-                for m in sorted(live) if recall.get(m) and recall[m][1] and wr.get(m, {}).get("answers")]
+    wr = wrong_table()
     heat = []
     for (task, m), v in sorted(suite_scores().items()):
         if m in live:
@@ -2462,7 +2469,7 @@ def charts_data() -> dict:
     totals = {m: {"rate": r["wrong"] / r["answers"], "answers": r["answers"], "wrong": r["wrong"]}
               for m, r in wr.items() if m in live and r["answers"]}
     hunt = [{"model": m, **r["hunt"]} for m, r in sorted(wr.items()) if m in live and any(r["hunt"].values())]
-    return {"overview": overview, "heat": heat, "families": ["hand-built", "claims", "seeded, function",
+    return {"overview": overview_rows(), "heat": heat, "families": ["hand-built", "claims", "seeded, function",
                                                              "seeded, whole file", "real bugs"],
             "wrong": bars, "wrongTotals": totals, "kinds": list(wrong.KINDS), "hunt": hunt,
             "work": work_rows(), "vision": vision_rows(), "uptime": uptime_data(), "trend": trend_data(),
@@ -2688,42 +2695,18 @@ def vision_card() -> str:
                     + (f"<td class='num'>{r['seconds']:.1f}</td>" if r.get("seconds") else "<td class='num muted'>—</td>")
                     + "</tr>")
     body.append("</tbody></table>")
-    key = """<dl>
-      <dt>The vision tasks</dt><dd>Grouped by where the pictures come from: <b>made</b> with their answer
-        key (<code>suite/vision_tasks.py</code>), your <b>own</b> photos keyed by hand, and items sampled
-        from public datasets with people's answers (<code>suite/vision_sample.py</code>): photographed
-        <b>receipts</b>, app <b>screens</b>, <b>tables</b>, and <b>objects</b> in photos. Each field is
-        <b>right</b>, <b>misread</b> (another value), <b>left out</b>, or a <b>trap taken</b>: a value for
-        something the picture does not show, where the right answer is <code>not shown</code> (a dot marks
-        those fields). They run for every model that takes images; a vision model gets only these, never
-        the code tasks.</dd>
-      <dt>Real work on images</dt><dd>Every seat of a vision panel through the gateway. <b>Checked</b> means
-        its verdict lists claims, each compared with the picture by hand: the claims right and wrong
-        come from these alone. <b>Useful, no claims</b> is a verdict without them, which on thicken's
-        photos means the seat agreed with another seat. Agreement is not a check, since seats fail
-        together, so it is never counted as right.</dd>
-      <dt>The real-work chart</dt><dd>Read as Real work is. The dot is the share of its judged seats your
-        verdict called useful (checked and helped, or useful with no claims), bigger for more judged; the
-        line is where that share likely sits (95%), and the order is by its low end, so a lot of evidence
-        outranks a little. Green when even the low end is over half, red when even the high end is under,
-        grey when there are too few to say. Beside it: useful of judged, how often it answered at all, and
-        the claims checked by hand, the only count of right and wrong. Seats not judged or not answered
-        are in those words and the table, not the dot.</dd>
-      <dt>The number beside a name</dt><dd>How much there is: fields asked on the tasks.</dd>
-    </dl>"""
     held = (f"<p class='hint'>The vision tasks wait until {esc(v['held'])}: no run picks them before then"
             " (<code>vision_from</code> in <code>config/suite.json</code>; remove it to start them now).</p>"
             if v["held"] else "")
-    return (f"<div class='panel'>{SHARE}<h2>Vision</h2><p class='sub'>Reading images: fields read right on pictures with"
-            " a known answer, then real work on images and how much of it was actually checked.</p>" + held +
+    return (f"<div class='panel'>{SHARE}<h2>Vision</h2><p class='sub'>Reading images: fields read right on pictures"
+            " with a known answer, then real work on images.</p>" + held +
             "<h3 class='chart-head'>On the vision tasks, field by field</h3><div class='chart' id='chart-vision-fields'></div>"
             "<h3 class='chart-head'>On real work with images: judged useful, and how sure that is</h3>"
             "<div class='chart' id='chart-vision-work'></div>"
             "<details class='key'><summary>Table</summary><div class='toolbar'><input type='search'"
             " data-filter placeholder='Filter by model or connection' aria-label='Filter rows'>"
             "<label><input type='checkbox' data-retired> Show retired</label></div>"
-            f"<div class='scroll'>{''.join(body)}</div></details>"
-            f"<details class='key'><summary>How to read this</summary>{key}</details></div>")
+            f"<div class='scroll'>{''.join(body)}</div></details></div>")
 
 
 def perf_charts() -> dict:
@@ -2892,35 +2875,8 @@ def trend_card() -> str:
     pick = ("<div class='toolbar'><label>Window <select data-trend-days>"
             + "".join(f"<option value='{w}'>last {w} days</option>" for w in TREND_DAYS)
             + f"</select></label></div>{legend}")
-    key = f"""<dl>
-      <dt>A bar</dt><dd>How far a model's scores in the window sit from its own scores before it, on the tasks
-        scored in both: each task as a share of its findings, so a 1-finding claim and an 11-finding file count
-        the same, then averaged over those tasks. Left is lower, right is higher; the shaded band is 10 points
-        either side. Hover for each task's move.</dd>
-      <dt>The groups</dt><dd><b>Lower</b> (or <b>higher</b>) when, on average, the scores moved 10 points or
-        more, on at least two tasks and twice as many as moved the other way, in at least two separate runs.
-        <b>Steady</b> otherwise: a steady bar past the band moved on average, but not on enough tasks or runs.
-        <b>Too little to say</b>, with no bar, when fewer than three tasks can be compared, or fewer than two
-        runs in the window or before it. One bad run, or one task, is never a trend, and nor is one run to
-        compare against. Biggest move first in each group.</dd>
-      <dt>Beside the bar</dt><dd>The evidence: the tasks compared and how many went down or up, then the runs
-        in the window against the runs before it. A model with no task scored both in the window and before it
-        is named under the chart.</dd>
-      <dt>The window</dt><dd>{first} days by default: a paid model is scored about once a week and a free one
-        about every 15 days, six tasks a run, so 7 days holds one run at most and could only say what one
-        afternoon did. {first} days holds 2 to 4 runs. Longer windows hold more runs but leave less before them
-        to compare with (the scores start {esc(t['first'] or 'with the first run')}).</dd>
-      <dt>Runs</dt><dd>Days a model was scored (a task asked twice in a day counts once, as the mean of its
-        scores). In the window, how many sat below or above its earlier scores.</dd>
-      <dt>What is counted</dt><dd>Scores as the run notes recorded them (<code>runs/suite-*.md</code>), under
-        each model's current name; timeouts, errors and refusals are not scores and are left out (Uptime counts
-        them). A task whose number of findings changed starts again. The answers behind the scores are kept
-        from 2026-11-08 in <code>runs/answers/&lt;task&gt;/&lt;model&gt;/</code>; older ones were replaced by
-        the next run and are gone.</dd>
-    </dl>"""
-    return chart_card("Trend", "Who scores lower, or higher, than it used to? Each model against its own earlier"
-                      " scores on the same tasks; flagged only when the move holds over several tasks and runs.",
-                      "chart-trend", "".join(window(w) for w in TREND_DAYS), key, extra=pick)
+    return chart_card("Trend", "Who scores lower, or higher, than it used to on the same tasks.",
+                      "chart-trend", "".join(window(w) for w in TREND_DAYS), extra=pick)
 
 
 # ---- Uptime: was the provider there when the bench called it? --------------
@@ -3311,31 +3267,8 @@ def uptime_card() -> str:
             + "".join(f"<option value='{w}'>last {w}</option>" for w in UPTIME_DAYS)
             + "</select></label><label>By <select data-uptime-by><option value='providers'>provider</option>"
             f"<option value='models'>model</option></select></label></div>{legend}")
-    key = """<dl>
-      <dt>Down</dt><dd>The provider was busy or overloaded (a 5xx, high demand, a shared pool's
-        429), unreachable (a broken stream, no reply), timed out (the gateway's 420 s included), or
-        failed in a way no rule recognises yet, listed under the chart so a rule can be added. A
-        shape a decision model was asked about counts as it said, marked "decided by" with the model
-        and how sure it was (at 0.6 or more; below that it stays unrecognised).</dd>
-      <dt>Left out</dt><dd>Neither up nor down, since it says nothing about the provider: our own
-        quota or allowance used up (a day, a month, credits), our own per-minute or concurrency
-        limit, a call the bench's pacing never sent, our client failing, our LAN hub refusing the
-        connection, and setup problems (sign-in, no such model, no access, our own request).</dd>
-      <dt>Up</dt><dd>It answered. An empty reply still counts as an answer.</dd>
-      <dt>A cell</dt><dd>One day: answered of the calls counted that day. Hollow when nothing was
-        counted that day; hover for the day, the count and the main reasons.</dd>
-      <dt>The % and (n)</dt><dd>Answered of counted over the days shown, and how many were counted:
-        weighted by calls, so a provider's row is every call to any of its models.</dd>
-      <dt>What is counted</dt><dd>Only calls the bench makes anyway: the daily probe, every gateway
-        seat, the suite's own calls once the client's ledger keeps their error text
-        (2026-11-08 on), and every decision model call (<code>metrics/decisions.jsonl</code>), on the
-        connection behind its served name. Each is classified from its error text when this is drawn,
-        so a better rule changes the past too. It is shown only: nothing is routed or retired by it.</dd>
-    </dl>"""
-    return chart_card("Uptime", "Whether the provider was there when the bench called it: the daily probe"
-                      " and every real call, one cell a day. Busy, unreachable and timed out count as down;"
-                      " our own quota, our own pacing and setup problems are left out.",
-                      "chart-uptime-models", "".join(window(w) for w in UPTIME_DAYS), key,
+    return chart_card("Uptime", "Whether the provider was there when the bench called it, one cell a day.",
+                      "chart-uptime-models", "".join(window(w) for w in UPTIME_DAYS),
                       extra=pick + "<div class='chart' id='chart-uptime-providers'></div>",
                       after="".join(odd(w) for w in UPTIME_DAYS))
 
@@ -3432,42 +3365,8 @@ def decision_card() -> str:
              f"<p class='hint'>{'Measured up to ' + esc(when[:16].replace('T', ' ')) + '.' if when else 'Not measured yet.'}"
              " The scheduler's <code>decisions</code> job asks each model one question a set a day;"
              " <code>python metrics/decide.py bench</code> runs a pass by hand.</p>")
-    key = f"""<dl>
-      <dt>The sets</dt><dd>Questions with known answers, built from the bench's own data, no hand labelling.
-        <b>Error classes</b>: failed calls' error text (redacted: no keys, ids or emails) and the class the
-        uptime rules give it. <b>Collections</b>: gateway requests and the collection the caller named (not
-        ones a decision model chose). <b>Useful answers</b>: seat answers you judged, with their request,
-        a yes/no question.</dd>
-      <dt>Right of asked</dt><dd>Each item's latest answer; a failed call counts as asked and not right.
-        <b>Accuracy</b> is of the answers given; F1 is the mean over the options of how well each was
-        picked, so always saying the commonest option scores low.</dd>
-      <dt>Brier</dt><dd>How far its probabilities sat from the truth: 0 is perfect; for a choice it is
-        summed over the options, so up to 2. Lower is better, and a sure wrong answer costs most.</dd>
-      <dt>The bars</dt><dd>Right of asked for each model on each set, from 0%. A faint bar is a model
-        under {low} items on that set: shown, not ranked yet. Hover a bar for its Brier.</dd>
-      <dt>Calibration</dt><dd>The second chart, once a model answers at two or more levels of sureness
-        on a set: answers grouped by the probability the model gave its answer
-        (x), against how often those answers were right (y); both axes start just under the lowest
-        answer, not at 0%. On the diagonal, its 80% answers come true
-        80% of the time; under it, it is surer than it should be. A bigger dot is more answers. The gap is
-        the average distance from the diagonal, weighted by answers.</dd>
-      <dt>At {decide.CONFIDENT}</dt><dd>The gateway acts on a choice only when the model is this sure: how
-        many answers were that sure, and how many of those were right.</dd>
-      <dt>Rank</dt><dd>Among models with {low} or more items asked on the set, by right answers
-        smoothed for sample size ((right + 1) / (asked + 2)). Below {low} a model is shown but not ranked,
-        and a use keeps its default (the first onboarded model that takes the question).</dd>
-      <dt>Who each use asks</dt><dd>The shape of a request and a new model's role are ranked on the
-        collection set (one described option of several, for a text), the notice check on useful answers
-        (the only yes/no set). A use asked per request never goes to a <code>:free</code> model while
-        another can answer: their calls come out of OpenRouter's free daily budget, which the suite and
-        the probe share.</dd>
-      <dt>Failures</dt><dd>Calls that came back with no answer, by the uptime classes (setup: no such
-        model, or paywalled). The pass stops a model at its first failure.</dd>
-    </dl>"""
-    return chart_card("Decision models", "The models that answer typed questions (a choice, a yes or no) with"
-                      " a probability: how often they are right on the bench's own labelled questions, how far"
-                      " to trust their probabilities, and which one each use asks.",
-                      "chart-decide", "".join(tables), key, extra=extra, retired=False)
+    return chart_card("Decision", "How often the models that answer typed questions (a choice, a yes or no)"
+                      " are right, and how sure.", "chart-decide", "".join(tables), extra=extra, retired=False)
 
 
 def bughunt_card() -> str:
@@ -3483,19 +3382,8 @@ def bughunt_card() -> str:
                     + "".join(f"<td class='num' data-sort='{h[k]}'>{h[k]}/{clean}</td>" for k in ("clean", "false alarm"))
                     + "</tr>")
     body.append("</tbody></table>")
-    key = """<dl>
-      <dt>Right of the line</dt><dd>Bug tasks (a real file with one change seeded, or a public
-        file before a real fix): green found the changed line, yellow named another line,
-        grey said there was no bug.</dd>
-      <dt>Left of the line</dt><dd>The same files untouched: red is a false alarm, claiming a
-        bug in clean code. The longer the red, the less to trust its "there's a bug here".</dd>
-      <dt>Order</dt><dd>On what is proven, best at the top: the low end of the found share's likely
-        range (95%) less the high end of the false alarms'. A few tasks give wide ranges, so they
-        rank low; a model never shown clean code could be raising alarms on all of it.</dd>
-      <dt>Faint bars</dt><dd>Under 10 tasks: shown, but little to go on.</dd>
-    </dl>"""
-    return chart_card("Bug hunt", "Every task with an answer key: bugs found against false alarms on the"
-                      " same files left clean. Right is good, left is bad.", "chart-hunt", "".join(body), key)
+    return chart_card("Bug hunt", "Bugs found against false alarms on the same files left clean.",
+                      "chart-hunt", "".join(body))
 
 
 def _wilson(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
@@ -3519,27 +3407,21 @@ def work_card() -> str:
                     f"<td class='num' data-sort='{lo:.3f}'>{lo * 100:.0f}–{hi * 100:.0f}%</td>"
                     f"<td class='num'>{r['real']}</td><td class='num'>{r['false']}</td></tr>")
     body.append("</tbody></table>")
-    key = """<dl>
-      <dt>Helped</dt><dd>Of the offloads judged, the share recorded useful: real work (reviews,
-        enumerations) handed to the model and checked afterwards. Benchmarks never count here.</dd>
-      <dt>The dot and its line</dt><dd>The dot is the share that helped, bigger for more judged. The
-        line is where the true share likely sits (a 95% Wilson interval): long for 3 of 3, short for
-        40 of 50. Green when even its low end is over half, red when even its high end is under,
-        grey when there are too few to say.</dd>
-      <dt>Order</dt><dd>By the low end of that line, so volume counts: 40 of 50 ranks above 3 of 3.</dd>
-      <dt>The dashed line</dt><dd>Every model's judged offloads together, for comparison.</dd>
-      <dt>Findings and false claims</dt><dd>Verified one by one in reviews, recorded since 2026-10-17.</dd>
-    </dl>"""
-    return chart_card("Real work", "When a model was given real work and the result was checked: how often"
-                      " it helped. The most direct measure of trust the bench has.", "chart-work", "".join(body), key)
+    return chart_card("Real work", "How often a model helped when given real work that was checked afterwards.",
+                      "chart-work", "".join(body))
 
 
 def overview_card() -> str:
-    return (f"<div class='panel'>{SHARE}<h2>Who to trust with a review</h2><p class='sub'>Each dot is a model."
-            " Right: finds more of the real bugs in our own code. Up: makes fewer things up (confidently"
-            " wrong on clean code, wrong lines, false claims, traps). Top right is where a reviewer should be."
-            " The models in or near the box, and the three that make most up, are named; hover for the rest.</p>"
-            "<div class='chart' id='chart-overview'></div></div>")
+    rows = sorted(overview_rows(), key=lambda d: (d["wrong"], -d["recall"]))
+    body = ["<table><thead><tr>", th("Model"), th("Finds real bugs", True), th("Makes things up", True),
+            "</tr></thead><tbody>"]
+    body += [f"<tr><td>{named(d['model'])}</td>"
+             f"<td class='num' data-sort='{d['recall']:.3f}'>{d['found']} ({d['recall'] * 100:.0f}%)</td>"
+             f"<td class='num' data-sort='{d['wrong']:.3f}'>{d['wrongN']} ({d['wrong'] * 100:.0f}%)</td></tr>"
+             for d in rows]
+    body.append("</tbody></table>")
+    return chart_card("Who to trust with a review", "Top right is the reviewer to pick: finds the real bugs"
+                      " and makes little up.", "chart-overview", "".join(body), retired=False)
 
 
 def suite_card() -> str:
@@ -3575,22 +3457,8 @@ def suite_card() -> str:
                         + "".join(cells) + flag + "</tr>")
         body.append("</tbody></table>")
         body = "".join(body)
-    key = """<dl>
-      <dt>n / N</dt><dd>Verified findings the model located, out of the total
-        for that task. The answers were established from source before any
-        model saw them.</dd>
-      <dt>Invented</dt><dd><strong>The column that matters.</strong> Something
-        asserted that is not true of the code. A confident wrong answer costs
-        more than a silent miss.</dd>
-      <dt>timeout / refused / error</dt><dd>Not a score. The model did not
-        answer — a filter, an overloaded service and a slow model are three
-        different facts and are never merged.</dd>
-      <dt>(tag)</dt><dd>The connection it arrives through: its Open WebUI tag, or its endpoint. Models
-        sharing one share its rate limit.</dd>
-    </dl>"""
-    return chart_card("Our code", "Every task on our own code, one square each: green found everything,"
-                      " red found nothing, grey did not answer; a dot means it invented something. Hover"
-                      " for the task and score.", "chart-code", body, key)
+    return chart_card("Our code", "Every task on our own code, one square per task and model: green found"
+                      " everything, red nothing.", "chart-code", body)
 
 
 EXTERNAL = (("LiveBench", "https://livebench.ai/", "contamination-limited questions, refreshed monthly"),
@@ -3605,8 +3473,8 @@ def external_card() -> str:
     """Links, not scores: the External tab showed FuncBench numbers nobody
     refreshed and was dropped (2026-10-16). Public leaderboards are read there."""
     rows = "".join(f"<li>{ext_link(u, n)} <span class='muted'>— {esc(why)}</span></li>" for n, u, why in EXTERNAL)
-    return ("<div class='panel'><h2>External</h2><p class='sub'>Public leaderboards, for comparison."
-            " The bench does not copy their numbers; its own tests above are what routing uses.</p>"
+    return ("<div class='panel'><h2>External</h2><p class='sub'>Public leaderboards, for comparison;"
+            " routing uses the bench's own tests.</p>"
             f"<ul class='links'>{rows}</ul></div>")
 
 
@@ -3639,26 +3507,8 @@ def wrong_card() -> str:
                     + (f"<td class='num' data-sort='{r['review_false']}'>{r['review_false']} in {r['reviews']}</td>"
                        if r["reviews"] else "<td class='num muted' data-sort='-1'>—</td>") + "</tr>")
     body.append("</tbody></table>")
-    key = """<dl>
-      <dt>Confidently wrong</dt><dd>Answers that asserted something false, of the answers
-        that could have. Being wrong is why the bench asks several models; asserting a bug
-        that is not there is what sends someone to fix working code. Lower is better.</dd>
-      <dt>Control</dt><dd>A seeded or real-bug control (the clean file) answered FAULT.</dd>
-      <dt>Wrong line</dt><dd>A seeded or real-bug task answered FAULT at a line the change did
-        not touch. Saying NO FAULT on a bug is a miss and is not counted.</dd>
-      <dt>False claim</dt><dd>A claim task whose claim is false, answered VERDICT: TRUE.</dd>
-      <dt>Trap</dt><dd>A hand-built task's planted falsehood, asserted.</dd>
-      <dt>Reviews</dt><dd>False claims recorded in verdicts (<code>offload.py verdict|add
-        --false "..."</code>), over judged offloads. Recorded in structured form only since
-        2026-10-17, so older reviews show none.</dd>
-      <dt>The thin line</dt><dd>Where the true share likely sits (95% range). Long for a few
-        answers: 0 of 2 is not a clean record, and the line shows how bad it could be.</dd>
-      <dt>Order</dt><dd>Worst proven at the top: by the low end of that line. Under 10 answers a
-        model's bar is faint.</dd>
-    </dl>"""
-    return chart_card("Confidently wrong", "Who asserts things that are not true: false alarms on clean"
-                      " code, wrong lines, false claims confirmed, traps taken. Shorter is better.",
-                      "chart-wrong", "".join(body), key)
+    return chart_card("Confidently wrong", "Who asserts things that are not true; shorter is better.",
+                      "chart-wrong", "".join(body))
 
 
 def benchmarks_tab() -> str:
@@ -3670,7 +3520,7 @@ def benchmarks_tab() -> str:
                ("trend", "Trend", trend_card), ("performance", "Performance", perf_card),
                ("work", "Real work", work_card), ("hunt", "Bug hunt", bughunt_card),
                ("wrong", "Confidently wrong", wrong_card), ("code", "Our code", suite_card),
-               ("vision", "Vision", vision_card), ("decisions", "Decision models", decision_card),
+               ("vision", "Vision", vision_card), ("decisions", "Decision", decision_card),
                ("external", "External", external_card))
     links = "".join(f"<a href='#report-{key}'>{esc(label)}</a>" for key, label, _ in reports)
     cards = "".join(card().replace("<div class='panel'", f"<div class='panel report' id='report-{key}'", 1)
@@ -3708,34 +3558,8 @@ def perf_card() -> str:
                 f"title='p50 {p50:.1f}s'><span style='width:100%'></span></span></td></tr>")
         body.append("</tbody></table>")
         body = "".join(body)
-    key = """<dl>
-      <dt>The bars</dt><dd><strong>p50 latency, relative to the slowest row in
-        this table.</strong> A full-width bar is the slowest here, not a score
-        out of anything.</dd>
-      <dt>p50 / p95</dt><dd>Median and 95th-percentile seconds to a complete
-        answer. Medians, not means — one timeout makes a mean fiction. p95 is
-        where rate limiting shows itself.</dd>
-      <dt>tiny / large</dt><dd>A one-word prompt measures overhead and
-        queueing; an 18 KB prompt measures throughput. They answer different
-        questions.</dd>
-      <dt>ch/s</dt><dd>Characters per second, from the large prompt only. A
-        proxy for tokens/s, affected by how verbose a model is.</dd>
-      <dt>tok/s</dt><dd>Output tokens per second from the provider's own count, first token to
-        last, large prompt only. Only where the built-in client made the call and the provider
-        reported usage; blank otherwise, never estimated.</dd>
-      <dt>Outcomes</dt><dd>answered / refused / error / timeout.</dd>
-      <dt>Weight it LEAST</dt><dd>Seconds are a wash. Speed only vetoes a model
-        when it is slow enough to change how you work.</dd>
-    </dl>"""
-    key = key.replace("</dl>", """
-      <dt>Did it answer?</dt><dd>Is on Uptime, by day, with our own quota and setup problems left out.</dd>
-      <dt>Speed vs quality</dt><dd>Median seconds per answer on our own suite tasks (real prompts,
-        not the one-word probe) against the share of findings located. Top left is fast and good:
-        the green box is the faster half and the top quarter of findings.</dd>
-    </dl>""")
-    return chart_card("Performance", "What the serving path does — not what the models are worth. One"
-                      " reading is weather; the history is climate.", "chart-speed", body, key,
-                      extra="<h3 class='chart-head'>Speed vs quality on our own tasks</h3>")
+    return chart_card("Performance", "How fast each model answers our own tasks, against how much it finds.",
+                      "chart-speed", body)
 
 
 def favicon(theme: str) -> str:
@@ -4017,6 +3841,8 @@ def discover_card() -> str:
     which asks /api/discover-model for the rest: its routes are where Add is."""
     all_rows = _discover_rows()
     rows = [r for r in all_rows if r["free"] or r["reach"] in ("connected", "on bench")]
+    # New models first, the newest at the top; the rest keep discover.py's order (a stable sort).
+    rows.sort(key=lambda r: r["first_seen"] if r["new"] else "", reverse=True)
     hidden = len(all_rows) - len(rows)
     reach_css = {"on bench": "ok", "connected": "ok", "easy to add": "warn", "other": ""}
     body = ["<table><thead><tr>", th("Model"), th("Rank", True), th("Provider"), th("Reach"), th("Price"),
@@ -4039,8 +3865,9 @@ def discover_card() -> str:
         add = ("<button class='btn small' type='button'>Add…</button>"
                if any(not x["on_bench_as"] for x in r["routes"]) else "")
         body.append(
-            f"<tr class='pick-row{'' if r['free'] else ' paid'}' data-provider='{esc(r['provider'])}'"
-            f" data-model='{esc(r['model'])}'><td>"
+            f"<tr class='pick-row' data-provider='{esc(r['provider'])}' data-model='{esc(r['model'])}'"
+            f" data-reach='{r['reach']}' data-price='{'free' if r['free'] else 'paid'}'"
+            f" data-new='{'1' if r['new'] else ''}' data-caps='{' '.join(caps)}'><td>"
             f"<a href='#' class='dmodel'><span class='alias'>{esc(r['name'])}</span></a>"
             + (" " + chip("new", "new", f"first seen {r['first_seen']}") if r["new"] else "")
             + f"<span class='conn'>{esc(r['model'])}"
@@ -4063,9 +3890,23 @@ def discover_card() -> str:
     import discover
     import sources
     ages = [a for a in map(sources.age_s, [*sources.FEEDS, discover.LISTS]) if a is not None]
-    toolbar = ("<div class='toolbar'><input type='search' data-filter placeholder='Filter by model,"
-               " provider or reach' aria-label='Filter rows'>"
-               "<label><input type='checkbox' data-paid> Show paid and unpriced (connected providers)</label>"
+    # The rail: a search box and a checkbox per value of each facet, matched against the
+    # rows' data-* by bench.js (dApply), which also fills in the counts and pages the list.
+    def group(title: str, facet: str, values) -> str:
+        return (f"<fieldset><legend>{esc(title)}</legend>" + "".join(
+            f"<label><input type='checkbox' data-df='{facet}' value='{esc(v)}'> {esc(label)}"
+            "<span class='n'></span></label>" for v, label in values) + "</fieldset>")
+    provs = {r["provider"]: r["provider_name"] for r in rows}
+    rail = ("<aside class='facets' id='d-facets' aria-label='Filter models'>"
+            "<input type='search' id='d-q' placeholder='Search models' aria-label='Search models'>"
+            + group("Show", "new", [("1", "New")])
+            + group("Price", "price", [("free", "Free"), ("paid", "Paid and unpriced")])
+            + group("Reach", "reach", [(v, v.capitalize()) for v in reach_css])
+            + group("Can", "caps", [(v, v.capitalize()) for v in ("tools", "vision", "reasons")])
+            + group(f"Provider · {len(provs)}", "provider",
+                    sorted(provs.items(), key=lambda kv: kv[1].lower()))
+            + "</aside>")
+    toolbar = ("<div class='toolbar'>"
                "<button class='btn small' type='button' id='d-refresh' title='Fetch FreeLLMAPI, models.dev and"
                " every Open WebUI connection&#39;s own model list now, instead of waiting for the daily fetch'>"
                "Refresh lists</button><span class='muted' id='d-refreshed'>"
@@ -4084,7 +3925,7 @@ def discover_card() -> str:
       <dt>Price</dt><dd>Free if FreeLLMAPI lists it (a catalog of free tiers) or models.dev
         prices it at 0: models.dev shows the PAID price even where a free tier exists. Otherwise
         input / output per million tokens. <em>Unknown</em> where only the provider's own list has
-        the model and it says nothing of price; those are behind <em>Show paid and unpriced</em>.</dd>
+        the model and it says nothing of price; those are under <em>Paid and unpriced</em>.</dd>
       <dt>Limits</dt><dd>The free tier's, from FreeLLMAPI: requests and tokens per minute (rpm,
         tpm) and per day (rpd, tpd), and roughly how many tokens a month that allows.</dd>
       <dt>New</dt><dd>First seen in either list in the last 7 days.</dd>
@@ -4111,7 +3952,9 @@ def discover_card() -> str:
             f" models.dev and your providers' own lists, deduped; {hidden:,} paid models on providers you have no route"
             f" to are left out. Click a model for everything known about it and the routes it can be"
             f" added by.</p>{toolbar}"
+            f"<div class='discover'>{rail}<div><p class='hint d-count' id='d-count' aria-live='polite'></p>"
             f"<div class='scroll'>{''.join(body)}</div>"
+            "<button class='btn small' type='button' id='d-more' hidden>Show 100 more</button></div></div>"
             f"<details class='key'><summary>How to read this</summary>{key}</details></div>")
 
 
@@ -4219,7 +4062,7 @@ def collections_tab() -> str:
         " names none</label>"
         "<div class='settings'><div><label class='field' for='g-pick-conf'>Only when the model is at least"
         "</label><input id='g-pick-conf' type='number' min='0.05' max='1' step='0.05'></div></div>"
-        "<p class='rules'>A decision model (the one Benchmarks › Decision models says the collection pick"
+        "<p class='rules'>A decision model (the one Benchmarks › Decision says the collection pick"
         " asks) chooses from the collections' descriptions and tags, and the reply says which and why"
         " (<code>bench.picked</code>, <code>X-Bench-Picked</code>). Less sure than this, or switched off,"
         " the request is refused with each collection's description and tags, so the caller can choose."
