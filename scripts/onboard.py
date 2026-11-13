@@ -292,8 +292,16 @@ def main() -> None:
                 " models_url .../ai/models/search?per_page=1000) and onboard it from there.\n"
                 if "@cf/" in name and endpoint != "cloudflare" and "{model}" not in
                 (endpoints.load()[endpoint].get("decisions") or "") else
+                # Only a hub gets here: any other endpoint is asked under its own base.
+                "  Give this hub a decisions URL in config/endpoints.json (Open WebUI's is"
+                " http://<host>/openai/{path}), or onboard the model from its provider's own endpoint.\n"
+                if "has no decisions URL" in why else
                 "  Open WebUI relays decisions only with ENABLE_OPENAI_API_PASSTHROUGH=True"
                 " in its environment.\n" if owui and "passthrough" in why.lower() else
+                # The relay sends the id as Open WebUI lists it, connection prefix and all.
+                f"  Open WebUI sends the provider the prefixed id ({name}), which it does not know."
+                " Add the provider as an endpoint of its own and onboard the model from there.\n"
+                if owui and " 404" in why and connection_prefix(live[name]) else
                 "  Its connection has no /decisions under its base. An OpenRouter-hosted decision"
                 " model cannot go through Open WebUI (its Decisions API is outside /api/v1);"
                 " pick it from openrouter (direct) instead.\n" if owui and " 404" in why and " 402" not in why else

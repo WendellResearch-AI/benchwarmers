@@ -20,7 +20,8 @@ that asks "what is served" asks every endpoint here.
 
 `decisions` (optional) is the full URL of the endpoint's Decisions API, for
 decision models that cannot be reached through chat completions; see
-`metrics/decide.py`. Open WebUI's is its `/openai/{path}` passthrough, which
+`metrics/decide.py`. Without one, an endpoint that is not a hub is asked under
+its own base (`decide.decisions_url`). Open WebUI's is its `/openai/{path}` passthrough, which
 answers only when the server runs with ENABLE_OPENAI_API_PASSTHROUGH=True;
 `{path}` is filled per model (`decisions` for Inception, `systemone` for
 Ollama), because the passthrough appends it to the connection's own base.

@@ -31,7 +31,9 @@ def jsonl(path: str, rows: list[dict]) -> None:
 write("config/endpoints.json", {"hub": {"base": "http://127.0.0.1:9/api", "key": "hub", "default": True,
                                         "decisions": "http://127.0.0.1:9/openai/{path}"},
                                 "cf": {"base": "http://127.0.0.1:9/ai/v1", "key": "hub",
-                                       "decisions": "http://127.0.0.1:9/ai/run/{model}"}})
+                                       "decisions": "http://127.0.0.1:9/ai/run/{model}"},
+                                "bare": {"base": "http://127.0.0.1:9/v1", "key": "hub", "kind": "provider"},
+                                "barehub": {"base": "http://127.0.0.1:8/api", "key": "hub"}})
 # dm2 first: before any result it is the one asked (the first that takes choice, as before),
 # except per request, where its :free budget is spared while dm1 can answer.
 MODELS = {
@@ -147,6 +149,20 @@ def cf_urlopen(request, timeout=0):
 decide.urllib.request.urlopen = cf_urlopen
 assert decide.probe("cf", "@cf/cloudflare/clef-flash") == (None, "decisions")
 assert decide.log_rows()[-1]["answers"]["probe"]["noul"] == 0.98
+decide.LOG.unlink()
+
+
+# An endpoint with no decisions URL is asked under its own base, each path in turn (AMD Token
+# Lab answers only /v1/systemone); a hub without one is not asked: its relay is given by hand.
+def bare_urlopen(request, timeout=0):
+    if request.full_url != "http://127.0.0.1:9/v1/systemone":
+        raise http_error(b'{"error": {"message": "Unknown endpoint"}}', 404)
+    return io.BytesIO(json.dumps({"answers": {"probe": {"type": "noul", "noul": 0.99}}}).encode())
+
+
+decide.urllib.request.urlopen = bare_urlopen
+assert decide.probe("bare", "d3") == (None, "systemone")
+assert decide.probe("barehub", "d3") == ("barehub has no decisions URL in config/endpoints.json", "")
 decide.LOG.unlink()
 decide.urllib.request.urlopen = urlopen
 

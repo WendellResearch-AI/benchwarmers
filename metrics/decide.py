@@ -19,12 +19,17 @@ model answers a typed question.
 
 WHERE THE CALL GOES
 -------------------
-Each endpoint in `config/endpoints.json` may carry a `decisions` URL. Open
+Each endpoint in `config/endpoints.json` may carry a `decisions` URL. One
+that is not a hub and has none is asked under its own base (`decisions_url`:
+`<base>/decisions`, then `<base>/systemone`, as AMD Token Lab names it). Open
 WebUI has one only through its `/openai/{path}` passthrough, which forwards to
 `{connection base}/decisions` and answers only when the server runs with
 ENABLE_OPENAI_API_PASSTHROUGH=True. That reaches Inception
 (`api.inceptionlabs.ai/v1/decisions`) but never OpenRouter, whose Decisions API
-is `/api/alpha/decisions`, outside its `/api/v1` base.
+is `/api/alpha/decisions`, outside its `/api/v1` base. Nor a connection with
+a prefix in Open WebUI: the passthrough sends the provider the prefixed id
+(`amd.d3-flash`), which it does not know; such a model is onboarded from the
+provider's own endpoint.
 
 A model is called on the endpoint it was picked from when onboarding, recorded
 as `via`: picked from Open WebUI, it goes through Open WebUI; picked from
@@ -226,6 +231,16 @@ def load() -> dict[str, dict]:
         return {}
 
 
+def decisions_url(endpoint: str) -> str:
+    """Where `endpoint`'s Decisions API is: its own `decisions` URL, else `{path}`
+    under its base, which is where a provider that has one serves it (AMD Token
+    Lab: /v1/systemone), so a direct endpoint needs nothing written by hand. ""
+    for a hub without one: its relay is not under its base (Open WebUI's is
+    /openai/{path}, outside /api) and is given by hand."""
+    url = endpoints.load()[endpoint].get("decisions") or ""
+    return url or ("" if endpoints.hub(endpoint) else endpoints.base(endpoint) + "/{path}")
+
+
 def call(endpoint: str, served: str, state, questions: dict, timeout: int = 60,
          path: str = "decisions", alias: str = "", use: str = "", meta: dict | None = None,
          retry: bool = True) -> dict:
@@ -237,7 +252,7 @@ def call(endpoint: str, served: str, state, questions: dict, timeout: int = 60,
     try:
         # Inside the try, so an endpoint gone from the config is logged too.
         entry = endpoints.load()[endpoint]
-        url = (entry.get("decisions") or "").replace("{path}", path)
+        url = decisions_url(endpoint).replace("{path}", path)
         if not url:
             raise ValueError(f"{endpoint} has no decisions URL in config/endpoints.json")
         headers = {"Content-Type": "application/json", **(entry.get("headers") or {})}
@@ -343,7 +358,7 @@ def error_text(exc: Exception) -> str:
 def probe(endpoint: str, served: str) -> tuple[str | None, str]:
     """(None, path) if `endpoint`'s decisions URL answers a yes/no question for
     `served`, else (why not, ""). Each of PATHS is tried where the URL has `{path}`."""
-    url = endpoints.load()[endpoint].get("decisions")
+    url = decisions_url(endpoint)
     if not url:
         return f"{endpoint} has no decisions URL in config/endpoints.json", ""
     why = []
