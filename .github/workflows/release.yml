@@ -136,7 +136,9 @@ jobs:
           PY
       - name: Publish server.json, waiting for a new version to show on npm and PyPI
         run: |
-          for wait in 30 60 120 0; do      # a fresh sign-in each try: the registry's token is short-lived
+          # npm showed 0.6.6 and 0.6.7 about four minutes after `npm publish` returned, just after
+          # the old 3.5 minutes of tries ran out; these wait up to 10.5.
+          for wait in 30 60 120 180 240 0; do      # a fresh sign-in each try: the registry's token is short-lived
             ./mcp-publisher login github-oidc && ./mcp-publisher publish && exit 0
             test "$wait" = 0 || { echo "retrying in ${wait}s"; sleep "$wait"; }
           done

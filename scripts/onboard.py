@@ -286,6 +286,9 @@ def main() -> None:
             return
         # The passthrough hints are about Open WebUI; anywhere else a 404 is the provider's.
         owui = endpoints.hub(endpoint) == "openwebui"
+        # A 404 is judged on the last path tried: /decisions answers 404 wherever the API is
+        # /systemone, and a 503 from that one is then the reason (AMD's d3-flash, 2026-11-13).
+        last = why.rsplit(f"; {endpoint} /", 1)[-1]
         # ponytail: Cloudflare told apart by its @cf/ ids; its partner models (no @cf/) get the generic hint.
         hint = ("  Cloudflare answers decisions only on its /ai/run route, which no hub relays: add"
                 " Cloudflare as a direct endpoint (decisions .../accounts/<id>/ai/run/{model},"
@@ -301,15 +304,15 @@ def main() -> None:
                 # The relay sends the id as Open WebUI lists it, connection prefix and all.
                 f"  Open WebUI sends the provider the prefixed id ({name}), which it does not know."
                 " Add the provider as an endpoint of its own and onboard the model from there.\n"
-                if owui and " 404" in why and connection_prefix(live[name]) else
+                if owui and " 404" in last and connection_prefix(live[name]) else
                 "  Its connection has no /decisions under its base. An OpenRouter-hosted decision"
                 " model cannot go through Open WebUI (its Decisions API is outside /api/v1);"
-                " pick it from openrouter (direct) instead.\n" if owui and " 404" in why and " 402" not in why else
+                " pick it from openrouter (direct) instead.\n" if owui and " 404" in last and " 402" not in why else
                 "  This endpoint has no Decisions API at its decisions URL in config/endpoints.json.\n"
-                if " 404" in why and " 402" not in why else
+                if " 404" in last and " 402" not in why else
                 "  The provider wants paid usage for this model; the bench uses free models only.\n"
                 if " 402" in why else
-                "  The provider refused the call; try again once its limit resets.\n")
+                "  The provider refused or failed the call; try again shortly, or once its limit resets.\n")
         sys.exit(f"  STOPPING: a decision model, but {endpoint}'s Decisions API did not answer:\n"
                  f"    {why}\n{hint}"
                  "  Not registered as a chat model, because every chat call to it would fail.")
