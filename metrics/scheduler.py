@@ -70,7 +70,7 @@ MODES = {"off": ("Off", "Nothing runs. A fresh install spends no model calls unt
 # What each job is for, in a sentence, for the Settings page.
 ABOUT = {
     "availability": "Is each model still answering? One one-word prompt per model every morning;"
-                    " feeds the status on At a glance and auto-retire.",
+                    " feeds each model's status (Models, Uptime) and auto-retire.",
     "catalog": "Refreshes what is known about models (context, output limit, price, free tier) and the"
                " Discover list from public feeds. No model calls.",
     "suite-free": "Scores one free model on the review suite: up to six tasks it has not answered yet,"

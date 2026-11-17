@@ -80,6 +80,9 @@ the rail is a bar with a menu.
   fold under it ("How this is measured").
 - **Columns of sections** (`.cols`): sections flow in as many columns as fit,
   each kept whole (Benchmarks' reports: one on a laptop, three at 3440).
+  Without script: `.cols.flow`, newspaper columns of 34rem, for sections of
+  any height (Settings); `.cols.fit`, a row the few short groups share at
+  any width (Info).
 - **Table**: spans its pane; hairline rows; a sticky head; numbers right in
   tabular figures; a heading sorts on click and shows its arrow; the row in
   hand carries the accent. A group of rows folds under its heading
@@ -89,7 +92,11 @@ the rail is a bar with a menu.
   page does not; the one chosen is the list's button with `aria-pressed`.
   Under 800px the list sits above.
 - **Facts** (`dl.rows`): a label and its value on a line, the labels in one
-  column.
+  column. A value the environment sets names its variable under it
+  (`.set-by`), as Settings shows each setting read at start.
+- **A long list as data** (Discover): the rows arrive as JSON in the page and
+  only those shown are drawn, more as the list's foot nears; its filter,
+  facets and sort work on the data. For a list of thousands, not dozens.
 - **Chip** (`.chip`, with `ok`, `warn`, `err`, `new`, `adhoc`, `via`): a state
   or a mark, never a button unless it is one.
 - **Buttons**: flat. `.btn` (an edge), `.btn.primary` (solid ink, one a view),

@@ -99,6 +99,7 @@ h1, h2, h3 { line-height: 1.2; letter-spacing: -.01em; text-wrap: balance; }
 /* A page's own controls in its bar (serve.BAR_TOOLS): its filter after the name,
    a spring, then its actions at the right. */
 .bar .spring { flex: 1; }
+.bar .btn { flex: none; }                  /* a narrower filter, never a button's name on two lines */
 .bar .done { color: var(--ok); }
 .bar .errors { color: var(--err); }
 .bar input[type=search] { width: 22rem; min-width: 0; height: 32px; padding: 0 10px; border: 1px solid var(--field); border-radius: var(--radius); background: var(--paper-2); color: var(--ink); font: inherit; }
@@ -120,7 +121,16 @@ h1, h2, h3 { line-height: 1.2; letter-spacing: -.01em; text-wrap: balance; }
 .cols[data-n='2'] { grid-template-columns: repeat(2, minmax(0, 1fr)); background: linear-gradient(var(--line), var(--line)) 50% 0 / 1px 100% no-repeat; }
 .cols[data-n='3'] { grid-template-columns: repeat(3, minmax(0, 1fr)); background: linear-gradient(var(--line), var(--line)) 33.333% 0 / 1px 100% no-repeat, linear-gradient(var(--line), var(--line)) 66.667% 0 / 1px 100% no-repeat; }
 .cols > .report { align-self: start; min-width: 0; }
-.panel.report { scroll-margin-top: var(--bar-h); }  /* a jump lands under the bar, not behind it */
+.cols > .panel { scroll-margin-top: var(--bar-h); }  /* a jump lands under the bar, not behind it */
+/* Settings' sections: as many columns as fit, each section whole, a hairline between. */
+.cols.flow { columns: 34rem; column-gap: 0; column-rule: 1px solid var(--line); }
+.cols.flow > .panel { break-inside: avoid; }
+/* Info's groups, few and short: they share the row, wide or narrow. */
+.cols.fit { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(26rem, 100%), 1fr)); margin-left: -1px; }
+.cols.fit > .panel { border-left: 1px solid var(--line); }
+.panel > h3 { margin: var(--gap-4) 0 var(--gap-1); font-size: var(--t-body); }
+.panel dl.rows { margin: var(--gap-2) 0 var(--gap-3); }
+.set-by { display: block; font: var(--t-small)/1.5 var(--font-mono); color: var(--muted); }   /* the environment variable that sets it */
 
 /* ---- the docked panel: a page's own facts (aside.facts), or the record in
    hand (dialog.dock): a model (#model-dialog, bench.js dock), a collection
@@ -193,7 +203,7 @@ dialog.dock .dock-foot > :is(.errors, .done) { flex-basis: 100%; margin: 0; }
     grid-template-columns: var(--rail-w) minmax(0, 1fr) var(--aside-w); }
 }
 @media (min-width: 1280px) and (max-width: 1699px) {
-  .app:has(> .panes > #tab-suite.active):not(:has(> dialog.dock[open])) { --aside-w: 320px; }
+  .app:has(> .panes > :is(#tab-suite, #tab-discover).active):not(:has(dialog.dock[open])) { --aside-w: 320px; }
 }
 /* Under 800px the rail is a bar across the top; Menu opens the pages under it. */
 @media (max-width: 799px) {
@@ -261,17 +271,16 @@ table.a-table col.c-acts { width: 7.5rem; }
 .a-retired > summary .muted { color: var(--muted); }
 .a-none { color: var(--muted); }
 
-/* settings, connections, logs, info */
-.themes { display: flex; flex-wrap: wrap; gap: .75rem; margin-top: .75rem; }
-td.set-by { font-size: var(--t-small); color: var(--muted); white-space: nowrap; }
-.theme-card { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: .35rem .5rem; padding: .6rem .8rem; border: 1px solid var(--line); border-radius: var(--radius); cursor: pointer; }
-.theme-card:has(input:checked) { border-color: var(--ink); background: var(--tint); }
-.theme-card .swatch, .theme-card a { grid-column: 2; }
+/* Settings' theme cards (the rail's switch, bigger: bench.js theme), logs */
+.themes { display: flex; flex-wrap: wrap; gap: var(--gap-3); margin-top: var(--gap-3); }
+.theme-card { display: grid; justify-items: start; gap: var(--gap-2); padding: 10px var(--gap-3); border: 1px solid var(--line); border-radius: var(--radius); background: var(--paper-2); color: var(--ink); }
+.theme-card:hover { background: var(--hover); }
+.theme-card[aria-pressed=true] { border-color: var(--ink); background: var(--tint); }
 .swatch { display: flex; gap: 2px; }
 .swatch span { width: 1rem; height: 1rem; border-radius: 2px; border: 1px solid var(--line); }
-.theme-card a { font-size: var(--t-small); }
-table.facts th { text-align: left; padding-right: 1.5rem; color: var(--muted); font-weight: 500; }
-table.facts td, [data-log] td:last-child { overflow-wrap: anywhere; }   /* Info's paths, Logs' seats: wrap on a phone */
+#tab-settings td { vertical-align: top; }
+#tab-settings td.when { white-space: nowrap; }
+[data-log] td:last-child { overflow-wrap: anywhere; }   /* Logs' seats: wrap on a phone */
 [data-log] td { overflow-wrap: break-word; }                             /* a short word stays whole; a long id breaks */
 details.panel > summary { cursor: pointer; }
 details.panel[open] > summary { margin-bottom: .75rem; }
@@ -336,7 +345,9 @@ a.dmodel:hover .alias { box-shadow: inset 0 -.3em 0 var(--signal); }
 .ep-table td .chip + .chip, .ep-table .c-open + .chip { margin-left: var(--gap-1); }
 .ep-table td.when { white-space: nowrap; }
 .l-table input { width: 5rem; padding: .2rem .4rem; border: 1px solid var(--field); border-radius: var(--radius); background: var(--paper-2); color: var(--ink); font: inherit; text-align: right; }
+.l-table { width: auto; }                  /* a form: its boxes beside the connection's name, not across the pane */
 .l-table td:first-child { min-width: 10rem; }
+.l-table .conn { max-width: 40rem; }
 .l-table :is(th, td):not(:first-child) { padding-left: var(--gap-1); padding-right: var(--gap-1); }
 .l-table .conn .btn { margin-left: var(--gap-2); }
 .hint { color: var(--muted); margin: .9rem 0 0; max-width: 70ch; }
@@ -391,22 +402,40 @@ tr.in-hand > td:first-child { box-shadow: inset 3px 0 0 var(--mark); }
 tr.retired > td { color: var(--muted); }
 tr.retired .alias { text-decoration: line-through; }
 body:not(.show-retired) tr.retired { display: none; }
-/* Discover: the facet rail beside the list. It stays in view and scrolls by itself. */
-.discover { display: grid; grid-template-columns: 13.5rem minmax(0, 1fr); gap: 1.5rem; align-items: start; }
-.facets { position: sticky; top: calc(var(--bar-h) + var(--gap-4)); max-height: calc(100dvh - var(--bar-h) - 3rem); overflow-y: auto; padding-right: .5rem; }
-.facets input[type=search] { font: inherit; width: 100%; padding: .4rem .6rem; border: 1px solid var(--field); border-radius: var(--radius); background: var(--paper-2); color: var(--ink); }
-.facets fieldset { border: 0; padding: 0; margin: .9rem 0 0; min-width: 0; }
-.facets legend { padding: 0; margin-bottom: .2rem; font-size: var(--t-small); font-weight: 700; color: var(--muted); }
-.facets label { display: flex; align-items: center; gap: .4rem; padding: .12rem 0; cursor: pointer; }
-.facets label .n { margin-left: auto; padding-left: .5rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+/* Discover (serve.discover_card): the facets a fold above the list, a column
+   beside it from 1440px; the list in a box that scrolls by itself under its
+   sticky head, so the page does not. Columns as the box allows: In → out,
+   Released and Limits leave a narrow one (the panel has them), Max output to
+   First seen join a wide one. */
+#tab-discover.active { display: flex; flex-direction: column; }
+.discover { flex: 1; min-height: 0; display: grid; grid-template: auto minmax(0, 1fr) / minmax(0, 1fr); }
+.facets { min-height: 0; max-height: 45vh; overflow-y: auto; scrollbar-width: thin; padding: 0 var(--pad); border-bottom: 1px solid var(--line); }
+.facets > summary { padding: var(--gap-2) 0; cursor: pointer; font-weight: 500; }
+.facets fieldset { border: 0; padding: 0; margin: 0 0 var(--gap-4); min-width: 0; }
+.facets legend { padding: 0; margin-bottom: var(--gap-1); font-size: var(--t-small); font-weight: 700; color: var(--muted); }
+.facets label { display: flex; align-items: center; gap: var(--gap-2); padding: 2px 0; cursor: pointer; }
+.facets label .n { margin-left: auto; padding-left: var(--gap-2); color: var(--muted); font-variant-numeric: tabular-nums; }
 .facets label.none { color: var(--muted); }
-.discover td:nth-child(n+2) { white-space: nowrap; }     /* one line a model: the table scrolls sideways instead */
-.d-count { margin: 0 0 .5rem; }
-#d-more { margin-top: .9rem; }
-@media (max-width: 900px) {
-  .discover { grid-template-columns: minmax(0, 1fr); }
-  .facets { position: static; max-height: 45vh; }
+@media (min-width: 1440px) {
+  .discover { grid-template-columns: 12rem minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+  .facets { max-height: none; padding: var(--gap-4) var(--gap-3) 0 var(--pad); border: 0; border-right: 1px solid var(--line); }
+  .facets > summary { display: none; }
 }
+.d-list { min-height: 0; overflow: auto; scrollbar-width: thin; container-type: inline-size; }
+.d-list th { position: sticky; top: 0; z-index: 1; background: var(--paper-2); border-bottom: 0; box-shadow: inset 0 -1px 0 var(--line); }
+.d-list :is(th, td) { padding-left: var(--gap-2); padding-right: var(--gap-2); }
+.d-list :is(th, td):first-child { padding-left: var(--pad); }
+.d-list td { white-space: nowrap; }
+/* The model, its provider, what it can do and its limits wrap; the rest is one line each. */
+.d-list td:is(:nth-child(1), :nth-child(3), :nth-child(8), :nth-child(10)) { white-space: normal; }
+.d-list td:first-child { min-width: 9rem; }
+.d-list .conn { overflow-wrap: anywhere; }
+.d-list td.dim { color: var(--muted); }
+.d-list .wide { display: none; }
+@container (min-width: 120rem) { .d-list .wide { display: table-cell; } .d-list td:nth-child(8) { white-space: nowrap; } }
+@container (max-width: 56rem) { .d-list .opt { display: none; } }
+#d-more { margin: var(--gap-3) var(--pad) var(--gap-5); }
+#d-count { white-space: nowrap; }
 .muted { color: var(--muted); }
 .ok { color: var(--ok); } .warn { color: var(--warn); } .err { color: var(--err); }
 
@@ -676,7 +705,6 @@ dialog .pick { display: flex; gap: 1.5rem; }
   .problem .acts { justify-content: flex-start; }
   details.key dl { grid-template-columns: minmax(0, 1fr); }
   .toolbar input[type=search] { min-width: 0; width: 100%; }
-  #tab-settings .panel > table { display: block; overflow-x: auto; }     /* Settings' tables scroll by themselves */
 }
 /* A narrow page: name and state on one line, the words and actions under
    them, the line above a model unbroken. */

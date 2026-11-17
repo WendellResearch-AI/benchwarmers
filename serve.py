@@ -3995,84 +3995,105 @@ def discover_refresh(who: str = "ui") -> dict:
     return {"ok": True, "errors": said}
 
 
+# Discover's columns (bench.js dRow draws them): key, heading, class, what it means. An
+# `opt` column leaves a narrow list (the panel has it), a `wide` one joins a wide list; `dim` is muted.
+DISCOVER_COLS = (
+    ("name", "Model", "", ""), ("rank", "Rank", "num opt", "FreeLLMAPI's smartest-first rank; hover one for more"),
+    ("provider", "Provider", "", ""), ("reach", "Reach", "", "How near it is: on the bench, connected, easy to add, other"),
+    ("price", "Price", "", "Free, or dollars per million tokens, input / output"),
+    ("context", "Context", "num", "Context window, in thousands of tokens"),
+    ("io", "In → out", "opt dim", "What it takes in and gives out"),
+    ("caps", "Can", "", "Calls tools, reads images (vision), reasons before answering"),
+    ("released", "Released", "opt dim", ""),
+    ("limits", "Limits", "opt dim", "The free tier's: requests or tokens a minute (rpm, tpm) or a day (rpd, tpd)"),
+    ("output", "Max output", "num wide", "The longest answer, in tokens"),
+    ("knowledge", "Knowledge", "wide dim", "Knowledge cutoff"), ("weights", "Weights", "wide dim", "Open or closed weights"),
+    ("listed", "Listed by", "wide dim", ""), ("seen", "First seen", "wide dim", "A dash: before the lists began"))
+REACH_CSS = {"on bench": "ok", "connected": "ok", "easy to add": "warn", "other": ""}
+
+
+def discover_data(rows: list[dict]) -> str:
+    """Discover's rows as data for bench.js (dApply filters, counts and sorts
+    them and draws the rows shown): their HTML was 2 MB, and every row in
+    the page was restyled on each key typed. Only what the table shows, with
+    the display text worked out here; each row a list in the order of
+    `fields`, an empty value 0 (bench.js dRead makes them objects again)."""
+    fields, out = None, []
+    for r in rows:
+        caps = [c for c, on in (("tools", r["tools"]), ("vision", r["vision"]), ("reasons", r["reasoning"])) if on]
+        cost = r.get("cost") or {}
+        lim = r.get("limits") or {}
+        on = ([f"on bench as {r['on_bench_as']}"] if r.get("on_bench_as") else []) + (
+            [f"also on bench as {', '.join(r['also_on'])}"] if r.get("also_on") else [])
+        row = {"provider": r["provider"], "model": r["model"], "name": r["name"], "new": r["new"],
+               "seen": "" if r["first_seen"] == "baseline" else r["first_seen"], "on": " · ".join(on),
+               "rank": r.get("rank"),
+               "rank_title": f"FreeLLMAPI: smartest #{r['rank']}" + (f", fastest #{r['speed']}" if r.get("speed") else "")
+               + (f", {r['size']}" if r.get("size") else "") if r.get("rank") is not None else "",
+               "reach": r["reach"],
+               "price": "free" if r["free"] else "unknown" if r["free"] is None else
+               f"{cost.get('input', '?')} / {cost.get('output', '?')}" if cost else "paid",
+               "context": r.get("context"), "io": f"{', '.join(r['in_mods'])} → {', '.join(r['out_mods'])}",
+               "caps": " ".join(caps), "released": r.get("released"),
+               "limits": " · ".join([f"{v:,} {k}" for k, v in lim.items()]
+                                    + ([f"{r['budget']} tokens a month"] if r.get("budget") else [])),
+               "add": any(not x["on_bench_as"] for x in r["routes"]),
+               "output": r.get("output"), "knowledge": r.get("knowledge"),
+               "weights": {True: "open", False: "closed"}.get(r.get("open_weights")),
+               "listed": ", ".join({"freellmapi": "FreeLLMAPI", "provider": "own list"}.get(s, s) for s in r["sources"])}
+        fields = fields or list(row)
+        values = [v or 0 for v in row.values()]
+        while values and values[-1] == 0:
+            values.pop()
+        out.append(values)
+    # Each provider's name, and its OpenAI-compatible base URL where one is known (its Reach chip's title).
+    return json.dumps({"fields": fields, "providers": {r["provider"]: r["provider_name"] for r in rows},
+                       "apis": {r["provider"]: r["api"] for r in rows if r.get("api")}, "rows": out},
+                      ensure_ascii=False, separators=(",", ":")).replace("</", "<\\/")
+
+
 def discover_card() -> str:
     """Models worth adding, from FreeLLMAPI and models.dev (metrics/discover.py),
-    deduped. Read from the daily cache, so the page never waits on the network;
-    built once per cache refresh. A click on a row opens its popup (bench.js),
-    which asks /api/discover-model for the rest: its routes are where Add is."""
+    deduped. Read from the daily cache, so the page never waits on the network.
+    The rows arrive as data (discover_data); the facets beside them, a fold
+    on a narrow window. A row opens beside the list (bench.js openDiscover),
+    which asks /api/discover-model for the rest: its routes are where Add is.
+    With none open, the panel says what the catalog is."""
     all_rows = _discover_rows()
     rows = [r for r in all_rows if r["free"] or r["reach"] in ("connected", "on bench")]
     # New models first, the newest at the top; the rest keep discover.py's order (a stable sort).
     rows.sort(key=lambda r: r["first_seen"] if r["new"] else "", reverse=True)
     hidden = len(all_rows) - len(rows)
-    reach_css = {"on bench": "ok", "connected": "ok", "easy to add": "warn", "other": ""}
-    body = ["<table><thead><tr>", th("Model"), th("Rank", True), th("Provider"), th("Reach"), th("Price"),
-            th("Context", True),
-            th("In → out"), th("Can"), th("Released"), th("Limits"), "<th></th></tr></thead><tbody>"]
-    for r in rows:
-        caps = [c for c, on in (("tools", r["tools"]), ("vision", r["vision"]),
-                                ("reasons", r["reasoning"])) if on]
-        cost = r.get("cost") or {}
-        price = ("free" if r["free"] else "unknown" if r["free"] is None else
-                 f"{cost.get('input', '?')} / {cost.get('output', '?')}" if cost else "paid")
-        lim = r.get("limits") or {}
-        lim_text = " · ".join([f"{v:,} {k}" for k, v in lim.items()]
-                              + ([f"{r['budget']} tokens a month"] if r.get("budget") else []))
-        ctx = r.get("context")
-        rank = (f"<td class='num' data-sort='{r['rank']}' title='FreeLLMAPI: smartest #{r['rank']}"
-                + (f", fastest #{r['speed']}" if r.get("speed") else "")
-                + (f", {esc(r['size'])}" if r.get("size") else "") + f"'>{r['rank']}</td>"
-                if r.get("rank") is not None else "<td class='num muted' data-sort='99999'>—</td>")
-        add = ("<button class='btn small' type='button'>Add…</button>"
-               if any(not x["on_bench_as"] for x in r["routes"]) else "")
-        body.append(
-            f"<tr class='pick-row' data-provider='{esc(r['provider'])}' data-model='{esc(r['model'])}'"
-            f" data-reach='{r['reach']}' data-price='{'free' if r['free'] else 'paid'}'"
-            f" data-new='{'1' if r['new'] else ''}' data-caps='{' '.join(caps)}'><td>"
-            f"<a href='#' class='dmodel'><span class='alias'>{esc(r['name'])}</span></a>"
-            + (" " + chip("new", "new", f"first seen {r['first_seen']}") if r["new"] else "")
-            + f"<span class='conn'>{esc(r['model'])}"
-            + (f" · on bench as {esc(r['on_bench_as'])}" if r.get("on_bench_as") else "")
-            + (f" · also on bench as {esc(', '.join(r['also_on']))}" if r.get("also_on") else "")
-            + "</span></td>" + rank
-            + f"<td title='{esc(r['provider'])}'>{esc(r['provider_name'])}</td>"
-            f"<td data-sort='{['on bench', 'connected', 'easy to add', 'other'].index(r['reach'])}'>"
-            f"{chip(r['reach'], reach_css[r['reach']], r.get('api') or '')}</td>"
-            f"<td title='per million tokens, input / output'>{esc(price)}</td>"
-            + (f"<td class='num' data-sort='{ctx}'>{ctx // 1000:,}k</td>" if ctx
-               else "<td class='num muted' data-sort='-1'>?</td>")
-            + f"<td class='muted'>{esc(', '.join(r['in_mods']))} → {esc(', '.join(r['out_mods']))}</td>"
-            + f"<td>{' '.join(chip(c, '') for c in caps) or '<span class=muted>—</span>'}</td>"
-            f"<td class='mono muted' data-sort='{esc(r.get('released') or '')}'>{esc(r.get('released') or '')}</td>"
-            f"<td class='muted'>{esc(lim_text)}</td>"
-            f"<td>{add}</td></tr>")
-    body.append("</tbody></table>")
     free = sum(1 for r in rows if r["free"])
+    if _DISCOVER.get("data_of") is not all_rows:          # once per new list of rows: 40 ms
+        _DISCOVER.update(data_of=all_rows, data=discover_data(rows))
     import discover
     import sources
     ages = [a for a in map(sources.age_s, [*sources.FEEDS, discover.LISTS]) if a is not None]
-    # The rail: a search box and a checkbox per value of each facet, matched against the
-    # rows' data-* by bench.js (dApply), which also fills in the counts and pages the list.
+    # A checkbox per value of each facet, matched against the rows by bench.js (dApply),
+    # which also fills in the counts and pages the list.
     def group(title: str, facet: str, values) -> str:
         return (f"<fieldset><legend>{esc(title)}</legend>" + "".join(
             f"<label><input type='checkbox' data-df='{facet}' value='{esc(v)}'> {esc(label)}"
             "<span class='n'></span></label>" for v, label in values) + "</fieldset>")
     provs = {r["provider"]: r["provider_name"] for r in rows}
-    rail = ("<aside class='facets' id='d-facets' aria-label='Filter models'>"
-            "<input type='search' id='d-q' placeholder='Search models' aria-label='Search models'>"
+    rail = ("<details class='facets' id='d-facets'><summary>Filters</summary>"
             + group("Show", "new", [("1", "New")])
             + group("Price", "price", [("free", "Free"), ("paid", "Paid and unpriced")])
-            + group("Reach", "reach", [(v, v.capitalize()) for v in reach_css])
+            + group("Reach", "reach", [(v, v.capitalize()) for v in REACH_CSS])
             + group("Can", "caps", [(v, v.capitalize()) for v in ("tools", "vision", "reasons")])
             + group(f"Provider · {len(provs)}", "provider",
                     sorted(provs.items(), key=lambda kv: kv[1].lower()))
-            + "</aside>")
-    toolbar = ("<div class='toolbar'>"
-               "<button class='btn small' type='button' id='d-refresh' title='Fetch FreeLLMAPI, models.dev and"
-               " every Open WebUI connection&#39;s own model list now, instead of waiting for the daily fetch'>"
-               "Refresh lists</button><span class='muted' id='d-refreshed'>"
-               + ("never fetched" if not ages else f"oldest list {max(ages) / 60:.0f} minutes old" if max(ages) < 5400
-                  else f"oldest list {max(ages) / 3600:.0f} hours old") + "</span></div>")
+            + "</details>")
+    heads = "".join(f"<th data-sortable tabindex='0' data-k='{k}'" + (f" class='{css}'" if css else "")
+                    + (f" title='{esc(why)}'" if why else "") + f">{esc(label)}</th>" for k, label, css, why in DISCOVER_COLS)
+    age = ("never fetched" if not ages else f"{max(ages) / 60:.0f} minutes old" if max(ages) < 5400
+           else f"{max(ages) / 3600:.0f} hours old")
+    facts = (("Listed", f"{len(rows):,} models, {free:,} free"),
+             ("Left out", f"{hidden:,} paid, with no route to them"),
+             ("Sources", "FreeLLMAPI, models.dev and your Open WebUI connections' own lists, deduped"),
+             ("Oldest list", f"<span id='d-refreshed'>{age}</span>; all are fetched daily"),
+             ("New", "first seen in the last 7 days"))
     key = """<dl>
       <dt>Rank</dt><dd>FreeLLMAPI's smartest-first order (1 is the smartest it lists); within
         each reach the list follows it. Hover for its fastest-first rank and size. A dash where
@@ -4090,33 +4111,44 @@ def discover_card() -> str:
       <dt>Limits</dt><dd>The free tier's, from FreeLLMAPI: requests and tokens per minute (rpm,
         tpm) and per day (rpd, tpd), and roughly how many tokens a month that allows.</dd>
       <dt>New</dt><dd>First seen in either list in the last 7 days.</dd>
-      <dt>Add</dt><dd>Click a row: its popup has everything known about the model and every
-        route this install has to it, each with <em>Add via this</em>. <em>Via Open WebUI</em>
+      <dt>Add</dt><dd>Open a row: the panel beside the list has everything known about the model
+        and every route this install has to it, each with <em>Add via this</em>. <em>Via Open WebUI</em>
         adds the model to that connection's Model IDs (when it lists them), creates its model
         record public, tagged like the connection's other models and with their logo, then runs
         the bench's onboarding as the confirm chooses (Onboard as, Vision model), so it is in
         the chats too.
         <em>Via LiteLLM</em> or <em>CLI Proxy API</em> adds it to that hub's connection (one more
-        deployment, or the provider's models list); those hubs are asked when the popup opens.
+        deployment, or the provider's models list); those hubs are asked when the panel opens.
         <em>Direct</em> onboards it on the provider's own endpoint: bench only. A new provider
         needs a connection or an endpoint first; hover its <em>easy to add</em> chip for the
         base URL.</dd>
       <dt>Sources</dt><dd>FreeLLMAPI's free catalog first: where it lists a model, its name,
-        provider, context, tools, limits, ranks and quirks lead, and the popup links its
+        provider, context, tools, limits, ranks and quirks lead, and the panel links its
         freellmapi.co page. models.dev fills the rest and alone has the paid models, prices,
-        base URLs and modalities; the popup links its page for the model. A model one provider
+        base URLs and modalities; the panel links its page for the model. A model one provider
         offers in both is shown once. Then each Open WebUI connection's own model list, for
         what the provider serves that neither catalog has yet. All are fetched daily;
         <em>Refresh lists</em> fetches them now.</dd>
     </dl>"""
-    return (f"<div class='panel'><h2>Discover</h2><p class='sub'>{free} free models from FreeLLMAPI,"
-            f" models.dev and your providers' own lists, deduped; {hidden:,} paid models on providers you have no route"
-            f" to are left out. Click a model for everything known about it and the routes it can be"
-            f" added by.</p>{toolbar}"
-            f"<div class='discover'>{rail}<div><p class='hint d-count' id='d-count' aria-live='polite'></p>"
-            f"<div class='scroll'>{''.join(body)}</div>"
-            "<button class='btn small' type='button' id='d-more' hidden>Show 100 more</button></div></div>"
-            f"<details class='key'><summary>How to read this</summary>{key}</details></div>")
+    return (f"<div class='discover'>{rail}<div class='d-list'><table id='d-table'><thead><tr>{heads}<th class='opt'></th></tr>"
+            "</thead><tbody></tbody></table>"
+            "<button class='btn small' type='button' id='d-more' hidden>Show more</button></div></div>"
+            f"<script type='application/json' id='d-data'>{_DISCOVER['data']}</script>"
+            # One model, docked beside the list (bench.js openDiscover fills it): what is known, the routes to add it by.
+            "<dialog class='dock' id='discover-dialog' aria-labelledby='d-title'>"
+            "<div class='bar'><p>In the catalog</p></div><div class='dock-body'>"
+            "<h2 class='dock-head' id='d-title' tabindex='-1'></h2><dl class='rows' id='d-profile'></dl>"
+            "<h3>Routes on this install</h3><p class='sub'>Add via this puts it on the bench that way, and into the hub"
+            " first where it goes through one.</p>"
+            "<div id='d-routes'></div><div class='errors' id='d-errors' role='alert'></div></div>"
+            "<div class='dock-foot'><button class='btn' type='button' id='d-close'>Close</button></div></dialog>"
+            # With none open: what the catalog is (bench.css aside.facts).
+            "<aside class='facts' id='facts-discover' aria-labelledby='facts-discover-h'>"
+            "<div class='bar'><h2 id='facts-discover-h'>About the catalog</h2>"
+            "<button type='button' class='linkish facts-close'>Close</button></div><div class='facts-body'>"
+            "<dl class='rows'>" + "".join(f"<dt>{k}</dt><dd>{v}</dd>" for k, v in facts) + "</dl>"
+            "<p>Open a model for everything known about it and the routes to add it by.</p>"
+            f"<details class='key'><summary>How to read this</summary>{key}</details></div></aside>")
 
 
 _CAN = {"reasoning": "reason", "vision": "take images", "tools": "call tools",
@@ -4344,9 +4376,15 @@ BAR_TOOLS = {
                     "<button class='btn primary' type='button' id='c-new'>New collection</button>"),
     "logs": ("<input type='search' data-filter='page' placeholder='Filter every log' aria-label='Filter every log'>"
              "<span class='spring'></span><button class='btn' type='button' id='logs-export'>Export…</button>"),
+    "discover": ("<input type='search' id='d-q' placeholder='Search the catalog' aria-label='Search the catalog'>"
+                 "<span class='muted' id='d-count' role='status'></span><span class='spring'></span>"
+                 "<button class='btn' type='button' id='d-refresh' title='Fetch FreeLLMAPI, models.dev and every"
+                 " Open WebUI connection&#39;s own model list now, instead of waiting for the daily fetch'>"
+                 "Refresh lists</button>"),
 }
 # The pages with their own facts (aside.facts), and the bar's button that opens them under 1280px.
-FACTS_OPEN = {"suite": "On this page", "collections": "Gateway settings", "endpoints": "All endpoints"}
+FACTS_OPEN = {"suite": "On this page", "collections": "Gateway settings", "endpoints": "All endpoints",
+              "discover": "About the catalog", "settings": "On this page"}
 
 
 def collections_and_gateway() -> str:
@@ -4772,43 +4810,62 @@ def revoke_gateway_key(name: str, who: str = "ui") -> dict:
     return {"ok": True, "errors": []}
 
 
+def set_section(id_: str, title: str, sub: str, body: str, form: bool = True) -> str:
+    """A Settings section: its heading, one sentence, its controls (a Save at their foot)."""
+    return (f"<div class='panel{' form-panel' * form}' id='{id_}'><h2>{title}</h2><p class='sub'>{sub}</p>"
+            f"{body}</div>")
+
+
+def set_rows(rows) -> str:
+    """Settings' facts: a label, its value, and under the value what sets it, an
+    environment variable read at start (shown here, set only there)."""
+    return "<dl class='rows'>" + "".join(
+        f"<dt>{esc(k)}</dt><dd>{v}" + "".join(f"<span class='set-by'>{esc(s)}</span>" for s in src) + "</dd>"
+        for k, v, *src in rows) + "</dl>"
+
+
 def gateway_keys_card() -> str:
+    """Settings' Gateway keys: where the gateway answers, whether a key is asked
+    for (both from the environment), the keys, and a new one."""
     def when(stamp) -> str:
         return esc(str(stamp or "")[:16].replace("T", " ")) or "<span class='muted'>never</span>"
     rows = "".join(f"<tr><td class='mono'>{esc(n)} <span class='muted'>{guard.PREFIX}…{esc(e.get('hint', ''))}</span></td>"
                    f"<td>{esc(', '.join(e.get('collections') or [])) or 'all'}</td>"
                    f"<td class='num'>{esc(e.get('rpm') or '—')}</td>"
-                   f"<td>{when(e.get('created'))}</td><td>{when(e.get('last_used'))}</td>"
+                   f"<td class='when'>{when(e.get('created'))}</td><td class='when'>{when(e.get('last_used'))}</td>"
                    f"<td><button class='btn' data-revoke-key='{esc(n)}'>Revoke</button></td></tr>"
                    for n, e in sorted(guard.gateway_keys().items()) if isinstance(e, dict))
     if guard.auth_on():
-        asked = "An admin token is set, so every call to <code>/v1/…</code> and <code>/bench/verdict</code> needs one."
+        asked = "on every call to /v1/… and /bench/verdict: an admin token is set"
     elif guard.keys_required():
-        asked = ("<code>BENCHWARMERS_REQUIRE_KEYS</code> is set, so every call to the gateway needs one, on this"
-                 " machine too.")
+        asked = "on every call, on this machine too"
     else:
-        asked = ("None is asked for yet: without an admin token (<code>BENCHWARMERS_ADMIN_TOKEN</code>) the gateway"
-                 " serves this machine with no key, as before. Set one, or <code>BENCHWARMERS_REQUIRE_KEYS=1</code>"
-                 " to ask on this machine too, and every call needs a key.")
+        asked = "not yet: this machine is served with no key until one of these is set"
+    bind = guard.bind()
     scopes = "".join(f"<label class='check'><input type='checkbox' name='k-scope' value='{esc(c)}'>"
                      f" {bench_collections.PREFIX}{esc(c)}</label>" for c in sorted(bench_collections.load()))
-    return ("<div class='panel form-panel'><h2>Gateway keys</h2><p class='muted'>For a chat UI, an agent or another"
-            " machine, sent as <code>Authorization: Bearer &lt;key&gt;</code>. A key reaches the gateway only, never"
-            " this dashboard; revoke it and it stops at once. Its name is on every call it makes (the Gateway"
-            f" card). {asked}</p>"
-            f"<table><thead><tr>{th('Name')}{th('May call')}{th('A minute', True)}{th('Made')}{th('Last used')}"
-            f"<th></th></tr></thead>"
-            f"<tbody>{rows or '<tr><td colspan=6 class=muted>No keys yet.</td></tr>'}</tbody></table>"
-            "<label class='field' for='k-name'>Name for a new key</label>"
-            "<input id='k-name' placeholder='e.g. open-webui' autocomplete='off'>"
-            "<fieldset><legend class='field'>Collections it may call (none ticked: all)</legend>"
-            f"{scopes or '<span class=muted>No collections yet.</span>'}</fieldset>"
-            "<label class='field' for='k-rpm'>Requests a minute (empty: no cap)</label>"
-            "<input id='k-rpm' type='number' min='1' max='10000' placeholder='no cap' autocomplete='off'>"
-            "<div class='errors' id='k-errors' role='alert'></div>"
-            "<div class='done' id='k-done' hidden><p>Copy it now: it is shown this once and kept only as a hash.</p>"
-            "<input id='k-value' class='mono' readonly></div>"
-            "<div class='actions'><button class='btn primary' id='k-make'>Make a key</button></div></div>")
+    return set_section(
+        "set-keys", "Gateway keys", "A key lets a chat app, an agent or another machine call the gateway, never"
+        " this dashboard: it is sent as <code>Authorization: Bearer &lt;key&gt;</code>.",
+        set_rows((("Answering on", f"{esc(bind)}:{PORT}/v1, and {esc(bind)}:{gateway.PORT} (gateway.py)",
+                   "BENCH_BIND", "BENCH_PORT", "BENCH_GATEWAY_PORT"),
+                  ("Public address", esc(guard.public_url() or "none"), "BENCHWARMERS_PUBLIC_URL"),
+                  ("A key is asked", esc(asked), "BENCHWARMERS_REQUIRE_KEYS", "BENCHWARMERS_ADMIN_TOKEN")))
+        + "<h3>Keys</h3>"
+        f"<div class='scroll'><table><thead><tr>{th('Name')}{th('May call')}{th('A minute', True)}{th('Made')}"
+        f"{th('Last used')}<th></th></tr></thead>"
+        f"<tbody>{rows or '<tr><td colspan=6 class=muted>No keys yet.</td></tr>'}</tbody></table></div>"
+        "<p class='rules'>Revoked, a key stops at once. Its name is on every call it makes (Logs, Gateway calls).</p>"
+        "<label class='field' for='k-name'>Name for a new key</label>"
+        "<input id='k-name' placeholder='e.g. open-webui' autocomplete='off'>"
+        "<fieldset><legend class='field'>Collections it may call (none ticked: all)</legend>"
+        f"{scopes or '<span class=muted>No collections yet.</span>'}</fieldset>"
+        "<label class='field' for='k-rpm'>Requests a minute (empty: no cap)</label>"
+        "<input id='k-rpm' type='number' min='1' max='10000' placeholder='no cap' autocomplete='off'>"
+        "<div class='errors' id='k-errors' role='alert'></div>"
+        "<div class='done' id='k-done' hidden><p>Copy it now: it is shown this once and kept only as a hash.</p>"
+        "<input id='k-value' class='mono' readonly></div>"
+        "<div class='actions'><button class='btn primary' id='k-make'>Make a key</button></div>")
 
 
 def login_page() -> str:
@@ -4956,8 +5013,9 @@ def import_zip(src, apply: bool) -> dict:
 
 def move_card() -> str:
     """Settings' Export and import (export_zip, import_zip; bench.js)."""
-    return ("<div class='panel form-panel'><h2>Export and import</h2><p class='muted'>Take this install to another"
-            " machine, or keep a copy of it: one .zip file, imported on the other install's Settings page.</p>"
+    return set_section(
+        "set-move", "Export and import", "Take this install to another machine, or keep a copy of it: one .zip,"
+        " imported on the other install's Settings page.",
             # No wrapper: `.pick` is the onboarding picker's 3-column grid row, and squeezed these into it.
             "<label class='check'><input type='radio' name='x-scope' value='settings' checked"
             " data-kept> <span><b>Settings only</b>: endpoints, collections, roles, model options, the schedule,"
@@ -4967,69 +5025,51 @@ def move_card() -> str:
             "<label class='check'><input type='checkbox' id='x-keys' data-kept> <span>With the endpoints' API keys."
             " The file then holds them: keep it like a password, and delete it once imported.</span></label>"
             "<div class='actions'><button class='btn' type='button' id='x-export'>Download export</button></div>"
-            "<h3 class='form-head'>Import</h3>"
+            "<h3>Import</h3>"
             "<p class='rules'>Its files replace this install's of the same name; files it does not have are left."
-            " This install's own go to <code>backups/</code> first. Restart afterwards (Server and access, below),"
+            " This install's own go to <code>backups/</code> first. Restart afterwards (Restart, on this page),"
             " so every part reads them.</p>"
+            "<label class='field' for='x-file'>The .zip to import</label>"
             "<input type='file' id='x-file' accept='.zip,application/zip'>"
             "<div class='done' id='x-what' role='status'></div><div class='errors' id='x-errors' role='alert'></div>"
             "<div class='actions'><button class='btn primary' type='button' id='x-import' disabled>Import</button>"
-            "</div></div>")
+            "</div>")
 
 
 def access_card() -> str:
-    """How this install is reached and who may call it, from the environment:
-    shown here, never set here. Each needs a restart, and a page that could
-    change its own login could open itself to anyone. No secret is shown."""
-    import paths
+    """Settings' Sign-in and access: who may reach this install, from the
+    environment: shown here, never set here. Each needs a restart, and a page
+    that could change its own login could open itself to anyone. No secret is
+    shown, only whether one is set."""
     bind = guard.bind()
     hosts, origins = sorted(guard._env("BENCH_ALLOWED_HOSTS")), sorted(guard._env("BENCH_ALLOWED_ORIGINS"))
     from_env = sorted(k[len(endpoints.ENV_KEY):].lower().replace("_", "-")
                       for k, v in os.environ.items() if k.startswith(endpoints.ENV_KEY) and v)
-    if guard.auth_on():
-        keys = "asked for on every gateway call (an admin token is set)"
-    elif guard.keys_required():
-        keys = "asked for on every gateway call, on this machine too"
-    else:
-        keys = "not asked for: this machine only, no admin token"
-    rows = [("Listening on", f"{bind}:{PORT} (dashboard, gateway at /v1) · {bind}:{gateway.PORT} (gateway.py)",
-             "BENCH_BIND, BENCH_PORT, BENCH_GATEWAY_PORT"),
-            ("Reached from", "this machine only" if guard._loopback(bind)
-             else "other machines too", "BENCH_BIND"),
-            ("Admin login", "on: the dashboard asks for the token" if guard.auth_on()
-             else "off, which only this machine allows", "BENCHWARMERS_ADMIN_TOKEN"),
-            ("Gateway keys", keys, "BENCHWARMERS_REQUIRE_KEYS"),
-            ("Public address", guard.public_url() or "none", "BENCHWARMERS_PUBLIC_URL"),
-            ("Other host names", ", ".join(hosts) or "none", "BENCH_ALLOWED_HOSTS"),
-            ("Browser apps on other sites", ", ".join(origins) or "none: same origin only", "BENCH_ALLOWED_ORIGINS"),
-            ("Data folder", f"{DATA} ({paths.WHY})", "BENCHWARMERS_HOME"),
-            ("Endpoint keys from the environment", ", ".join(from_env) or "none: all in the llm key store",
-             f"{endpoints.ENV_KEY}<NAME>")]
-    body = "".join(f"<tr><th scope='row'>{esc(k)}</th><td>{esc(v)}</td>"
-                   f"<td class='mono set-by'>{'<br>'.join(esc(s) for s in src.split(', '))}</td></tr>"
-                   for k, v, src in rows)
-    return ("<div class='panel'><h2>Server and access</h2><p class='muted'>How this install is reached and who"
-            " may call it. Set in the environment, read at start: change one and restart. Shown here, never"
-            " set here, since a page that could change its own login could open itself to anyone. No secret"
-            " is shown, only whether one is set.</p>"
-            f"<table class='facts'><thead><tr>{th('Setting')}{th('Now')}{th('Set by')}</tr></thead>"
-            f"<tbody>{body}</tbody></table>{restart_block('restart', 'a setting above')}</div>")
+    return set_section("set-access", "Sign-in and access", "Set in the environment and read at start, never on this"
+                       " page: one that could change its own sign-in could open itself to anyone.", set_rows((
+                           ("Admin sign-in", "on: the dashboard asks for the token" if guard.auth_on()
+                            else "off, which only this machine allows", "BENCHWARMERS_ADMIN_TOKEN"),
+                           ("Reached from", "this machine only" if guard._loopback(bind) else "other machines too",
+                            "BENCH_BIND"),
+                           ("Other host names", esc(", ".join(hosts) or "none"), "BENCH_ALLOWED_HOSTS"),
+                           ("Browser apps on other sites", esc(", ".join(origins) or "none: same origin only"),
+                            "BENCH_ALLOWED_ORIGINS"),
+                           ("Endpoint keys from the environment", esc(", ".join(from_env) or "none: all in the llm key store"),
+                            f"{endpoints.ENV_KEY}<NAME>"))), form=False)
 
 
-def restart_block(id_: str, what: str) -> str:
-    """The Restart heading, what runs now, and its button (bench.js restart()).
-    On Settings (Server and access) and Info, each with its own ids, since both
-    tabs can be in the page at once."""
+def restart_block() -> str:
+    """Settings' Restart: what runs now, and its button (bench.js restart())."""
     running, disk = on_disk()
     now = (f"Running {esc(RELEASE)} ({esc(running)}), the code on disk." if running == disk else
            f"<strong>Newer code is on disk</strong> ({esc(disk)}; running {esc(RELEASE)}, {esc(running)}).")
     # restart(): stopped and started again by serve.py's own parent process.
-    return (f"<h3>Restart</h3><p class='muted'>{now} A restart starts the dashboard again on the code on disk,"
-            f" for an update or {what}, whatever runs it (a service, the launcher, a container or a terminal)."
-            " It waits for onboarding, a scheduled job and gateway calls in progress, or cuts them off if you"
-            " insist; the page comes back in a few seconds.</p>"
-            f"<p><button class='btn' type='button' id='{id_}'>Restart Benchwarmers</button>"
-            f" <span id='{id_}-out' role='status'></span></p>")
+    return set_section("set-restart", "Restart", "Starts the dashboard again on the code on disk, for an update or a"
+                       " setting read at start, whatever runs it.",
+                       f"<p>{now}</p><p class='rules'>It waits for onboarding, a scheduled job and gateway calls in"
+                       " progress, or cuts them off if you insist; the page comes back in a few seconds.</p>"
+                       "<div class='actions'><button class='btn' type='button' id='restart'>Restart Benchwarmers</button>"
+                       " <span id='restart-out' role='status'></span></div>")
 
 
 RESTART = 75                       # the exit code serve.py's parent reads as "start me again"
@@ -5137,14 +5177,14 @@ def client_card() -> str:
              "settings": "Chosen here (<code>config/client.json</code>); <code>BENCH_CLIENT</code> would win.",
              "default": "The default, as nothing has chosen yet; <code>BENCH_CLIENT</code> would win."}[source]
     off = " disabled" if pinned else ""
-    return ("<div class='panel form-panel'><h2>Model client</h2><p class='muted'>What makes every model call"
-            " the bench makes: gateway seats, the suite, the probes and auto-retire's checks. The next call uses"
-            " it, no restart. Whichever it is, a model on a sign-in that renews or on ChatGPT's plan, and any"
-            " call with images, goes through the built-in client.</p>"
-            f"<label class='field' for='mc-client'>Client</label><select id='mc-client'{off}>{opts}</select>"
-            f"<p class='rules'>{where}</p>"
-            "<div class='errors' id='mc-errors' role='alert'></div><div class='done' id='mc-done'></div>"
-            f"<div class='actions'><button class='btn primary' id='mc-save'{off}>Save client</button></div></div>")
+    return set_section(
+        "set-client", "Model client", "What makes every model call the bench makes (gateway seats, the suite,"
+        " the probes, auto-retire's checks); the next call uses it.",
+        f"<label class='field' for='mc-client'>Client</label><select id='mc-client'{off}>{opts}</select>"
+        f"<p class='rules'>{where} Whichever it is, a model on a sign-in that renews or on ChatGPT's plan, and any"
+        " call with images, goes through the built-in client.</p>"
+        "<div class='errors' id='mc-errors' role='alert'></div><div class='done' id='mc-done'></div>"
+        f"<div class='actions'><button class='btn primary' id='mc-save'{off}>Save client</button></div>")
 
 
 def save_own_client_free(providers, who: str = "ui") -> dict:
@@ -5177,60 +5217,77 @@ def own_client_card() -> str:
     rows = "".join(f"<tr><td>{esc(p)}</td><td><input type='checkbox' name='oc-prov' value='{esc(p)}'"
                    f" aria-label='Leave out the free models of {esc(p)}'{' checked' if on else ''}></td></tr>"
                    for p, on in sorted(sources.free_in_own_client_only().items()))
-    return ("<div class='panel form-panel'><h2>Free only in their own app</h2><p class='muted'>Some providers'"
-            " free models answer only inside the provider's own app: opencode's say its free tier \"can only be"
-            " used from within opencode\". Discover leaves out the free models of the providers ticked here;"
-            " their paid models stay.</p>"
-            "<table><thead><tr>" + th("Provider") + th("Free models left out") + f"</tr></thead><tbody>{rows}</tbody></table>"
-            "<label class='field' for='oc-add'>Add a provider</label>"
-            "<input id='oc-add' placeholder='its models.dev id' autocomplete='off'>"
-            "<div class='errors' id='oc-errors' role='alert'></div><div class='done' id='oc-done'></div>"
-            "<div class='actions'><button class='btn primary' id='oc-save'>Save</button></div></div>")
+    return set_section(
+        "set-own", "Free only in their own app", "Discover leaves out the free models of the providers ticked here,"
+        " whose free tier answers only in their own app; their paid models stay.",
+        "<table><thead><tr>" + th("Provider") + th("Free models left out") + f"</tr></thead><tbody>{rows}</tbody></table>"
+        "<p class='rules'>opencode, for one, says its free tier \"can only be used from within opencode\".</p>"
+        "<label class='field' for='oc-add'>Add a provider</label>"
+        "<input id='oc-add' placeholder='its models.dev id' autocomplete='off'>"
+        "<div class='errors' id='oc-errors' role='alert'></div><div class='done' id='oc-done'></div>"
+        "<div class='actions'><button class='btn primary' id='oc-save'>Save</button></div>")
 
 
 def settings_page() -> str:
-    """Theme (saved as picked), gateway keys, the scheduler (mode and jobs),
-    the model client, providers whose free tier is theirs alone, and how the
-    install is reached (shown only: the environment sets it)."""
+    """Its sections in as many columns as fit (bench.css .cols.flow), each with
+    its own Save: the theme (saved as picked), the model client, sign-in and
+    access (shown only: the environment sets it), the scheduler, gateway keys,
+    export and import, providers whose free tier is theirs alone, and Restart.
+    The panel beside them: the sections, and what this install runs as now."""
+    import paths
     import scheduler
+    import client as model_client
     current = saved_theme()
     swatch = ("--paper", "--band", "--ink", "--brand", "--primary", "--signal", "--link", "--err")
     cards = []
-    for name in themes():
+    for name in themes():           # picked as the rail's switch is (bench.js theme): the same buttons
         merged = {**_tokens(BASE_THEME), **_tokens(name)}
         dots = "".join(f"<span style='background:{esc(merged.get(t, '').strip())}'></span>" for t in swatch)
-        cards.append(f"<label class='theme-card'><input type='radio' name='theme' value='{esc(name)}'"
-                     f"{' checked' if name == current else ''}><b>{esc(THEME_LABELS.get(name, name.title()))}</b>"
-                     f"<span class='swatch'>{dots}</span></label>")
+        cards.append(f"<button type='button' class='theme-card' data-theme-pick='{esc(name)}'"
+                     f" aria-pressed='{str(name == current).lower()}'><b>{esc(THEME_LABELS.get(name, name.title()))}</b>"
+                     f"<span class='swatch' aria-hidden='true'>{dots}</span></button>")
     conf, now = scheduler.settings(), datetime.datetime.now()
     state, on = load_json(scheduler.STATE), scheduler.enabled(conf)
+    # A job a row: its name and what it does under it, whether it runs, when last and next.
     rows = "".join(
-        f"<tr><td title='runs {esc(' '.join(args))}'>{esc(job)}</td><td><input type='checkbox' name='s-job'"
+        f"<tr><td><span title='runs {esc(' '.join(args))}'>{esc(job)}</span>"
+        f"<span class='conn'>{esc(scheduler.ABOUT.get(job, ''))}</span></td><td><input type='checkbox' name='s-job'"
         f" value='{esc(job)}' aria-label='Run {esc(job)}'{' checked' if job in on else ''}></td>"
-        f"<td>{esc(state.get(job, '—')[:16].replace('T', ' '))}</td>"
-        f"<td>{scheduler.next_due(slots, now):%a %d %b %H:%M}</td>"
-        f"<td>{esc(scheduler.ABOUT.get(job, ''))}</td></tr>"
+        f"<td class='when'>{esc(state.get(job, '—')[:16].replace('T', ' '))}</td>"
+        f"<td class='when'>{scheduler.next_due(slots, now):%a %d %b %H:%M}</td></tr>"
         for job, (args, slots) in scheduler.JOBS.items())
     modes = "".join(f"<option value='{esc(k)}' data-why='{esc(why)}'{' selected' if k == conf['mode'] else ''}>"
                     f"{esc(label)}</option>" for k, (label, why) in scheduler.MODES.items())
-    return (
-        "<div class='panel form-panel'><h2>Theme</h2><p class='muted'>Applied and saved the moment you pick one."
-        " Every theme passes the contrast check (<code>scripts/check_themes.py</code>). The \"by Wendell"
-        " Research\" credit is not a setting.</p>"
-        f"<div class='themes' id='themes'>{''.join(cards)}</div>"
-        "<div class='errors' id='t-errors' role='alert'></div><div class='done' id='t-done'></div></div>"
-        + gateway_keys_card() +
-        "<div class='panel form-panel'><h2>Scheduler</h2><p class='muted'>The recurring checks, run by the"
-        " dashboard itself. A change applies within a minute, without a restart.</p>"
-        f"<label class='field' for='s-mode'>Mode</label><select id='s-mode' data-was='{esc(conf['mode'])}'>{modes}</select>"
-        "<p class='rules' id='s-mode-why'></p>"
-        "<table><thead><tr>" + th("Job") + th("On") + th("Counted up to") + th("Next")
-        + th("What it does") + f"</tr></thead><tbody>{rows}</tbody></table>"
-        "<p class='rules'>Run makes model calls on its own schedule. If something else also runs these jobs"
-        " (cron, Windows Task Scheduler), turn it off in the same step, or every job runs twice.</p>"
-        "<div class='errors' id='s-errors' role='alert'></div><div class='done' id='s-done'></div>"
-        "<div class='actions'><button class='btn primary' id='s-save'>Save scheduler</button></div></div>"
-        + client_card() + own_client_card() + move_card() + access_card())
+    sections = [
+        set_section("set-theme", "Theme", "Applied and saved the moment you pick one; every theme passes the"
+                    " contrast check.", f"<div class='themes' role='group' aria-label='Theme'>{''.join(cards)}</div>"
+                    "<p class='rules'>The \"by Wendell Research\" credit is not a setting.</p>", form=False),
+        client_card(), access_card(),
+        set_section("set-scheduler", "Scheduler", "The recurring checks, run by the dashboard itself; a change"
+                    " applies within a minute, without a restart.",
+                    f"<label class='field' for='s-mode'>Mode</label><select id='s-mode' data-was='{esc(conf['mode'])}'>"
+                    f"{modes}</select><p class='rules' id='s-mode-why'></p>"
+                    "<div class='scroll'><table class='jobs'><thead><tr>" + th("Job") + th("On") + th("Counted up to")
+                    + th("Next") + f"</tr></thead><tbody>{rows}</tbody></table></div>"
+                    "<p class='rules'>Run makes model calls on its own schedule. If something else also runs these"
+                    " jobs (cron, Windows Task Scheduler), turn it off in the same step, or every job runs twice.</p>"
+                    "<div class='errors' id='s-errors' role='alert'></div><div class='done' id='s-done'></div>"
+                    "<div class='actions'><button class='btn primary' id='s-save'>Save scheduler</button></div>"),
+        gateway_keys_card(), move_card(), own_client_card(), restart_block()]
+    links = "".join(f"<li><a href='#{i}'>{t}</a></li>" for i, t in re.findall(r"<div class='panel[^']*' id='([\w-]+)'><h2>([^<]+)</h2>",
+                                                                               "".join(sections)))
+    chosen, source = model_client.chosen()
+    facts = (("Version", f"{esc(RELEASE)}, <span class='mono'>{esc(COMMIT or '—')}</span>"
+              + (f" of {esc(RELEASE_DATE)}" if RELEASE_DATE else "")),
+             ("Data folder", f"<span class='mono'>{esc(str(DATA))}</span> ({esc(paths.WHY)})", "BENCHWARMERS_HOME"),
+             ("Port", str(PORT), "BENCH_PORT"), ("Scheduler", esc(scheduler.MODES[conf["mode"]][0])),
+             ("Model client", esc(chosen), *(["BENCH_CLIENT"] if source == "environment" else [])))
+    return (f"<div class='cols flow'>{''.join(sections)}</div>"
+            "<aside class='facts' id='facts-settings' aria-labelledby='facts-settings-h'>"
+            "<div class='bar'><h2 id='facts-settings-h'>On this page</h2>"
+            "<button type='button' class='linkish facts-close'>Close</button></div><div class='facts-body'>"
+            f"<nav class='jump' aria-labelledby='facts-settings-h'><ol>{links}</ol></nav>"
+            f"<h3>This install now</h3>{set_rows(facts)}</div></aside>")
 
 
 def endpoints_page() -> str:
@@ -5728,24 +5785,35 @@ def on_disk() -> tuple[str, str]:
 
 
 def info_page() -> str:
-    import scheduler
-    import client as model_client
+    """The project and this copy of its code, as groups of facts that share the
+    width (bench.css .cols.fit). What this install runs as (its version, data
+    folder, port, scheduler, client) is on Settings, and the bench's counts on
+    Benchmarks: linked, not said twice."""
     # The release this is, or on a branch the one it builds on (0.5.6-dev -> v0.5.6).
-    rows = [("Source", ext_link(connect.REPO, connect.REPO.removeprefix("https://"))),
-            ("Version", ext_link(f"{connect.REPO}/releases/tag/v{RELEASE.split('-')[0]}", RELEASE))]
-    rows += [(k, esc(v)) for k, v in [
-        ("Date", RELEASE_DATE or "unknown"), ("Commit", COMMIT or "unknown"),
-        ("Python", f"{sys.version.split()[0]} · {sys.executable}"),
-        ("Folder", str(ROOT)), ("Data folder", str(DATA)), ("Endpoints", str(len(endpoints.load()))),
-        ("Models on the bench", str(len(_chat_aliases()))),
-        ("Scheduler", scheduler.settings()["mode"]), ("Model client", model_client.chosen()[0]),
-        ("Theme", saved_theme())]]
-    body = "".join(f"<tr><th scope='row'>{esc(k)}</th><td class='mono'>{v}</td></tr>" for k, v in rows)
-    return (f"<div class='panel'><h2>Info</h2><table class='facts'><tbody>{body}</tbody></table>"
-            f"{restart_block('restart-info', 'a setting')}"
-            "<p class='muted'>Benchwarmers · by Wendell Research · MIT licence"
-            " (<code>LICENSE</code>, credits in <code>NOTICE</code>). Every response carries"
-            " <code>X-Benchwarmers-Version</code>.</p></div>")
+    tag, doc = RELEASE.split("-")[0], lambda name: ext_link(f"{connect.REPO}/blob/main/{name}", name)
+    groups = (
+        ("Benchwarmers", (
+            ("Source", ext_link(connect.REPO, connect.REPO.removeprefix("https://"))),
+            ("Release notes", ext_link(f"{connect.REPO}/releases/tag/v{tag}", f"v{tag}")),
+            ("Licence", "MIT, " + ext_link(f"{connect.REPO}/blob/main/LICENSE", "LICENSE")),
+            ("Credits", ext_link(f"{connect.REPO}/blob/main/NOTICE", "NOTICE")),
+            ("Made by", ext_link("https://wendellresearch.ai", "Wendell Research")))),
+        ("This copy", (
+            ("Code folder", f"<span class='mono'>{esc(str(ROOT))}</span>"),
+            ("Python", f"{esc(sys.version.split()[0])} <span class='mono'>{esc(sys.executable)}</span>"),
+            ("Each response", "says which build answered, in <code>X-Benchwarmers-Version</code>"),
+            ("Running as", "the version, data folder, port, scheduler and model client are on"
+             " <a href='/settings' data-go='settings'>Settings</a>"),
+            ("The bench", "its models, endpoints and collections are counted on"
+             " <a href='/' data-go='suite'>Benchmarks</a>, beside the reports"))),
+        ("Read more", tuple((label, doc(name)) for label, name in (
+            ("Start here", "README.md"), ("Using it", "USAGE.md"), ("The gateway", "GATEWAY.md"),
+            ("Your apps", "CLIENTS.md"), ("The benchmarks", "BENCHMARKS.md"), ("Hosting", "HOSTING.md")))),
+        ("Your data", tuple((label, doc(name)) for label, name in (
+            ("Privacy", "PRIVACY.md"), ("Security", "SECURITY.md"), ("Terms", "TERMS.md")))))
+    return ("<div class='cols fit'>" + "".join(
+        f"<div class='panel'><h2>{t}</h2><dl class='rows'>" + "".join(f"<dt>{k}</dt><dd>{v}</dd>" for k, v in rows)
+        + "</dl></div>" for t, rows in groups) + "</div>")
 
 
 def directory_json() -> str:
@@ -5935,15 +6003,6 @@ def editor() -> str:
         "<div id='cn-wait' hidden><p class='served' id='cn-msg'></p></div>"
         "<div class='errors' id='e-errors' role='alert'></div><div class='done' id='e-done'></div>"
         "<div class='actions' id='e-after' hidden><button class='btn' data-close>Close</button></div>"
-        "</dialog>"
-        # one Discover model: what is known, and the routes to add it by (bench.js fills it)
-        "<dialog id='discover-dialog' aria-labelledby='d-title'>"
-        "<h2 id='d-title'></h2><p class='served' id='d-served'></p>"
-        "<div class='profile' id='d-profile'></div>"
-        "<h3 class='form-head'>Routes on this install</h3>"
-        "<div id='d-routes'></div>"
-        "<div class='errors' id='d-errors' role='alert'></div>"
-        "<div class='actions'><button class='btn' id='d-close'>Close</button></div>"
         "</dialog>"
         # verdict on one gateway seat
         "<dialog id='verdict-dialog' aria-labelledby='v-title'>"

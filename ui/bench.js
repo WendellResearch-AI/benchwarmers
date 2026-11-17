@@ -54,17 +54,16 @@
   $('ask-no').addEventListener('click', function () { answer(false); });
   askD.addEventListener('close', function () { answer(false); });   // Escape
 
-  // ---- restart (serve.restart): the page reloads once the new one answers ----
-  // One button on Settings (restart) and one on Info (restart-info), each with its own status line.
-  function restart(id, force) {
-    var rs = $(id), out = $(id + '-out');
+  // ---- restart (serve.restart, Settings): the page reloads once the new one answers ----
+  function restart(force) {
+    var rs = $('restart'), out = $('restart-out');
     rs.disabled = true; out.textContent = 'Restarting…';
     post('/api/restart', {force: force}).then(function (res) {
       if (res.ok) return back(out, Date.now());
       rs.disabled = false; out.textContent = '';
       if (!res.busy) { listErrors(out, res.errors); return; }
       ask('Still in progress: ' + res.errors.join('; ') + '. Restart anyway and cut them off?', 'Restart anyway', true)
-        .then(function (yes) { if (yes) restart(id, true); });
+        .then(function (yes) { if (yes) restart(true); });
     }).catch(function (err) { rs.disabled = false; out.textContent = String(err); });
   }
   // The old one stops half a second after answering; /health answers again once the new one is up.
@@ -77,11 +76,9 @@
         });
     }, 1500);
   }
-  ['restart', 'restart-info'].forEach(function (id) {
-    on('click', id, function () {
-      ask('Restart Benchwarmers? The dashboard and the gateway on this port stop for a few seconds.', 'Restart')
-        .then(function (yes) { if (yes) restart(id, false); });
-    });
+  on('click', 'restart', function () {
+    ask('Restart Benchwarmers? The dashboard and the gateway on this port stop for a few seconds.', 'Restart')
+      .then(function (yes) { if (yes) restart(false); });
   });
 
   // ---- Export and import (serve.export_zip, import_zip) ----------------
@@ -262,10 +259,17 @@
   show(rendered ? rendered.id.slice(4) : 'suite');
 
   // ---- sortable tables -------------------------------------------------
-  function key(cell) {
-    var raw = cell.dataset.sort != null ? cell.dataset.sort : cell.textContent.trim();
+  // A cell's data-sort, or its text, as a number where it is one; numbers before words.
+  function key(raw) {
     var n = parseFloat(raw);
     return isNaN(n) || !/^-?[\d.]+/.test(raw) ? raw.toLowerCase() : n;
+  }
+  function ordered(pairs, dir) {             // [key, thing] pairs, sorted on the key: the things
+    var up = dir === 'ascending' ? 1 : -1;
+    return pairs.sort(function (a, b) {
+      var x = a[0], y = b[0];
+      return up * ((typeof x === typeof y) ? (x < y ? -1 : x > y ? 1 : 0) : (typeof x === 'number' ? -1 : 1));
+    }).map(function (p) { return p[1]; });
   }
   function sort(th, dir) {
     var table = th.closest('table'), body = table.tBodies[0];
@@ -273,13 +277,11 @@
     dir = dir || (th.getAttribute('aria-sort') === 'descending' ? 'ascending' : 'descending');
     table.querySelectorAll('th[aria-sort]').forEach(function (o) { o.removeAttribute('aria-sort'); });
     th.setAttribute('aria-sort', dir);
-    var rows = Array.prototype.slice.call(body.rows);
-    rows.sort(function (a, b) {
-      var x = key(a.cells[idx]), y = key(b.cells[idx]);
-      var c = (typeof x === typeof y) ? (x < y ? -1 : x > y ? 1 : 0) : (typeof x === 'number' ? -1 : 1);
-      return dir === 'ascending' ? c : -c;
-    });
-    rows.forEach(function (r) { body.appendChild(r); });
+    if (table.id === 'd-table') return dApply();          // Discover's rows are data, drawn in this order
+    ordered(Array.prototype.map.call(body.rows, function (r) {
+      var c = r.cells[idx];
+      return [key(c.dataset.sort != null ? c.dataset.sort : c.textContent.trim()), r];
+    }), dir).forEach(function (r) { body.appendChild(r); });
   }
   // On the document, not each header: a part of the page swapped in after an
   // action (refreshNeeds) sorts too.
@@ -583,55 +585,103 @@
     }, failed);
   });
 
-  // ---- Discover: the facet rail -----------------------------------------
+  // ---- Discover: the catalog as data (serve.discover_data) ---------------
   // A row shows when it matches the search box and every facet with a box ticked: any of
-  // the ticked values (for Can: all of them, since a model has several). Each box's count
-  // is what ticking it would leave, given the other facets. Free only until asked otherwise.
-  var D_FACETS = ['new', 'price', 'reach', 'caps', 'provider'], D_PAGE = 100;
-  var dPick = {price: ['free']}, dQ = '', dLimit = D_PAGE;
+  // the ticked values (for Can: all of them). Each box's count is what ticking it would
+  // leave, given the other facets. Only the first D_PAGE matches are drawn, more as the
+  // list's foot nears.
+  var D_FACETS = ['new', 'price', 'reach', 'caps', 'provider'], D_PAGE = 40, NUM = new Intl.NumberFormat();
+  var REACH = {'on bench': 'ok', connected: 'ok', 'easy to add': 'warn', other: ''};
+  var dPick = {price: ['free']}, dLimit = D_PAGE, dData = null, dCols = [], dHits = [], dHand = '';
   try { dPick = JSON.parse(store('bench.discover')) || dPick; } catch (e) { /* not ours: the default */ }
-  // The list is paged in CSS, so the first rows shown stay the first after a sort by a column.
-  var dPageCss = document.head.appendChild(el('style'));
-  function dHas(r, k, v) { return k === 'caps' ? r.dataset.caps.split(' ').indexOf(v) !== -1 : r.dataset[k] === v; }
-  function dApply() {
-    var rail = $('d-facets');
-    if (!rail) return;
-    var picked = D_FACETS.filter(function (k) { return (dPick[k] || []).length; });
-    var q = dQ.trim().toLowerCase(), counts = {}, hits = 0;
-    $('tab-discover').querySelectorAll('tr.pick-row').forEach(function (r) {
-      var fails = picked.filter(function (k) {
-        return !dPick[k][k === 'caps' ? 'every' : 'some'](function (v) { return dHas(r, k, v); });
+  function escH(s) { return String(s).replace(/[&<>"']/g, function (c) { return '&#' + c.charCodeAt(0) + ';'; }); }
+  function dRead() {                 // the page's rows, read once: their facet values and words
+    var node = $('d-data');
+    if (node && (!dData || dData.node !== node)) {
+      dData = JSON.parse(node.textContent); dData.node = node;
+      dData.rows = dData.rows.map(function (a) {
+        var r = {};
+        dData.fields.forEach(function (k, i) { if (a[i]) r[k] = a[i]; });
+        r.f = {'new': [r['new'] ? '1' : ''], price: [r.price === 'free' ? 'free' : 'paid'], reach: [r.reach],
+               caps: r.caps ? r.caps.split(' ') : [], provider: [r.provider]};
+        r.q = [r.name, r['new'] ? 'new' : '', r.model, r.on, r.rank, dData.providers[r.provider], r.reach, r.price,
+               r.io, r.caps, r.released, r.limits].join(' ').toLowerCase();
+        return r;
       });
-      // A row's words read once (they never change in place; a new list is new rows).
-      var text = !q || (r.qText || (r.qText = r.textContent.toLowerCase())).indexOf(q) !== -1;
-      r.hidden = !text || fails.length > 0;
-      if (!r.hidden) hits++;
-      if (!text || fails.length > 1) return;
-      D_FACETS.forEach(function (k) {
-        // Failing only this facet, another of its boxes would show the row (not Can: it wants all).
-        if (fails.length && (fails[0] !== k || k === 'caps')) return;
-        (k === 'caps' ? r.dataset.caps.split(' ') : [r.dataset[k]]).forEach(function (v) {
-          counts[k + '|' + v] = (counts[k + '|' + v] || 0) + 1;
-        });
+      dCols = Array.prototype.map.call($('d-table').tHead.rows[0].cells, function (th) { return th.className; });
+      dData.boxes = Array.prototype.map.call($('d-facets').querySelectorAll('input[data-df]'), function (c) {
+        return [c, c.parentNode.querySelector('.n'), c.dataset.df + '|' + c.value];
       });
-    });
-    rail.querySelectorAll('input[data-df]').forEach(function (c) {
-      var n = counts[c.dataset.df + '|' + c.value] || 0;
-      c.parentNode.querySelector('.n').textContent = n.toLocaleString();
-      c.parentNode.classList.toggle('none', !n && !c.checked);
-    });
-    $('d-count').textContent = hits.toLocaleString() + (hits === 1 ? ' model' : ' models')
-      + (hits > dLimit ? ', the first ' + dLimit.toLocaleString() + ' shown' : '');
-    $('d-more').hidden = hits <= dLimit;
-    var paged = '#tab-discover tr.pick-row:nth-child(n+' + (dLimit + 1) + ' of :not([hidden])) { display: none; }';
-    if (dPageCss.textContent !== paged) dPageCss.textContent = paged;     // the same sheet again costs a whole restyle
+      dData.near = new IntersectionObserver(function (seen) { if (seen[0].isIntersecting) more(); },
+                                            {root: $('d-more').parentNode, rootMargin: '0px 0px 600px'});
+    }
+    return node && dData;
   }
+  function dCell(r, k) {             // what sort() orders a column by: as its old cells' data-sort
+    return k === 'rank' ? r.rank || 99999 : k === 'context' || k === 'output' ? r[k] || -1
+      : k === 'reach' ? Object.keys(REACH).indexOf(r.reach) : k === 'provider' ? dData.providers[r.provider]
+      : k === 'caps' ? r.caps || '—' : r[k] || '';
+  }
+  function dRow(r) {                 // its cells in serve.DISCOVER_COLS's order
+    var dash = '<span class="muted">—</span>', or = function (v) { return v ? escH(v) : dash; };
+    return '<tr class="pick-row' + (r.provider + '\n' + r.model === dHand ? ' in-hand' : '') + '" data-provider="'
+      + escH(r.provider) + '" data-model="' + escH(r.model) + '">' + [
+      '<a href="#" class="dmodel"><span class="alias">' + escH(r.name) + '</span></a>'
+        + (r['new'] ? ' <span class="chip new" title="first seen ' + escH(r.seen) + '">new</span>' : '')
+        + '<span class="conn">' + escH(r.model + (r.on ? ' · ' + r.on : '')) + '</span>',
+      r.rank ? '<span title="' + escH(r.rank_title) + '">' + r.rank + '</span>' : dash,
+      '<span title="' + escH(r.provider) + '">' + escH(dData.providers[r.provider]) + '</span>',
+      '<span class="chip ' + REACH[r.reach] + '" title="' + escH(dData.apis[r.provider] || '') + '">' + r.reach + '</span>',
+      escH(r.price), r.context ? NUM.format(Math.floor(r.context / 1000)) + 'k' : dash, escH(r.io),
+      r.caps ? r.caps.split(' ').map(function (c) { return '<span class="chip">' + c + '</span>'; }).join(' ') : dash,
+      or(r.released), or(r.limits), r.output ? NUM.format(r.output) : dash, or(r.knowledge), or(r.weights),
+      or(r.listed), or(r.seen), r.add ? '<button class="btn small" type="button">Add…</button>' : ''
+    ].map(function (h, i) { return '<td class="' + dCols[i] + '">' + h + '</td>'; }).join('') + '</tr>';
+  }
+  function dApply() {
+    if (!dRead()) return;
+    var picked = D_FACETS.filter(function (k) { return (dPick[k] || []).length; });
+    var q = $('d-q').value.trim().toLowerCase(), counts = {}, hits = [], th = $('d-table').querySelector('th[aria-sort]');
+    dData.rows.forEach(function (r) {
+      if (q && r.q.indexOf(q) === -1) return;
+      var fails = picked.filter(function (k) {
+        return !dPick[k][k === 'caps' ? 'every' : 'some'](function (v) { return r.f[k].indexOf(v) !== -1; });
+      });
+      if (!fails.length) hits.push(r);
+      else if (fails.length > 1) return;
+      for (var i = 0; i < D_FACETS.length; i++) {
+        // Failing only this facet, another of its boxes would show the row (not Can: it wants all).
+        var k = D_FACETS[i], f = r.f[k];
+        if (fails.length && (fails[0] !== k || k === 'caps')) continue;
+        for (var j = 0; j < f.length; j++) counts[k + '|' + f[j]] = (counts[k + '|' + f[j]] || 0) + 1;
+      }
+    });
+    dData.boxes.forEach(function (b) {                // written only where it changed: each write is a restyle
+      var n = NUM.format(counts[b[2]] || 0);
+      if (b[1].textContent !== n) b[1].textContent = n;
+      b[0].parentNode.classList.toggle('none', n === '0' && !b[0].checked);
+    });
+    dHits = th ? ordered(hits.map(function (r) { return [key(String(dCell(r, th.dataset.k))), r]; }), th.getAttribute('aria-sort')) : hits;
+    dDraw(0);
+  }
+  function dDraw(from) {             // the rows from `from` to dLimit, after those drawn, or for them
+    var n = dHits.length, html = dHits.slice(from, dLimit).map(dRow).join(''), b = $('d-more'), body = $('d-table').tBodies[0];
+    $('d-count').textContent = NUM.format(n) + (n === 1 ? ' model' : ' models') + (n > dLimit ? ', the first ' + dLimit + ' shown' : '');
+    b.hidden = n <= dLimit;
+    if (from) body.insertAdjacentHTML('beforeend', html);
+    else body.innerHTML = html || '<tr><td colspan="16" class="muted">' + (dData.rows.length ? 'Nothing matches the search and the filters.'
+      : 'Nothing listed yet: Refresh lists fetches the catalogs now.') + '</td></tr>';
+    dData.near.unobserve(b); dData.near.observe(b);     // asked afresh: still near the foot, more come
+  }
+  function more() { if (dLimit < dHits.length) { dLimit += D_PAGE; dDraw(dLimit - D_PAGE); } }
+  var dWide = matchMedia('(min-width: 1440px)');      // the facets: a column from 1440px, open there; a fold under
+  function dFold() { if ($('d-facets') && dWide.matches) $('d-facets').open = true; }
+  dWide.addEventListener('change', dFold);
   onLoad.discover = function () {
-    $('d-q').value = dQ;
     $('d-facets').querySelectorAll('input[data-df]').forEach(function (c) {
       c.checked = (dPick[c.dataset.df] || []).indexOf(c.value) !== -1;
     });
-    dApply();
+    dFold(); dApply();
   };
   document.addEventListener('change', function (ev) {
     if (!ev.target.matches('input[data-df]')) return;
@@ -643,9 +693,9 @@
     dLimit = D_PAGE; dApply();
   });
   document.addEventListener('input', function (ev) {
-    if (ev.target.id === 'd-q') { dQ = ev.target.value; dLimit = D_PAGE; dApply(); }
+    if (ev.target.id === 'd-q') { dLimit = D_PAGE; dApply(); }
   });
-  on('click', 'd-more', function () { dLimit += D_PAGE; dApply(); });
+  on('click', 'd-more', more);
 
   // ---- live: the page follows the data ---------------------------------
   // The data's stamp (serve.data_stamp) is asked every 10 s while the page is
@@ -759,7 +809,7 @@
   }
   function markHand() {
     var d = $('model-dialog'), alias = d && d.open && $('m-title').textContent;
-    document.querySelectorAll('tr.in-hand:not(.c-row)').forEach(function (r) { r.classList.remove('in-hand'); });   // a collection's own (fillForm)
+    document.querySelectorAll('tr.in-hand:not(.c-row, .pick-row)').forEach(function (r) { r.classList.remove('in-hand'); });   // a collection's, an endpoint's, a catalog model's own
     if (alias) document.querySelectorAll('.tab.active a.model[data-alias="' + CSS.escape(alias) + '"]').forEach(function (a) {
       var r = a.closest('tr'); if (r) r.classList.add('in-hand');
     });
@@ -1417,10 +1467,10 @@
   oq.stop.addEventListener('click', function () { oqAct('/api/onboard-queue/stop'); });
   oq.clear.addEventListener('click', function () { oqAct('/api/onboard-queue/clear'); if (!oq.view.hidden) od.close(); });
   oqPoll();
-  // ---- Discover: a row opens its model, with every route to add it by -----
+  // ---- Discover: a row opens its model beside the list, with every route to add it by ----
   // The rest of what is known comes from /api/discover-model, so the page does
-  // not carry 1,200 models' details it will mostly never show.
-  var dd = $('discover-dialog');
+  // not carry 2,500 models' details it will mostly never show.
+  function dd() { return $('discover-dialog'); }       // in the page: new with each fetch of it
   function price(x) {
     var c = x.cost || {};
     return x.free ? 'free' : x.free == null ? 'price unknown'
@@ -1448,7 +1498,7 @@
       b.disabled = true; b.textContent = 'Adding…';
       post('/api/onboard-queue', {items: [Object.assign({served: x.model, endpoint: x.endpoint}, how)]}).then(function (res) {
         if (!res.ok) { listErrors($('d-errors'), res.errors); b.disabled = false; b.textContent = 'Add via this'; return; }
-        dd.close(); preStep = null; o.errors.textContent = ''; od.showModal();
+        dd().close(); preStep = null; o.errors.textContent = ''; od.showModal();
         afterQueued(res, {served: x.model, endpoint: x.endpoint}, title, '');
       }).catch(function (err) { $('d-errors').textContent = String(err); b.disabled = false; b.textContent = 'Add via this'; });
       return;
@@ -1456,7 +1506,7 @@
     // A hub's own steps take a while before the onboarding is even queued, so
     // the progress starts now: the onboarding popup with the hub as its first
     // step, and the sidebar's chip. The queue's own poll takes the chip over.
-    dd.close(); waitToken++;
+    dd().close(); waitToken++;
     preStep = {label: 'Added to ' + x.label, state: 'now', note: ''};
     runView(title, 'Adding it to ' + x.label + '…');
     oq.box.hidden = false; oq.chip.classList.remove('done', 'fail'); oq.chip.style.setProperty('--fill', '3%');
@@ -1485,58 +1535,58 @@
     renderSteps('', false, null);
     if (!od.open) od.showModal();
   }
-  function openDiscover(provider, model) {
-    $('d-errors').textContent = '';
+  // Opened by its attribute, as an endpoint is: docked, the list beside it stays live, its
+  // row marked (dRow keeps the mark through a search or a filter). Its facts come with the answer.
+  var dAsked = 0;
+  function openDiscover(row, keyboard) {
+    var d = dd(), mine = ++dAsked, provider = row.dataset.provider, model = row.dataset.model;
+    dHand = provider + '\n' + model;
+    $('d-table').querySelectorAll('tr.in-hand').forEach(function (r) { r.classList.remove('in-hand'); });
+    row.classList.add('in-hand');
+    $('d-title').textContent = row.querySelector('.alias').textContent;
+    $('d-errors').textContent = $('d-profile').textContent = '';
+    $('d-routes').textContent = 'Asking…';
+    d.setAttribute('open', '');
+    if (keyboard) $('d-title').focus();
     get('/api/discover-model?provider=' + encodeURIComponent(provider) + '&model=' + encodeURIComponent(model))
       .then(function (res) {
-        if (!res.ok) { listErrors($('d-errors'), res.errors); dd.showModal(); return; }
+        if (mine !== dAsked || !d.open) return;                 // another row asked since, or put away
+        var list = $('d-routes');
+        list.textContent = '';
+        if (!res.ok) { listErrors($('d-errors'), res.errors); return; }
         if (res.errors.length) listErrors($('d-errors'), res.errors);   // a hub that could not be asked
-        var r = res.model, p = $('d-profile'), list = $('d-routes');
+        var r = res.model;
         $('d-title').textContent = r.name;
         // Each source a link to its page for the model: FreeLLMAPI's where its sitemap has one, models.dev's by its
         // canonical id. The provider's own list has no page, only its connection.
-        var sv = $('d-served');
-        sv.textContent = r.provider_name + ' · ' + r.model + ' · listed by ';
+        var from = el('span');
         r.sources.forEach(function (s, i) {
-          if (i) sv.appendChild(document.createTextNode(' and '));
-          if (s === 'provider') { sv.appendChild(document.createTextNode(r.provider_name + '\'s own list (' + r.connection + ' connection)')); return; }
+          if (i) from.appendChild(document.createTextNode(' and '));
+          if (s === 'provider') { from.appendChild(document.createTextNode(r.provider_name + '\'s own list (' + r.connection + ' connection)')); return; }
           var fl = s === 'freellmapi';
-          sv.appendChild(el('a', {href: fl ? r.page || 'https://freellmapi.co/models' : r.md_page || 'https://models.dev/',
-                                  target: '_blank', rel: 'noopener'}, fl ? 'FreeLLMAPI' : 'models.dev'));
-        });
-        if (r.on_bench_as) sv.appendChild(document.createTextNode(' · on the bench as ' + r.on_bench_as));
-        p.textContent = '';
-        [['Input', r.in_mods], ['Output', r.out_mods]].forEach(function (x) {
-          var row = el('div', {class: 'prof'});
-          row.appendChild(el('span', {class: 'muted'}, x[0] + ' '));
-          (x[1] && x[1].length ? x[1] : ['unknown']).forEach(function (v) { row.appendChild(el('span', {class: 'chip'}, v)); });
-          p.appendChild(row);
+          from.appendChild(el('a', {href: fl ? r.page || 'https://freellmapi.co/models' : r.md_page || 'https://models.dev/',
+                                    target: '_blank', rel: 'noopener'}, fl ? 'FreeLLMAPI' : 'models.dev'));
         });
         var can = [['tools', r.tools], ['vision', r.vision], ['reasons', r.reasoning]]
           .filter(function (x) { return x[1]; }).map(function (x) { return x[0]; });
-        var facts = [
-          r.rank != null ? 'smartest #' + r.rank + (r.speed ? ', fastest #' + r.speed : '') + ' on FreeLLMAPI' : '',
-          r.size || '',
-          r.context ? 'context ' + Number(r.context).toLocaleString() + ' tokens' : 'context unknown',
-          r.output ? 'output up to ' + Number(r.output).toLocaleString() : '',
-          can.length ? 'can: ' + can.join(', ') : '',
-          price(r),
-          r.limits ? 'limits ' + limits(r.limits) : '',
-          r.budget ? r.budget + ' tokens a month' : '',
-          r.released ? 'released ' + r.released : '',
-          r.knowledge ? 'knowledge to ' + r.knowledge : '',
-          r.open_weights != null ? (r.open_weights ? 'open weights' : 'closed weights') : '',
-          'first seen ' + (r.first_seen === 'baseline' ? 'before the list began' : r.first_seen)];
-        p.appendChild(el('div', {class: 'prof'}, facts.filter(Boolean).join(' · ')));
-        // FreeLLMAPI's operating notes for this provider, e.g. thinking tokens that eat the output cap.
-        (r.quirks || []).forEach(function (q) {
-          var row = el('div', {class: 'prof'});
-          row.appendChild(el('strong', {}, q.title + ': '));
-          row.appendChild(document.createTextNode(q.body || ''));
-          p.appendChild(row);
+        var facts = [['Model id', el('span', {class: 'mono'}, r.model)], ['Provider', r.provider_name], ['Listed by', from],
+          ['On the bench as', r.on_bench_as], ['Also on it as', (r.also_on || []).join(', ')],
+          ['Context window', r.context ? Number(r.context).toLocaleString() + ' tokens' : 'unknown'],
+          ['Max output', r.output ? Number(r.output).toLocaleString() + ' tokens' : ''],
+          ['Takes in', (r.in_mods || []).join(', ') || 'unknown'], ['Gives out', (r.out_mods || []).join(', ') || 'unknown'],
+          ['Can', can.join(', ') || 'nothing known'], ['Price', price(r)], ['Limits', limits(r.limits)],
+          ['A month', r.budget ? r.budget + ' tokens' : ''],
+          ['On FreeLLMAPI', r.rank != null ? 'smartest #' + r.rank + (r.speed ? ', fastest #' + r.speed : '') + (r.size ? ', ' + r.size : '') : ''],
+          ['Released', r.released], ['Knowledge to', r.knowledge],
+          ['Weights', r.open_weights == null ? '' : r.open_weights ? 'open' : 'closed'],
+          ['First seen', r.first_seen === 'baseline' ? 'before the list began' : r.first_seen]]
+          // FreeLLMAPI's operating notes for this provider, e.g. thinking tokens that eat the output cap.
+          .concat((r.quirks || []).map(function (q) { return [q.title, q.body || '']; }));
+        facts.forEach(function (f) {
+          if (!f[1]) return;
+          $('d-profile').appendChild(el('dt', {}, f[0]));
+          $('d-profile').appendChild(el('dd')).append(f[1]);           // words, or a node (Listed by's links)
         });
-        if (r.also_on && r.also_on.length) p.appendChild(el('div', {class: 'prof muted'}, 'Also on the bench as ' + r.also_on.join(', ')));
-        list.textContent = '';
         res.routes.forEach(function (x) {
           var row = el('div', {class: 'endpoint'}), left = el('div');
           left.appendChild(el('div', {class: 'what'}, x.label));
@@ -1556,25 +1606,35 @@
         if (!res.routes.length) list.appendChild(el('p', {class: 'rules'}, 'None: ' + r.provider_name
           + ' needs a connection in a hub or an endpoint of its own first'
           + (r.api ? ' (its OpenAI-compatible base URL is ' + r.api + ')' : '') + '.'));
-        dd.showModal();
-      }).catch(function (err) { $('d-errors').textContent = String(err); dd.showModal(); });
+      }).catch(function (err) { if (mine === dAsked) { $('d-routes').textContent = ''; $('d-errors').textContent = String(err); } });
   }
   document.addEventListener('click', function (e) {
     var row = e.target.closest('tr.pick-row');           // the whole row: its name, its Add…, anywhere
     if (!row) return;
-    e.preventDefault(); openDiscover(row.dataset.provider, row.dataset.model);
+    e.preventDefault(); openDiscover(row, !e.detail);    // from a keyboard: the focus to it
   });
-  $('d-close').addEventListener('click', function () { dd.close(); });
-  // Refresh lists: every list fetched now (serve.discover_refresh), then the page with them.
+  on('click', 'd-close', function () { dd().close(); });
+  // Put away (Close, Escape, an Add): its row unmarked, and the focus back to it from the panel.
+  $('tab-discover').addEventListener('close', function (ev) {      // caught on its way down: close does not bubble
+    if (ev.target.id !== 'discover-dialog') return;
+    var row = $('d-table').querySelector('tr.in-hand'), at = document.activeElement;
+    dHand = '';
+    if (!row) return;
+    row.classList.remove('in-hand');
+    if (ev.target.contains(at) || at === document.body) row.querySelector('a').focus();
+  }, true);
+  // Refresh lists (in the bar): every list fetched now (serve.discover_refresh), then the page with them.
   on('click', 'd-refresh', function () {
-    var dr = this, said = $('d-refreshed');
-    dr.disabled = true; dr.textContent = 'Fetching…'; said.textContent = 'about half a minute';
+    var dr = this, said = function (text) { if ($('d-refreshed')) $('d-refreshed').textContent = text; };
+    dr.disabled = true; dr.textContent = 'Fetching…'; said('fetching, about half a minute');
+    function idle() { dr.disabled = false; dr.textContent = 'Refresh lists'; }
     post('/api/discover/refresh', {}).then(function (res) {
       // Fetched now even if you went to another page meanwhile, so its errors are there when you come back.
       refreshPanes(['discover']); load('discover').then(function () {          // any errors beside the new page's list age
-        if (res.errors.length) $('d-refreshed').textContent = res.errors.join(' · ') + ' · ' + $('d-refreshed').textContent;
+        idle();
+        if (res.errors.length) said(res.errors.join(' · ') + ' · ' + $('d-refreshed').textContent);
       });
-    }).catch(function (err) { said.textContent = String(err); dr.disabled = false; dr.textContent = 'Refresh lists'; });
+    }).catch(function (err) { said(String(err)); idle(); });
   });
   function follow(log, title, before) {
     runView(title, before + 'Running in the background; closing this does not stop it. Log: runs/' + log);
@@ -1605,26 +1665,15 @@
   // Every theme's colours are on the page (serve.brand_css), keyed by the
   // data-theme on <html>, so switching is one attribute: no reload. The
   // charts read their colours when drawn, so they are drawn again.
-  // Settings' picker and the rail's switch are one: each shows what the other picked.
+  // Settings' cards and the rail's switch are the same buttons: each shows what the other picked.
   function theme(name) {
     document.documentElement.setAttribute('data-theme', name);
     document.querySelectorAll('[data-theme-pick]').forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.themePick === name)); });
-    var radio = document.querySelector('#themes input[value="' + name + '"]');
-    if (radio) radio.checked = true;
-    if ($('t-errors')) $('t-errors').textContent = $('t-done').textContent = '';
     drawCharts();
-    return post('/api/theme', {theme: name}).then(function (r) {
+    post('/api/theme', {theme: name}).then(function (r) {
       if (r.ok && location.search.indexOf('theme=') !== -1) history.replaceState(null, '', location.pathname + location.hash);   // drop a ?theme preview
-      return r;
     });
   }
-  on('change', 'themes', function (ev) {
-    var name = ev.target.value;
-    theme(name).then(function (r) {
-      if (!r.ok) { listErrors($('t-errors'), r.errors); return; }
-      $('t-done').textContent = 'Saved: ' + name + ' is the theme from now on.';
-    });
-  });
   document.addEventListener('click', function (e) {
     var b = e.target.closest('[data-theme-pick]');
     if (b) theme(b.dataset.themePick);
