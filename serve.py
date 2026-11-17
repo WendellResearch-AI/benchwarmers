@@ -2459,19 +2459,28 @@ SHARE = ("<details class='share'><summary>Share</summary><div class='share-menu'
          + "</span></div></details>")
 
 
-def chart_card(title: str, sub: str, chart_id: str, table: str, key: str = "", extra: str = "",
-               retired: bool = True, after: str = "") -> str:
-    """A Benchmarks panel: the chart first (drawn by bench.js with Observable
-    Plot), the table folded under it, then a key if one is given (the reports
-    have none: the name, the chart and one line say it). `extra` goes above
-    the chart, `after` right under it."""
-    return (f"<div class='panel'>{SHARE}<h2>{title}</h2><p class='sub'>{sub}</p>{extra}"
-            f"<div class='chart' id='{chart_id}'></div>{after}"
-            "<details class='key'><summary>Table</summary><div class='toolbar'><input type='search'"
+def report_head(title: str, tools: str = "") -> str:
+    """A report's heading line: its name, its own controls (a window, a view),
+    and Share at the right."""
+    return f"<header><h2>{title}</h2>{tools}{SHARE}</header>"
+
+
+def table_fold(table: str, retired: bool = True) -> str:
+    """A report's table, folded under its chart, with its filter."""
+    return ("<details class='key'><summary>Table</summary><div class='toolbar'><input type='search'"
             " data-filter placeholder='Filter by model or connection' aria-label='Filter rows'>"
             + ("<label><input type='checkbox' data-retired> Show retired</label>" if retired else "") + "</div>"
-            f"<div class='scroll'>{table}</div></details>"
-            + (f"<details class='key'><summary>How to read this</summary>{key}</details>" if key else "") + "</div>")
+            f"<div class='scroll'>{table}</div></details>")
+
+
+def chart_card(title: str, sub: str, chart_id: str, table: str, key: str = "", extra: str = "",
+               retired: bool = True, after: str = "", tools: str = "") -> str:
+    """A Benchmarks panel: its heading line (`tools` on it), one sentence, the
+    chart (drawn by bench.js with Observable Plot), then the table and how it
+    is measured, each folded. `extra` goes above the chart, `after` right under it."""
+    return (f"<div class='panel'>{report_head(title, tools)}<p class='sub'>{sub}</p>{extra}"
+            f"<div class='chart' id='{chart_id}'></div>{after}{table_fold(table, retired)}"
+            + (f"<details class='key'><summary>How this is measured</summary>{key}</details>" if key else "") + "</div>")
 
 
 def _family(task: str) -> str:
@@ -2804,15 +2813,19 @@ def vision_card() -> str:
     held = (f"<p class='hint'>The vision tasks wait until {esc(v['held'])}: no run picks them before then"
             " (<code>vision_from</code> in <code>config/suite.json</code>; remove it to start them now).</p>"
             if v["held"] else "")
-    return (f"<div class='panel'>{SHARE}<h2>Vision</h2><p class='sub'>Reading images: fields read right on pictures"
+    how = ("<p>The tasks are pictures with a known answer (receipts, screens, tables and objects from public"
+           " sets, pictures the bench makes, and any of the install's own), scored field by field: right, misread (the line is there with another value), left out,"
+           " trap taken (a value for something the picture does not show), or no answer.</p><p>Real work is every"
+           " seat of the gateway's image panels and how it was judged: checked claim by claim against the"
+           " picture, or only said useful or not, which can mean it agreed with another seat. Agreement is not a"
+           " check, so the two are never added. A seat never judged, or never answered, gets no dot; the table has"
+           " every seat.</p>")
+    return (f"<div class='panel'>{report_head('Vision')}<p class='sub'>Reading images: fields read right on pictures"
             " with a known answer, then real work on images.</p>" + held +
             "<h3 class='chart-head'>On the vision tasks, field by field</h3><div class='chart' id='chart-vision-fields'></div>"
             "<h3 class='chart-head'>On real work with images: judged useful, and how sure that is</h3>"
-            "<div class='chart' id='chart-vision-work'></div>"
-            "<details class='key'><summary>Table</summary><div class='toolbar'><input type='search'"
-            " data-filter placeholder='Filter by model or connection' aria-label='Filter rows'>"
-            "<label><input type='checkbox' data-retired> Show retired</label></div>"
-            f"<div class='scroll'>{''.join(body)}</div></details></div>")
+            "<div class='chart' id='chart-vision-work'></div>" + table_fold("".join(body))
+            + f"<details class='key'><summary>How this is measured</summary>{how}</details></div>")
 
 
 def perf_charts() -> dict:
@@ -2978,11 +2991,16 @@ def trend_card() -> str:
               "<span><i style='background:var(--ok)'></i>higher</span><span><i style='background:var(--muted);opacity:.6'></i>"
               "steady</span><span><i style='background:var(--line)'></i>within 10 pts of its earlier scores</span>"
               "<span>no bar: too little to say</span></div>")
-    pick = ("<div class='toolbar'><label>Window <select data-trend-days>"
-            + "".join(f"<option value='{w}'>last {w} days</option>" for w in TREND_DAYS)
-            + f"</select></label></div>{legend}")
+    pick = ("<label>Window <select data-trend-days>"
+            + "".join(f"<option value='{w}'>last {w} days</option>" for w in TREND_DAYS) + "</select></label>")
+    how = ("<p>A model against itself, task by task: its scores on a task in the window against its scores on the"
+           " same task before it. A score is the share of the task's findings located; a task whose answer key"
+           " changed starts again, and a timeout, an error or a refusal is not a score.</p><p>Lower or higher is a"
+           f" move of {TREND_MOVE * 100:.0f} points or more on average, with at least two tasks and twice as many"
+           " moving that way as the other, in two runs or more. Fewer than three tasks compared, or one run on"
+           " either side, is too little to say. Shown only: it routes and retires nothing.</p>")
     return chart_card("Trend", "Who scores lower, or higher, than it used to on the same tasks.",
-                      "chart-trend", "".join(window(w) for w in TREND_DAYS), extra=pick)
+                      "chart-trend", "".join(window(w) for w in TREND_DAYS), how, extra=legend, tools=pick)
 
 
 # ---- Uptime: was the provider there when the bench called it? --------------
@@ -3358,10 +3376,6 @@ def uptime_card() -> str:
         return (f"<div data-uptime-window='{w}'{'' if w == first else ' hidden'}>"
                 f"<h3 class='chart-head'>Not recognised by a rule: {total} call{'s' * (total != 1)}"
                 + (f", {decided} of them classed by a decision model" if decided else "") + "</h3>"
-                "<p class='hint'>Counted as down until a rule in <code>suite/run.py</code>"
-                " (<code>uptime_class</code>) says what they are, unless a decision model was asked about the"
-                " shape (the scheduler's <code>decisions</code> job, a few new shapes a day): then counted as it"
-                " said, marked here and in the hovers with the model and how sure it was.</p>"
                 f"<ul class='links'>{items}</ul></div>")
 
     legend = ("<div class='q-legend'><span><i style='background:var(--ok)'></i>all answered</span>"
@@ -3369,14 +3383,21 @@ def uptime_card() -> str:
               "<span><i style='background:var(--err)'></i>under 80% answered</span>"
               "<span><i style='background:none;border:1px solid var(--line)'></i>no counted calls</span></div>")
     # The window and one view at a time: by provider (shorter, the default) or by model (bench.js).
-    pick = ("<div class='toolbar'><label>Days <select data-uptime-days>"
+    pick = ("<label>Days <select data-uptime-days>"
             + "".join(f"<option value='{w}'>last {w}</option>" for w in UPTIME_DAYS)
             + "</select></label><label>By <select data-uptime-by><option value='providers'>provider</option>"
-            f"<option value='models'>model</option></select></label></div>{legend}")
+            "<option value='models'>model</option></select></label>")
+    how = ("<p>Only calls the bench makes anyway, each counted once: the daily probe, every gateway seat, and"
+           " the suite's and onboarding's calls. A call that failed is down when the provider was not there, and"
+           " left out when the bench caused it (its own quota or rate limit, its client, its LAN hub, a call it"
+           " did not send). Shown only: uptime changes no routing and retires nothing.</p>"
+           "<p>An error no rule in <code>suite/run.py</code> (<code>uptime_class</code>) knows is counted as down,"
+           " unless a decision model was asked about its shape (the scheduler's <code>decisions</code> job, a few"
+           " new shapes a day): then it is counted as the model said, and marked so here and in the hovers.</p>")
     return chart_card("Uptime", "Whether the provider was there when the bench called it, one cell a day.",
                       "chart-uptime-models", "".join(window(w) for w in UPTIME_DAYS),
-                      extra=pick + "<div class='chart' id='chart-uptime-providers'></div>",
-                      after="".join(odd(w) for w in UPTIME_DAYS))
+                      how + "".join(odd(w) for w in UPTIME_DAYS),
+                      extra=legend + "<div class='chart' id='chart-uptime-providers'></div>", tools=pick)
 
 
 # ---- Decision models: how well each answers the bench's typed questions -----
@@ -3467,12 +3488,14 @@ def decision_card() -> str:
                       f" <span class='muted'>({esc(DECIDE_KIND[s])}{'; ' + esc(labels) if labels else ''})</span></h3>"
                       + "".join(body))
     when = res.get("updated", "")
-    extra = (f"<h3 class='chart-head'>Who each use asks now</h3><ul class='links'>{''.join(uses)}</ul>"
-             f"<p class='hint'>{'Measured up to ' + esc(when[:16].replace('T', ' ')) + '.' if when else 'Not measured yet.'}"
-             " The scheduler's <code>decisions</code> job asks each model one question a set a day;"
-             " <code>python metrics/decide.py bench</code> runs a pass by hand.</p>")
+    how = (f"<p>{'Measured up to ' + esc(when[:16].replace('T', ' ')) + '.' if when else 'Not measured yet.'}"
+           " The scheduler's <code>decisions</code> job asks each model one question a set a day;"
+           " <code>python metrics/decide.py bench</code> runs a pass by hand. A model is ranked on a set once it"
+           f" has been asked {low} of its items; until then its bar is faint.</p>")
     return chart_card("Decision", "How often the models that answer typed questions (a choice, a yes or no)"
-                      " are right, and how sure.", "chart-decide", "".join(tables), extra=extra, retired=False)
+                      " are right, and how sure.", "chart-decide", "".join(tables), how, retired=False,
+                      after=f"<details class='key'><summary>Who each use asks now</summary>"
+                            f"<ul class='links'>{''.join(uses)}</ul></details>")
 
 
 def bughunt_card() -> str:
@@ -3488,8 +3511,13 @@ def bughunt_card() -> str:
                     + "".join(f"<td class='num' data-sort='{h[k]}'>{h[k]}/{clean}</td>" for k in ("clean", "false alarm"))
                     + "</tr>")
     body.append("</tbody></table>")
+    how = ("<p>Seeded bugs and real ones, scored against their answer keys. Right of zero, the share of the bugs"
+           " found, found on the wrong line, and missed; left of it, the share of the same files left clean on"
+           " which the model raised a false alarm.</p><p>Ranked on what is proven: the low end of the found"
+           " share's 95% range less the high end of the false alarms', so a few tasks cannot top the chart."
+           " The number beside a name is its tasks; under 10, its bar is faint.</p>")
     return chart_card("Bug hunt", "Bugs found against false alarms on the same files left clean.",
-                      "chart-hunt", "".join(body))
+                      "chart-hunt", "".join(body), how)
 
 
 def _wilson(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
@@ -3513,8 +3541,12 @@ def work_card() -> str:
                     f"<td class='num' data-sort='{lo:.3f}'>{lo * 100:.0f}–{hi * 100:.0f}%</td>"
                     f"<td class='num'>{r['real']}</td><td class='num'>{r['false']}</td></tr>")
     body.append("</tbody></table>")
+    how = ("<p>Work handed to a model through the bench and judged afterwards. The dot is the share that helped,"
+           " sized by how many were judged; the line is where the true share likely sits (a 95% Wilson interval:"
+           " wide for 3 of 3, narrow for 40 of 50). Ranked by the low end of that line, so a few lucky answers do"
+           " not outrank many good ones. The dashed line is every model's work together.</p>")
     return chart_card("Real work", "How often a model helped when given real work that was checked afterwards.",
-                      "chart-work", "".join(body))
+                      "chart-work", "".join(body), how)
 
 
 def overview_card() -> str:
@@ -3526,8 +3558,12 @@ def overview_card() -> str:
              f"<td class='num' data-sort='{d['wrong']:.3f}'>{d['wrongN']} ({d['wrong'] * 100:.0f}%)</td></tr>"
              for d in rows]
     body.append("</tbody></table>")
+    how = ("<p>A dot per model with both scores: the share of the real findings in our own code tasks it located"
+           " (right), and the share of its answers that were confidently wrong (up is fewer). The shaded zone, 90%"
+           " or more found and 15% or less made up, is where to pick a reviewer from. The models in or near it,"
+           " and the three that make the most up, are named; hover a dot for any other.</p>")
     return chart_card("Who to trust with a review", "Top right is the reviewer to pick: finds the real bugs"
-                      " and makes little up.", "chart-overview", "".join(body), retired=False)
+                      " and makes little up.", "chart-overview", "".join(body), how, retired=False)
 
 
 def suite_card() -> str:
@@ -3539,7 +3575,9 @@ def suite_card() -> str:
     if not scores:
         body = "<p class='hint'>No suite runs recorded yet.</p>"
     else:
-        body = ["<table><thead><tr>" + th("Model")
+        # A cell per task and model, about 5,000: each as short as it can be (bench.css
+        # table.grid sets the figures and the dash of a task not run).
+        body = ["<table class='grid'><thead><tr>" + th("Model")
                 + "".join(th(esc(t), True) for t in tasks)
                 + th("Invented") + "</tr></thead><tbody>"]
         for model in models:
@@ -3547,14 +3585,13 @@ def suite_card() -> str:
             for task in tasks:
                 hit = scores.get((task, model))
                 if not hit:
-                    cells.append("<td class='num muted' data-sort='-2'>—</td>")
+                    cells.append("<td data-sort=-2></td>")
                     continue
                 found = hit["found"]
                 bad = found in ("timeout", "refused", "error")
                 m = re.match(r"(\d+)/(\d+)", found)
-                rank = f"{int(m.group(1)) / max(1, int(m.group(2))):.3f}" if m else "-1"
-                cells.append(f"<td class='num{' err' if bad else ''}' data-sort='{rank}'>"
-                             f"{esc(found)}</td>")
+                rank = f"{int(m.group(1)) / max(1, int(m.group(2))):.3g}" if m else "-1"
+                cells.append(f"<td{' class=err' if bad else ''} data-sort={rank}>{esc(found)}</td>")
                 if hit["invented"]:
                     invented.append(f"{task}: {hit['invented']}")
             flag = ("<td class='err'>" + esc("; ".join(invented)) + "</td>"
@@ -3563,8 +3600,12 @@ def suite_card() -> str:
                         + "".join(cells) + flag + "</tr>")
         body.append("</tbody></table>")
         body = "".join(body)
+    how = ("<p>A square per task and model, coloured by the share of the task's findings it located: green all,"
+           " red none, pale no score (a timeout, an error or a refusal). A dot marks an answer that invented"
+           " something. The tasks are grouped by kind (hand-built, claims, seeded in a function or a whole file,"
+           " real bugs), and the models ordered by all they found.</p>")
     return chart_card("Our code", "Every task on our own code, one square per task and model: green found"
-                      " everything, red nothing.", "chart-code", body)
+                      " everything, red nothing.", "chart-code", body, how)
 
 
 EXTERNAL = (("LiveBench", "https://livebench.ai/", "contamination-limited questions, refreshed monthly"),
@@ -3613,8 +3654,14 @@ def wrong_card() -> str:
                     + (f"<td class='num' data-sort='{r['review_false']}'>{r['review_false']} in {r['reviews']}</td>"
                        if r["reviews"] else "<td class='num muted' data-sort='-1'>—</td>") + "</tr>")
     body.append("</tbody></table>")
+    how = ("<p>One chance per answer to our own code tasks: a clean control called faulty, a fault named on a line"
+           " the change did not touch, a false claim called true, a planted falsehood asserted. A miss is not"
+           " counted: saying nothing is cheap to check, inventing is not.</p><p>The thin line over each bar is"
+           " where the true share likely sits (95% Wilson), so 0 of 2 shows how bad it could be, not a clean"
+           " record. Worst proven first; the number beside a name is its answers, and under 10 its bar is faint."
+           " The table's Reviews are apart: false claims recorded in its judged real work.</p>")
     return chart_card("Confidently wrong", "Who asserts things that are not true; shorter is better.",
-                      "chart-wrong", "".join(body))
+                      "chart-wrong", "".join(body), how)
 
 
 def benchmarks_tab() -> str:
@@ -3662,8 +3709,11 @@ def perf_card() -> str:
         latest = {(r["model"], r["prompt"]): r for r in perf
                   if r["model"] in live}
         widest = max((float(r["p50_s"]) for r in latest.values()), default=1) or 1
-        body = ["<table><thead><tr>" + th("Model") + th("Prompt") + th("p50", True)
-                + th("p95", True) + th("ch/s", True) + th("tok/s", True) + th("Outcomes")
+        body = ["<table><thead><tr>" + th("Model") + th("Prompt") + th("<abbr title='median seconds'>p50</abbr>", True)
+                + th("<abbr title='95th percentile, seconds'>p95</abbr>", True)
+                + th("<abbr title='characters a second'>ch/s</abbr>", True)
+                + th("<abbr title='tokens a second'>tok/s</abbr>", True)
+                + th("<abbr title='answered / refused / error / timeout'>Outcomes</abbr>")
                 + "<th>p50, relative</th></tr></thead><tbody>"]
         for (model, prompt), row in sorted(latest.items()):
             p50 = float(row["p50_s"])
@@ -3682,8 +3732,12 @@ def perf_card() -> str:
                 f"title='p50 {p50:.1f}s'><span style='width:100%'></span></span></td></tr>")
         body.append("</tbody></table>")
         body = "".join(body)
+    how = ("<p>A dot per model: its median seconds an answer on our own code tasks (on a log scale) against the"
+           " share of their findings it located. The zone, 90% or more found in 40 seconds or less, is the quick"
+           " and thorough corner; the models in or near it are named, hover a dot for the rest. The table is the"
+           " daily probe instead: each model's latest timings per prompt.</p>")
     return chart_card("Performance", "How fast each model answers our own tasks, against how much it finds.",
-                      "chart-speed", body)
+                      "chart-speed", body, how)
 
 
 def favicon(theme: str) -> str:
@@ -4145,7 +4199,7 @@ def collections_tab() -> str:
         f"<div id='c-list'>{collection_list(rows)}</div></div>"
         # A collection opens docked beside the list, as a model does (bench.js fillForm):
         # the one clicked, or a new one. Its Save at a fixed foot.
-        "<dialog id='c-form' aria-labelledby='c-form-head'>"
+        "<dialog class='dock' id='c-form' aria-labelledby='c-form-head'>"
         "<div class='bar'><p>Collection</p></div><div class='dock-body'>"
         "<h2 id='c-form-head' tabindex='-1'>New collection</h2>"
         "<label class='field' for='c-name'>Name</label>"
@@ -4282,13 +4336,17 @@ UI_CONFIG = DATA / "config" / "ui.json"
 # right. Fixed HTML, so they are there before the page arrives and a page fetched
 # again never replaces them: a filter keeps what is typed in it.
 BAR_TOOLS = {
-    "collections": ("<span class='spring'></span><span class='done' id='c-status' role='status'></span>"
+    "endpoints": ("<input type='search' data-filter='page' placeholder='Find an endpoint or a model it serves'"
+                  " aria-label='Find an endpoint or a model it serves'><span class='spring'></span>"
+                  "<span class='done' id='el-done' role='status'></span><span class='errors' id='el-errors' role='alert'></span>"
+                  "<button class='btn primary' type='button' id='e-add'>Add an endpoint</button>"),
+    "collections":("<span class='spring'></span><span class='done' id='c-status' role='status'></span>"
                     "<button class='btn primary' type='button' id='c-new'>New collection</button>"),
     "logs": ("<input type='search' data-filter='page' placeholder='Filter every log' aria-label='Filter every log'>"
              "<span class='spring'></span><button class='btn' type='button' id='logs-export'>Export…</button>"),
 }
 # The pages with their own facts (aside.facts), and the bar's button that opens them under 1280px.
-FACTS_OPEN = {"suite": "On this page", "collections": "Gateway settings"}
+FACTS_OPEN = {"suite": "On this page", "collections": "Gateway settings", "endpoints": "All endpoints"}
 
 
 def collections_and_gateway() -> str:
@@ -5176,8 +5234,12 @@ def settings_page() -> str:
 
 
 def endpoints_page() -> str:
-    """Each endpoint, its actions, what it serves; your own apps and rate limits
-    per connection (bench.js fills those two from /api/connect and /api/connections)."""
+    """The endpoints, a row each (name, base URL, key, models on the bench, when
+    the daily served check last listed it); one clicked opens beside the list in
+    the docked panel (bench.js openEp): its facts, its actions, what it serves.
+    With none open, the panel holds what applies to all of them and your own
+    apps. Under the list, rate limits per connection (bench.js fills the apps
+    and the limits from /api/connect and /api/connections)."""
     eps = endpoint_list()["endpoints"]
     # What each endpoint serves, without asking it: the bench's own models on
     # it, plus what the daily served check (scripts/check_deprecations.py)
@@ -5197,82 +5259,121 @@ def endpoints_page() -> str:
         on.setdefault(r["endpoint"], {})[r["served"]] = r["alias"]
     for a, d in decide.load().items():
         on.setdefault(d["endpoint"], {})[d["served"]] = a
-    tags, status = load_json(DATA / "config" / "provider-tags.json"), model_status()
-    blocks = []
-    for e in eps:
+    tags, status, data = load_json(DATA / "config" / "provider-tags.json"), model_status(), endpoints.load()
+    table, docks = [], []
+    for i, e in enumerate(eps):
         mine, listed = on.get(e["name"], {}), serves.get(e["name"], {})
         rows = []
         for served in sorted(set(mine) | set(listed), key=lambda s: (s not in mine, s.lower())):
             alias, day = mine.get(served), listed.get(served)
+            # A model on the bench by its alias (and its connection), what it is served as under
+            # it; one only served by its id and connection. Its state at the right.
             if alias:
                 label, css, why = status.get(alias, ("decision", "", "a decision model"))
-                bench = f"<td>{named(alias)}</td>"
-                rest = (f"<td>{esc(catalog.connection_of(alias))}</td>"
-                        f"<td data-sort='0'>{chip(label, css, why)}</td>")
+                rows.append(f"<tr><td>{named(alias)}</td><td>served as <span class='mono'>{esc(served)}</span></td>"
+                            f"<td>{chip(label, css, why)}</td></tr>")
             else:
                 gone = day and day != checked
-                bench = "<td class='muted'>not on the bench</td>"
-                rest = (f"<td>{esc((tags.get(served, '').split('/')[0] if e['hub'] == 'openwebui' else e['name']) or '—')}</td>"
-                        f"<td data-sort='{2 if gone else 1}'>"
-                        + (chip(f"last seen {day}", "warn") if gone else chip("served", "")) + "</td>")
-            rows.append(f"<tr>{bench}<td class='mono'>{esc(served)}</td>{rest}</tr>")
-        extra = sum(1 for s, d in listed.items() if s not in mine and d == checked)
-        # Its actions (bench.js reads the row from data-ep): a sign-in again
+                conn = (tags.get(served, "").split("/")[0] if e["hub"] == "openwebui" else e["name"]) or ""
+                rows.append(f"<tr><td><span class='alias'>{esc(served)}</span><span class='conn'>{esc(conn)}</span></td>"
+                            "<td>not on the bench</td><td>"
+                            + (chip(f"last seen {day}", "warn") if gone else chip("served", "")) + "</td></tr>")
+        now = sum(1 for d in listed.values() if d == checked)
+        seen = max(listed.values(), default="")
+        # When the daily served check last had its list: on its last run, or an older day (it did not answer since).
+        when = (f"<td class='when' data-sort='{esc(seen)}'>{esc(seen)}</td>" if seen and seen == checked else
+                f"<td data-sort='{esc(seen)}'>" + chip(f"not listed since {seen}", "warn",
+                                                       f"the daily served check on {checked} got no list from it")
+                + "</td>" if seen else "<td class='muted' data-sort=''>—</td>")
+        # Its actions (bench.js reads the endpoint from data-ep): a sign-in again
         # where it came from one; Make default and Remove on all but the default.
         signed = e["connect"]
-        acts = "<button class='btn small' data-ep-act='change'>Change key</button>"
+        acts = "<button class='btn' type='button' data-ep-act='change'>Change key</button>"
         if signed and signed.get("flow") and signed["flow"] != "local":
-            acts += "<button class='btn small' data-ep-act='again'>Sign in again</button>"
+            acts += "<button class='btn' type='button' data-ep-act='again'>Sign in again</button>"
         if not e["default"]:
-            acts += ("<button class='btn small' data-ep-act='default'>Make default</button>"
-                     "<button class='btn small danger' data-ep-act='remove'>Remove</button>")
+            acts += "<button class='btn' type='button' data-ep-act='default'>Make default</button>"
+        acts += "<button class='btn' type='button' data-dock-close>Close</button>"
+        if not e["default"]:
+            acts += "<button class='linkish danger' type='button' data-ep-act='remove'>Remove</button>"
         until = (" until " + signed["expires"][:10]) if signed and signed.get("expires") and not signed.get("refreshes") else ""
-        blocks.append(
-            f"<div class='ep' data-ep='{esc(json.dumps(e))}'><div class='ep-head'><div>"
-            f"<div class='what'><span class='alias'>{esc(e['name'])}</span>"
-            + (" " + chip("default", "") if e["default"] else "")
-            + " " + chip("key set" if e["key_set"] else "no key", "ok" if e["key_set"] else "warn")
-            + ((" " + chip("sign in again", "warn") if signed.get("expired") else " " + chip("signed in" + until, "via"))
-               if signed else "")
-            + f"</div><div class='base mono'>{esc(e['base'])}</div></div><div class='acts'>{acts}</div></div>"
-            f"<details class='models'><summary>{len(mine)} on the bench"
-            + (f" · {extra} more served" if extra else "") + "</summary>"
-            "<table><thead><tr>" + th("On the bench as") + th("Served as") + th("Connection") + th("Status")
-            + f"</tr></thead><tbody>{''.join(rows)}</tbody></table></details></div>")
+        key = (chip("key set" if e["key_set"] else "no key", "ok" if e["key_set"] else "warn")
+               + ((" " + chip("sign in again", "warn") if signed.get("expired") else " " + chip("signed in" + until, "via"))
+                  if signed else ""))
+        name, hub = esc(e["name"]), endpoints.HUBS.get(e["hub"], "")
+        # The row: its name opens it (a button, for a keyboard); the models it serves
+        # are what the page's filter finds it by too (bench.js applyFilter, data-find).
+        table.append(
+            f"<tr class='c-row ep-row' data-name='{name}' data-find='{esc(' '.join(sorted(set(mine) | set(listed) | set(mine.values()))))}'>"
+            f"<td><button type='button' class='c-open alias' aria-label='Open endpoint {name}'>{name}</button>"
+            + (chip("default", "") if e["default"] else "") + f"</td><td class='base' title='{esc(e['base'])}'>"
+            f"<span class='mono'>{esc(e['base'])}</span></td><td>{key}</td><td class='num'>{len(mine)}</td>"
+            f"<td class='num'>{now if seen else '—'}</td>{when}</tr>")
+        facts = (("Base URL", f"<span class='mono'>{esc(e['base'])}</span>"),
+                 ("Kind", esc(e["kind"]) + (f", {esc(hub)}" if hub else "")),
+                 ("API", esc(endpoints.APIS.get(data.get(e["name"], {}).get("api") or "chat", ""))),
+                 ("Key", key),
+                 ("Signed in", (esc(signed.get("label") or signed.get("provider", "")) + esc(until)) if signed else ""),
+                 ("On the bench", f"{len(mine)} model{'s' * (len(mine) != 1)}"
+                  + (", the default endpoint" if e["default"] else "")),
+                 ("Listed", f"{now} on {esc(checked)}, by the daily served check" if seen == checked and seen
+                  else f"not since {esc(seen)}" if seen else "never by the daily served check"))
+        docks.append(
+            f"<dialog class='dock' id='ep-{i}' data-name='{name}' data-ep='{esc(json.dumps(e))}' aria-labelledby='ep-{i}-h'>"
+            f"<div class='bar'><p>Endpoint</p></div><div class='dock-body'><h2 class='dock-head' id='ep-{i}-h' tabindex='-1'>{name}</h2>"
+            "<dl class='rows'>" + "".join(f"<dt>{k}</dt><dd>{v}</dd>" for k, v in facts if v) + "</dl>"
+            f"<h3>What it serves</h3><p class='sub'>The bench's models on it, then what the daily served check"
+            " listed.</p>" + (f"<table class='serves'><tbody>{''.join(rows)}</tbody></table>" if rows else
+                              "<p class='muted'>Nothing yet: no model on the bench comes through it, and the daily"
+                              " served check has no list from it.</p>") + "</div>"
+            f"<div class='dock-foot'>{acts}</div></dialog>")
+    keyed = sum(1 for e in eps if e["key_set"] and not (e["connect"] or {}).get("expired"))
+    facts = (("Endpoints", f"{len(eps)}" + (f", the default {esc(default)}" if default else "")),
+             ("With a key", f"{keyed} of {len(eps)}"),
+             ("Models through them", sum(len(m) for m in on.values())),
+             ("Last listed", f"{esc(checked)}, by the daily served check" if checked else "not yet"))
     return (
-        "<div class='panel'><h2>Endpoints</h2><p class='sub'>Where models are served from: providers,"
-        " aggregators, a hub such as Open WebUI, or a local runtime. Prompts to a model go straight to its"
-        " endpoint, so add only ones you are content to send private source to. Each shows whether its key"
-        " is set (never the key) and what it serves: the bench's own models, then what the daily served"
-        f" check listed{' on ' + esc(checked) if checked else ''}.</p>"
-        "<div class='list-actions'><button class='btn primary' id='e-add'>Add an endpoint</button>"
-        "<span class='done' id='el-done'></span><span class='errors' id='el-errors' role='alert'></span></div>"
+        "<div class='panel'><p class='sub'>Where models are served from, a base URL and a key: prompts go"
+        " straight there, so add only endpoints you would send private source to.</p>"
         # Model servers running here, not endpoints yet: bench.js asks /api/connect/local on show.
-        "<div class='found' id='e-found' hidden><h3>Found on this machine</h3><div id='e-found-list'></div></div>"
-        "<div class='toolbar'><input type='search' data-filter placeholder='Find a model on any endpoint'"
-        " aria-label='Filter models'></div>"
-        f"{''.join(blocks)}</div>"
-        "<div class='panel form-panel'><h2>Use your own app</h2>"
-        "<p class='sub'>Some providers need an app registered with them before anyone can sign in."
-        " Benchwarmers ships Wendell Research's where it has one; register your own and paste its"
-        " public client id to use yours instead (never a secret: none of these use one). Endpoints"
-        " already signed in keep working with the app they were signed in with.</p>"
-        "<div id='cn-apps'></div><div class='errors' id='cn-app-errors' role='alert'></div>"
-        "<div class='done' id='cn-app-done'></div></div>"
-        "<div class='panel form-panel'><h2>Rate limits per connection</h2>"
-        "<p class='sub'>What a key behind each connection allows, from the provider's docs or"
-        " freellmapi.co/models. Models on that connection share it; a model's own limits (its"
-        " popup) win, and limits the bench learns from errors only ever lower these. rpmo is calls"
-        " a calendar month (UTC), for a trial key's monthly cap. The built-in client keeps to them:"
-        " when one is used up it waits if the call can still finish in time, else it does not send.</p>"
-        "<p class='sub'>The bench also learns a connection's own rpm and rpd: when a provider refuses"
+        "<div class='found' id='e-found' hidden><h2>Found on this machine</h2><div id='e-found-list'></div></div>"
+        + ("<div class='scroll'><table class='ep-table'><thead><tr>" + th("Endpoint") + th("Base URL") + th("Key")
+           + th("On the bench", True) + "<th data-sortable tabindex='0' class='num' title='models its list held when"
+           " the daily served check last asked'>Listed</th>" + th("Last listed")
+           + f"</tr></thead><tbody>{''.join(table)}</tbody></table></div>" if eps else
+           "<p class='empty'>No endpoint yet. <b>Add an endpoint</b> pastes a key for any OpenAI-compatible API,"
+           " or signs in to a provider on its own page.</p>")
+        + "</div>" + "".join(docks) +
+        "<div class='panel'><h2>Rate limits per connection</h2>"
+        "<p class='sub'>What a key behind each connection allows; the models on that connection share it.</p>"
+        "<details class='key'><summary>How these limits work</summary>"
+        "<p>From the provider's docs or freellmapi.co/models. A model's own limits (its panel) win, and limits the"
+        " bench learns from errors only ever lower these. rpm and rpd are requests a minute and a day, tpm and tpd"
+        " tokens, rpmo requests a calendar month (UTC), for a trial key's monthly cap. The built-in client keeps"
+        " to them: when one is used up it waits if the call can still finish in time, else it does not send.</p>"
+        "<p>The bench also learns a connection's own rpm and rpd: when a provider refuses"
         " with a 429 that names no number, the requests the bench had sent in that minute or day are the"
         " limit, near enough. Met once it is only noted; met again at about the same count, a minute or a"
         " day later, it is kept to like a limit of yours, unless you set your own here, which always wins."
         " A learned limit not met again for 14 days is forgotten, so a raised limit is found; Forget drops"
-        " one now.</p>"
-        "<div id='l-list'></div><div class='errors' id='l-errors' role='alert'></div>"
-        "<div class='done' id='l-done'></div></div>")
+        " one now.</p></details>"
+        "<div class='scroll' id='l-list'></div><div class='errors' id='l-errors' role='alert'></div>"
+        "<div class='done' id='l-done'></div></div>"
+        # What applies to every endpoint, beside the list (bench.css aside.facts).
+        "<aside class='facts' id='facts-endpoints' aria-labelledby='facts-endpoints-h'>"
+        "<div class='bar'><h2 id='facts-endpoints-h'>All endpoints</h2>"
+        "<button type='button' class='linkish facts-close'>Close</button></div><div class='facts-body'>"
+        "<dl class='rows'>" + "".join(f"<dt>{k}</dt><dd>{v}</dd>" for k, v in facts) + "</dl>"
+        "<p>Keys are kept where <code>llm keys set</code> keeps them, never in the repository, and"
+        " are never shown again.</p><p><b>Add an endpoint</b>, in the bar, pastes a"
+        " key for any OpenAI-compatible API, a hub such as Open WebUI or a local runtime, or signs in to a"
+        " provider on its own page.</p>"
+        "<h3>Use your own app</h3><div class='form-panel'><p class='rules'>Some providers need an app registered"
+        " with them before anyone can sign in. Benchwarmers ships Wendell Research's where it has one; register"
+        " your own and paste its public client id to use yours instead (never a secret: none of these use one)."
+        " Endpoints already signed in keep working with the app they were signed in with.</p>"
+        "<div id='cn-apps'></div><div class='errors' id='cn-app-errors' role='alert'></div>"
+        "<div class='done' id='cn-app-done'></div></div></div></aside>")
 
 
 def _reply_cell(by_prompt: dict) -> str:
@@ -5668,7 +5769,7 @@ def _directory_json() -> str:
 def editor() -> str:
     return (
         # A model, docked beside the page (bench.js dock): not a popup. Its Save at a fixed foot.
-        "<dialog id='model-dialog' aria-labelledby='m-title'>"
+        "<dialog class='dock' id='model-dialog' aria-labelledby='m-title'>"
         "<div class='bar'><p>Model</p></div><div class='dock-body'>"
         "<h2 id='m-title' tabindex='-1'></h2><p class='served' id='m-served'></p>"
         "<div class='note' id='m-gone' hidden></div>"

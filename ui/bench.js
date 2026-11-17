@@ -299,14 +299,11 @@
     var box = scope.querySelector('input[data-filter]'), q = box ? box.value.trim().toLowerCase() : '';
     var facets = Array.prototype.filter.call(scope.querySelectorAll('select[data-facet]'), function (s) { return s.value; });
     scope.querySelectorAll('tbody tr, .log-line').forEach(function (r) {
-      // A group's name (data-conn: Models' connection) counts as text of each of its rows.
-      var g = r.closest('[data-conn]'), text = r.textContent + (g ? ' ' + g.dataset.conn : '');
+      // A group's name (data-conn: Models' connection) counts as text of each of its rows,
+      // and so does what a row is found by beside its text (data-find: an endpoint's models).
+      var g = r.closest('[data-conn]'), text = r.textContent + (g ? ' ' + g.dataset.conn : '') + ' ' + (r.dataset.find || '');
       r.hidden = (q && text.toLowerCase().indexOf(q) === -1)
         || facets.some(function (s) { return r.dataset[s.dataset.facet] !== s.value; });
-    });
-    // A match inside a folded list (an endpoint's models) opens it.
-    if (q) scope.querySelectorAll('details.models').forEach(function (d) {
-      if (d.querySelector('tbody tr:not([hidden])')) d.open = true;
     });
     // A group with no row left is hidden; one with a match opens.
     scope.querySelectorAll('[data-conn]').forEach(function (g) {
@@ -1755,10 +1752,40 @@
     $('e-hub-row').hidden = $('e-admin-row').hidden = e.kind.value !== 'hub';
   });
   ed.querySelectorAll('[data-close]').forEach(function (b) { b.addEventListener('click', function () { ed.close(); }); });
-  ed.addEventListener('close', function () { if (e.changed) { e.changed = false; refreshPanes(); } });
-  function refreshSaying(message) {
+  ed.addEventListener('close', function () { if (e.changed) { e.changed = false; again(epOpen); } });
+  // An endpoint opens docked beside the list, as a collection does: its row marked,
+  // Escape or Close puts it away and the focus goes back to its row.
+  var epOpen = '';
+  function epRow(name) { return document.querySelector('#tab-endpoints tr.ep-row[data-name="' + CSS.escape(name) + '"]'); }
+  function openEp(name, keyboard) {
+    var d = document.querySelector('#tab-endpoints dialog.dock[data-name="' + CSS.escape(name) + '"]');
+    if (!d) return;
+    document.querySelectorAll('#tab-endpoints dialog.dock[open]').forEach(function (o) { if (o !== d) o.close(); });
+    epOpen = name;
+    d.setAttribute('open', '');                       // docked, not a popup: the list stays live
+    if (epRow(name)) epRow(name).classList.add('in-hand');
+    if (keyboard) d.querySelector('.dock-head').focus();
+  }
+  $('tab-endpoints').addEventListener('close', function (ev) {      // caught on its way down: close does not bubble
+    var d = ev.target, row = d.matches('dialog.dock') && epRow(d.dataset.name), at = document.activeElement;
+    if (!row) return;
+    row.classList.remove('in-hand');
+    if (d.contains(at) || at === document.body) row.querySelector('button').focus();
+    if (epOpen === d.dataset.name) epOpen = '';
+  }, true);
+  // After a change: the pages fetched again (refreshPanes). The endpoint in hand is put
+  // away first, since a page holding an open record waits for it (load), and opened
+  // again once its page is new, if it is still there.
+  function again(name) {
+    var d = document.querySelector('#tab-endpoints dialog.dock[open]');
+    if (d) d.close();
+    return refreshPanes().then(function () {
+      if (name && shown === 'endpoints') openEp(name, document.activeElement === document.body);   // the focus, lost with the old rows
+    });
+  }
+  function refreshSaying(message, keep) {
     $('el-errors').textContent = ''; $('el-done').textContent = message;
-    refreshPanes().then(function () { $('el-done').textContent = message; });     // on the new page too
+    again(keep ? epOpen : '').then(function () { $('el-done').textContent = message; });     // on the new page too
   }
   var rowActs = {
     change: function (x) { openEndpoint('change', x); },
@@ -1772,7 +1799,7 @@
         if (!yes) return;
         post('/api/endpoint/default', {name: x.name}).then(function (r) {
           if (!r.ok) { listErrors($('el-errors'), r.errors); return; }
-          refreshSaying(r.note + '.');
+          refreshSaying(r.note + '.', true);
         });
       });
     },
@@ -1793,33 +1820,40 @@
     }
   };
   $('tab-endpoints').addEventListener('click', function (ev) {
-    var b = ev.target.closest('.ep button[data-ep-act]');
-    if (b) rowActs[b.dataset.epAct](JSON.parse(b.closest('.ep').dataset.ep));
+    var b = ev.target.closest('[data-ep] button[data-ep-act]'), row = ev.target.closest('tr.ep-row');
+    if (b) rowActs[b.dataset.epAct](JSON.parse(b.closest('[data-ep]').dataset.ep));
+    else if (ev.target.closest('[data-dock-close]')) ev.target.closest('dialog').close();
+    else if (row && !ev.target.closest('a')) openEp(row.dataset.name, !ev.detail);   // from a keyboard: the focus to it
   });
+  // Rate limits per connection: a row each, its name and models, a box per limit, its Save.
   function loadLimits() {
     var list = $('l-list');
     get('/api/connections').then(function (res) {
       list.textContent = '';
+      var table = el('table', {class: 'l-table'}), head = el('tr'), body = el('tbody');
+      head.appendChild(el('th', {}, 'Connection'));
+      res.keys.forEach(function (k) { head.appendChild(el('th', {class: 'num', title: (res.labels || {})[k] || k}, k)); });
+      head.appendChild(el('th', {}, ''));
+      table.appendChild(el('thead')).appendChild(head); table.appendChild(body); list.appendChild(table);
       res.connections.forEach(function (c) {
-        var row = el('div', {class: 'endpoint'});
-        var left = el('div');
-        left.appendChild(el('div', {class: 'what'}, c.name));
-        left.appendChild(el('div', {class: 'base'}, c.models.join(', ')));
-        var inputs = el('div', {class: 'limits'});
+        var row = el('tr'), left = el('td');
+        left.appendChild(el('div', {class: 'alias'}, c.name));
+        left.appendChild(el('div', {class: 'conn'}, c.models.join(', ')));
+        row.appendChild(left);
+        var inputs = [];
         res.keys.forEach(function (k) {
-          var lab = el('label', {title: (res.labels || {})[k] || k}, k + ' ');
-          var box = el('input', {type: 'number', min: '1', 'data-k': k, placeholder: '—'});
+          var box = el('input', {type: 'number', min: '1', 'data-k': k, placeholder: '—',
+                                 'aria-label': k + ' for ' + c.name, title: (res.labels || {})[k] || k});
           if (c.limits[k]) box.value = c.limits[k];
-          lab.appendChild(box); inputs.appendChild(lab);
+          inputs.push(box); row.appendChild(el('td', {class: 'num'})).appendChild(box);
         });
-        left.appendChild(inputs);
         // What the bench worked out from this connection's 429s (learn.py):
         // kept to where no value of yours is set, until Forget or 14 days.
         res.keys.forEach(function (k) {
           var ev = (c.learned || {})[k], once = (c.pending || {})[k];
           if (!ev && !once) return;
           var on = function (iso) { return new Date(iso).toLocaleDateString(undefined, {day: 'numeric', month: 'short'}); };
-          var note = el('div', {class: 'base'}, ev
+          var note = el('div', {class: 'conn'}, ev
             ? 'learned ' + ev.value + ' ' + k + ' · 429s on ' + on(ev.at)
               + (ev.confirmed_at && on(ev.confirmed_at) !== on(ev.at) ? ', last on ' + on(ev.confirmed_at) : '')
               + ' · ' + (c.limits[k] ? 'not enforced: yours wins' : 'enforced (yours wins)') + ' '
@@ -1836,20 +1870,20 @@
           });
           note.appendChild(forget); left.appendChild(note);
         });
-        row.appendChild(left);
-        var save = el('button', {class: 'btn small', type: 'button'}, 'Save');
+        var save = el('button', {class: 'btn small', type: 'button', 'aria-label': 'Save the limits for ' + c.name}, 'Save');
         save.addEventListener('click', function () {
           var limits = {};
-          inputs.querySelectorAll('input').forEach(function (b) { if (b.value) limits[b.dataset.k] = parseInt(b.value, 10); });
+          inputs.forEach(function (b) { if (b.value) limits[b.dataset.k] = parseInt(b.value, 10); });
           $('l-errors').textContent = ''; $('l-done').textContent = '';
           post('/api/connection-limits', {connection: c.name, limits: limits}).then(function (r) {
             if (!r.ok) { listErrors($('l-errors'), r.errors); return; }
             $('l-done').textContent = 'Saved limits for ' + c.name + '.';
           });
         });
-        var acts = el('div', {class: 'acts'}); acts.appendChild(save); row.appendChild(acts);
-        list.appendChild(row);
+        row.appendChild(el('td', {class: 'acts'})).appendChild(save);
+        body.appendChild(row);
       });
+      applyFilter($('tab-endpoints'));                 // the page's filter, on rows that came after it
     });
   }
   onShow.endpoints = function () {             // its own-app and rate-limit sections, and what runs here
@@ -2999,31 +3033,57 @@
       box.textContent = '';                      // a redraw replaces the chart
       try { box.appendChild(make(width())); } catch (e) { box.textContent = 'Chart failed: ' + e; }
     }
-    // Pixel offsets that keep scatter labels apart: each label, in order, moves
-    // up or down until it clears the ones already placed; null when no place is
-    // free (that one is left to its hover, not drawn over another).
-    function spread(points, xpx, ypx) {
+    // A label's width as Plot sets it (system-ui, 13px unless `size`), so a margin is
+    // sized to its longest label, not guessed at so many px a character.
+    var pen = document.createElement('canvas').getContext('2d');
+    function textW(s, size, bold) {
+      pen.font = (bold ? '700 ' : '') + (size || 13) + 'px system-ui, sans-serif';
+      return pen.measureText(s).width;
+    }
+    function widest(labels, size) { return Math.ceil(Math.max.apply(null, [0].concat(labels.map(function (s) { return textW(s, size); })))); }
+    // The room at the left for a column of labels: the widest, the tick and its gap,
+    // up to `cap` (a longer one is cut by clip). capL: a third of the chart, 300 px at most.
+    function room(labels, cap) { return Math.min(cap, widest(labels) + 12); }
+    function capL(w) { return Math.round(Math.min(300, w * 0.36)); }
+    // Pixel offsets that keep scatter labels apart: each label, in order, moves up or
+    // down until it clears the ones already placed, and is anchored at its end or start
+    // where centred it would cross the chart's edge (xpx: from the svg's left; w: its
+    // width). Null when no place is free: that one is left to its hover, not drawn over another.
+    function spread(points, xpx, ypx, w) {
       var boxes = [], tries = [-12, 14, -26, 28, -40, 42, -54, 56];
       return points.map(function (d) {
-        var cx = xpx(d), half = d.model.length * 2.9;
+        var cx = xpx(d), tw = textW(d.model, 11) + 4;
+        var anchor = cx + tw / 2 > w ? 'end' : cx - tw / 2 < 0 ? 'start' : 'middle';
+        var x1 = anchor === 'end' ? cx - tw : anchor === 'start' ? cx : cx - tw / 2;
         for (var k = 0; k < tries.length; k++) {
           var cy = ypx(d) + tries[k];
-          if (!boxes.some(function (b) { return Math.abs(b.x - cx) < b.half + half + 4 && Math.abs(b.y - cy) < 12; })) {
-            boxes.push({x: cx, y: cy, half: half});
-            return tries[k];
+          if (!boxes.some(function (b) { return x1 < b.x2 + 4 && b.x1 < x1 + tw + 4 && Math.abs(b.y - cy) < 12; })) {
+            boxes.push({x1: x1, x2: x1 + tw, y: cy});
+            return {dy: tries[k], anchor: anchor};
           }
         }
         return null;
       });
     }
+    // A scatter's names (spread placed them), a halo in the panel's colour keeping each
+    // legible over dots, grid lines and the zone.
+    function names(labels, x) {
+      return ['start', 'middle', 'end'].map(function (a) {
+        return Plot.text(labels.filter(function (l) { return l.anchor === a; }), {x: x, y: 'ty', text: 'model',
+          textAnchor: a, fontSize: 11, fill: ink, stroke: halo, strokeWidth: 3.5, strokeOpacity: 0.9, paintOrder: 'stroke'});
+      });
+    }
     function rows(n) { return 20 * n + 80; }
     // A name too long for its margin: `over` characters, and one for the …, out
-    // of its middle (Trend, Uptime); its hover keeps it whole.
+    // of its middle; its hover keeps it whole. clip: cut until it is `px` wide.
     function middle(s, over) {
       var keep = s.length - over - 1;
       return over <= 0 ? s : s.slice(0, Math.ceil(keep / 2)) + '…' + s.slice(s.length - Math.floor(keep / 2));
     }
-    function fit(s, max) { return middle(s, s.length - max); }
+    function clip(s, px) {
+      for (var n = s.length, t = s; n > 6 && textW(t) > px; t = middle(s, s.length - --n));
+      return t;
+    }
     var FEW = 10;                        // under this many tasks or answers, a row is drawn faint
     // The 95% Wilson interval of k successes in n: [low, high]. Honest at small n and at
     // 0 or n of n, where k/n ± 1.96·se says nothing (3 of 3 is not "100% ± 0").
@@ -3072,17 +3132,18 @@
         var s = r.s;
         return plural(s.tasks, 'task') + ': ' + s.down + ' down, ' + s.up + ' up · ' + plural(s.runs, 'run') + ' vs ' + s.before + ' before';
       }
-      // The name (at about 7 px a character, up to 260 px: a longer one loses its
-      // middle, its hover keeps it whole), the bars (260 px at least), the
-      // evidence. On a phone, no evidence (the table has it) and shorter names;
-      // narrower still, the chart scrolls sideways.
-      var nameW = Math.min(260, Math.max(150, 7 * Math.max.apply(null, M.map(function (r) { return r.key.length; })) + 24));
-      var evW = 320;
+      // The names (indented under their group's heading, up to 260 px: a longer one loses
+      // its middle, its hover keeps it whole), the bars (260 px at least), the evidence.
+      // On a phone, no evidence (the table has it) and shorter names; narrower still, the
+      // chart scrolls sideways.
+      var nameW = Math.min(260, Math.max(28 + widest(M.map(function (r) { return r.key; })),
+                                         16 + Math.ceil(Math.max.apply(null, heads.map(function (h) { return textW(h.text, 13, true); })))));
+      var evW = 16 + widest(M.map(evidence), 12);
       w = $('chart-trend').clientWidth || w;          // its own box: a phone's is narrower than width()'s 520
       // Without the evidence column the names take what the bars do not need (260 px), not a
       // fixed 130 px: at the dashboard's width that cut "muse-glimmer-30b" to "muse-gl…mer-30b".
       if (w < nameW + evW + 260) { evW = 0; nameW = Math.min(nameW, Math.max(130, w - 280)); }
-      var fits = Math.floor((nameW - 24) / 7), right = evW || 20, wide = w < nameW + right + 140;
+      var right = evW || 20, wide = w < nameW + right + 140;
       w = Math.max(w, nameW + right + 140);
       // Symmetric, to the biggest bar and room for its number; 20 pts at least.
       var top = Math.max(0.2, Math.ceil((Math.max.apply(null, [0].concat(B.map(function (r) { return Math.abs(r.s.change); }))) + 0.05) * 10) / 10);
@@ -3104,7 +3165,7 @@
             textAnchor: 'start', dx: 4, fill: ink}),
           Plot.text(heads, {y: 'key', frameAnchor: 'left', dx: -nameW, textAnchor: 'start', fontWeight: 700, fill: 'c', text: 'text'}),
           Plot.text(M, {y: 'key', frameAnchor: 'left', dx: -nameW + 12, textAnchor: 'start', fill: quiet, title: tip,
-            text: function (r) { return middle(r.key, r.key.length - fits); }}),
+            text: function (r) { return clip(r.key, nameW - 20); }}),
           evW ? Plot.text(M, {y: 'key', frameAnchor: 'right', dx: 12, textAnchor: 'start', fontSize: 12, fill: quiet, title: tip,
             text: evidence}) : null
         ]
@@ -3143,11 +3204,10 @@
           return head + '\n' + (n ? c.d[0] + ' of ' + n + ' answered' : 'no counted calls')
             + (c.d[3] ? '\n' + c.d[3].split('; ').join('\n') : '');
         }
-        // Room for the longest "name  (n)" at about 7 px a character, up to 300 px; a
-        // longer name loses its middle (its hover keeps it whole).
+        // Room for the longest "name  (n)"; a longer name than the room loses its middle
+        // (its hover keeps it whole).
         function label(r) { return r.name + '  (' + r.n + ')'; }
-        var left = Math.min(300, Math.max(160, 7 * Math.max.apply(null, R.map(function (r) { return label(r).length; })) + 10));
-        var right = 70, cellW = (w - left - right) / win, fits = Math.floor((left - 10) / 7);
+        var left = room(R.map(label), capL(w)), right = 56, cellW = (w - left - right) / win;
         return Plot.plot({
           width: w, height: 22 * R.length + 50, style: style, marginLeft: left, marginRight: right, marginTop: 28,
           padding: 0.12,
@@ -3157,8 +3217,8 @@
               win > 7 ? {day: 'numeric', month: 'short'} : cellW < 48 ? {day: 'numeric'} : {weekday: 'short', day: 'numeric'});
           }},
           y: {domain: R.map(function (r) { return r.name; }), label: null, tickSize: 0, tickFormat: function (m) {
-            var s = label(by[m]), over = s.length - fits;
-            return over <= 0 ? s : middle(m, over) + '  (' + by[m].n + ')';
+            var n = '  (' + by[m].n + ')';
+            return clip(m, left - 8 - textW(n)) + n;
           }},
           marks: [
             // A day with nothing counted is hollow: absent, not failing.
@@ -3218,7 +3278,7 @@
     // best first. A model under the ranking floor (DC.low items) is drawn faint: shown,
     // not yet ranked.
     function decideBars(w, names, panels, models, colors) {
-      var out = el('div');
+      var out = el('div'), left = room(models, capL(w));     // one margin for every set, so the bars line up
       DC.sets.forEach(function (s) {
         var rows = DC.scores.filter(function (r) { return r.set === s[0]; }).map(function (r) {
           return Object.assign({share: r.correct / r.asked, ranked: r.asked >= DC.low}, r);
@@ -3227,9 +3287,10 @@
         if (!rows.length) { out.appendChild(el('p', {class: 'hint'}, 'No model asked on this set yet.')); return; }
         out.appendChild(Plot.plot({
           width: w, height: rows.length * 26 + 40, style: style,
-          marginLeft: w < 560 ? 120 : 160, marginRight: 50, marginTop: 4, marginBottom: 30,
+          marginLeft: left, marginRight: 50, marginTop: 4, marginBottom: 30,
           x: {domain: [0, 1], label: null, tickFormat: '.0%', ticks: 5, grid: true},
-          y: {domain: rows.map(function (r) { return r.model; }), label: null},
+          y: {domain: rows.map(function (r) { return r.model; }), label: null,
+              tickFormat: function (m) { return clip(m, left - 12); }},
           color: colors,
           marks: [
             Plot.barX(rows, {x: 'share', y: 'model', fill: 'model', insetTop: 4, insetBottom: 4, rx: 2,
@@ -3266,7 +3327,9 @@
       by[f] = 'panel';
       return Plot.plot(Object.assign(opts, {
         width: narrow ? Math.min(w, 520) : w, height: narrow ? 3 * 230 + 70 : 320, style: style,
-        marginLeft: 52, marginRight: narrow ? 90 : 20, marginBottom: 44, marginTop: 28,
+        // Stacked, each set's name at the right of its panel: room for the longest.
+        marginLeft: 52, marginRight: narrow ? 16 + widest(panels) : 20,
+        marginBottom: 44, marginTop: 28,
         inset: 14,                         // a dot at 100% clear of the frame
         x: {domain: [lo, 1], label: 'Probability it gave its answer →', tickFormat: '.0%', ticks: 5, grid: true},
         y: {domain: [lo, 1], label: '↑ Share right', tickFormat: '.0%', ticks: 5, grid: true},
@@ -3286,7 +3349,9 @@
       if (!C.overview.length) return el('p', {class: 'hint'}, 'No model has both suite scores and answers yet.');
       var worst = Math.max(0.15, Math.max.apply(null, C.overview.map(function (d) { return d.wrong; })));
       var x0 = Math.max(0, Math.floor((Math.min.apply(null, C.overview.map(function (d) { return d.recall; })) - 0.05) * 20) / 20);
-      var pxW = w - 110, pxH = 370;
+      // The frame: 44 px left, 50 right, 30 top, 46 under (the axis label under the tick
+      // labels, which it ran into), and 16 inside; the names are placed in those pixels.
+      var pxW = w - 44 - 50 - 32, pxH = 456 - 30 - 46 - 32;
       // Named: the models in or next to the zone (the ones to pick from), then the clearest
       // warnings (most made up). The rest are on hover: named all at once they ran together.
       // The zone: finds 90% or more of the real bugs, makes up 15% or less.
@@ -3295,13 +3360,13 @@
       var worstFew = C.overview.slice().sort(function (a, b) { return b.wrong - a.wrong; }).slice(0, 3);
       var pts = C.overview.filter(function (d) { return near(d) || worstFew.indexOf(d) !== -1; })
         .sort(function (a, b) { return a.wrong - b.wrong || b.recall - a.recall; });
-      var offs = spread(pts, function (d) { return (d.recall - x0) / (1 - x0) * pxW; },
-                        function (d) { return d.wrong / worst * pxH; });
-      var labels = pts.map(function (d, i) { return offs[i] == null ? null : {model: d.model, recall: d.recall, ty: d.wrong + offs[i] * worst / pxH}; })
-        .filter(Boolean);
+      var offs = spread(pts, function (d) { return 60 + (d.recall - x0) / (1 - x0) * pxW; },
+                        function (d) { return d.wrong / worst * pxH; }, w);
+      var labels = pts.map(function (d, i) {
+        return offs[i] && {model: d.model, recall: d.recall, ty: d.wrong + offs[i].dy * worst / pxH, anchor: offs[i].anchor};
+      }).filter(Boolean);
       return Plot.plot({
-        // marginBottom: room for the axis label under the tick labels, which it ran into.
-        width: w, height: 456, style: style, grid: true, inset: 16, marginRight: 50, marginTop: 30, marginBottom: 46,
+        width: w, height: 456, style: style, grid: true, inset: 16, marginLeft: 44, marginRight: 50, marginTop: 30, marginBottom: 46,
         x: {label: 'Finds real bugs in our code →', domain: [x0, 1], tickFormat: '.0%'},
         y: {label: '↑ Makes fewer things up', domain: [0, worst], reverse: true, tickFormat: '.0%'},
         marks: [
@@ -3309,9 +3374,7 @@
           Plot.rect([{x1: zoneX, x2: 1, y1: 0, y2: zoneY}], {x1: 'x1', x2: 'x2', y1: 'y1', y2: 'y2',
             fill: good, fillOpacity: 0.12, stroke: good, strokeOpacity: 0.5, strokeDasharray: '4 3'}),
           Plot.dot(C.overview, {x: 'recall', y: 'wrong', r: 6, fill: good, stroke: ink, strokeWidth: 0.5}),
-          // A halo in the panel's colour keeps each name legible over dots, grid lines and the zone.
-          Plot.text(labels, {x: 'recall', y: 'ty', text: 'model', fontSize: 11, fill: ink,
-                             stroke: halo, strokeWidth: 3.5, strokeOpacity: 0.9, paintOrder: 'stroke'}),
+          names(labels, 'recall'),
           Plot.tip(C.overview, Plot.pointer({x: 'recall', y: 'wrong',
             title: function (d) { return d.model + '\nfinds ' + d.found + ' real findings\nconfidently wrong in ' + d.wrongN + ' answers'; }}))
         ]
@@ -3337,11 +3400,13 @@
         segs.push({model: h.model, part: 'missed', x1: f + wl, x2: f + wl + ms, n: h.missed + ' of ' + bugs + ' bugs'});
       });
       var models = Object.keys(score).sort(function (a, b) { return score[b] - score[a] || tasks[b] - tasks[a]; });
+      function count(m) { return '  (' + tasks[m] + ')'; }      // 1 task is not the same evidence as 38
+      var left = room(models.map(function (m) { return m + count(m); }), capL(w));
       return Plot.plot({
-        width: w, height: rows(models.length), style: style, marginLeft: w < 560 ? 150 : 250,
+        width: w, height: rows(models.length) + 16, style: style, marginLeft: left, marginBottom: 46,
         x: {domain: [-1, 1], label: '← false alarms on clean files · bugs found →', grid: true,
             tickFormat: function (d) { return Math.abs(Math.round(d * 100)) + '%'; }},
-        y: {domain: models, label: null, tickFormat: function (m) { return fit(m, w < 560 ? 16 : 28) + '  (' + tasks[m] + ')'; }},
+        y: {domain: models, label: null, tickFormat: function (m) { return clip(m, left - 12 - textW(count(m))) + count(m); }},
         color: {legend: true, domain: ['found', 'wrong line', 'missed', 'false alarm'], range: [good, signal, line, err]},
         marks: [
           // Under FEW tasks a model's bars are faint: shown, not much to go on.
@@ -3367,12 +3432,15 @@
       }).sort(function (a, b) { return b.lo - a.lo || b.judged - a.judged; });
       var all = R.reduce(function (s, r) { return [s[0] + r.useful, s[1] + r.judged]; }, [0, 0]);
       var pooled = all[0] / all[1];
-      var narrowW = w < 560, nameW = narrowW ? 130 : 210;
+      function n(r) { return r.useful + '/' + r.judged; }
+      var nameW = room(R.map(function (r) { return r.model; }), capL(w));
+      // Room on the right for a count beside a range that reaches 100%.
+      var right = 12 + widest(R.map(n), 11);
       return Plot.plot({
-        width: w, height: 24 * R.length + 90, style: style, marginLeft: nameW, marginRight: 64, marginTop: 34,
+        width: w, height: 24 * R.length + 106, style: style, marginLeft: nameW, marginRight: right, marginTop: 34, marginBottom: 46,
         x: {domain: [0, 1], label: 'Helped, share of judged offloads →', tickFormat: '.0%', ticks: 5, grid: true},
         y: {domain: R.map(function (r) { return r.model; }), label: null,
-            tickFormat: function (m) { return fit(m, narrowW ? 16 : 26); }},
+            tickFormat: function (m) { return clip(m, nameW - 12); }},
         r: {domain: [0, Math.max.apply(null, R.map(function (r) { return r.judged; }))], range: [3, 11]},
         color: {domain: ['helps', 'too few to say', 'does not help'], range: [good, muted, err], legend: true},
         marks: [
@@ -3387,8 +3455,7 @@
                 + r.offloads + ' offloads)\nlikely between ' + Math.round(r.lo * 100) + '% and ' + Math.round(r.hi * 100) + '%'
                 + (r.real || r.false ? '\nverified findings ' + r.real + ', false claims ' + r.false : '');
             }}),
-          Plot.text(R, {x: 'hi', y: 'model', dx: 8, textAnchor: 'start', fill: ink, fontSize: 11,
-            text: function (r) { return r.useful + '/' + r.judged; }})
+          Plot.text(R, {x: 'hi', y: 'model', dx: 8, textAnchor: 'start', fill: ink, fontSize: 11, text: n})
         ]
       });
     });
@@ -3399,18 +3466,19 @@
       var s = C.speed.map(function (d) { return d.seconds; });
       var lo = Math.max(1, Math.min.apply(null, s) * 0.8), hi = Math.max.apply(null, s) * 1.25;
       var y0 = Math.max(0, Math.floor((Math.min.apply(null, C.speed.map(function (d) { return d.recall; })) - 0.05) * 20) / 20);
-      var pxW = w - 110, pxH = 340;
+      var pxW = w - 44 - 50 - 32, pxH = 436 - 30 - 46 - 32;     // the frame, as on Who to trust
       // The zone: 90% or more of the findings, in 40 seconds or less. Named: the models in
       // or next to it, as on Who to trust; the rest are on hover.
       var zoneS = Math.min(hi, Math.max(lo, 40)), zoneR = Math.max(y0, 0.9);
       var pts = C.speed.filter(function (d) { return d.seconds <= zoneS * 1.25 && d.recall >= zoneR - (1 - y0) * 0.08; })
         .sort(function (a, b) { return b.recall - a.recall; });
-      var offs = spread(pts, function (d) { return (Math.log(d.seconds) - Math.log(lo)) / (Math.log(hi) - Math.log(lo)) * pxW; },
-                        function (d) { return (1 - d.recall) / (1 - y0) * pxH; });
-      var labels = pts.map(function (d, i) { return offs[i] == null ? null : {model: d.model, seconds: d.seconds, ty: d.recall - offs[i] * (1 - y0) / pxH}; })
-        .filter(Boolean);
+      var offs = spread(pts, function (d) { return 60 + (Math.log(d.seconds) - Math.log(lo)) / (Math.log(hi) - Math.log(lo)) * pxW; },
+                        function (d) { return (1 - d.recall) / (1 - y0) * pxH; }, w);
+      var labels = pts.map(function (d, i) {
+        return offs[i] && {model: d.model, seconds: d.seconds, ty: d.recall - offs[i].dy * (1 - y0) / pxH, anchor: offs[i].anchor};
+      }).filter(Boolean);
       return Plot.plot({
-        width: w, height: 436, style: style, grid: true, inset: 16, marginRight: 50, marginTop: 30, marginBottom: 46,
+        width: w, height: 436, style: style, grid: true, inset: 16, marginLeft: 44, marginRight: 50, marginTop: 30, marginBottom: 46,
         x: {type: 'log', domain: [lo, hi], label: 'Median seconds per answer on our tasks →'},
         y: {domain: [y0, 1], label: '↑ Findings located', tickFormat: '.0%'},
         marks: [
@@ -3418,8 +3486,7 @@
           Plot.rect([{x1: lo, x2: zoneS, y1: zoneR, y2: 1}], {x1: 'x1', x2: 'x2', y1: 'y1', y2: 'y2',
             fill: good, fillOpacity: 0.12, stroke: good, strokeOpacity: 0.5, strokeDasharray: '4 3'}),
           Plot.dot(C.speed, {x: 'seconds', y: 'recall', r: 6, fill: sky, stroke: ink, strokeWidth: 0.5}),
-          Plot.text(labels, {x: 'seconds', y: 'ty', text: 'model', fontSize: 11, fill: ink,
-                             stroke: halo, strokeWidth: 3.5, strokeOpacity: 0.9, paintOrder: 'stroke'}),
+          names(labels, 'seconds'),
           Plot.tip(C.speed, Plot.pointer({x: 'seconds', y: 'recall',
             title: function (d) { return d.model + '\nmedian ' + d.seconds.toFixed(0) + 's over ' + d.tasks + ' tasks\nfinds ' + Math.round(d.recall * 100) + '%'; }}))
         ]
@@ -3448,13 +3515,13 @@
       var models = Object.keys(sum).filter(function (m) { return scored[m]; }).sort(function (a, b) { return sum[b] - sum[a]; });
       var idle = Object.keys(sum).filter(function (m) { return !scored[m]; }).sort();
       var shown = C.heat.filter(function (d) { return scored[d.model]; });
-      var nameW = w < 560 ? 130 : 230;
+      var nameW = room(models, capL(w));
       function tip(d) { return d.model + '\n' + d.task + ' (' + d.family + ')\n' + d.label + (d.invented ? '\ninvented something' : ''); }
       var box = el('div');
       box.appendChild(Plot.plot({
         width: w, height: 22 * models.length + 84, style: style, marginLeft: nameW, marginTop: 44, padding: 0.08,
         x: {domain: tasks, axis: null},
-        y: {domain: models, label: null, tickSize: 0, tickFormat: function (m) { return fit(m, w < 560 ? 16 : 30); }},
+        y: {domain: models, label: null, tickSize: 0, tickFormat: function (m) { return clip(m, nameW - 12); }},
         color: {type: 'linear', domain: [0, 0.5, 1], range: [err, signal, good]},
         marks: [
           Plot.cell(shown.filter(function (d) { return d.rate == null; }), {x: 'task', y: 'model', fill: line, title: tip}),
@@ -3492,13 +3559,15 @@
       var models = Object.keys(S).sort(function (a, b) { return share(b) - share(a) || S[a].taken - S[b].taken; });
       var colour = {right: good, misread: signal, 'left out': line, 'trap taken': err, 'no answer': muted};
       function tip(d) { return d.model + '\n' + d.task.replace(/^vision-/, '') + ': ' + d.field + (d.trap ? ' (a trap)' : '') + '\n' + d.state; }
+      function count(m) { return '  (' + S[m].right + '/' + S[m].fields + ')'; }
+      var left = room(models.map(function (m) { return m + count(m); }), capL(w));
       return Plot.plot({
         // The group names tilted: a narrow group (a few tables) would run into its neighbour's.
-        width: w, height: 22 * models.length + 140, style: style, marginLeft: 300, marginTop: 80, padding: 0.08,
+        width: w, height: 22 * models.length + 140, style: style, marginLeft: left, marginTop: 80, padding: 0.08,
         x: {domain: keys, axis: 'top', label: null, tickSize: 0, tickRotate: -60, textAnchor: 'start',
             tickFormat: function (k) { return head[k] || ''; }},
         y: {domain: models, label: null, tickSize: 0,
-            tickFormat: function (m) { return m + '  (' + S[m].right + '/' + S[m].fields + ')'; }},
+            tickFormat: function (m) { return clip(m, left - 12 - textW(count(m))) + count(m); }},
         color: {legend: true, domain: V.states, range: V.states.map(function (s) { return colour[s]; })},
         marks: [
           Plot.cell(V.heat, {x: 'key', y: 'model', fill: 'state', title: tip}),
@@ -3537,12 +3606,13 @@
         return r.useful + '/' + r.judged + (narrowV ? '' : ' · ' + Math.round(r.answered / r.total * 100) + '% answered'
           + (r.real + r.wrongC ? ' · claims ' + r.real + '/' + (r.real + r.wrongC) : ''));
       }
+      var nameW = room(R.map(function (r) { return r.model; }), capL(w));
       if (R.length) box.appendChild(Plot.plot({
-        width: w, height: 24 * R.length + 90, style: style, marginLeft: narrowV ? 130 : 190,
-        marginRight: narrowV ? 50 : 260, marginTop: 34,
+        width: w, height: 24 * R.length + 106, style: style, marginLeft: nameW, marginTop: 34, marginBottom: 46,
+        marginRight: 16 + widest(R.map(words), 11),
         x: {domain: [0, 1], label: 'Judged useful, share of its judged seats →', tickFormat: '.0%', ticks: 5, grid: true},
         y: {domain: R.map(function (r) { return r.model; }), label: null,
-            tickFormat: function (m) { return fit(m, narrowV ? 16 : 26); }},
+            tickFormat: function (m) { return clip(m, nameW - 12); }},
         r: {domain: [0, Math.max.apply(null, R.map(function (r) { return r.judged; }))], range: [3, 11]},
         color: {domain: ['helps', 'too few to say', 'does not help'], range: [good, muted, err], legend: true},
         marks: [
@@ -3578,11 +3648,13 @@
       });
       var ranges = models.map(function (m) { return R[m]; });
       var top = Math.min(1, Math.max.apply(null, ranges.map(function (r) { return r.hi; })) + 0.02);
+      // The count beside each name: 1 of 2 is not the same evidence as 17 of 26.
+      function count(m) { return '  (' + T[m].answers + ')'; }
+      var left = room(models.map(function (m) { return m + count(m); }), capL(w));
       return Plot.plot({
-        width: w, height: 20 * models.length + 70, style: style, marginLeft: w < 560 ? 150 : 250,
+        width: w, height: 20 * models.length + 86, style: style, marginLeft: left, marginBottom: 46,
         x: {domain: [0, top], label: 'Confidently wrong, share of answers that could have been →', tickFormat: '.0%', grid: true},
-        // The count beside each name: 1 of 2 is not the same evidence as 17 of 26.
-        y: {domain: models, label: null, tickFormat: function (m) { return fit(m, w < 560 ? 16 : 28) + '  (' + T[m].answers + ')'; }},
+        y: {domain: models, label: null, tickFormat: function (m) { return clip(m, left - 12 - textW(count(m))) + count(m); }},
         color: {legend: true, domain: C.kinds, range: [err, signal, sky, muted]},
         marks: [
           Plot.barX(C.wrong, {x: 'rate', y: 'model', fill: 'kind', insetTop: 3, insetBottom: 3,

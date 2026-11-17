@@ -1,7 +1,7 @@
 # Benchmarks
 
 The first part of this file says how to read the dashboard's **Benchmarks**
-page; each report has the same under **How to read this**. The rest, from
+page; each report has the same under **How this is measured**. The rest, from
 "Standard benchmarks" on, is the record of why the bench scores models on its
 own suite rather than on public benchmarks (2026-09), kept as written. The
 `floor/` tier and the other files it names are not part of this repository.

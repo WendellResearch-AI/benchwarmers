@@ -60,12 +60,12 @@ theme's court line):
 - **The page** (`section.tab`): a bar (`.bar`: the page's name, its search or
   filter, a `.spring`, its own actions at the right; `serve.BAR_TOOLS`, fixed
   HTML that a page fetched again never replaces), then its sections.
-- **The docked panel** (`aside.facts`, or the record in hand: the model
-  editor, a collection): what the page holds in facts, the contents of a long
-  page, or the record in hand with its Save at a fixed foot. With nothing in
-  hand it says what it is for. A record is a `<dialog>` opened by its `open`
-  attribute (not `showModal`), so the page beside it stays live; Escape and
-  Close put it away and its row loses the mark.
+- **The docked panel** (`aside.facts`, or the record in hand, `dialog.dock`:
+  the model editor, a collection, an endpoint): what the page holds in facts,
+  the contents of a long page, or the record in hand with its actions at a
+  fixed foot. With nothing in hand it says what it is for. A record is a
+  `<dialog>` opened by its `open` attribute (not `showModal`), so the page
+  beside it stays live; Escape and Close put it away and its row loses the mark.
 
 Under 1280px the panel is a sheet from the right, shown when something is in
 hand or the page's bar asks for it (Benchmarks' "On this page"). Under 800px
@@ -74,7 +74,10 @@ the rail is a bar with a menu.
 ## Pieces
 
 - **Section** (`.panel`): a heading (`--t-lead`, bold), one sentence under it,
-  then content. Sections are parted by a hairline, not boxed.
+  then content. Sections are parted by a hairline, not boxed. A section with
+  its own controls has a heading line (`.panel > header`: the heading, its
+  controls, Share at the right). What explains it beyond the sentence is in a
+  fold under it ("How this is measured").
 - **Columns of sections** (`.cols`): sections flow in as many columns as fit,
   each kept whole (Benchmarks' reports: one on a laptop, three at 3440).
 - **Table**: spans its pane; hairline rows; a sticky head; numbers right in

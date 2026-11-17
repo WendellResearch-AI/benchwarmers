@@ -100,13 +100,16 @@ h1, h2, h3 { line-height: 1.2; letter-spacing: -.01em; text-wrap: balance; }
    a spring, then its actions at the right. */
 .bar .spring { flex: 1; }
 .bar .done { color: var(--ok); }
+.bar .errors { color: var(--err); }
 .bar input[type=search] { width: 22rem; min-width: 0; height: 32px; padding: 0 10px; border: 1px solid var(--field); border-radius: var(--radius); background: var(--paper-2); color: var(--ink); font: inherit; }
 /* A page not fetched yet (bench.js load), while the bar sweeps the top. */
 .tab[data-lazy] > .bar:last-child::after { content: "Loading…"; color: var(--muted); }
 .facts-open { margin-left: auto; }
 .panel { padding: var(--gap-4) var(--pad) var(--gap-5); }
 .tab > .panel ~ .panel, .cols > .panel { border-top: 1px solid var(--line); }
-.panel > h2 { margin: 0; font-size: var(--t-lead); font-weight: 700; }
+.panel > h2, .panel > header > h2 { margin: 0; font-size: var(--t-lead); font-weight: 700; }
+/* A section's heading line: its name, its own controls (Benchmarks' windows), Share at the right. */
+.panel > header { display: flex; flex-wrap: wrap; align-items: center; gap: var(--gap-2) var(--gap-4); min-height: 32px; }
 :is(.panel, .split > section) > .sub { margin: var(--gap-1) 0 var(--gap-3); color: var(--muted); max-width: 70ch; }
 
 /* Benchmarks' reports, in as many columns as fit (bench.js columns sets
@@ -120,18 +123,19 @@ h1, h2, h3 { line-height: 1.2; letter-spacing: -.01em; text-wrap: balance; }
 .panel.report { scroll-margin-top: var(--bar-h); }  /* a jump lands under the bar, not behind it */
 
 /* ---- the docked panel: a page's own facts (aside.facts), or the record in
-   hand: a model (#model-dialog, bench.js dock) or a collection (#c-form,
-   fillForm), opened beside the page. From 1280px it is the frame's third pane
-   and the page gives it the room; under, a sheet over the page's right side. */
-aside.facts, #model-dialog, #c-form {
+   hand (dialog.dock): a model (#model-dialog, bench.js dock), a collection
+   (#c-form, fillForm) or an endpoint (openEp), opened beside the page. From
+   1280px it is the frame's third pane and the page gives it the room; under,
+   a sheet over the page's right side. */
+aside.facts, dialog.dock {
   position: fixed; z-index: 20; inset: 0 0 0 auto; width: var(--aside-w); max-width: 100vw; height: auto; max-height: none;
   margin: 0; padding: 0; display: flex; flex-direction: column; color: var(--ink); background: var(--paper);
   border: 0; border-top: .4rem solid var(--court-line, transparent); border-left: 1px solid var(--line); border-radius: 0; box-shadow: none; }
-:is(#model-dialog, #c-form):not([open]) { display: none; }
-.app:has(#model-dialog[open], #c-form[open]) aside.facts { display: none; }
-:is(aside.facts, #model-dialog, #c-form) .bar { position: static; padding: 0 var(--gap-3) 0 20px; background: none; }
-:is(aside.facts, #model-dialog, #c-form) .bar :is(h2, p) { font-size: var(--t-body); }
-.facts-body > :is(.form-panel, details) { margin-left: 20px; margin-right: 20px; }
+dialog.dock:not([open]) { display: none; }
+.app:has(dialog.dock[open]) aside.facts { display: none; }
+:is(aside.facts, dialog.dock) .bar { position: static; padding: 0 var(--gap-3) 0 20px; background: none; }
+:is(aside.facts, dialog.dock) .bar :is(h2, p) { font-size: var(--t-body); }
+.facts-body > :is(.form-panel, details, p) { margin-left: 20px; margin-right: 20px; }
 .facts-close { display: none; margin-left: auto; }
 .facts-body, .dock-body { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin; }
 .facts-body { padding-bottom: var(--gap-5); }
@@ -148,8 +152,17 @@ dl.rows dd .mono { font-size: var(--t-small); }
 /* The model editor: its alias, then label and value rows (the rules under
    them, the panel's width), its folds, and Save at a fixed foot. */
 .dock-body { padding: var(--gap-4) 20px var(--gap-5); }
-#m-title, #c-form-head { margin: 0; font: 500 var(--t-lead)/1.3 var(--font-mono); letter-spacing: 0; overflow-wrap: anywhere; }
-#c-form-head:focus { outline: none; }
+#m-title, #c-form-head, .dock-head { margin: 0; font: 500 var(--t-lead)/1.3 var(--font-mono); letter-spacing: 0; overflow-wrap: anywhere; }
+:is(#c-form-head, .dock-head):focus { outline: none; }
+.dock-body > dl.rows { margin: var(--gap-3) 0 0; }
+.dock-body > h3 { margin: var(--gap-5) 0 0; font-size: var(--t-body); }
+.dock-body > .sub { margin: var(--gap-1) 0 var(--gap-2); color: var(--muted); }
+/* What an endpoint serves, in its panel: a model and its state on a line, what it is served as under them. */
+table.serves, table.serves tbody { display: block; }
+table.serves tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 var(--gap-3); padding: 6px 0; border-bottom: 1px solid var(--line); }
+table.serves td { padding: 0; border: 0; overflow-wrap: anywhere; }
+table.serves td:nth-child(2) { grid-row: 2; color: var(--muted); font-size: var(--t-small); }
+table.serves .mono { color: var(--ink-2); }
 #model-dialog .served { margin: var(--gap-1) 0 var(--gap-4); }
 #model-dialog .rows { display: grid; grid-template-columns: 7.5rem minmax(0, 1fr); align-items: center; gap: var(--gap-2) var(--gap-3); }
 #model-dialog .rows > label { color: var(--muted); }
@@ -158,9 +171,9 @@ dl.rows dd .mono { font-size: var(--t-small); }
 :is(#m-facts, #m-opts) { margin-top: var(--gap-4); padding-top: var(--gap-3); border-top: 1px solid var(--line); }
 :is(#m-facts, #m-opts) > summary { cursor: pointer; font-weight: 700; }
 .dock-foot { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: var(--gap-2); padding: var(--gap-3) 20px; border-top: 1px solid var(--line); }
-:is(#model-dialog, #c-form) .dock-foot > :is(.errors, .done) { flex-basis: 100%; margin: 0; }
+dialog.dock .dock-foot > :is(.errors, .done) { flex-basis: 100%; margin: 0; }
 .dock-foot > :empty { display: none; }
-#c-delete { margin-left: auto; }
+#c-delete, .dock-foot > .danger:last-child { margin-left: auto; }
 #model-dialog .remove { margin: 0 0 0 auto; padding: 0; border: 0; }
 #model-dialog .remove[open] { flex-basis: 100%; margin: 0; }
 #model-dialog .remove > summary { color: var(--muted); text-decoration: underline; text-underline-offset: .18em; }
@@ -169,18 +182,18 @@ dl.rows dd .mono { font-size: var(--t-small); }
 /* Under 1280px the panel is a sheet (a popup may keep a shadow); from 1280 a
    pane, narrower beside Benchmarks' reports until 1700. */
 @media (max-width: 1279px) {
-  aside.facts, #model-dialog, #c-form { width: min(440px, 100vw); box-shadow: -12px 0 32px -16px color-mix(in oklab, var(--ink-deep) 50%, transparent); }
+  aside.facts, dialog.dock { width: min(440px, 100vw); box-shadow: -12px 0 32px -16px color-mix(in oklab, var(--ink-deep) 50%, transparent); }
   aside.facts { display: none; }
   .app.facts-open aside.facts { display: flex; }
   .facts-close { display: inline; }
 }
 @media (min-width: 1280px) {
   .bar .facts-open { display: none; }
-  .app:has(> .panes > .tab.active > :is(aside.facts, #c-form[open])), .app:has(> #model-dialog[open]) {
+  .app:has(> .panes > .tab.active > :is(aside.facts, dialog.dock[open])), .app:has(> dialog.dock[open]) {
     grid-template-columns: var(--rail-w) minmax(0, 1fr) var(--aside-w); }
 }
 @media (min-width: 1280px) and (max-width: 1699px) {
-  .app:has(> .panes > #tab-suite.active):not(:has(> #model-dialog[open])) { --aside-w: 320px; }
+  .app:has(> .panes > #tab-suite.active):not(:has(> dialog.dock[open])) { --aside-w: 320px; }
 }
 /* Under 800px the rail is a bar across the top; Menu opens the pages under it. */
 @media (max-width: 799px) {
@@ -215,7 +228,7 @@ button { font: inherit; cursor: pointer; }
 .problem { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .25rem 1rem; align-items: center; padding: .55rem .75rem; margin: 0 -.75rem; border-radius: var(--radius); }
 .problem:hover { background: var(--step-1); }
 .problem .why { color: var(--muted); overflow-wrap: anywhere; }
-.problem .acts, .endpoint .acts, .ep .acts { display: flex; gap: .5rem; flex-wrap: wrap; justify-content: flex-end; }
+.problem .acts, .endpoint .acts { display: flex; gap: .5rem; flex-wrap: wrap; justify-content: flex-end; }
 .row-input { display: flex; gap: .5rem; align-items: center; margin-top: .35rem; }
 .row-input input { flex: 1; min-width: 0; margin: 0 !important; }
 .problems .head { display: flex; align-items: baseline; gap: .5rem; }
@@ -308,30 +321,37 @@ details.panel[open] > summary { margin-bottom: .75rem; }
 
 .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem 1.25rem; margin: 0 0 .75rem; }
 .toolbar input[type=search] { font: inherit; padding: .4rem .6rem; min-width: 14rem; border: 1px solid var(--field); border-radius: var(--radius); background: var(--paper-2); color: var(--ink); }
-.toolbar label { display: inline-flex; align-items: center; gap: .4rem; cursor: pointer; }
-.toolbar select { font: inherit; padding: .35rem .4rem; border: 1px solid var(--field); border-radius: var(--radius); background: var(--paper-2); color: var(--ink); }
+:is(.toolbar, .panel > header) label { display: inline-flex; align-items: center; gap: .4rem; cursor: pointer; }
+:is(.toolbar, .panel > header) select { font: inherit; padding: .35rem .4rem; border: 1px solid var(--field); border-radius: var(--radius); background: var(--paper-2); color: var(--ink); }
 tr.pick-row { cursor: pointer; }
 a.dmodel { color: var(--ink); text-decoration: none; font-weight: 500; }
 a.dmodel:hover .alias { box-shadow: inset 0 -.3em 0 var(--signal); }
-/* Connections: each endpoint, its models folded under it */
-.ep { padding: .75rem 0; border-top: 1px solid var(--line); }
-.ep-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .4rem 1rem; align-items: center; }
-.ep .base { color: var(--muted); overflow-wrap: anywhere; }
-.ep details.models > summary { cursor: pointer; color: var(--link); margin-top: .3rem; }
-.ep details.models[open] > summary { margin-bottom: .5rem; }
+/* Endpoints (serve.endpoints_page): a row each, the whole row opens it docked
+   (bench.js openEp); a name on one line, the base URL cut to its column, whole
+   in its title and the panel; on a phone the table scrolls in its box. Under
+   them, rate limits per connection: a box per limit (bench.js loadLimits). */
+.ep-table .c-open { white-space: nowrap; overflow-wrap: normal; }
+.ep-table td.base { max-width: 24rem; }
+.ep-table td.base .mono { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--t-small); }
+.ep-table td .chip + .chip, .ep-table .c-open + .chip { margin-left: var(--gap-1); }
+.ep-table td.when { white-space: nowrap; }
+.l-table input { width: 5rem; padding: .2rem .4rem; border: 1px solid var(--field); border-radius: var(--radius); background: var(--paper-2); color: var(--ink); font: inherit; text-align: right; }
+.l-table td:first-child { min-width: 10rem; }
+.l-table :is(th, td):not(:first-child) { padding-left: var(--gap-1); padding-right: var(--gap-1); }
+.l-table .conn .btn { margin-left: var(--gap-2); }
 .hint { color: var(--muted); margin: .9rem 0 0; max-width: 70ch; }
 
 /* key: folded until asked for */
 details.key { margin: 1rem 0 0; }
+details.key + details.key { margin-top: var(--gap-2); }      /* a report's folds, one under the other */
+details.key > p { max-width: 70ch; }
 details.key > summary { cursor: pointer; color: var(--link); width: max-content; }
 details.key dl { margin: .5rem 0 0; display: grid; grid-template-columns: max-content minmax(0, 60ch); gap: .35rem 1rem; }
 details.key dt { font-weight: 700; }
 details.key dd { margin: 0; color: var(--ink); }
 
-/* Share (serve.SHARE, bench.js): top right of a report, its menu under it. */
-.panel:has(> .share) { position: relative; }
-.panel:has(> .share) > h2 { padding-right: 4.5rem; }
-details.share { position: absolute; top: var(--gap-4); right: var(--pad); }
+/* Share (serve.SHARE, bench.js): the end of a report's heading line, its menu under it. */
+details.share { position: relative; margin-left: auto; }
 details.share > summary { cursor: pointer; color: var(--link); list-style: none; text-decoration: underline; text-underline-offset: .18em; }
 details.share > summary::-webkit-details-marker { display: none; }
 .share-menu { position: absolute; right: 0; top: 1.7rem; z-index: 5; display: flex; flex-direction: column; align-items: flex-start; gap: .5rem; min-width: 14rem; padding: .8rem 1rem; border: 1px solid var(--ink); border-radius: var(--radius); background: var(--paper-2); }
@@ -349,6 +369,10 @@ th[data-sortable]::after { content: ""; display: inline-block; width: .9em; colo
 th[aria-sort=ascending]::after { content: " \2191"; }
 th[aria-sort=descending]::after { content: " \2193"; }
 td.num, th.num { text-align: right; }
+/* A grid of figures (Our code's table): every cell between the first and the last is one, and an empty one a task not run. */
+table.grid td:not(:first-child, :last-child) { text-align: right; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+table.grid td:empty::after { content: "—"; color: var(--muted); }
+table.grid td:last-child { min-width: 24rem; }      /* what a model invented, in lines, not a column of words */
 /* the per-connection model cards on Connections: one fixed column plan */
 table.model-cards { table-layout: fixed; min-width: 52rem; }
 .panel:has(> table.model-cards) { overflow-x: auto; }        /* scrolls on a narrow window instead of wrapping numbers */
@@ -480,7 +504,7 @@ dialog h2 { margin: 0 0 .2rem; font-size: var(--t-head); font-weight: 700; }
 .endpoint:hover { background: var(--hover); }
 .endpoint .base { color: var(--muted); overflow-wrap: anywhere; }
 .found { margin: 0 0 1rem; }
-.found h3 { margin: 0 0 .25rem; font-size: var(--t-lead); font-weight: 700; }
+.found h2 { margin: 0 0 .25rem; font-size: var(--t-lead); font-weight: 700; }
 :is(dialog, .form-panel) h3.form-head { margin: 1.25rem 0 0; font-size: var(--t-lead); font-weight: 700; }
 :is(dialog, .form-panel) input[readonly] { background: var(--step-1); }
 /* Add an endpoint's choices: API key, then each provider; the chosen one pressed */
@@ -545,7 +569,6 @@ pre.log.answer { max-height: 40vh; }
 .q-tile .q-head .chip { flex: none; white-space: nowrap; }
 .q-about { display: flex; flex-direction: column; gap: .1rem; margin-top: -.3rem; font-size: var(--t-small); color: var(--muted); }
 .q-about .q-from { font-style: italic; }
-.q-small { font-size: var(--t-small); color: var(--muted); }
 .q-body { display: flex; flex-direction: column; gap: .5rem; min-width: 0; }
 .q-group { border: 1px solid var(--line); border-radius: var(--radius); padding: .45rem .55rem .55rem; display: flex; flex-direction: column; gap: .45rem; }
 .q-group.bare { border: 0; padding: 0; }
@@ -573,16 +596,17 @@ pre.log.answer { max-height: 40vh; }
 .q-msg:empty { display: none; }
 .q-tile .q-foot { display: flex; gap: .4rem; justify-content: space-between; margin-top: auto; padding-top: .5rem; border-top: 1px solid var(--line); }
 .q-tile .q-foot .chip { margin-left: .2rem; }
-.q-legend { display: flex; flex-wrap: wrap; gap: 1rem; margin: 0 0 .4rem; }
+.q-legend { display: flex; flex-wrap: wrap; gap: var(--gap-1) var(--gap-4); margin: 0 0 .4rem; }
 .q-legend i { display: inline-block; width: .8rem; height: .7rem; border-radius: 2px; margin-right: .35rem; vertical-align: -1px; }
 #q-models { width: min(48rem, 94vw); max-width: none; }
 #q-models td:first-child { white-space: nowrap; }
 
 /* Benchmarks charts (Observable Plot) */
 .chart { margin: .5rem 0 .75rem; overflow-x: auto; }
-/* The first report's chart keeps its room until Plot arrives (bench.js needPlot): it is
-   always 456px high (bench.js, chart-overview), so the page under it does not jump. */
+/* A chart of a fixed height keeps its room until it is drawn (bench.js needPlot, drawNear),
+   so the page under it does not jump: Who to trust's and Performance's (bench.js). */
 #chart-overview:empty { min-height: 456px; }
+#chart-speed:empty { min-height: 436px; }
 h3.chart-head { font-size: var(--t-body); font-weight: 700; margin: 1rem 0 .2rem; }
 .chart-label { font-weight: 700; margin: .9rem 0 .1rem; }
 /* Models: each connection a fold, its heading the summary */
@@ -642,15 +666,14 @@ button.fold-all[aria-expanded="true"] .fold-chev { transform: rotate(45deg); mar
 .prefixed .prefix { display: flex; align-items: center; padding: 0 .55rem; font-family: var(--font-mono); color: var(--muted); background: var(--step-1); border: 1px solid var(--line); border-right: 0; border-radius: var(--radius) 0 0 var(--radius); }
 .prefixed input { flex: 1; min-width: 0; border-top-left-radius: 0; border-bottom-left-radius: 0; }
 .chart figure { margin: 0; }
-.chart [aria-label="color-legend"], .chart div[class$="-swatches"] { font-size: var(--t-small); margin-bottom: .4rem; }
+/* Plot's legends at the page's small size, not its own 10px (its class is "plot-…-swatches plot-…-swatches-wrap"). */
+.chart div[class*="-swatches"] { font-size: var(--t-small); margin-bottom: .4rem; }
 
 dialog .pick { display: flex; gap: 1.5rem; }
 
 @media (max-width: 40rem) {
   .problem { grid-template-columns: minmax(0, 1fr); }
   .problem .acts { justify-content: flex-start; }
-  .ep-head { grid-template-columns: minmax(0, 1fr); }
-  .ep .acts { justify-content: flex-start; }
   details.key dl { grid-template-columns: minmax(0, 1fr); }
   .toolbar input[type=search] { min-width: 0; width: 100%; }
   #tab-settings .panel > table { display: block; overflow-x: auto; }     /* Settings' tables scroll by themselves */
