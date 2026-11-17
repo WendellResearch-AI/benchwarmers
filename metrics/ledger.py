@@ -93,19 +93,27 @@ def rows(since: float = 0.0, until: float | None = None):
             t = next_month(t)
     for path in files:
         try:
-            fh = open(path, encoding="utf-8", errors="replace")
+            # Parsed once in a dashboard render (Quota management read the month three times).
+            parsed = locked.once(("ledger", str(path)), lambda: _parsed(path))
         except OSError:
             continue
-        with fh:
-            for line in fh:
-                try:
-                    row = json.loads(line)
-                except ValueError:
-                    continue                           # a line still being written
-                if not isinstance(row, dict) or not isinstance(row.get("t"), (int, float)):
-                    continue
-                if row["t"] >= since and (until is None or row["t"] < until):
-                    yield row
+        for row in parsed:
+            if row["t"] >= since and (until is None or row["t"] < until):
+                yield row
+
+
+def _parsed(path: pathlib.Path) -> list[dict]:
+    """A month's lines, each with its start `t`; a line still being written is left out."""
+    out = []
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(row, dict) and isinstance(row.get("t"), (int, float)):
+                out.append(row)
+    return out
 
 
 def tokens(usage: dict) -> dict:

@@ -135,6 +135,19 @@ def read_text(path) -> str:
     return once(str(path), lambda: pathlib.Path(path).read_text(encoding="utf-8"))
 
 
+def derived(path, make):
+    """make(the file's text, "" when it cannot be read); inside snapshot(),
+    worked out once per text and SHARED by every caller, so only for answers
+    nobody changes (a caller wanting its own copies copies). Keyed by the text
+    itself, so a write from this thread (a new text) works it out again.
+    `make` is a function defined once, not a lambda made at each call."""
+    try:
+        text = read_text(path)
+    except OSError:
+        text = ""
+    return once((make, text), lambda: make(text))
+
+
 def appended(path, mark: dict) -> tuple[bool, list[str]]:
     """(start over?, lines) for a log that is only ever appended to: the
     whole lines added since `mark` last saw it. The first time, or when the
@@ -224,6 +237,14 @@ def _selftest() -> None:
             g.write_text('{"a": 3}', encoding="utf-8")
             read_json(g)["a"] = 9                               # changing what it parsed changes nothing
             assert read_json(g) == {"a": 2}
+            made, h = [], pathlib.Path(tmp) / "h.json"
+
+            def parse(text):
+                made.append(text)
+                return json.loads(text or "{}")
+            assert derived(h, parse) is derived(h, parse) == {} and len(made) == 1     # once a text
+            write_atomic(h, '{"a": 4}')
+            assert derived(h, parse) == {"a": 4} and len(made) == 2                   # a new text: again
         assert read_json(g) == {"a": 3}
         # A log read in pieces: only what was added, a half-written line waits,
         # and a rewrite starts over.

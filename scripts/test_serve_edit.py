@@ -171,6 +171,37 @@ def main() -> int:
     ok = (set(view["served"]) == set(view["models"]) and victim not in view["served"]
           and view["served"].get(other) == d3[other]["served"])
     print(("ok   " if ok else "FAIL ") + "collection view: served name for every member choice"); failures += 0 if ok else 1
+    # Kept between requests (serve.kept), never across a write: with the data's stamp held
+    # still, so only the write itself can tell, a role changed through the page is in the
+    # very next answer, and with nothing written the answer is the one kept.
+    import threading
+    import urllib.request
+    from http.server import ThreadingHTTPServer
+    server = ThreadingHTTPServer(("127.0.0.1", 0), serve.Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    held = serve.data_stamp, serve.PORT
+    serve.data_stamp, serve.PORT = (lambda: 1.0), server.server_port
+
+    def ask(path, body=None):
+        req = urllib.request.Request(f"http://127.0.0.1:{server.server_port}{path}",
+                                     None if body is None else json.dumps(body).encode(),
+                                     {"Host": f"127.0.0.1:{server.server_port}", "Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=60) as r:
+            return json.loads(r.read())
+    try:
+        before = ask("/api/directory")["models"][other]["role"]
+        made = serve._kept["directory"][1]
+        again = ask("/api/directory")["models"][other]["role"]
+        kept_it = serve._kept["directory"][1] == made
+        role = "code" if before != "code" else "general"
+        changed = ask("/api/model", {"alias": other, "new_alias": other, "new_role": role})
+        after = ask("/api/directory")["models"][other]["role"]
+    finally:
+        serve.data_stamp, serve.PORT = held
+        server.shutdown()
+    ok = kept_it and again == before and changed["ok"] and after == role
+    print(("ok   " if ok else "FAIL ") + "a page kept between requests, and never answered from before a write"
+          + ("" if ok else f" -> {before} {again} {kept_it} {changed} {after}")); failures += 0 if ok else 1
     # Clients: every snippet parses in its format, names each collection, sets the
     # timeouts a panel needs, and a made key goes only into a shell line or a field.
     import tomllib

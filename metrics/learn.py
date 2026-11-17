@@ -152,10 +152,20 @@ def _live(ev: dict, now: dt.datetime) -> bool:
 
 
 def learned() -> dict:
-    """alias -> what was learned, without the rate limits that have expired."""
+    """alias -> what was learned, without the rate limits that have expired.
+    Worked out once a render (catalog.info asks for every model), each caller
+    given its own dict."""
+    return dict(locked.derived(LEARNED, _learned))
+
+
+def _learned(text: str) -> dict:
     now = dt.datetime.now().astimezone()
     out = {}
-    for alias, e in _read(LEARNED).items():
+    try:
+        seen = json.loads(text) if text else {}
+    except ValueError:
+        seen = {}
+    for alias, e in (seen if isinstance(seen, dict) else {}).items():
         if alias.startswith("_"):
             continue
         if isinstance(e, dict) and e.get("limits"):

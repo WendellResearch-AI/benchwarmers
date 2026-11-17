@@ -113,6 +113,7 @@ def main() -> int:
             assert call(d, "/api/nope", {}, Host="evil.example")[0] == 403
             assert call(d, "/api/nope", {})[0] == 401
             assert call(d, "/fonts/chivo-latin-400-normal.woff2")[0] == 303
+            assert call(d, serve.versioned("bench.js"))[0] == 303                 # the page's script too
             status, _, page = call(d, "/login")
             assert status == 200 and "Admin token" in page
             # ...which only the admin token gets, through the same guard as any write.
@@ -126,6 +127,13 @@ def main() -> int:
             assert call(d, "/api/stamp", **jar)[0] == 200
             assert call(d, "/api/theme", {"theme": "nope"}, **jar)[0] == 400      # in, then the theme rule
             assert call(d, "/api/nope", {}, **jar)[0] == 404
+            # Signed in, the page's script and stylesheet: kept for good at the address the
+            # page names (serve.versioned), asked again at any other.
+            for name in ("bench.js", "bench.css"):
+                status, headers, text = call(d, serve.versioned(name), **jar)
+                assert status == 200 and headers["Cache-Control"] == "max-age=31536000, immutable" and text, headers
+                assert call(d, f"/ui/{name}?v=0", **jar)[1]["Cache-Control"] == "no-cache"
+            assert call(d, "/ui/serve.py", **jar)[0] == 404 and call(d, "/ui/../serve.py", **jar)[0] == 404
 
             # Open without either: health (any Host), and Connect's callback.
             assert call(d, "/health", Host="platform.internal:9")[:3:2] == (200, '{"ok": true}')

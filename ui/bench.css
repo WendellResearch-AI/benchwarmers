@@ -533,6 +533,9 @@ pre.log.answer { max-height: 40vh; }
 
 /* Benchmarks charts (Observable Plot) */
 .chart { margin: .5rem 0 .75rem; overflow-x: auto; }
+/* The first report's chart keeps its room until Plot arrives (bench.js needPlot): it is
+   always 456px high (bench.js, chart-overview), so the page under it does not jump. */
+#chart-overview:empty { min-height: 456px; }
 h3.chart-head { font-size: var(--t-body); font-weight: 700; margin: 1rem 0 .2rem; }
 .chart-label { font-weight: 700; margin: .9rem 0 .1rem; }
 /* Models: each connection a fold, its heading the summary */

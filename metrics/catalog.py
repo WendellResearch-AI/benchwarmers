@@ -78,16 +78,31 @@ def _read(path: pathlib.Path) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+def _parse(text: str) -> dict:
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _shared(path: pathlib.Path) -> dict:
+    """_read(path), parsed once a render (locked.derived): info() asked for the
+    catalog five times a model. Shared, so read it and never change it."""
+    import locked
+    return locked.derived(path, _parse)
+
+
 def catalog() -> dict:
-    return _read(CATALOG).get("models", {})
+    return _shared(CATALOG).get("models", {})
 
 
 def overrides() -> dict:
-    return {k: v for k, v in _read(OVERRIDES).items() if not k.startswith("_")}
+    return {k: v for k, v in _shared(OVERRIDES).items() if not k.startswith("_")}
 
 
 def connection_limits() -> dict:
-    return {k: v for k, v in _read(LIMITS).items() if not k.startswith("_")}
+    return {k: v for k, v in _shared(LIMITS).items() if not k.startswith("_")}
 
 
 def connection_of(alias: str) -> str:
@@ -131,7 +146,7 @@ def info(alias: str) -> dict:
             sources[f"limits.{k}"] = f"learned {ev['at'][:10]}"
     if seen.get("served_as"):
         out["served_as"] = seen["served_as"]
-    out.update(connection=conn, sources=sources, refreshed=_read(CATALOG).get("refreshed"))
+    out.update(connection=conn, sources=sources, refreshed=_shared(CATALOG).get("refreshed"))
     return out
 
 

@@ -249,7 +249,14 @@ def suite_recall() -> dict[str, tuple[int, int, int]]:
     outputs applies today's classifier to the original answers, so a fix to the
     scorer retroactively corrects the routing rather than leaving a wrong
     number fossilised in a markdown table.
+
+    Scored once in a dashboard render (Benchmarks asked three times).
     """
+    import locked
+    return dict(locked.once(("suite_recall",), _suite_recall))
+
+
+def _suite_recall() -> dict[str, tuple[int, int, int]]:
     import json as _json
     from run import registered_models, score
 

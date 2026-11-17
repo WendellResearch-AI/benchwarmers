@@ -128,6 +128,17 @@ def font_file(name: str) -> pathlib.Path | None:
 # Images a theme may draw (Hardwood's centre court): named here, served from
 # ui/ with a fixed type, so the route cannot be walked to other files.
 ASSETS = {"mascot.png": "image/png"}
+# The dashboard's own script and stylesheet, at an address that changes with
+# the file (versioned), so a browser keeps each for good and a page carries
+# neither (they were 270 KB of every page).
+CODE = {"bench.js": "text/javascript; charset=utf-8", "bench.css": "text/css; charset=utf-8"}
+
+
+def versioned(name: str) -> str:
+    """/ui/<name>?v=<its modification time>: a new address whenever it changes."""
+    return f"/ui/{name}?v={(UI / name).stat().st_mtime_ns:x}"
+
+
 # The logo, header and byline in one, for a shared report's image (bench.js
 # "share"): the repository's own, at /ui/<name>; light and dark grounds.
 LOGOS = {"logo.svg": ROOT / ".github" / "logo.svg", "logo-dark.svg": ROOT / ".github" / "logo-dark.svg"}
@@ -153,6 +164,57 @@ def data_stamp() -> float:
              *DATA.glob("runs/gateway/*.jsonl"), DATA / "runs" / "scheduler.log"]
     paths = [p for p in paths if p.name != UI_CONFIG.name]     # a theme switch is already on the page
     return max((p.stat().st_mtime for p in paths if p.exists()), default=0.0)
+
+
+# ---- kept between requests -------------------------------------------------
+# A page that took a second to work out is kept while nothing it reads has
+# changed: data_stamp() has not moved, the dashboard itself has written nothing
+# (_writes, bumped after every POST and Connect's callback, which also covers a
+# file the stamp does not watch), and for KEEP_FOR seconds at most, so what
+# reads the clock (a reset, "resting until", today's column) is never older.
+KEEP_FOR = 30
+_kept: dict = {}                       # name -> (key, made at, value)
+_kept_locks: dict = {}
+_writes = [0]
+
+
+def data_key() -> tuple:
+    """What the data is as this request starts, once a render: taken before it
+    reads a file, so nothing kept is worked out from older text than its key
+    says. render() asks first (its rail reads files before the page); the
+    routes that keep something reach kept() before reading anything."""
+    return locked.once(("data key",), lambda: (str(DATA), data_stamp(), _writes[0]))
+
+
+def kept(name: str, make):
+    """make(), kept between requests while data_key() stays the same, for at
+    most KEEP_FOR seconds. A request asking while another works it out waits
+    for that answer instead of working it out again."""
+    key = data_key()
+    with _kept_locks.setdefault(name, threading.Lock()):
+        hit = _kept.get(name)
+        if hit and hit[0] == key and time.monotonic() - hit[1] < KEEP_FOR:
+            return hit[2]
+        made = time.monotonic()
+        value = make()
+        _kept[name] = (key, made, value)
+        return value
+
+
+def wrote() -> None:
+    """The dashboard changed something: nothing kept from before is answered again."""
+    _writes[0] += 1
+
+
+def _warm() -> None:
+    """The home page worked out once as the dashboard starts (the run notes
+    parsed, the answers scored, the logs read, kept), so the first visitor,
+    most often the page coming back after a Restart, waits for what is left of
+    it (kept) rather than all of it."""
+    try:
+        render()
+    except Exception:                          # noqa: BLE001 -- the page asked for later says what went wrong
+        pass
 
 
 def alias_history() -> dict[str, str]:
@@ -276,9 +338,13 @@ def _perf_rows() -> list[dict]:
 
 
 def registered() -> dict[str, str]:
-    """model_name -> llm id."""
+    """model_name -> llm id. Parsed once a render (asked a hundred times)."""
+    return dict(locked.derived(YAML_PATH, _registered))
+
+
+def _registered(text: str) -> dict[str, str]:
     out, current = {}, None
-    for line in read(DATA / "config" / "extra-openai-models.yaml").splitlines():
+    for line in text.splitlines():
         if (m := re.match(r"\s*-?\s*model_id:\s*(.+)", line)):
             current = m.group(1).strip().strip("\"'")
         elif (m := re.match(r"\s*model_name:\s*(.+)", line)):
@@ -306,8 +372,19 @@ def provider_label(tag: str) -> str:
 
 
 def retired() -> dict[str, dict]:
-    """Aliases removed from the bench by hand, with when and why."""
-    return load_json(DATA / "config" / "retired.json")
+    """Aliases removed from the bench by hand, with when and why. Parsed once
+    a render (Benchmarks asked 1,200 times), each caller given its own dict."""
+    return dict(locked.derived(RETIRED_PATH, _object))
+
+
+def _object(text: str) -> dict:
+    """A JSON file's text as load_json reads it ({} when there is none)."""
+    return json.loads(text or "{}")
+
+
+def _ad_hoc(text: str) -> frozenset:
+    """config/model-roles.json's ad hoc aliases."""
+    return frozenset(json.loads(text or "{}").get("ad_hoc", []))
 
 
 def current() -> set[str]:
@@ -340,10 +417,10 @@ def named(model: str) -> str:
     if gone:
         sub = f"retired {gone.get('at', '')[:10]}"
     else:
-        d = decide.load().get(model)
+        d = locked.once(("decide.load",), decide.load).get(model)
         sub = " · ".join(filter(None, [
             f"{d['served']} · via {d['via']}" if d else tag_for(model),
-            "ad hoc" if model in set(load_json(ROLES_PATH).get("ad_hoc", [])) else ""]))
+            "ad hoc" if model in locked.derived(ROLES_PATH, _ad_hoc) else ""]))
     return (f"<a href='#' class='model' data-alias='{esc(model)}'>"
             f"<span class='alias'>{esc(model)}</span></a>"
             + (f"<span class='conn'>{esc(sub)}</span>" if sub else ""))
@@ -1589,7 +1666,13 @@ def _chat_aliases() -> list[str]:
 
 
 def collections_view() -> dict:
-    """Collections, gateway settings, and what a collection may hold."""
+    """Collections, gateway settings, and what a collection may hold. Kept
+    between requests (kept): the page draws its list from it, then asks for
+    it again for the editor. Shared: read it, never change it."""
+    return kept("collections", _collections_view)
+
+
+def _collections_view() -> dict:
     s = bench_collections.settings()
     rows = [{"name": n, **bench_collections.described(n, c, s)}
             for n, c in sorted(bench_collections.load().items())]
@@ -2198,7 +2281,13 @@ def open_actions() -> tuple[dict[str, dict], list[tuple[str, dict]]]:
     Rate limits and timeouts are not listed: they resolve themselves, or count
     toward the 7-day backstop and appear here as `retiring` when that nears.
     Automatic retirements ARE listed, with Restore, because a decision taken
-    without a person should be easy for one to undo."""
+    without a person should be easy for one to undo.
+
+    Once a render (the rail's count and Benchmarks' facts ask): read it, never change it."""
+    return locked.once(("open_actions",), _open_actions)
+
+
+def _open_actions() -> tuple[dict[str, dict], list[tuple[str, dict]]]:
     alerts = load_json(DATA / "metrics" / "alerts.json")
     names = registered()
     live = set(names.values())
@@ -2444,7 +2533,12 @@ def wrong_table() -> dict:
 
 def overview_rows() -> list[dict]:
     """Who to trust, a row per registered model with both suite scores and answers:
-    the share of real findings located, and the share of answers confidently wrong."""
+    the share of real findings located, and the share of answers confidently wrong.
+    Worked out once a render (the card and the chart ask), each caller given its own rows."""
+    return [dict(r) for r in locked.once(("overview_rows",), _overview_rows)]
+
+
+def _overview_rows() -> list[dict]:
     import route
     recall, wr = route.suite_recall(), wrong_table()
     return [{"model": m, "recall": recall[m][0] / recall[m][1], "wrong": wr[m]["wrong"] / wr[m]["answers"],
@@ -2479,7 +2573,12 @@ def charts_data() -> dict:
 
 def work_rows() -> list[dict]:
     """Real work handed out (metrics/offloads.jsonl): how often it helped when
-    judged, and the verified claims recorded since 2026-10-17."""
+    judged, and the verified claims recorded since 2026-10-17. Once a render
+    (the card and the chart ask), each caller given its own rows."""
+    return [dict(r) for r in locked.once(("work_rows",), _work_rows)]
+
+
+def _work_rows() -> list[dict]:
     from offload import entries, summary
     live, claims = on_bench(), {}
     for e in entries():
@@ -2513,7 +2612,14 @@ def vision_rows() -> dict:
     picture; one without claims says only useful or not, which for thicken's
     face corners means it agreed with another seat. Agreement is not a check
     (the bench's own rule: seats fail together), so the two are never added.
+
+    Worked out once a render (the card and the chart ask), and shared: read it,
+    never change it.
     """
+    return locked.once(("vision_rows",), _vision_rows)
+
+
+def _vision_rows() -> dict:
     import run
     live = on_bench()
     heat, tasks = [], {}
@@ -3596,6 +3702,7 @@ def favicon(theme: str) -> str:
 
 def render(theme: str | None = None, shown: str = "suite") -> str:
     with locked.snapshot():                    # each file read once a render (metrics/locked.py)
+        data_key()                             # before any file is read (kept)
         return _page(theme, shown)
 
 
@@ -3607,13 +3714,11 @@ def _page(theme: str | None, shown: str = "suite") -> str:
         f"<!doctype html><html lang='en' data-theme='{esc(theme)}'><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width, initial-scale=1'>"
         f"<title>{'' if shown == 'suite' else esc(name) + ' · '}Benchwarmers</title>" + favicon(theme) +
-        f"<style>{brand_css()}{read(UI / 'bench.css')}</style>"
+        f"<style>{brand_css()}</style><link rel='stylesheet' href='{versioned('bench.css')}'>"
         f"{tabs(shown, theme)}<script>window.BENCH={directory_json()};</script>"
-        # Observable Plot (on d3) draws the Benchmarks charts. Pinned versions from
-        # jsDelivr; without a network the tables under each chart still work.
-        "<script src='https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js'></script>"
-        "<script src='https://cdn.jsdelivr.net/npm/@observablehq/plot@0.6.16/dist/plot.umd.min.js'></script>"
-        f"<script>{read(UI / 'bench.js')}</script></html>")
+        # The charts' library (d3, Observable Plot) is asked by bench.js when a page with
+        # charts is first shown, not by every page (bench.js needPlot).
+        f"<script src='{versioned('bench.js')}'></script></html>")
 
 
 def gateway_card(limit: int = 30) -> str:
@@ -3960,8 +4065,58 @@ def discover_card() -> str:
             f"<details class='key'><summary>How to read this</summary>{key}</details></div>")
 
 
+_CAN = {"reasoning": "reason", "vision": "take images", "tools": "call tools",
+        "structured_output": "give structured output"}
+
+
+def _ctx(n: int) -> str:
+    """512k, 1M (2^20), 1.9M: a context window as bench.js tokens() writes it."""
+    return (str(math.floor(n / 104857.6 + 0.5) / 10).removesuffix(".0") + "M" if n >= 1_000_000
+            else f"{int(n // 1000)}k")
+
+
+def collection_list(rows: list[dict]) -> str:
+    """The list of collections, as bench.js drawList draws it again after a
+    change: a button per collection (a click opens it), its tags, its panel as
+    it sits (a seat per member, one per explorer, the merger after an arrow)
+    and what its members can do together."""
+    out = []
+    for row in rows:
+        title = (f"<span class='alias'>bench/{esc(row['name'])}</span>"
+                 + ("<span class='chip'>ad hoc: only when called by name</span>" if row["ad_hoc"] else "")
+                 + "".join(f"<span class='chip'>{esc(t)}</span>" for t in row["tags"]))
+        seats = ("".join(f"<span class='seat'>{esc(m)}</span>" for m in row["members"])
+                 + (f"<span class='seat explorer'>explorer{' · ' + esc(row['shape']) if row['shape'] else ''}</span>"
+                    * row["explorers"])
+                 + ("<span class='merge'><span aria-hidden='true'>→</span><span class='seat merger'>"
+                    f"<span class='k'>merger</span>{esc(row['merger'] or 'chosen by verdicts')}</span></span>"
+                    if row["reply"] == "merged" else ""))
+        together = ""
+        if t := row.get("together"):
+            lim = [f"{v:,}".removesuffix(".0") + f" {k}" for k, v in (t.get("limits") or {}).items() if v]
+            can = [_CAN.get(k, k) for k in t["capabilities"]]
+            n = len(t["connections"])
+            together = ("<p class='together'>" + esc(
+                (f"Prompts up to {_ctx(t['context_window'])} tokens" if t["context_window"] else "Context window unknown")
+                + (f" (unknown for {', '.join(t['context_unknown'])}). " if t["context_unknown"] else ". ")
+                + (f"All can {', '.join(can[:-1]) + ' and ' if len(can) > 1 else ''}{can[-1]}. " if can
+                   else "Nothing known they can all do. ")
+                + (f"Tightest limit {', '.join(lim)} across " if lim else "No limits known across ")
+                + f"{n} connection{'' if n == 1 else 's'}.") + "</p>")
+        out.append(f"<button class='endpoint c-row' type='button' data-name='{esc(row['name'])}'"
+                   f" aria-label='Open bench/{esc(row['name'])}'><div><div class='top'>{title}</div>"
+                   + (f"<p class='desc'>{esc(row['description'])}</p>" if row["description"] else "")
+                   + f"<div class='seats'>{seats}</div>{together}</div>"
+                   "<span class='open-hint' aria-hidden='true'>Open ›</span></button>")
+    return "".join(out) or "<p class='empty'>No collections yet.</p>"
+
+
 def collections_tab() -> str:
-    """Every collection; clicking one, or New collection, opens its popup."""
+    """Every collection; clicking one, or New collection, opens its popup. The
+    list and the gateway settings arrive with the page (they came a second
+    after it, from /api/collections, and moved it down)."""
+    view = collections_view()
+    s, pick, conf = view["settings"], view["pick"], view["pick"].get("pick_confidence")
     return (
         "<div class='panel form-panel'><h2 id='c-title'>Collections</h2>"
         "<p class='served'>Named groups of models the bench gateway runs together. A caller"
@@ -3970,7 +4125,7 @@ def collections_tab() -> str:
         " members is the sweet spot. Open one to edit or delete it.</p>"
         "<div class='list-actions'><button class='btn primary' id='c-new'>New collection</button>"
         "<span class='done' id='c-status' role='status'></span></div>"
-        "<div id='c-list'></div>"
+        f"<div id='c-list'>{collection_list(view['collections'])}</div>"
         # The details in a popup, like every other edit on the dashboard: for
         # the collection clicked, or a new one.
         "<dialog id='c-form' aria-labelledby='c-form-head'>"
@@ -4053,17 +4208,19 @@ def collections_tab() -> str:
         "<details class='c-settings'><summary class='form-head'>Gateway settings</summary>"
         "<div class='settings'>"
         "<div><label class='field' for='g-max-calls'>Max calls per request</label>"
-        "<input id='g-max-calls' type='number' min='1' max='10'></div>"
+        f"<input id='g-max-calls' type='number' min='1' max='10' value='{esc(s['max_calls'])}'></div>"
         "<div><label class='field' for='g-max-explorers'>Max explorers</label>"
-        "<input id='g-max-explorers' type='number' min='0' max='2'></div>"
+        f"<input id='g-max-explorers' type='number' min='0' max='2' value='{esc(s['max_explorers'])}'></div>"
         "</div>"
         "<p class='rules'>Explorers = min(max explorers, max calls − members): with 5 and 2, a"
         " 2- or 3-model collection gets 2, a 4-model one 1, a 5-model one none. These apply to"
         " every collection that does not set its own in its dialog.</p>"
-        "<label class='check'><input type='checkbox' id='g-pick'> Choose a collection for a request that"
-        " names none</label>"
+        f"<label class='check'><input type='checkbox' id='g-pick'{' checked' if pick.get('pick_collection') else ''}>"
+        " Choose a collection for a request that names none</label>"
         "<div class='settings'><div><label class='field' for='g-pick-conf'>Only when the model is at least"
-        "</label><input id='g-pick-conf' type='number' min='0.05' max='1' step='0.05'></div></div>"
+        "</label><input id='g-pick-conf' type='number' min='0.05' max='1' step='0.05'"
+        f" placeholder='{esc(view['confident'])}' value='{'' if conf is None else esc(conf)}'"
+        f"{'' if pick.get('pick_collection') else ' disabled'}></div></div>"
         "<p class='rules'>A decision model (the one Benchmarks › Decision says the collection pick"
         " asks) chooses from the collections' descriptions and tags, and the reply says which and why"
         " (<code>bench.picked</code>, <code>X-Bench-Picked</code>). Less sure than this, or switched off,"
@@ -4407,6 +4564,8 @@ def pane(key: str, actions: tuple | None = None) -> str:
     if key == "needs":
         groups, auto = actions or open_actions()
         return actions_page(groups, auto)
+    if key == "suite":                         # a second of work, the home page: kept between requests
+        return kept("suite", benchmarks_tab)
     return globals()[next(fn for k, _, fn in TABS if k == key)]()
 
 
@@ -5390,11 +5549,18 @@ RELEASE, RELEASE_DATE, COMMIT = version()
 VERSION = f"{RELEASE} {RELEASE_DATE}".strip()           # the X-Benchwarmers-Version header
 
 
+_disk: list = [0.0, ""]                 # (when git was asked, its answer)
+
+
 def on_disk() -> tuple[str, str]:
     """(running, on disk): what this process started from and what a restart
-    would start, by commit, or by the VERSION file where there is no git."""
+    would start, by commit, or by the VERSION file where there is no git.
+    git is asked at most every KEEP_FOR seconds (it was 0.1 to 0.4 s of each
+    Settings and Info): a new commit shows within that."""
     if COMMIT:
-        return COMMIT, _git("log", "-1", "--format=%h") or COMMIT
+        if time.monotonic() - _disk[0] > KEEP_FOR or not _disk[1]:
+            _disk[:] = [time.monotonic(), _git("log", "-1", "--format=%h") or COMMIT]
+        return COMMIT, _disk[1]
     return RELEASE, read(ROOT / "VERSION").strip()
 
 
@@ -5420,13 +5586,19 @@ def info_page() -> str:
 
 
 def directory_json() -> str:
+    """window.BENCH: every model, its facts and options. On every page, so kept
+    between requests (kept); its stamp is the one it was worked out at."""
+    return kept("directory", _directory_json)
+
+
+def _directory_json() -> str:
     directory = model_directory()
     facts = {a: catalog.info(a) for a, d in directory.items() if d.get("kind") != "decision"}
     options = {a: o for a, o in load_json(OPTIONS_PATH).items() if a in facts and isinstance(o, dict)}
     # A decision model's role suggestion from onboarding (decide.suggest_role): shown, never applied.
     suggested = {a: s for a, s in (locked.read_json(decide.DECIDED).get("roles") or {}).items() if isinstance(s, dict)}
     return json.dumps({"models": directory, "facts": facts, "options": options, "roles": model_roles.load()["roles"],
-                       "suggested": suggested, "retired": retired(), "onboard": onboard_issues(), "stamp": data_stamp(),
+                       "suggested": suggested, "retired": retired(), "onboard": onboard_issues(), "stamp": data_key()[1],
                        "repo": connect.REPO},
                       ensure_ascii=False).replace("</", "<\\/")
 
@@ -5720,6 +5892,7 @@ class Handler(gateway.Handler):
                 out = {"ok": False, "errors": [str(exc)], "state": "error"}
             except Exception as exc:                   # noqa: BLE001 -- the tab must still hear something
                 out = {"ok": False, "errors": [f"could not save it ({type(exc).__name__}: {exc})"], "state": "error"}
+            wrote()
             connect.settle(query.get("state", ""), out)
             body = connect_page(out).encode("utf-8")
             self.send_response(200)
@@ -5731,7 +5904,8 @@ class Handler(gateway.Handler):
             self.wfile.write(body)
             return
         if self.path == "/api/collections":
-            self._json(200, collections_view())
+            with locked.snapshot():                    # each file read once (it read 1,300)
+                self._json(200, collections_view())
             return
         read_only = {"/api/status": status_view, "/api/models": models_view,
                      "/api/gateway-keys": gateway_keys_view}
@@ -5777,21 +5951,29 @@ class Handler(gateway.Handler):
                 shutil.copyfileobj(tmp, self.wfile)
             return
         if self.path.startswith(("/fonts/", "/ui/")):
-            # Only the named font files and ASSETS; anything else is a 404, so
-            # this cannot be walked to other paths.
-            name = self.path.split("/", 2)[2]
-            path = font_file(name) if self.path.startswith("/fonts/") else \
-                (UI / name if name in ASSETS and (UI / name).exists() else
+            # Only the named font files, ASSETS and CODE; anything else is a
+            # 404, so this cannot be walked to other paths.
+            name = path.split("/", 2)[2]
+            file = font_file(name) if path.startswith("/fonts/") else \
+                (UI / name if (name in ASSETS or name in CODE) and (UI / name).exists() else
                  LOGOS[name] if name in LOGOS and LOGOS[name].exists() else None)
-            if not path:
+            if not file:
                 self.send_error(404)
                 return
-            data = path.read_bytes()
+            data = file.read_bytes()
             self.send_response(200)
-            self.send_header("Content-Type", ASSETS.get(name) or ("image/svg+xml" if name in LOGOS else "font/woff2"))
+            self.send_header("Content-Type", ASSETS.get(name) or CODE.get(name)
+                             or ("image/svg+xml" if name in LOGOS else "font/woff2"))
             self.send_header("X-Content-Type-Options", "nosniff")
-            self.send_header("Content-Length", str(len(data)))
-            self.send_header("Cache-Control", "max-age=86400")
+            if name in CODE:
+                # Its address names its version (versioned): kept for good, unless
+                # the file changed after the page that asked was made.
+                data = self._length(data)
+                self.send_header("Cache-Control", "max-age=31536000, immutable"
+                                 if self.path == versioned(name) else "no-cache")
+            else:
+                self.send_header("Content-Length", str(len(data)))
+                self.send_header("Cache-Control", "max-age=86400")
             self.end_headers()
             self.wfile.write(data)
             return
@@ -5838,6 +6020,7 @@ class Handler(gateway.Handler):
                 tmp.seek(0)
                 result = import_zip(tmp, apply="apply=1" in self.path) if length == 0 else \
                     {"ok": False, "errors": ["the upload stopped before its end"]}
+            wrote()
             return self._json(200 if result["ok"] else 400, result)
         ops = {"/api/model": lambda p: change_model(str(p.get("alias", "")),
                                                     p.get("new_alias"), p.get("new_role"),
@@ -5930,6 +6113,8 @@ class Handler(gateway.Handler):
                       "changed": [], "sync": ""}
         except RuntimeError as exc:                    # endpoints: none yet, or a file it cannot read
             result = {"ok": False, "errors": [str(exc)], "changed": [], "sync": ""}
+        finally:
+            wrote()                                    # before the answer: the next page is never from before it
         self._json(200 if result["ok"] else 400, result)
 
     def _admitted(self, path: str) -> bool:
@@ -6042,6 +6227,7 @@ if __name__ == "__main__":
     paths.make()                                       # a fresh data folder's layout, before any writer
     import scheduler
     scheduler.start()                                  # off unless config/scheduler.json says otherwise
+    threading.Thread(target=_warm, daemon=True).start()
     SERVER = ThreadingHTTPServer((address, PORT), Handler)
     SERVER.serve_forever()                             # returns only when restart() shuts it down
     sys.exit(RESTART)

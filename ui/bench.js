@@ -165,20 +165,22 @@
     else if (e.target.closest('.facts-close, aside.facts a')) sheet('facts', false);
   });
   // A page in place and set up: fetched if it has no HTML yet, or only old HTML
-  // (data-lazy), which stays on screen until the new arrives.
-  function load(id) {
+  // (data-lazy), which stays on screen until the new arrives. `quiet`: asked
+  // ahead of a click (early), so no loading bar unless the click comes first.
+  var awaited = {};
+  function load(id, quiet) {
     var s = $('tab-' + id);
     if (!s.hasAttribute('data-lazy')) return ready[id] || Promise.resolve();
+    var asked = s.getAttribute('data-lazy');
+    if (!quiet && !/^live/.test(asked)) { awaited[id] = 1; document.body.classList.add('loading'); }   // a live refresh shows only what changed
     if (!fetching[id]) {
-      var asked = s.getAttribute('data-lazy');
-      if (!/^live/.test(asked)) document.body.classList.add('loading');     // a live refresh shows only what changed
       fetching[id] = fetch('/api/pane?tab=' + id, {cache: 'no-store'}).then(function (r) {
         if (!r.ok) throw new Error(r.status);
         return r.json();
       }).catch(function (err) { location.reload(); throw err; })         // could not ask: the old way
         .then(function (p) {
-          delete fetching[id];
-          if (!Object.keys(fetching).length) document.body.classList.remove('loading');
+          delete fetching[id]; delete awaited[id];
+          if (!Object.keys(awaited).length) document.body.classList.remove('loading');
           // Marked again (refreshPanes) or swapped in (refreshNeeds) while this
           // was on its way: its HTML is older than the page wanted now.
           if (s.getAttribute('data-lazy') !== asked) return load(id);
@@ -191,6 +193,17 @@
     }
     return fetching[id];
   }
+  // A page is fetched before the click: once the pointer rests on its link in the
+  // rail (80 ms, so a pointer passing over the rail asks for nothing), or the link
+  // takes the focus. The same load, not shown.
+  var resting = 0;
+  function early(a) { if (a && a.dataset.tab !== shown) load(a.dataset.tab, true); }
+  document.addEventListener('pointerover', function (e) {
+    var a = e.target.closest && e.target.closest('.tabs a[data-tab]');
+    clearTimeout(resting);
+    if (a) resting = setTimeout(function () { early(a); }, 80);
+  });
+  document.addEventListener('focusin', function (e) { early(e.target.closest && e.target.closest('.tabs a[data-tab]')); });
   // New HTML for a page, keeping what its filter boxes and facets say, which
   // sections are open and which column each table is sorted by. `live` (the
   // data moved, nobody acted): the same HTML as last time is left alone, and
@@ -529,6 +542,7 @@
     var name = 'benchwarmers-' + title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') + '-' + day;
     var byline = D.repo.replace(/^https:\/\//, '') + ' · ' + day, credit = title + ' · Benchwarmers, ' + byline;
     menu.open = false;
+    if (panel.classList.contains('report')) drawReport(panel);    // its charts, if it was not drawn yet
     function said(text) { sm.textContent = text; setTimeout(function () { sm.textContent = 'Share'; }, 3500); }
     function failed(e) { if (!e || e.name !== 'AbortError') said('Share failed: ' + ((e && e.message) || e)); }
     if (what === 'md') {
@@ -572,7 +586,8 @@
       var fails = picked.filter(function (k) {
         return !dPick[k][k === 'caps' ? 'every' : 'some'](function (v) { return dHas(r, k, v); });
       });
-      var text = !q || r.textContent.toLowerCase().indexOf(q) !== -1;
+      // A row's words read once (they never change in place; a new list is new rows).
+      var text = !q || (r.qText || (r.qText = r.textContent.toLowerCase())).indexOf(q) !== -1;
       r.hidden = !text || fails.length > 0;
       if (!r.hidden) hits++;
       if (!text || fails.length > 1) return;
@@ -592,7 +607,8 @@
     $('d-count').textContent = hits.toLocaleString() + (hits === 1 ? ' model' : ' models')
       + (hits > dLimit ? ', the first ' + dLimit.toLocaleString() + ' shown' : '');
     $('d-more').hidden = hits <= dLimit;
-    dPageCss.textContent = '#tab-discover tr.pick-row:nth-child(n+' + (dLimit + 1) + ' of :not([hidden])) { display: none; }';
+    var paged = '#tab-discover tr.pick-row:nth-child(n+' + (dLimit + 1) + ' of :not([hidden])) { display: none; }';
+    if (dPageCss.textContent !== paged) dPageCss.textContent = paged;     // the same sheet again costs a whole restyle
   }
   onLoad.discover = function () {
     $('d-q').value = dQ;
@@ -2105,7 +2121,7 @@
          del: $('c-delete'), reply: $('c-reply'), merger: $('c-merger'), find: $('c-member-filter'),
          seats: $('c-seats'), prov: $('c-member-provider'), show: $('c-member-show'), adHoc: $('c-ad-hoc'),
          ownCalls: $('c-max-calls'), ownExp: $('c-max-explorers')};
-    return loadCollections();
+    return loadCollections(false, true);       // the list came with the page: the editor's data only
   };
   var C = null, open = null;         // the collection whose details are showing
   // What the dialog's two limits come to: empty follows the gateway settings.
@@ -2378,63 +2394,76 @@
     return n >= 1000000 ? String(Math.round(n / 104857.6) / 10).replace(/\.0$/, '') + 'M'
                         : Math.floor(n / 1000).toLocaleString() + 'k';
   }
-  function loadCollections(keep) {
+  // The editor's data (C), and after a change the list drawn again as
+  // serve.collection_list draws it with the page (`drawn`: it is, as it arrived).
+  function loadCollections(keep, drawn) {
     return get('/api/collections').then(function (res) {
-      C = res; c.list.textContent = '';
-      res.collections.forEach(function (row) {
-        // The whole row opens the collection: no tight button pair on it.
-        var box = el('button', {class: 'endpoint c-row', type: 'button', 'data-name': row.name,
-                                'aria-label': 'Open bench/' + row.name});
-        var left = el('div');
-        var title = el('div', {class: 'top'});
-        title.appendChild(el('span', {class: 'alias'}, 'bench/' + row.name));
-        if (row.ad_hoc) title.appendChild(el('span', {class: 'chip'}, 'ad hoc: only when called by name'));
-        row.tags.forEach(function (t) { title.appendChild(el('span', {class: 'chip'}, t)); });
-        left.appendChild(title);
-        if (row.description) left.appendChild(el('p', {class: 'desc'}, row.description));
-        // The panel as it sits: a seat per member, an empty one per explorer,
-        // and the merger after an arrow.
-        var seats = el('div', {class: 'seats'});
-        row.members.forEach(function (m) { seats.appendChild(el('span', {class: 'seat'}, m)); });
-        for (var i = 0; i < row.explorers; i++) {
-          seats.appendChild(el('span', {class: 'seat explorer'}, 'explorer' + (row.shape ? ' · ' + row.shape : '')));
-        }
-        if (row.reply === 'merged') {
-          var merge = el('span', {class: 'merge'}), seat = el('span', {class: 'seat merger'});
-          merge.appendChild(el('span', {'aria-hidden': 'true'}, '→'));
-          seat.appendChild(el('span', {class: 'k'}, 'merger'));
-          seat.appendChild(document.createTextNode(row.merger || 'chosen by verdicts'));
-          merge.appendChild(seat); seats.appendChild(merge);
-        }
-        left.appendChild(seats);
-        var t = row.together;
-        if (t) {
-          var lim = Object.keys(t.limits || {}).filter(function (k) { return t.limits[k]; })
-            .map(function (k) { return t.limits[k].toLocaleString() + ' ' + k; });
-          var can = t.capabilities.map(function (k) { return CAN[k] || k; });
-          var n = plural(t.connections.length, 'connection');
-          left.appendChild(el('p', {class: 'together'},
-            (t.context_window ? 'Prompts up to ' + tokens(t.context_window) + ' tokens' : 'Context window unknown') +
-            (t.context_unknown.length ? ' (unknown for ' + t.context_unknown.join(', ') + '). ' : '. ') +
-            (can.length ? 'All can ' + (can.length > 1 ? can.slice(0, -1).join(', ') + ' and ' : '') + can[can.length - 1] + '. '
-                        : 'Nothing known they can all do. ') +
-            (lim.length ? 'Tightest limit ' + lim.join(', ') + ' across ' + n + '.' : 'No limits known across ' + n + '.')));
-        }
-        box.appendChild(left);
-        box.appendChild(el('span', {class: 'open-hint', 'aria-hidden': 'true'}, 'Open ›'));
-        box.addEventListener('click', function () { fillForm(row); });
-        c.list.appendChild(box);
-      });
-      if (!res.collections.length) c.list.appendChild(el('p', {class: 'empty'}, 'No collections yet.'));
-      c.maxCalls.value = res.settings.max_calls; c.maxExp.value = res.settings.max_explorers;
-      // The collection pick (serve.save_gateway_settings): empty confidence is the default.
-      c.pick.checked = res.pick.pick_collection; c.pickConf.placeholder = res.confident;
-      c.pickConf.value = res.pick.pick_confidence == null ? '' : res.pick.pick_confidence;
-      c.pickConf.disabled = !c.pick.checked;
+      C = res;
+      if (!drawn) drawList(res);
       if (!keep) closeForm();
     });
   }
-  on('click', 'c-new', function () { fillForm(null); c.name.focus(); });
+  function drawList(res) {
+    c.list.textContent = '';
+    res.collections.forEach(function (row) {
+      // The whole row opens the collection: no tight button pair on it.
+      var box = el('button', {class: 'endpoint c-row', type: 'button', 'data-name': row.name,
+                              'aria-label': 'Open bench/' + row.name});
+      var left = el('div');
+      var title = el('div', {class: 'top'});
+      title.appendChild(el('span', {class: 'alias'}, 'bench/' + row.name));
+      if (row.ad_hoc) title.appendChild(el('span', {class: 'chip'}, 'ad hoc: only when called by name'));
+      row.tags.forEach(function (t) { title.appendChild(el('span', {class: 'chip'}, t)); });
+      left.appendChild(title);
+      if (row.description) left.appendChild(el('p', {class: 'desc'}, row.description));
+      // The panel as it sits: a seat per member, an empty one per explorer,
+      // and the merger after an arrow.
+      var seats = el('div', {class: 'seats'});
+      row.members.forEach(function (m) { seats.appendChild(el('span', {class: 'seat'}, m)); });
+      for (var i = 0; i < row.explorers; i++) {
+        seats.appendChild(el('span', {class: 'seat explorer'}, 'explorer' + (row.shape ? ' · ' + row.shape : '')));
+      }
+      if (row.reply === 'merged') {
+        var merge = el('span', {class: 'merge'}), seat = el('span', {class: 'seat merger'});
+        merge.appendChild(el('span', {'aria-hidden': 'true'}, '→'));
+        seat.appendChild(el('span', {class: 'k'}, 'merger'));
+        seat.appendChild(document.createTextNode(row.merger || 'chosen by verdicts'));
+        merge.appendChild(seat); seats.appendChild(merge);
+      }
+      left.appendChild(seats);
+      var t = row.together;
+      if (t) {
+        var lim = Object.keys(t.limits || {}).filter(function (k) { return t.limits[k]; })
+          .map(function (k) { return t.limits[k].toLocaleString() + ' ' + k; });
+        var can = t.capabilities.map(function (k) { return CAN[k] || k; });
+        var n = plural(t.connections.length, 'connection');
+        left.appendChild(el('p', {class: 'together'},
+          (t.context_window ? 'Prompts up to ' + tokens(t.context_window) + ' tokens' : 'Context window unknown') +
+          (t.context_unknown.length ? ' (unknown for ' + t.context_unknown.join(', ') + '). ' : '. ') +
+          (can.length ? 'All can ' + (can.length > 1 ? can.slice(0, -1).join(', ') + ' and ' : '') + can[can.length - 1] + '. '
+                      : 'Nothing known they can all do. ') +
+          (lim.length ? 'Tightest limit ' + lim.join(', ') + ' across ' + n + '.' : 'No limits known across ' + n + '.')));
+      }
+      box.appendChild(left);
+      box.appendChild(el('span', {class: 'open-hint', 'aria-hidden': 'true'}, 'Open ›'));
+      c.list.appendChild(box);
+    });
+    if (!res.collections.length) c.list.appendChild(el('p', {class: 'empty'}, 'No collections yet.'));
+    c.maxCalls.value = res.settings.max_calls; c.maxExp.value = res.settings.max_explorers;
+    // The collection pick (serve.save_gateway_settings): empty confidence is the default.
+    c.pick.checked = res.pick.pick_collection; c.pickConf.placeholder = res.confident;
+    c.pickConf.value = res.pick.pick_confidence == null ? '' : res.pick.pick_confidence;
+    c.pickConf.disabled = !c.pick.checked;
+  }
+  // The whole row opens the collection, once the editor's data is in (onLoad).
+  document.addEventListener('click', function (e) {
+    var b = e.target.closest('#c-list .c-row');
+    if (b) ready.collections.then(function () {
+      var row = C.collections.filter(function (r) { return r.name === b.dataset.name; })[0];
+      if (row) fillForm(row);
+    });
+  });
+  on('click', 'c-new', function () { ready.collections.then(function () { fillForm(null); c.name.focus(); }); });
   on('click', 'c-close', closeForm);
   // Done: say so in the popup, close it a moment later, and keep the message
   // above the list, as onboarding and retiring do.
@@ -2888,9 +2917,68 @@
   }
 
   // ---- Benchmarks charts: Observable Plot, data from serve.charts_data ------
+  // d3 and Observable Plot (pinned, from jsDelivr) are asked the first time a page
+  // with charts is drawn, not by every page: until they arrive, or fail to (each
+  // chart then says so), the charts wait, and all are drawn when they do.
+  var PLOT = ['https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js',
+              'https://cdn.jsdelivr.net/npm/@observablehq/plot@0.6.16/dist/plot.umd.min.js'], plotAsked = 0;
+  function needPlot() {
+    if (window.Plot || plotAsked === 2) return false;
+    if (!plotAsked) {
+      plotAsked = 1;
+      PLOT.forEach(function (src, i) {
+        var s = el('script', {src: src});
+        s.async = false;                               // fetched together, run in order: Plot needs d3
+        if (i) s.onload = s.onerror = function () { plotAsked = 2; drawCharts(); };
+        document.head.appendChild(s);
+      });
+    }
+    return true;
+  }
+  // A report's charts are drawn when it first comes within a window's height of
+  // the window, not all eleven at load; drawn again (a theme, a width, a window
+  // chosen) only once it has been. Until then each waits in `queued`, by its id.
+  // Undrawn, every report is short and all of them sit near the top, so the
+  // observer only says when to look: drawNear measures each in turn, as the ones
+  // before it are drawn and grow.
+  var shownReports = {}, queued = {};
+  var nearBy = window.IntersectionObserver && new IntersectionObserver(function (entries) {
+    if (entries.some(function (e) { return e.isIntersecting; })) drawNear();
+  }, {root: $('tab-suite'), rootMargin: '100% 0px'});
+  function drawNear() {
+    var page = $('tab-suite');
+    // Once Plot is in (or failed to come: each chart then says so), and only when shown.
+    if ((!window.Plot && plotAsked !== 2) || !page.classList.contains('active')) return;
+    var view = page.getBoundingClientRect(), reach = view.height;
+    page.querySelectorAll('.panel.report').forEach(function (r) {
+      var b = !shownReports[r.id] && r.getBoundingClientRect();
+      if (b && b.bottom > view.top - reach && b.top < view.bottom + reach) drawReport(r);
+    });
+  }
+  function drawReport(report) {
+    if (shownReports[report.id]) return;
+    shownReports[report.id] = true;
+    if (nearBy) nearBy.unobserve(report);
+    report.querySelectorAll('.chart[id]').forEach(function (box) {
+      var draw = queued[box.id];
+      delete queued[box.id];
+      if (draw) draw();
+    });
+  }
+  // Each time Benchmarks arrives: its reports are new elements; one drawn before is
+  // drawn at once again (no empty frame after a live refresh), the rest when near.
+  function watchReports() {
+    if (nearBy) nearBy.disconnect();
+    document.querySelectorAll('#tab-suite .panel.report').forEach(function (r) {
+      if (shownReports[r.id] || !nearBy) shownReports[r.id] = true;
+      else nearBy.observe(r);
+    });
+  }
   // A function, not run once: a theme switched on Settings redraws them in its
   // colours. `part` ('suite' or 'quotas'): only that page's, as it arrives.
   function drawCharts(part) {
+    if (!$('charts-data') && !QD) return;          // no page with charts yet: nothing to ask for
+    if (needPlot()) return;
     var holder = $('charts-data');
     var css = getComputedStyle(document.documentElement);
     function tok(name, fallback) { return (css.getPropertyValue(name) || '').trim() || fallback; }
@@ -2917,8 +3005,9 @@
     if (!holder || part === 'quotas') return;
     var C = JSON.parse(holder.textContent);
     function put(id, make) {
-      var box = $(id);
+      var box = $(id), report = box && box.closest('.report');
       if (!box) return;
+      if (report && !shownReports[report.id]) { queued[id] = function () { put(id, make); }; return; }
       if (!window.Plot) {
         box.className += ' muted';
         box.textContent = 'Charts need Observable Plot from cdn.jsdelivr.net, which did not load; the table below has the same numbers.';
@@ -3525,12 +3614,13 @@
         ]
       });
     });
-
+    drawNear();                           // what is near the window now (the rest wait in `queued`)
   }
-  onLoad.suite = function () { columns(); drawCharts('suite'); jumpSpy(); };
+  onLoad.suite = function () { columns(); watchReports(); drawCharts('suite'); jumpSpy(); };
   onShow.suite = function () {            // drawn while another page was shown (a theme picked on Settings)
     var r = document.querySelector('#tab-suite .panel.report');
-    if (r && Math.abs(r.clientWidth - drawnAt) > 1) drawCharts('suite');
+    if (r && drawnAt && Math.abs(r.clientWidth - drawnAt) > 1) drawCharts('suite');
+    else drawNear();
   };
   // Benchmarks' reports in as many columns as fit, each kept whole: one under 1100px of
   // room, three from 1640. In two or three they are a grid of 8px rows, each report
@@ -3545,11 +3635,13 @@
       else if (t.offsetHeight) t.style.gridRowEnd = 'span ' + Math.ceil(t.offsetHeight / 8);
     });
     var r = document.querySelector('.tab.active .panel.report');
-    if (r && Math.abs(r.clientWidth - drawnAt) > 1) { clearTimeout(redraw); redraw = setTimeout(function () { drawCharts('suite'); }, 150); }
+    if (r && drawnAt && Math.abs(r.clientWidth - drawnAt) > 1) { clearTimeout(redraw); redraw = setTimeout(function () { drawCharts('suite'); }, 150); }
   });
   function fit(g) {
     var w = g && g.clientWidth, n = String(w >= 1640 ? 3 : w >= 1100 ? 2 : 1);
-    if (w && g.dataset.n !== n) g.dataset.n = n;      // not while the page is not shown: it has no width
+    // Not while the page is not shown: hidden (content-visibility) it has the width of a page
+    // without its facts, and laid out again in more columns, every chart was drawn again on return.
+    if (w && g.closest('.tab.active') && g.dataset.n !== n) g.dataset.n = n;
   }
   function columns() {
     var g = document.querySelector('#tab-suite .cols');
@@ -3587,6 +3679,9 @@
     var target = $(a.getAttribute('href').slice(1));
     if (!target) return;
     e.preventDefault();
+    // The reports up to it are drawn first, so none grows under the jump and moves it.
+    var all = Array.prototype.slice.call(document.querySelectorAll('#tab-suite .panel.report'));
+    all.slice(0, all.indexOf(target) + 1).forEach(drawReport);
     var still = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
     target.scrollIntoView({behavior: still ? 'auto' : 'smooth', block: 'start'});
     target.setAttribute('tabindex', '-1');
