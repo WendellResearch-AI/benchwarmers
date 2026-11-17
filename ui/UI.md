@@ -58,10 +58,14 @@ theme's court line):
   edge is the court's sideline (`--sideline`, a colour only a theme with a
   floor sets; the others draw `--line`).
 - **The page** (`section.tab`): a bar (`.bar`: the page's name, its search or
-  filter, its own actions), then its sections.
-- **The docked panel** (`aside.facts`, or the model editor): what the page
-  holds in facts, the contents of a long page, or the record in hand with its
-  Save at a fixed foot. With nothing in hand it says what it is for.
+  filter, a `.spring`, its own actions at the right; `serve.BAR_TOOLS`, fixed
+  HTML that a page fetched again never replaces), then its sections.
+- **The docked panel** (`aside.facts`, or the record in hand: the model
+  editor, a collection): what the page holds in facts, the contents of a long
+  page, or the record in hand with its Save at a fixed foot. With nothing in
+  hand it says what it is for. A record is a `<dialog>` opened by its `open`
+  attribute (not `showModal`), so the page beside it stays live; Escape and
+  Close put it away and its row loses the mark.
 
 Under 1280px the panel is a sheet from the right, shown when something is in
 hand or the page's bar asks for it (Benchmarks' "On this page"). Under 800px
@@ -78,7 +82,9 @@ the rail is a bar with a menu.
   hand carries the accent. A group of rows folds under its heading
   (`<details>`), with one Collapse all / Expand all for the page.
 - **A list beside a detail** (`.split`): the things down the left, the chosen
-  one beside it (Clients' apps, Logs' logs).
+  one beside it (Clients' apps, Logs' logs), each scrolling by itself so the
+  page does not; the one chosen is the list's button with `aria-pressed`.
+  Under 800px the list sits above.
 - **Facts** (`dl.rows`): a label and its value on a line, the labels in one
   column.
 - **Chip** (`.chip`, with `ok`, `warn`, `err`, `new`, `adhoc`, `via`): a state

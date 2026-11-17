@@ -132,6 +132,7 @@
       else a.removeAttribute('aria-current');
     });
     document.querySelectorAll('.tab').forEach(function (s) { s.classList.toggle('active', s.id === 'tab-' + id); });
+    document.querySelectorAll('.tab:not(.active) dialog[open]').forEach(function (d) { d.close(); });   // a record docked on a page left
     sheet('menu', false); sheet('facts', false);
     return load(id).then(function () { markHand(); if (onShow[id] && shown === id) onShow[id](); });
   }
@@ -324,7 +325,7 @@
   // ---- Expand all / Collapse all: every fold of the page's groups (Models' connections).
   // One labelled toggle, as accordions have it: Collapse all while every one is open,
   // else Expand all. Kept right after any fold opens or shuts, by hand, by it or by a live swap.
-  var FOLDS = 'details.model-card, details[data-log]';      // the groups a page folds: Models' connections, Logs' logs
+  var FOLDS = 'details.model-card';                           // the groups a page folds: Models' connections
   function foldButtons(tab) {
     var folds = tab.querySelectorAll(FOLDS), open = 0;
     folds.forEach(function (d) { if (d.open) open++; });
@@ -346,7 +347,23 @@
     if (e.target.matches && e.target.matches(FOLDS)) foldButtons(e.target.closest('.tab'));
   }, true);
 
-  // ---- Logs: Export as text (every log in one .txt, to read) and CSV (one log, its
+  // ---- Logs: the list down the left, the log chosen beside it (serve.logs_page),
+  // kept when the page is fetched again.
+  var logShown = '';
+  function pickLog(name) {
+    var tab = $('tab-logs'), pick = tab.querySelector('[data-log-pick="' + CSS.escape(name) + '"]');
+    if (!pick) return;
+    logShown = name;
+    tab.querySelectorAll('[data-log-pick]').forEach(function (b) { b.setAttribute('aria-pressed', String(b === pick)); });
+    tab.querySelectorAll('section[data-log]').forEach(function (s) { s.hidden = s.dataset.log !== name; });
+  }
+  document.addEventListener('click', function (e) {
+    var b = e.target.closest('[data-log-pick]');
+    if (b) pickLog(b.dataset.logPick);
+  });
+  onLoad.logs = function () { if (logShown) pickLog(logShown); };
+
+  // Export as text (every log in one .txt, to read) and CSV (one log, its
   // own columns, for a spreadsheet). Both as the page shows them, the filter applied.
   function stampNow() {                                     // local time, as the page shows
     var now = new Date(), two = function (n) { return String(n).padStart(2, '0'); };
@@ -367,12 +384,14 @@
   // Export…: the popup picks the format and the logs. Text: every log chosen in one
   // .txt to read, tab-separated. CSV: a .csv per log (its own columns), through Share's
   // saveFile(blob, name) and csv(rows) (RFC 4180, with a BOM).
-  on('click', 'logs-export', function () {
-    var q = ($('tab-logs').querySelector('input[data-filter]') || {}).value;
-    $('lx-note').textContent = q ? 'Only the lines that match the filter, "' + q + '", as the page shows them.'
-      : 'Every line the page shows: the last 200 of each log.';
-    $('lx-errors').textContent = '';
-    $('logs-export-dialog').showModal();
+  on('click', 'logs-export', function () {              // in the bar: there before the page's own popup
+    load('logs').then(function () {
+      var q = ($('tab-logs').querySelector('input[data-filter]') || {}).value;
+      $('lx-note').textContent = q ? 'Only the lines that match the filter, "' + q + '", as the page shows them.'
+        : 'Every line the page shows: the last 200 of each log.';
+      $('lx-errors').textContent = '';
+      $('logs-export-dialog').showModal();
+    });
   });
   on('click', 'lx-cancel', function () { $('logs-export-dialog').close(); });
   on('click', 'lx-go', function () {
@@ -381,7 +400,7 @@
     var want = Array.prototype.filter.call(dlg.querySelectorAll('input[name=lx-log]'), function (x) { return x.checked; })
       .map(function (x) { return x.value; });
     if (!want.length) { $('lx-errors').textContent = 'Choose at least one log.'; return; }
-    var logs = Array.prototype.filter.call(tab.querySelectorAll('details[data-log]'), function (d) {
+    var logs = Array.prototype.filter.call(tab.querySelectorAll('section[data-log]'), function (d) {
       return want.indexOf(d.dataset.log) !== -1;
     });
     var stamp = stampNow(), q = (tab.querySelector('input[data-filter]') || {}).value;
@@ -743,7 +762,7 @@
   }
   function markHand() {
     var d = $('model-dialog'), alias = d && d.open && $('m-title').textContent;
-    document.querySelectorAll('tr.in-hand').forEach(function (r) { r.classList.remove('in-hand'); });
+    document.querySelectorAll('tr.in-hand:not(.c-row)').forEach(function (r) { r.classList.remove('in-hand'); });   // a collection's own (fillForm)
     if (alias) document.querySelectorAll('.tab.active a.model[data-alias="' + CSS.escape(alias) + '"]').forEach(function (a) {
       var r = a.closest('tr'); if (r) r.classList.add('in-hand');
     });
@@ -753,10 +772,13 @@
     var at = document.activeElement;
     if (opener && opener.isConnected && (md.contains(at) || at === document.body)) opener.focus();
   });
-  document.addEventListener('keydown', function (e) {        // a popup over it takes its own Escape
-    if (e.key !== 'Escape' || document.querySelector('dialog:modal')) return;
+  // Escape puts away the model, else a record the page docked (Collections'); a popup
+  // over them takes its own Escape, and a box that clears itself on Escape keeps it.
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Escape' || e.defaultPrevented || document.querySelector('dialog:modal')) return;
     sheet('menu', false); sheet('facts', false);
-    if (md.open) md.close();
+    var d = md.open ? md : document.querySelector('.tab.active dialog[open]');
+    if (d) d.close();
   });
   // How its onboarding stopped (serve.onboard_issues): only while it has not
   // answered a probe since. The error as the provider gave it, and the log.
@@ -2121,7 +2143,7 @@
          del: $('c-delete'), reply: $('c-reply'), merger: $('c-merger'), find: $('c-member-filter'),
          seats: $('c-seats'), prov: $('c-member-provider'), show: $('c-member-show'), adHoc: $('c-ad-hoc'),
          ownCalls: $('c-max-calls'), ownExp: $('c-max-explorers')};
-    return loadCollections(false, true);       // the list came with the page: the editor's data only
+    return loadCollections();                  // the list came with the page: the editor's data only
   };
   var C = null, open = null;         // the collection whose details are showing
   // What the dialog's two limits come to: empty follows the gateway settings.
@@ -2268,10 +2290,11 @@
   on('click', 'c-refresh', refreshMembers);
   // A model opened from the list may have been changed in its popup: what it now is, on close.
   md.addEventListener('close', function () { if (c.form && c.form.open) refreshMembers(); });
-  // Escape in a box with text clears it; only an empty box lets Escape close the popup.
-  on('keydown', 'c-member-filter', function (e) {
-    if (e.key === 'Escape' && c.find.value) { e.preventDefault(); e.stopPropagation(); c.find.value = ''; filterMembers(); }
-  });
+  // Escape in a box with text clears it; only an empty box lets Escape put the collection
+  // away. Caught on its way down, before the document's Escape.
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && e.target.id === 'c-member-filter' && c.find.value) { e.preventDefault(); c.find.value = ''; filterMembers(); }
+  }, true);
   // Suggested tags under the field: a click adds or removes one, and the
   // field stays free for any other.
   function tagList() {
@@ -2297,20 +2320,26 @@
   on('change', 'c-shape', recount);          // the explorer seats say their shape
   on('input', 'c-max-calls', recount);
   on('input', 'c-max-explorers', recount);
-  // A collection opens in a popup, as every other edit on the dashboard does:
-  // the one clicked, or a new one from New collection.
-  function closeForm() {
-    if (c.form.open) c.form.close();
+  // A collection opens docked beside the list, as a model does (dock): the one
+  // clicked, its row marked, or a new one from New collection. Escape or Close
+  // puts it away, and the focus goes back to its row.
+  function closeForm() { if (c.form && c.form.open) c.form.close(); }
+  function rowOf(name) { return name && c.list.querySelector('.c-row[data-name="' + CSS.escape(name) + '"]'); }
+  on('close', 'c-form', function () {
+    var row = rowOf(open), at = document.activeElement;
+    if (row) row.classList.remove('in-hand');
+    if (c.form.contains(at) || at === document.body) (row ? row.querySelector('button') : $('c-new')).focus();
     open = null;
-  }
-  on('close', 'c-form', function () { open = null; });
+  });
   // `row`: a saved collection, opened to edit. `draft`: a new one's values filled in
   // beforehand (first run's core), still new until saved.
   function fillForm(row, draft) {
     c.errors.textContent = ''; c.done.textContent = ''; c.status.textContent = '';
+    if (rowOf(open)) rowOf(open).classList.remove('in-hand');
     open = row ? row.name : null; c.del.hidden = !row;
+    if (rowOf(open)) rowOf(open).classList.add('in-hand');
     c.head.textContent = row ? 'bench/' + row.name : 'New collection';
-    if (!c.form.open) c.form.showModal();
+    c.form.setAttribute('open', '');                  // docked, not a popup: no backdrop, the list stays live
     var src = row || draft;
     c.name.value = src ? src.name : ''; c.name.readOnly = !!row;
     c.desc.value = src ? src.description : ''; c.tags.value = src ? src.tags.join(', ') : '';
@@ -2387,90 +2416,42 @@
       c.members.appendChild(line);
     });
   }
-  // What a collection's members can all do, in the words the tag checks use.
-  var CAN = {reasoning: 'reason'};
-  Object.keys(CAP_TAGS).forEach(function (t) { CAN[CAP_TAGS[t][0]] = CAP_TAGS[t][1]; });
   function tokens(n) {                                 // 512k, 1M (2^20), 1.9M
     return n >= 1000000 ? String(Math.round(n / 104857.6) / 10).replace(/\.0$/, '') + 'M'
                         : Math.floor(n / 1000).toLocaleString() + 'k';
   }
-  // The editor's data (C), and after a change the list drawn again as
-  // serve.collection_list draws it with the page (`drawn`: it is, as it arrived).
-  function loadCollections(keep, drawn) {
-    return get('/api/collections').then(function (res) {
-      C = res;
-      if (!drawn) drawList(res);
-      if (!keep) closeForm();
-    });
+  // The editor's data (C): what each collection holds, what may join it.
+  function loadCollections() { return get('/api/collections').then(function (res) { C = res; }); }
+  // After a change, the page from the server again (serve.collections_tab: its
+  // list, its facts, the gateway settings), as any page is fetched (load, swap).
+  // A collection open beside it is closed first: the page waits for it (load).
+  function fetchAgain() {
+    $('tab-collections').setAttribute('data-lazy', ++marks);
+    ownChange();
+    return load('collections');
   }
-  function drawList(res) {
-    c.list.textContent = '';
-    res.collections.forEach(function (row) {
-      // The whole row opens the collection: no tight button pair on it.
-      var box = el('button', {class: 'endpoint c-row', type: 'button', 'data-name': row.name,
-                              'aria-label': 'Open bench/' + row.name});
-      var left = el('div');
-      var title = el('div', {class: 'top'});
-      title.appendChild(el('span', {class: 'alias'}, 'bench/' + row.name));
-      if (row.ad_hoc) title.appendChild(el('span', {class: 'chip'}, 'ad hoc: only when called by name'));
-      row.tags.forEach(function (t) { title.appendChild(el('span', {class: 'chip'}, t)); });
-      left.appendChild(title);
-      if (row.description) left.appendChild(el('p', {class: 'desc'}, row.description));
-      // The panel as it sits: a seat per member, an empty one per explorer,
-      // and the merger after an arrow.
-      var seats = el('div', {class: 'seats'});
-      row.members.forEach(function (m) { seats.appendChild(el('span', {class: 'seat'}, m)); });
-      for (var i = 0; i < row.explorers; i++) {
-        seats.appendChild(el('span', {class: 'seat explorer'}, 'explorer' + (row.shape ? ' · ' + row.shape : '')));
-      }
-      if (row.reply === 'merged') {
-        var merge = el('span', {class: 'merge'}), seat = el('span', {class: 'seat merger'});
-        merge.appendChild(el('span', {'aria-hidden': 'true'}, '→'));
-        seat.appendChild(el('span', {class: 'k'}, 'merger'));
-        seat.appendChild(document.createTextNode(row.merger || 'chosen by verdicts'));
-        merge.appendChild(seat); seats.appendChild(merge);
-      }
-      left.appendChild(seats);
-      var t = row.together;
-      if (t) {
-        var lim = Object.keys(t.limits || {}).filter(function (k) { return t.limits[k]; })
-          .map(function (k) { return t.limits[k].toLocaleString() + ' ' + k; });
-        var can = t.capabilities.map(function (k) { return CAN[k] || k; });
-        var n = plural(t.connections.length, 'connection');
-        left.appendChild(el('p', {class: 'together'},
-          (t.context_window ? 'Prompts up to ' + tokens(t.context_window) + ' tokens' : 'Context window unknown') +
-          (t.context_unknown.length ? ' (unknown for ' + t.context_unknown.join(', ') + '). ' : '. ') +
-          (can.length ? 'All can ' + (can.length > 1 ? can.slice(0, -1).join(', ') + ' and ' : '') + can[can.length - 1] + '. '
-                      : 'Nothing known they can all do. ') +
-          (lim.length ? 'Tightest limit ' + lim.join(', ') + ' across ' + n + '.' : 'No limits known across ' + n + '.')));
-      }
-      box.appendChild(left);
-      box.appendChild(el('span', {class: 'open-hint', 'aria-hidden': 'true'}, 'Open ›'));
-      c.list.appendChild(box);
-    });
-    if (!res.collections.length) c.list.appendChild(el('p', {class: 'empty'}, 'No collections yet.'));
-    c.maxCalls.value = res.settings.max_calls; c.maxExp.value = res.settings.max_explorers;
-    // The collection pick (serve.save_gateway_settings): empty confidence is the default.
-    c.pick.checked = res.pick.pick_collection; c.pickConf.placeholder = res.confident;
-    c.pickConf.value = res.pick.pick_confidence == null ? '' : res.pick.pick_confidence;
-    c.pickConf.disabled = !c.pick.checked;
-  }
-  // The whole row opens the collection, once the editor's data is in (onLoad).
+  // The whole row opens the collection, once the editor's data is in (onLoad);
+  // from a keyboard, the focus goes to it.
   document.addEventListener('click', function (e) {
     var b = e.target.closest('#c-list .c-row');
-    if (b) ready.collections.then(function () {
+    if (b) load('collections').then(function () {
       var row = C.collections.filter(function (r) { return r.name === b.dataset.name; })[0];
-      if (row) fillForm(row);
+      if (row) { fillForm(row); if (!e.detail) c.head.focus(); }
     });
   });
-  on('click', 'c-new', function () { ready.collections.then(function () { fillForm(null); c.name.focus(); }); });
+  on('click', 'c-new', function () { load('collections').then(function () { fillForm(null); c.name.focus(); }); });
   on('click', 'c-close', closeForm);
-  // Done: say so in the popup, close it a moment later, and keep the message
-  // above the list, as onboarding and retiring do.
-  function finished(message) {
-    c.done.textContent = message; c.status.textContent = message; loadCollections(true);
+  // Done: say so beside Save, put it away a moment later and fetch the page again;
+  // the message stays in the page's bar, as onboarding and retiring do.
+  function finished(message, name) {
+    c.done.textContent = message; c.status.textContent = message;
     refreshNeeds();                                       // first run's last step may be done
-    setTimeout(closeForm, 1200);
+    setTimeout(function () {
+      closeForm();
+      fetchAgain().then(function () {                     // the focus, lost with the old rows, to its new row
+        if (document.activeElement === document.body) (rowOf(name) ? rowOf(name).querySelector('button') : $('c-new')).focus();
+      });
+    }, 1200);
   }
   on('click', 'c-delete', function () {
     var name = open;
@@ -2492,17 +2473,19 @@
                              max_calls: c.ownCalls.value === '' ? null : Number(c.ownCalls.value),
                              max_explorers: c.ownExp.value === '' ? null : Number(c.ownExp.value)}).then(function (r) {
       if (!r.ok) { listErrors(c.errors, r.errors); return; }
-      finished('Saved bench/' + name + '.');
+      finished('Saved bench/' + name + '.', name);
     }).catch(function (err) { c.errors.textContent = String(err); });
   });
   on('change', 'g-pick', function () { c.pickConf.disabled = !c.pick.checked; });
+  // Saved: the page again (each collection's explorers follow), the message and the focus on the new Save.
   on('click', 'g-save', function () {
     c.gErrors.textContent = ''; c.gDone.textContent = '';
     post('/api/gateway-settings', {max_calls: parseInt(c.maxCalls.value, 10),
                                    max_explorers: parseInt(c.maxExp.value, 10), pick_collection: c.pick.checked,
                                    pick_confidence: c.pickConf.value === '' ? null : Number(c.pickConf.value)}).then(function (r) {
       if (!r.ok) { listErrors(c.gErrors, r.errors); return; }
-      c.gDone.textContent = 'Settings saved.'; loadCollections(true);
+      var had = document.activeElement === $('g-save');
+      return fetchAgain().then(function () { c.gDone.textContent = 'Settings saved.'; if (had) $('g-save').focus(); });
     }).catch(function (err) { c.gErrors.textContent = String(err); });
   });
 

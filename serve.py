@@ -4076,60 +4076,78 @@ def _ctx(n: int) -> str:
 
 
 def collection_list(rows: list[dict]) -> str:
-    """The list of collections, as bench.js drawList draws it again after a
-    change: a button per collection (a click opens it), its tags, its panel as
-    it sits (a seat per member, one per explorer, the merger after an arrow)
-    and what its members can do together."""
+    """The collections, a row each (a click opens one beside the list): its
+    name, what it is for and its tags; its panel as it sits (a seat per member,
+    one per explorer, then the merger or the route after an arrow); and what
+    its members can do together. bench.js fetches the page again after a change."""
     out = []
     for row in rows:
-        title = (f"<span class='alias'>bench/{esc(row['name'])}</span>"
-                 + ("<span class='chip'>ad hoc: only when called by name</span>" if row["ad_hoc"] else "")
-                 + "".join(f"<span class='chip'>{esc(t)}</span>" for t in row["tags"]))
+        name = esc(row["name"])
         seats = ("".join(f"<span class='seat'>{esc(m)}</span>" for m in row["members"])
                  + (f"<span class='seat explorer'>explorer{' · ' + esc(row['shape']) if row['shape'] else ''}</span>"
                     * row["explorers"])
                  + ("<span class='merge'><span aria-hidden='true'>→</span><span class='seat merger'>"
                     f"<span class='k'>merger</span>{esc(row['merger'] or 'chosen by verdicts')}</span></span>"
-                    if row["reply"] == "merged" else ""))
-        together = ""
-        if t := row.get("together"):
-            lim = [f"{v:,}".removesuffix(".0") + f" {k}" for k, v in (t.get("limits") or {}).items() if v]
-            can = [_CAN.get(k, k) for k in t["capabilities"]]
-            n = len(t["connections"])
-            together = ("<p class='together'>" + esc(
-                (f"Prompts up to {_ctx(t['context_window'])} tokens" if t["context_window"] else "Context window unknown")
-                + (f" (unknown for {', '.join(t['context_unknown'])}). " if t["context_unknown"] else ". ")
-                + (f"All can {', '.join(can[:-1]) + ' and ' if len(can) > 1 else ''}{can[-1]}. " if can
-                   else "Nothing known they can all do. ")
-                + (f"Tightest limit {', '.join(lim)} across " if lim else "No limits known across ")
-                + f"{n} connection{'' if n == 1 else 's'}.") + "</p>")
-        out.append(f"<button class='endpoint c-row' type='button' data-name='{esc(row['name'])}'"
-                   f" aria-label='Open bench/{esc(row['name'])}'><div><div class='top'>{title}</div>"
-                   + (f"<p class='desc'>{esc(row['description'])}</p>" if row["description"] else "")
-                   + f"<div class='seats'>{seats}</div>{together}</div>"
-                   "<span class='open-hint' aria-hidden='true'>Open ›</span></button>")
-    return "".join(out) or "<p class='empty'>No collections yet.</p>"
+                    if row["reply"] == "merged" else
+                    "<span class='merge'><span aria-hidden='true'>→</span><span class='seat merger'>"
+                    "<span class='k'>route</span>one member, by its record</span></span>"
+                    if row["reply"] == "route" else ""))
+        t = row.get("together") or {"context_window": None, "context_unknown": [], "capabilities": [],
+                                    "limits": {}, "connections": []}
+        lim = [f"{v:,}".removesuffix(".0") + f" {k}" for k, v in (t.get("limits") or {}).items() if v]
+        can = [_CAN.get(k, k) for k in t["capabilities"]]
+        n = len(t["connections"])
+        together = (
+            (f"<span>Up to <span class='mono'>{_ctx(t['context_window'])}</span> tokens</span>" if t["context_window"]
+             else "<span class='muted'>Context window unknown</span>")
+            + (f"<span class='muted'>not known for {esc(', '.join(t['context_unknown']))}</span>"
+               if t["context_unknown"] else "")
+            + (f"<span>All can {esc(', '.join(can))}</span>" if can
+               else "<span class='muted'>Nothing known they all can do</span>")
+            + (f"<span>At most {esc(', '.join(lim))}</span>" if lim else "<span class='muted'>No limits known</span>")
+            + f"<span class='muted'>across {n} connection{'' if n == 1 else 's'}</span>")
+        out.append(
+            f"<tr class='c-row' data-name='{name}'><td><button type='button' class='c-open alias'"
+            f" aria-label='Open bench/{name}'>bench/{name}</button>"
+            + ("<span class='chip'>ad hoc: only when called by name</span>" if row["ad_hoc"] else "")
+            + (f"<p class='desc'>{esc(row['description'])}</p>" if row["description"] else "")
+            + ("<p class='tags'>" + "".join(f"<span class='chip'>{esc(x)}</span>" for x in row["tags"]) + "</p>"
+               if row["tags"] else "")
+            + f"</td><td><div class='seats'>{seats}</div></td><td class='together'>{together}</td></tr>")
+    if not out:
+        return ("<p class='empty'>No collections yet. <b>New collection</b> makes one: a name callers ask for,"
+                " and two to four models that answer together.</p>")
+    return ("<table class='c-table'><thead><tr>" + th("Collection") + "<th>Panel</th>"
+            "<th title='What every member takes and does, as the catalog says: the longest prompt, what they"
+            " all can do, and the lowest rate limits among their connections (requests or tokens a minute"
+            " or a day: rpm, rpd, tpm, tpd)'>Together</th></tr></thead><tbody>" + "".join(out) + "</tbody></table>")
 
 
 def collections_tab() -> str:
-    """Every collection; clicking one, or New collection, opens its popup. The
-    list and the gateway settings arrive with the page (they came a second
-    after it, from /api/collections, and moved it down)."""
+    """Every collection, a row each; one clicked, or New collection (in the
+    bar, BAR_TOOLS), opens beside the list in the docked panel (bench.js
+    fillForm). With none open, the panel holds what applies to every
+    collection: its facts and the gateway settings. The list arrives with the
+    page, and the page is fetched again after a change."""
     view = collections_view()
     s, pick, conf = view["settings"], view["pick"], view["pick"].get("pick_confidence")
+    rows = view["collections"]
+    ad_hoc = sum(1 for r in rows if r["ad_hoc"])
+    sure = round((view["confident"] if conf is None else conf) * 100)
+    facts = (("Collections", f"{len(rows)}" + (f", {ad_hoc} ad hoc" if ad_hoc else "")),
+             ("Gateway", f"<span class='mono'>{esc(gateway_url())}</span>"),
+             ("A request naming none", f"A decision model picks one when it is at least {sure}% sure;"
+              " otherwise it is refused" if pick.get("pick_collection")
+              else "Refused, with each collection's description and tags"))
     return (
-        "<div class='panel form-panel'><h2 id='c-title'>Collections</h2>"
-        "<p class='served'>Named groups of models the bench gateway runs together. A caller"
-        f" asks for <code>bench/&lt;name&gt;</code> at <code>{esc(gateway_url())}</code>;"
-        " every member answers, plus explorer seats the bench fills by staleness. Two to four"
-        " members is the sweet spot. Open one to edit or delete it.</p>"
-        "<div class='list-actions'><button class='btn primary' id='c-new'>New collection</button>"
-        "<span class='done' id='c-status' role='status'></span></div>"
-        f"<div id='c-list'>{collection_list(view['collections'])}</div>"
-        # The details in a popup, like every other edit on the dashboard: for
-        # the collection clicked, or a new one.
+        "<div class='panel c-panel'><p class='sub'>Ask the gateway for <code>bench/&lt;name&gt;</code>"
+        " and every seat in its panel answers.</p>"
+        f"<div id='c-list'>{collection_list(rows)}</div></div>"
+        # A collection opens docked beside the list, as a model does (bench.js fillForm):
+        # the one clicked, or a new one. Its Save at a fixed foot.
         "<dialog id='c-form' aria-labelledby='c-form-head'>"
-        "<h2 id='c-form-head'>New collection</h2>"
+        "<div class='bar'><p>Collection</p></div><div class='dock-body'>"
+        "<h2 id='c-form-head' tabindex='-1'>New collection</h2>"
         "<label class='field' for='c-name'>Name</label>"
         # The prefix is fixed text beside the field, so it cannot be deleted
         # or typed twice; save_collection also drops one typed by habit.
@@ -4200,12 +4218,18 @@ def collections_tab() -> str:
         "<p class='rules'>Left off <code>GET /v1/models</code> and the list agents choose from, so an"
         " agent picking for itself never spends it. For the expensive ones you decide to run: say"
         " <code>bench/&lt;name&gt;</code> and it runs. Not a lock: anyone who knows the name can call it.</p>"
+        "</div><div class='dock-foot'>"
         "<div class='errors' id='c-errors' role='alert'></div><div class='done' id='c-done'></div>"
-        "<div class='actions'><button class='btn danger' id='c-delete' hidden>Delete collection</button>"
-        "<span class='spacer'></span><button class='btn' id='c-close'>Close</button>"
-        "<button class='btn primary' id='c-save'>Save collection</button></div>"
+        "<button class='btn primary' id='c-save'>Save collection</button>"
+        "<button class='btn' id='c-close'>Close</button>"
+        "<button class='linkish danger' id='c-delete' hidden>Delete collection</button></div>"
         "</dialog>"
-        "<details class='c-settings'><summary class='form-head'>Gateway settings</summary>"
+        # What applies to every collection, beside the list (bench.css aside.facts).
+        "<aside class='facts' id='facts-collections' aria-labelledby='facts-collections-h'>"
+        "<div class='bar'><h2 id='facts-collections-h'>All collections</h2>"
+        "<button type='button' class='linkish facts-close'>Close</button></div><div class='facts-body'>"
+        "<dl class='rows'>" + "".join(f"<dt>{k}</dt><dd>{v}</dd>" for k, v in facts) + "</dl>"
+        "<h3>Gateway settings</h3><div class='form-panel'>"
         "<div class='settings'>"
         "<div><label class='field' for='g-max-calls'>Max calls per request</label>"
         f"<input id='g-max-calls' type='number' min='1' max='10' value='{esc(s['max_calls'])}'></div>"
@@ -4214,7 +4238,7 @@ def collections_tab() -> str:
         "</div>"
         "<p class='rules'>Explorers = min(max explorers, max calls − members): with 5 and 2, a"
         " 2- or 3-model collection gets 2, a 4-model one 1, a 5-model one none. These apply to"
-        " every collection that does not set its own in its dialog.</p>"
+        " every collection that does not set its own.</p>"
         f"<label class='check'><input type='checkbox' id='g-pick'{' checked' if pick.get('pick_collection') else ''}>"
         " Choose a collection for a request that names none</label>"
         "<div class='settings'><div><label class='field' for='g-pick-conf'>Only when the model is at least"
@@ -4228,8 +4252,12 @@ def collections_tab() -> str:
         " A name that is not a collection is always refused.</p>"
         "<div class='errors' id='g-errors' role='alert'></div><div class='done' id='g-done'></div>"
         "<div class='actions'>"
-        "<button class='btn primary' id='g-save'>Save settings</button></div>"
-        "</details></div>")
+        "<button class='btn primary' id='g-save'>Save settings</button></div></div>"
+        "<details class='key'><summary>How a collection runs</summary><p>A collection is a named panel of"
+        " models the gateway runs together. Every member answers, plus explorer seats the bench fills with"
+        " other models, the least recently tried first, so it keeps learning about the rest of the bench."
+        " Two to four members is the sweet spot. Open a row to change it or delete it.</p></details>"
+        "</div></aside>")
 
 
 # A grouped sidebar since 2026-10-19 (RELEASE-PLAN "The dashboard"): eight
@@ -4250,6 +4278,17 @@ SECTIONS = (("Observe", (("suite", "Benchmarks", "benchmarks_tab"),
                          ("info", "Info", "info_page"))))
 TABS = tuple(page for _, pages in SECTIONS for page in pages)
 UI_CONFIG = DATA / "config" / "ui.json"
+# A page's own controls in its bar (ui/UI.md): its filter, then its actions at the
+# right. Fixed HTML, so they are there before the page arrives and a page fetched
+# again never replaces them: a filter keeps what is typed in it.
+BAR_TOOLS = {
+    "collections": ("<span class='spring'></span><span class='done' id='c-status' role='status'></span>"
+                    "<button class='btn primary' type='button' id='c-new'>New collection</button>"),
+    "logs": ("<input type='search' data-filter='page' placeholder='Filter every log' aria-label='Filter every log'>"
+             "<span class='spring'></span><button class='btn' type='button' id='logs-export'>Export…</button>"),
+}
+# The pages with their own facts (aside.facts), and the bar's button that opens them under 1280px.
+FACTS_OPEN = {"suite": "On this page", "collections": "Gateway settings"}
 
 
 def collections_and_gateway() -> str:
@@ -4598,10 +4637,10 @@ def tabs(shown: str = "suite", theme: str = DEFAULT_THEME) -> str:
                    if n else f">{esc(label)}") + "</a></li>")
 
     def bar(key: str, label: str) -> str:
-        # Under 1280px Benchmarks' own facts are a sheet, opened from its bar.
-        toggle = ("<button type='button' class='btn small facts-open' aria-controls='facts-suite'"
-                  " aria-expanded='false'>On this page</button>") if key == "suite" else ""
-        return f"<div class='bar'><h1 tabindex='-1'>{esc(label)}</h1>{toggle}</div>"
+        # Under 1280px a page's own facts (aside.facts) are a sheet, opened from its bar.
+        toggle = (f"<button type='button' class='btn small facts-open' aria-controls='facts-{key}'"
+                  f" aria-expanded='false'>{FACTS_OPEN[key]}</button>" if key in FACTS_OPEN else "")
+        return f"<div class='bar'><h1 tabindex='-1'>{esc(label)}</h1>{BAR_TOOLS.get(key, '')}{toggle}</div>"
     nav = "".join(f"<h2>{esc(group)}</h2><ul>" + "".join(link(key, label) for key, label, _ in pages) + "</ul>"
                   for group, pages in SECTIONS)
     panes = "".join(f"<section class='tab active' id='tab-{key}'>{bar(key, label)}{pane(key, actions)}</section>"
@@ -5471,38 +5510,72 @@ def _log_rows(path: pathlib.Path, limit: int = 200) -> list[str]:
 
 
 def logs_page() -> str:
-    """Newest first, from the files that already exist. Gateway calls show who
-    sat and how it went, never the prompt or the answers."""
+    """The logs down the left (name, size, last written), the one chosen beside
+    them in a box that scrolls by itself (bench.js pickLog): the newest 200
+    lines of each, newest first, from the files that already exist. Gateway
+    calls show who sat and how it went, never the prompt or the answers."""
+    gw_file, changes_file, sched_file = (DATA / "runs" / "gateway" / "calls.jsonl", DATA / "config" / "changes.jsonl",
+                                         DATA / "runs" / "scheduler.log")
     gw = []
-    for line in _log_rows(DATA / "runs" / "gateway" / "calls.jsonl"):
+    for line in _log_rows(gw_file):
         try:
             r = json.loads(line)
         except ValueError:
             continue
         seats = ", ".join(f"{s.get('alias')} {s.get('status')}" for s in r.get("seats", []))
-        gw.append(f"<tr><td class='mono'>{esc(r.get('at', '')[:16].replace('T', ' '))}</td>"
+        gw.append(f"<tr><td class='when'>{esc(r.get('at', '')[:16].replace('T', ' '))}</td>"
                   f"<td>{esc(r.get('model', ''))}</td><td>{esc(r.get('shape', ''))}</td><td>{esc(seats)}</td></tr>")
     changes = []
-    for line in _log_rows(DATA / "config" / "changes.jsonl"):
+    for line in _log_rows(changes_file):
         try:
             c = json.loads(line)
         except ValueError:
             continue
-        changes.append(f"<tr><td class='mono'>{esc(c.get('at', '')[:16].replace('T', ' '))}</td>"
+        changes.append(f"<tr><td class='when'>{esc(c.get('at', '')[:16].replace('T', ' '))}</td>"
                        f"<td>{esc(c.get('by', ''))}</td><td>{esc(c.get('alias') or '')}</td>"
                        f"<td>{esc(c.get('field', ''))}</td><td>{esc(str(c.get('new') or ''))[:160]}</td></tr>")
-    sched = "".join(f"<div class='mono log-line'>{esc(line)}</div>"
-                    for line in _log_rows(DATA / "runs" / "scheduler.log"))
-    onboard = "".join(f"<li class='mono log-line'>{esc(p.name)}</li>"
-                      for p in sorted((DATA / "runs").glob("onboard-*.log"), reverse=True)[:30])
+    sched = [f"<div class='log-line'>{esc(line)}</div>" for line in _log_rows(sched_file)]
+    runs = sorted((DATA / "runs").glob("onboard-*.log"), reverse=True)
+    onboard = [f"<li class='log-line'>{esc(p.name)}</li>" for p in runs[:30]]
 
-    def section(title, body, n, open_=False):
-        return (f"<details class='panel'{' open' if open_ else ''} data-log='{esc(title)}'><summary><b>{esc(title)}</b>"
-                f" <span class='muted'>· {n}</span></summary>{body}</details>")
+    def table(heads, rows):
+        return rows and ("<table><thead><tr>" + "".join(th(h) for h in heads)
+                         + f"</tr></thead><tbody>{''.join(rows)}</tbody></table>")
+
+    def size(paths) -> str:
+        """The files' bytes and when one was last written, as the list says it."""
+        st = [p.stat() for p in paths if p.exists()]
+        n = sum(s.st_size for s in st)
+        if not st:
+            return "not written yet"
+        return ((f"{n / 1e6:.1f} MB" if n >= 1e6 else f"{max(1, round(n / 1e3))} KB")
+                + time.strftime(" · %Y-%m-%d %H:%M", time.localtime(max(s.st_mtime for s in st))))
+    # Each log: its name, files, what it holds, and its lines as the page shows them.
+    logs = (("Gateway calls", [gw_file], f"The last {len(gw)} requests in <code>runs/gateway/calls.jsonl</code>:"
+             " who sat and how each seat went, never the prompt or the answers.",
+             table(("When", "Collection", "Shape", "Seats"), gw), len(gw)),
+            ("Changes", [changes_file], f"The last {len(changes)} changes in <code>config/changes.jsonl</code>:"
+             " a model, a collection or a setting, and who changed it.",
+             table(("When", "By", "Model", "What", "New"), changes), len(changes)),
+            ("Scheduler", [sched_file], f"The last {len(sched)} lines of <code>runs/scheduler.log</code>:"
+             " each job as it starts and ends.", "".join(sched), len(sched)),
+            ("Onboarding runs", runs, f"The newest {len(onboard)} of {len(runs)} onboarding logs,"
+             " <code>runs/onboard-*.log</code>, by name.", f"<ul>{''.join(onboard)}</ul>" if onboard else "", len(onboard)))
+    slug = {name: "log-" + re.sub(r"[^a-z]+", "-", name.lower()) for name, *_ in logs}
+    empty = "<div class='log-line muted'>Nothing yet.</div>"
+    nav = "".join(f"<li><button type='button' data-log-pick='{name}' aria-controls='{slug[name]}'"
+                  f" aria-pressed='{str(i == 0).lower()}'><span>{name}</span><span class='n'>{n}</span>"
+                  f"<small>{size(paths)}</small></button></li>"
+                  for i, (name, paths, _, _, n) in enumerate(logs))
+    views = "".join(f"<section id='{slug[name]}' data-log='{name}' aria-labelledby='{slug[name]}-h'{' hidden' if i else ''}>"
+                    f"<h2 id='{slug[name]}-h'>{name}</h2><p class='sub'>{sub}</p>"
+                    f"<div class='log-box' tabindex='0' role='region' aria-labelledby='{slug[name]}-h'>"
+                    f"{body or empty}</div></section>"
+                    for i, (name, _, sub, body, _) in enumerate(logs))
     # Export: a popup for the format and the logs (bench.js), each as the page shows it,
     # the filter applied. Text, every log chosen in one file to read; CSV, a file per log.
     picks = "".join(f"<label class='check'><input type='checkbox' name='lx-log' value='{esc(t)}' checked> {esc(t)}</label>"
-                    for t in ("Gateway calls", "Changes", "Scheduler", "Onboarding runs"))
+                    for t, *_ in logs)
     export = ("<dialog id='logs-export-dialog' aria-labelledby='lx-title'><h2 id='lx-title'>Export logs</h2>"
               "<fieldset><legend class='field'>Format</legend>"
               "<label class='check'><input type='radio' name='lx-format' value='txt' checked> Text (.txt)</label>"
@@ -5511,18 +5584,7 @@ def logs_page() -> str:
               "<p class='rules' id='lx-note'></p><div class='errors' id='lx-errors' role='alert'></div>"
               "<div class='actions'><button class='btn' type='button' id='lx-cancel'>Cancel</button>"
               "<button class='btn primary' type='button' id='lx-go'>Export</button></div></dialog>")
-    return (
-        "<div class='panel'><div class='toolbar'><input data-filter='page' placeholder='Filter every log on this page'"
-        " aria-label='Filter logs'>"
-        "<button class='btn small' type='button' id='logs-export'>Export…</button>"
-        f"{fold_toggle(False)}</div></div>{export}"
-        + section("Gateway calls", "<table><thead><tr>" + th("When") + th("Collection") + th("Shape")
-                  + th("Seats") + f"</tr></thead><tbody>{''.join(gw)}</tbody></table>", len(gw), True)
-        + section("Changes", "<table><thead><tr>" + th("When") + th("By") + th("Model") + th("What")
-                  + th("New") + f"</tr></thead><tbody>{''.join(changes)}</tbody></table>", len(changes))
-        + section("Scheduler", sched or "<p class='muted'>Nothing yet.</p>",
-                  len(_log_rows(DATA / 'runs' / 'scheduler.log')))
-        + section("Onboarding runs", f"<ul>{onboard}</ul>", onboard.count("<li")))
+    return f"<div class='split logs'><nav aria-label='Logs'><ul>{nav}</ul></nav>{views}</div>{export}"
 
 
 def _git(*args: str) -> str:
