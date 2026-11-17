@@ -106,6 +106,7 @@ def main() -> int:
             os.environ["BENCHWARMERS_ADMIN_TOKEN"] = TOKEN
             status, headers, _ = call(d, "/")
             assert status == 303 and headers["Location"] == "/login", (status, headers)
+            assert call(d, "/models")[0] == 303                                   # every page's own address too
             assert call(d, "/api/stamp")[0] == 401
             assert call(d, "/api/theme", {"theme": "nope"})[0] == 401             # writes too
             # Not even which routes exist: the Host, then the login, then the 404.

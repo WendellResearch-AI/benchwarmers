@@ -17,7 +17,7 @@ client. A model's REMOVAL
 (same popup, confirmed, reason optional): deregistered, taken
 out of every collection, and recorded in `config/retired.json`; no evidence
 is deleted. And ONBOARDING
-(header button): `scripts/onboard.py` started in the background with its log
+(the sidebar's button): `scripts/onboard.py` started in the background with its log
 tailed here. The upstream model id is never editable. Nothing else can write.
 
 Every table carries a KEY beside it saying what each column measures. A
@@ -1856,7 +1856,7 @@ def _spawn_onboard(served: str, endpoint: str = "", who: str = "ui",
 # The picker's models, and Discover's Add, run ONE AT A TIME, each a 4-call
 # probe and a suite: a burst on one free tier gets its key throttled. A thread
 # of this server runs them, so closing the popup or reloading the page stops
-# nothing; the header shows progress from GET /api/onboard-queue. Only
+# nothing; the sidebar shows progress from GET /api/onboard-queue. Only
 # POST /api/onboard (start_onboard) still starts one at once, for scripts.
 # ponytail: in memory; restarting serve.py drops the rest of a batch (each
 # started model's log stays in runs/). Persist it if restarts mid-batch matter.
@@ -1869,7 +1869,7 @@ def onboard_queue() -> dict:
     """The batch: each model's state (queued, running, done, no answer,
     failed, skipped) and whether it is still running. The running model also
     has `step`, the last of onboard.py's five steps its log has reached (0
-    before the first), so the header can fill by fifths of a model."""
+    before the first), so the sidebar's chip can fill by fifths of a model."""
     with _OQ_LOCK:
         running = _OQ["worker"] is not None
         out = {"ok": True, "errors": [], "running": running, "stopping": running and _OQ["stop"],
@@ -3514,19 +3514,37 @@ def wrong_card() -> str:
 def benchmarks_tab() -> str:
     data = json.dumps(charts_data(), ensure_ascii=False).replace("</", "<\\/")
     # Who to trust, then what moves day to day (Uptime, Trend, Performance), then Real work,
-    # then the rest in the order they had. Each report gets an id; a bar of links to them
-    # stays at the top while the page scrolls, the one in view marked (bench.js jumpSpy).
+    # then the rest in the order they had, in as many columns as fit (bench.js columns).
+    # Each report gets an id; beside them, a link to each, the one in view marked (bench.js
+    # jumpSpy), and what the bench holds now.
     reports = (("trust", "Who to trust", overview_card), ("uptime", "Uptime", uptime_card),
                ("trend", "Trend", trend_card), ("performance", "Performance", perf_card),
                ("work", "Real work", work_card), ("hunt", "Bug hunt", bughunt_card),
                ("wrong", "Confidently wrong", wrong_card), ("code", "Our code", suite_card),
                ("vision", "Vision", vision_card), ("decisions", "Decision", decision_card),
                ("external", "External", external_card))
-    links = "".join(f"<a href='#report-{key}'>{esc(label)}</a>" for key, label, _ in reports)
+    links = "".join(f"<li><a href='#report-{key}'>{esc(label)}</a></li>" for key, label, _ in reports)
     cards = "".join(card().replace("<div class='panel'", f"<div class='panel report' id='report-{key}'", 1)
                     for key, _, card in reports)
-    return (f"<nav class='jump' aria-label='On this page'><p class='jump-title'>On this page</p>{links}</nav>{cards}"
+    return (f"<div class='cols'>{cards}</div>"
+            "<aside class='facts' id='facts-suite' aria-labelledby='facts-suite-h'>"
+            "<div class='bar'><h2 id='facts-suite-h'>On this page</h2>"
+            "<button type='button' class='linkish facts-close'>Close</button></div><div class='facts-body'>"
+            f"<nav class='jump' aria-labelledby='facts-suite-h'><ol>{links}</ol></nav>"
+            f"<h3>The bench now</h3><dl class='rows'>{bench_now()}</dl></div></aside>"
             f"<script type='application/json' id='charts-data'>{data}</script>")
+
+
+def bench_now() -> str:
+    """Benchmarks' facts beside its reports: counts of what the dashboard reads anyway."""
+    directory = model_directory()
+    chat = [a for a, d in directory.items() if d.get("kind") != "decision"]
+    rows = (("Models on the bench", len(chat)), ("Decision models", len(directory) - len(chat)),
+            ("Connections", len({catalog.connection_of(a) for a in directory})),
+            ("Endpoints", len(endpoints.load())), ("Collections", len(bench_collections.load())),
+            ("Ad hoc only", sum(1 for d in directory.values() if d.get("ad_hoc"))),
+            ("Retired", len(retired())), ("Action needed", f"{open_count(open_actions()[0])} open"))
+    return "".join(f"<dt>{k}</dt><dd>{v}</dd>" for k, v in rows)
 
 
 def perf_card() -> str:
@@ -3563,7 +3581,7 @@ def perf_card() -> str:
 
 
 def favicon(theme: str) -> str:
-    """The tab icon: the header's bench, its seat in the theme's brand colour
+    """The tab icon: the sidebar's bench, its seat in the theme's brand colour
     (read from the theme's css; a tab cannot read the page's variables)."""
     m = re.search(r"--brand:\s*(#[0-9a-fA-F]{3,8})\b", read(UI / "themes" / f"{theme}.css"))
     seat = m.group(1) if m else "#990000"
@@ -3583,30 +3601,14 @@ def render(theme: str | None = None, shown: str = "suite") -> str:
 
 def _page(theme: str | None, shown: str = "suite") -> str:
     theme = theme if theme in themes() else saved_theme()      # a ?theme preview, else the saved one
+    shown = page_for(shown)
+    name = next(label for key, label, _ in TABS if key == shown)
     return (
         f"<!doctype html><html lang='en' data-theme='{esc(theme)}'><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width, initial-scale=1'>"
-        "<title>Benchwarmers</title>" + favicon(theme) +
+        f"<title>{'' if shown == 'suite' else esc(name) + ' · '}Benchwarmers</title>" + favicon(theme) +
         f"<style>{brand_css()}{read(UI / 'bench.css')}</style>"
-        # One line: the name on its bench, the credit beside it, the actions at
-        # the far end. (The next scheduled runs were listed under it; Settings'
-        # scheduler table shows them, with what each job does.)
-        "<header><h1><span>Benchwarmers</span></h1>"
-        # The credit is fixed, not a setting (RELEASE-PLAN decision 7).
-        "<p class='sub'>by <a href='https://wendellresearch.ai' target='_blank' rel='noopener'>Wendell Research</a></p>"
-        "<div class='head-actions'>"
-        "<button class='btn fresh' id='fresh' hidden>New results · Show</button>"
-        # The onboarding queue's progress (bench.js fills it from /api/onboard-queue).
-        "<div class='oq' id='oq' hidden role='status'>"
-        "<span class='oq-chip' id='oq-chip'><span id='oq-text'></span></span>"
-        "<button class='linkish' id='oq-open'>Details</button>"
-        "<button class='linkish' id='oq-stop'>Stop</button>"
-        "<button class='linkish' id='oq-clear'>Clear</button></div>"
-        "<button class='btn primary' id='onboard-open'>Onboard a model</button></div></header>"
-        # What needs a person first, then the pages; endpoints are managed from
-        # Connections now (the header button moved there).
-        f"<main>{first_run()}<div class='layout'>{tabs(shown)}</div></main>{editor()}"
-        f"<script>window.BENCH={directory_json()};</script>"
+        f"{tabs(shown, theme)}<script>window.BENCH={directory_json()};</script>"
         # Observable Plot (on d3) draws the Benchmarks charts. Pinned versions from
         # jsDelivr; without a network the tables under each chart still work.
         "<script src='https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js'></script>"
@@ -4084,7 +4086,7 @@ SECTIONS = (("Observe", (("suite", "Benchmarks", "benchmarks_tab"),
                          ("logs", "Logs", "logs_page"))),
             ("Gateway", (("endpoints", "Endpoints", "endpoints_page"),
                          ("models", "Models", "models_page"),
-                         ("collections", "Collections", "collections_and_gateway"),   # starred (bench.css)
+                         ("collections", "Collections", "collections_and_gateway"),
                          ("clients", "Clients", "clients_page"),
                          ("discover", "Discover", "discover_card"))),
             ("Control", (("settings", "Settings", "settings_page"),
@@ -4408,26 +4410,65 @@ def pane(key: str, actions: tuple | None = None) -> str:
     return globals()[next(fn for k, _, fn in TABS if k == key)]()
 
 
-def tabs(shown: str = "suite") -> str:
-    # Read once a render: Action needed's count in the sidebar, and its page when
-    # shown. Only the tab shown is rendered (the bench_tab cookie, set by bench.js):
-    # rendering every one took seconds. The rest are empty until opened (data-lazy).
-    # A tab that is gone (a cookie still saying glance) shows the home page.
+def href(key: str) -> str:
+    """A page's own address: Benchmarks is /, every other page /<key>."""
+    return "/" if key == "suite" else f"/{key}"
+
+
+def page_for(path: str) -> str:
+    """The page an address names (href; /benchmarks is Benchmarks too). Any
+    other address shows the home page."""
+    key = path.strip("/")
+    return key if any(k == key for k, _, _ in TABS) else "suite"
+
+
+def tabs(shown: str = "suite", theme: str = DEFAULT_THEME) -> str:
+    """The frame (ui/UI.md): the rail (the name on its bench, the pages as links,
+    the onboarding queue, Onboard a model, the theme), then the page pane, each
+    page a section under its bar, then the popups. Only the page shown is
+    rendered: rendering every one took seconds. The rest are their bars alone
+    until opened (data-lazy, bench.js load). Action needed's count is read once."""
     actions = open_actions()
     count = {"needs": open_count(actions[0])}
-    shown = shown if any(k == shown for k, _, _ in TABS) else "suite"
+    shown = page_for(shown)
 
-    def button(key: str, label: str) -> str:
+    def link(key: str, label: str) -> str:
         n = count.get(key)
-        return (f"<button role='tab' data-tab='{key}' aria-selected='false'"
+        return (f"<li><a data-tab='{key}' href='{href(key)}'" + (" aria-current='page'" if key == shown else "")
                 + (f" aria-label='{esc(label)}, {n} open'>{esc(label)}<span class='n' aria-hidden='true'>{n}</span>"
-                   if n else f">{esc(label)}") + "</button>")
-    nav = "".join(f"<div class='group'><h2>{esc(group)}</h2>"
-                  + "".join(button(key, label) for key, label, _ in pages) + "</div>"
+                   if n else f">{esc(label)}") + "</a></li>")
+
+    def bar(key: str, label: str) -> str:
+        # Under 1280px Benchmarks' own facts are a sheet, opened from its bar.
+        toggle = ("<button type='button' class='btn small facts-open' aria-controls='facts-suite'"
+                  " aria-expanded='false'>On this page</button>") if key == "suite" else ""
+        return f"<div class='bar'><h1 tabindex='-1'>{esc(label)}</h1>{toggle}</div>"
+    nav = "".join(f"<h2>{esc(group)}</h2><ul>" + "".join(link(key, label) for key, label, _ in pages) + "</ul>"
                   for group, pages in SECTIONS)
-    panes = "".join(f"<section class='tab' id='tab-{key}'>{pane(key, actions)}</section>" if key == shown
-                    else f"<section class='tab' id='tab-{key}' data-lazy></section>" for key, _, _ in TABS)
-    return f"<nav class='tabs' role='tablist' aria-label='Pages'>{nav}</nav><div class='panes'>{panes}</div>"
+    panes = "".join(f"<section class='tab active' id='tab-{key}'>{bar(key, label)}{pane(key, actions)}</section>"
+                    if key == shown else f"<section class='tab' id='tab-{key}' data-lazy>{bar(key, label)}</section>"
+                    for key, label, _ in TABS)
+    picks = "".join(f"<button type='button' data-theme-pick='{esc(t)}' aria-pressed='{str(t == theme).lower()}'"
+                    f" title='{esc(THEME_LABELS.get(t, t.title()))}'>{esc(t.title())}</button>" for t in themes())
+    return (
+        "<div class='app'><nav class='tabs' aria-label='Pages'><div class='brand'>"
+        "<a class='word' href='/' data-go='suite'><span>Benchwarmers</span></a>"
+        # The credit is fixed, not a setting (RELEASE-PLAN decision 7).
+        "<p class='by'>by <a href='https://wendellresearch.ai' target='_blank' rel='noopener'>Wendell Research</a></p>"
+        "<button type='button' class='btn menu' id='menu' aria-expanded='false' aria-controls='rail-body'>Menu</button>"
+        f"</div><div class='rail-body' id='rail-body'>{nav}<div class='foot'>"
+        "<button class='btn fresh' id='fresh' hidden>New results · Show</button>"
+        # The onboarding queue's progress (bench.js fills it from /api/onboard-queue).
+        "<div class='oq' id='oq' hidden role='status'>"
+        "<span class='oq-chip' id='oq-chip'><span id='oq-text'></span></span>"
+        "<button class='linkish' id='oq-open'>Details</button>"
+        "<button class='linkish' id='oq-stop'>Stop</button>"
+        "<button class='linkish' id='oq-clear'>Clear</button></div>"
+        "<button class='btn primary' id='onboard-open'>Onboard a model</button>"
+        # Saved as Settings' picker saves it (bench.js theme).
+        f"<div class='pick-theme' role='group' aria-labelledby='theme-cap'><p id='theme-cap'>Theme</p>{picks}</div>"
+        # What needs a person first (first run), then the pages.
+        f"</div></div></nav><main class='panes'>{first_run()}{panes}</main>{editor()}</div>")
 
 
 def saved_theme() -> str:
@@ -5392,20 +5433,27 @@ def directory_json() -> str:
 
 def editor() -> str:
     return (
+        # A model, docked beside the page (bench.js dock): not a popup. Its Save at a fixed foot.
         "<dialog id='model-dialog' aria-labelledby='m-title'>"
-        "<h2 id='m-title'></h2><p class='served' id='m-served'></p>"
+        "<div class='bar'><p>Model</p></div><div class='dock-body'>"
+        "<h2 id='m-title' tabindex='-1'></h2><p class='served' id='m-served'></p>"
         "<div class='note' id='m-gone' hidden></div>"
         "<div class='note' id='m-onboard' hidden></div>"
-        "<div id='m-editor'>"
-        "<label class='field' for='m-alias'>Alias</label><input id='m-alias' spellcheck='false'>"
+        "<div id='m-editor'><div class='rows'>"
+        "<label for='m-alias'>Alias</label><input id='m-alias' class='mono' spellcheck='false'>"
         "<p class='rules' id='m-alias-why'>The name <code>llm -m</code> takes and every record is"
         " keyed by. Letters, digits, dot, dash, underscore; unused, and never a retired name.</p>"
         "<p class='note' id='m-danger' hidden>Renaming rewrites the llm registry and records"
         " old → new in <code>alias-history.json</code>, so suite outputs, offloads, perf"
         " history and run notes keep following this model.</p>"
-        "<label class='field' for='m-role'>Role</label><select id='m-role'></select>"
+        "<label for='m-role'>Role</label><select id='m-role'></select>"
         "<p class='rules' id='m-role-why'></p>"
         "<p class='note' id='m-role-hint' hidden></p>"
+        "<label for='m-adhoc'>Ad hoc only</label><span><input type='checkbox' id='m-adhoc'></span>"
+        "<p class='rules'>Never chosen by the bench on its own: no explorer seat, no router"
+        " pick, no scheduled suite, perf or availability runs. Still called whenever you choose"
+        " it: as a collection member (or merger), with <code>with</code>, or with"
+        " <code>--model</code>. For metered, capped or trial keys.</p></div>"
         "<fieldset id='m-qtypes' hidden><legend class='field'>Question types</legend>"
         "<label class='check'><input type='checkbox' value='noul'> yes/no"
         " <span class='muted'>(noul: a probability that the answer is yes)</span></label>"
@@ -5449,16 +5497,11 @@ def editor() -> str:
         " endpoint. <span id='co-ceiling'></span></p>"
         "<div class='errors' id='co-errors' role='alert'></div>"
         "</details>"
-        "<label class='check'><input type='checkbox' id='m-adhoc'> Ad hoc only</label>"
-        "<p class='rules'>Never chosen by the bench on its own: no explorer seat, no router"
-        " pick, no scheduled suite, perf or availability runs. Still called whenever you choose"
-        " it: as a collection member (or merger), with <code>with</code>, or with"
-        " <code>--model</code>. For metered, capped or trial keys.</p>"
-        "</div>"
+        "</div></div><div class='dock-foot'>"
         "<div class='errors' id='m-errors' role='alert'></div><div class='done' id='m-done'></div>"
-        "<div class='actions'><button class='btn' id='m-close'>Close</button>"
+        "<button class='btn primary' id='m-save'>Save</button>"
         "<button class='btn primary' id='m-restore' hidden>Restore</button>"
-        "<button class='btn primary' id='m-save'>Save</button></div>"
+        "<button class='btn' id='m-close'>Close</button>"
         "<details class='remove' id='m-remove-box'><summary>Retire this model…</summary>"
         "<p class='rules'>Deregisters the alias, records it in <code>retired.json</code> so the"
         " name is never reused, takes it out of every collection it is a member or merger of,"
@@ -5468,7 +5511,7 @@ def editor() -> str:
         "<label class='field' for='m-reason'>Why <span class='muted'>(optional, recorded)</span></label>"
         "<input id='m-reason' placeholder='e.g. free tier withdrawn 2026-10-15'>"
         "<div class='actions'><button class='btn danger' id='m-remove'>Retire</button></div>"
-        "</details></dialog>"
+        "</details></div></dialog>"
         # The page's own confirm (bench.js ask): window.confirm can be blocked.
         "<dialog id='ask-dialog' aria-labelledby='ask-text'>"
         "<p id='ask-text' style='white-space:pre-line'></p>"
@@ -5482,7 +5525,7 @@ def editor() -> str:
         "<p class='served'>Everything your endpoints serve that is not on the bench, retired or"
         " dismissed. Onboarding registers it, probes it (4 calls) and runs the internal"
         " suite: minutes, and it spends calls. Pick one or several: they run one at a time,"
-        " with progress in the header. A model from somewhere else? Add its endpoint first.</p>"
+        " with progress at the foot of the sidebar. A model from somewhere else? Add its endpoint first.</p>"
         "<input type='search' id='o-find' placeholder='Search models or connections'"
         " aria-label='Search models'>"
         # How old the list is (serve.LISTED_FOR), and asking again now.
@@ -5753,9 +5796,8 @@ class Handler(gateway.Handler):
             self.wfile.write(data)
             return
         theme = q.get("theme", [None])[0]               # a preview; else the saved one
-        shown = re.search(r"(?:^|;)\s*bench_tab=(\w+)", self.headers.get("Cookie") or "")   # the tab last shown
         try:
-            page = render(theme, shown.group(1) if shown else "suite")
+            page = render(theme, page_for(path))       # the page the address names (href)
         except RuntimeError as exc:                    # endpoints.json unreadable: say which and why
             page = f"<!doctype html><meta charset='utf-8'><title>Benchwarmers</title><p>{esc(exc)}</p>"
         self._page(page)                               # gzipped beyond this machine (_length)

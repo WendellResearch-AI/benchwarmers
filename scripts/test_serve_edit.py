@@ -691,6 +691,14 @@ def main() -> int:
           + ("" if ok else f" -> {w} {twice} late {late}"))
     failures += 0 if ok else 1
 
+    # An address per page: / and /benchmarks are Benchmarks, /<key> the others,
+    # anything else the home page; each page's link is its address.
+    ok = (serve.page_for("/") == serve.page_for("/benchmarks") == serve.page_for("/nope") == "suite"
+          and serve.page_for("/models") == serve.page_for("/models/") == "models"
+          and all(serve.page_for(serve.href(k)) == k for k, _, _ in serve.TABS))
+    print(("ok   " if ok else "FAIL ") + "an address per page, and the home page for any other")
+    failures += 0 if ok else 1
+
     # gzip for a caller off this machine that takes it; never over loopback.
     import gzip
 

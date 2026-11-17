@@ -115,23 +115,55 @@
   on('change', 'x-file', function () { importZip(false); });
   on('click', 'x-import', function () { importZip(true); });
 
-  // ---- tabs, remembered per browser ----------------------------------
-  // The server renders only the one shown (serve.tabs, told by the bench_tab
-  // cookie set here); the others are fetched when first opened (GET
-  // /api/pane), and again after a change to them (refreshPanes).
-  var tabs = document.querySelectorAll('.tabs button[data-tab]');      // not the sidebar's own toggle
+  // ---- pages: a link each, at its own address (serve.href) -------------
+  // The server renders only the page the address names; the others are
+  // fetched when first opened (GET /api/pane), and again after a change to
+  // them (refreshPanes). A link swaps the page in place, at once.
+  var app = document.querySelector('.app');
+  var tabs = document.querySelectorAll('.tabs a[data-tab]');
   var onShow = {};                     // a page's loader, run each time it is shown
   var onLoad = {};                     // a page's set-up, run each time its HTML arrives
   var shown = null, fetching = {}, ready = {}, marks = 0, last = {}, edited = {};
   var KEPT = 'input[data-filter], select[data-facet], input[data-retired], input[data-df], #d-q, [data-kept]';    // controls a swap keeps (or may reset)
   function show(id) {
     shown = id;
-    tabs.forEach(function (b) { b.setAttribute('aria-selected', String(b.dataset.tab === id)); });
+    tabs.forEach(function (a) {
+      if (a.dataset.tab === id) { a.setAttribute('aria-current', 'page'); document.title = (id === 'suite' ? '' : a.firstChild.textContent + ' · ') + 'Benchwarmers'; }
+      else a.removeAttribute('aria-current');
+    });
     document.querySelectorAll('.tab').forEach(function (s) { s.classList.toggle('active', s.id === 'tab-' + id); });
-    store('bench.tab', id);
-    document.cookie = 'bench_tab=' + id + '; path=/; max-age=31536000; samesite=strict';
-    return load(id).then(function () { if (onShow[id] && shown === id) onShow[id](); });
+    sheet('menu', false); sheet('facts', false);
+    return load(id).then(function () { markHand(); if (onShow[id] && shown === id) onShow[id](); });
   }
+  // A page chosen (a link, a button that leads there): a new entry in the history, and
+  // the focus on its name, where a keyboard or a screen reader carries on from.
+  function go(id) {
+    var a = document.querySelector('.tabs a[data-tab="' + id + '"]');
+    if (id !== shown) history.pushState(null, '', a.getAttribute('href') + location.search);   // a ?theme preview stays
+    var done = show(id);
+    $('tab-' + id).querySelector('.bar h1').focus({preventScroll: true});
+    return done;
+  }
+  function pageAt(path) { var k = path.split('/')[1]; return k && $('tab-' + k) ? k : 'suite'; }
+  addEventListener('popstate', function () { if (pageAt(location.pathname) !== shown) show(pageAt(location.pathname)); });
+  // A plain click; with Ctrl, Shift or the middle button a link opens a new tab as links do.
+  document.addEventListener('click', function (e) {
+    var a = e.target.closest('a[data-tab], [data-go]');
+    if (!a || (a.href && (e.button || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey))) return;
+    e.preventDefault();
+    go(a.dataset.tab || a.dataset.go);
+  });
+  // Under 800px the rail is a bar whose Menu opens the pages; under 1280px a page's
+  // own facts are a sheet, opened from its bar. Escape, or a page chosen, puts both away.
+  function sheet(which, open) {
+    app.classList.toggle(which + '-open', open);
+    document.querySelectorAll(which === 'menu' ? '#menu' : '.facts-open').forEach(function (b) { b.setAttribute('aria-expanded', String(open)); });
+  }
+  document.addEventListener('click', function (e) {
+    if (e.target.closest('#menu')) sheet('menu', !app.classList.contains('menu-open'));
+    else if (e.target.closest('.facts-open')) sheet('facts', !app.classList.contains('facts-open'));
+    else if (e.target.closest('.facts-close, aside.facts a')) sheet('facts', false);
+  });
   // A page in place and set up: fetched if it has no HTML yet, or only old HTML
   // (data-lazy), which stays on screen until the new arrives.
   function load(id) {
@@ -165,7 +197,7 @@
   // so is a page someone is at work on (busy), with New results offered.
   function swap(id, html, live) {
     var s = $('tab-' + id), boxes = 'input[data-filter], select[data-facet]', old = s.querySelectorAll(boxes);
-    if (live && (html === last[id] || (s.hasChildNodes() && busy(s)))) {
+    if (live && (html === last[id] || (s.childElementCount > 1 && busy(s)))) {
       if (html !== last[id]) fresh.hidden = false;
       s.removeAttribute('data-lazy');
       return ready[id] || setUp(id);
@@ -178,7 +210,9 @@
       var th = p[1].querySelector('th[aria-sort]');
       if (th) sorts[p[0]] = [Array.prototype.indexOf.call(p[1].children, th), th.getAttribute('aria-sort')];
     });
-    s.innerHTML = last[id] = html; s.removeAttribute('data-lazy');
+    var bar = s.querySelector(':scope > .bar');          // the page's name stays, and its focus
+    while (bar.nextSibling) bar.nextSibling.remove();
+    bar.insertAdjacentHTML('afterend', last[id] = html); s.removeAttribute('data-lazy');
     named(s.querySelectorAll('details'), foldKey).forEach(function (p) { if (p[0] in folds) p[1].open = folds[p[0]]; });
     named(s.querySelectorAll('thead tr'), headKey).forEach(function (p) {
       var k = sorts[p[0]], th = k && p[1].children[k[0]];
@@ -204,16 +238,14 @@
   function headKey(tr) { return tr.textContent; }
   function setUp(id) {
     delete edited['tab-' + id];
-    applyRetired();
+    applyRetired(); markHand();
     return (ready[id] = Promise.resolve(onLoad[id] && onLoad[id]()));
   }
-  tabs.forEach(function (b) { b.addEventListener('click', function () { show(b.dataset.tab); }); });
   // The page the server rendered is set up as a fetched one is, once every
   // onLoad below is defined.
   var rendered = document.querySelector('.tab:not([data-lazy])');
   Promise.resolve().then(function () { if (rendered) setUp(rendered.id.slice(4)); });
-  var wanted = store('bench.tab');            // else the one rendered: storage blocked or cleared, the cookie kept
-  show(wanted && $('tab-' + wanted) ? wanted : rendered ? rendered.id.slice(4) : 'suite');
+  show(rendered ? rendered.id.slice(4) : 'suite');
 
   // ---- sortable tables -------------------------------------------------
   function key(cell) {
@@ -355,12 +387,6 @@
       saveFile(new Blob([out.join('\n') + '\n'], {type: 'text/plain;charset=utf-8'}), 'benchwarmers-logs-' + stamp + '.txt');
     }
     dlg.close();
-  });
-
-  // ---- a link to another page ----
-  document.addEventListener('click', function (e) {
-    var b = e.target.closest('[data-go]');
-    if (b) { show(b.dataset.go); scrollTo(0, 0); }
   });
 
   // ---- retired rows: hidden unless asked for ---------------------------
@@ -609,7 +635,8 @@
     return !!(edited[s.id] || (s.contains(a) && a.matches('input, textarea, select') && !a.matches(KEPT))
       || (sel && String(sel) && sel.containsNode(s, true)) || s.querySelector('svg:hover'));
   }
-  function held() { return !!document.querySelector('dialog[open]') || busy($('tab-' + shown)); }
+  // The docked model editor is not a popup: the page beside it follows the data.
+  function held() { return !!document.querySelector('dialog[open]:not(#model-dialog)') || busy($('tab-' + shown)); }
   function poll() {
     if (document.hidden || fetching[shown]) return;          // one at a time: a slow page is not asked again meanwhile
     get('/api/stamp').then(function (s) {
@@ -632,7 +659,7 @@
            reason: $('m-reason'), remove: $('m-remove'), onboard: $('m-onboard'),
            qtypes: $('m-qtypes'), aliasWhy: $('m-alias-why'), roleHint: $('m-role-hint')};
   m.aliasWhy.dataset.chat = m.aliasWhy.textContent;
-  var editing = null, shown = {};
+  var editing = null, opened = {};     // opened: what the editor opened with (not `shown`, the page's name)
 
   function openModel(alias) {
     var model = D.models[alias], gone = (D.retired || {})[alias];
@@ -682,10 +709,39 @@
       m.save.disabled = false; m.save.textContent = 'Save';
       m.reason.value = ''; m.removeBox.open = false; m.remove.disabled = false; refresh();
       // What the popup opened with: Save sends only the parts that differ from it.
-      shown = {model: JSON.stringify(modelBody()), facts: factsBody(), opts: optsBody()};
+      opened = {model: JSON.stringify(modelBody()), facts: factsBody(), opts: optsBody()};
     }
-    if (!md.open) md.showModal();      // open already: shown again as it now is (shownAgain)
+    dock();                            // open already: shown again as it now is (shownAgain)
   }
+  // The editor docks beside the page (bench.css): opened by its attribute, not show(),
+  // so a click leaves the focus where it was; a keyboard's goes to it, and back to the
+  // link that opened it when it closes. The rows of its model are marked (markHand).
+  // From a name inside a popup (a collection's members) it opens over that popup.
+  var opener = null, byKey = false;
+  function dock() {
+    if (!md.open) {
+      if (opener && opener.closest('dialog:modal')) md.showModal(); else md.setAttribute('open', '');
+    }
+    markHand();
+    if (byKey) { byKey = false; m.title.focus(); }
+  }
+  function markHand() {
+    var d = $('model-dialog'), alias = d && d.open && $('m-title').textContent;
+    document.querySelectorAll('tr.in-hand').forEach(function (r) { r.classList.remove('in-hand'); });
+    if (alias) document.querySelectorAll('.tab.active a.model[data-alias="' + CSS.escape(alias) + '"]').forEach(function (a) {
+      var r = a.closest('tr'); if (r) r.classList.add('in-hand');
+    });
+  }
+  md.addEventListener('close', function () {
+    markHand();
+    var at = document.activeElement;
+    if (opener && opener.isConnected && (md.contains(at) || at === document.body)) opener.focus();
+  });
+  document.addEventListener('keydown', function (e) {        // a popup over it takes its own Escape
+    if (e.key !== 'Escape' || document.querySelector('dialog:modal')) return;
+    sheet('menu', false); sheet('facts', false);
+    if (md.open) md.close();
+  });
   // How its onboarding stopped (serve.onboard_issues): only while it has not
   // answered a probe since. The error as the provider gave it, and the log.
   var ONBOARD_NEXT = {
@@ -791,7 +847,7 @@
   }
   document.addEventListener('click', function (e) {
     var a = e.target.closest('a.model');
-    if (a) { e.preventDefault(); openModel(a.dataset.alias); }
+    if (a) { e.preventDefault(); opener = a; byKey = !e.detail; openModel(a.dataset.alias); }
   });
   m.close.addEventListener('click', function () { md.close(); });
   m.alias.addEventListener('input', refresh);
@@ -834,20 +890,20 @@
     if (!editing) return;
     var alias = editing, body = modelBody(), facts = factsBody(), opts = optsBody(), said = [];
     var steps = [];
-    if (facts !== shown.facts) steps.push(function () {
+    if (facts !== opened.facts) steps.push(function () {
       return post('/api/model-facts', {alias: alias, facts: JSON.parse(facts)}).then(function (r) {
         if (!r.ok) { listErrors($('f-errors'), r.errors); $('m-facts').open = true; throw 'refused'; }
         said.push('model facts');
       });
     });
-    if (opts !== shown.opts) steps.push(function () {   // the llm CLI is told too: seconds
+    if (opts !== opened.opts) steps.push(function () {   // the llm CLI is told too: seconds
       return post('/api/model-options', {alias: alias, max_tokens: opts ? Number(opts) : null}).then(function (r) {
         if (!r.ok) { listErrors($('co-errors'), r.errors); $('m-opts').open = true; throw 'refused'; }
         ownChange();                         // only this popup shows them
         said.push('call options' + (r.note ? ' (' + r.note + ')' : ''));
       });
     });
-    if (JSON.stringify(body) !== shown.model) steps.push(function () {
+    if (JSON.stringify(body) !== opened.model) steps.push(function () {
       body.alias = alias;
       return post('/api/model', body).then(function (r) {
         if (!r.ok) { listErrors(m.errors, r.errors); throw 'refused'; }
@@ -881,7 +937,7 @@
       .then(function (yes) {
         if (!yes) return;
         m.remove.disabled = true; m.errors.textContent = ''; md.close();
-        function refused(errors) { md.showModal(); listErrors(m.errors, errors); m.remove.disabled = false; }
+        function refused(errors) { byKey = false; dock(); listErrors(m.errors, errors); m.remove.disabled = false; }
         post('/api/remove', {alias: alias, reason: m.reason.value}).then(function (res) {
           if (!res.ok) { refused(res.errors); return; }
           m.remove.disabled = false; markRetired([alias], true); refreshNeeds();
@@ -1179,7 +1235,7 @@
     });
   }
   // Everything ticked goes to the queue (serve.queue_onboard), which runs one
-  // model at a time. The popup closes: the header's chip shows the batch, and
+  // model at a time. The popup closes: the sidebar's chip shows the batch, and
   // its Details the queue. Refused, it stays open with the reasons.
   o.start.addEventListener('click', function () {
     var mode = $('o-mode').value, vision = $('o-vision').checked;
@@ -1213,7 +1269,7 @@
     else showQueue(res);
   }
   // The queue starts it within a moment; follow its log once it has one,
-  // unless the popup was closed or reopened meanwhile (the header has it then).
+  // unless the popup was closed or reopened meanwhile (the sidebar has it then).
   function waitAndFollow(one, at, title, before, token, tries) {
     if (token !== waitToken || !od.open) return;
     get('/api/onboard-queue').then(function (q) {
@@ -1226,7 +1282,7 @@
     });
   }
 
-  // ---- the onboarding queue: progress in the header (serve.onboard_queue) --
+  // ---- the onboarding queue: progress in the sidebar (serve.onboard_queue) -
   // Polled while it runs, and once on every page load, so a batch started
   // before a reload still shows. Its results stay until Clear.
   var oq = {box: $('oq'), text: $('oq-text'), chip: $('oq-chip'), stop: $('oq-stop'), clear: $('oq-clear'),
@@ -1267,7 +1323,7 @@
   }
   function oqList(q) {
     oq.sum.textContent = q.running
-      ? 'One at a time, in this order. Closing this does not stop it; Stop in the header lets the model running now finish and skips the rest.'
+      ? 'One at a time, in this order. Closing this does not stop it; Stop at the foot of the sidebar lets the model running now finish and skips the rest.'
       : q.items.length ? 'Finished. Each log is in runs/.' : 'Nothing queued.';
     oq.list.textContent = '';
     q.items.forEach(function (i) {
@@ -1364,7 +1420,7 @@
     }
     // A hub's own steps take a while before the onboarding is even queued, so
     // the progress starts now: the onboarding popup with the hub as its first
-    // step, and the header chip. The queue's own poll takes the chip over.
+    // step, and the sidebar's chip. The queue's own poll takes the chip over.
     dd.close(); waitToken++;
     preStep = {label: 'Added to ' + x.label, state: 'now', note: ''};
     runView(title, 'Adding it to ' + x.label + '…');
@@ -1514,16 +1570,29 @@
   // Every theme's colours are on the page (serve.brand_css), keyed by the
   // data-theme on <html>, so switching is one attribute: no reload. The
   // charts read their colours when drawn, so they are drawn again.
-  on('change', 'themes', function (ev) {
-    var input = ev.target;
-    document.documentElement.setAttribute('data-theme', input.value);
-    $('t-errors').textContent = ''; $('t-done').textContent = '';
-    if (typeof drawCharts === 'function') drawCharts();
-    post('/api/theme', {theme: input.value}).then(function (r) {
-      if (!r.ok) { listErrors($('t-errors'), r.errors); return; }
-      $('t-done').textContent = 'Saved: ' + input.value + ' is the theme from now on.';
-      if (location.search.indexOf('theme=') !== -1) history.replaceState(null, '', '/');   // drop a ?theme preview
+  // Settings' picker and the rail's switch are one: each shows what the other picked.
+  function theme(name) {
+    document.documentElement.setAttribute('data-theme', name);
+    document.querySelectorAll('[data-theme-pick]').forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.themePick === name)); });
+    var radio = document.querySelector('#themes input[value="' + name + '"]');
+    if (radio) radio.checked = true;
+    if ($('t-errors')) $('t-errors').textContent = $('t-done').textContent = '';
+    drawCharts();
+    return post('/api/theme', {theme: name}).then(function (r) {
+      if (r.ok && location.search.indexOf('theme=') !== -1) history.replaceState(null, '', location.pathname + location.hash);   // drop a ?theme preview
+      return r;
     });
+  }
+  on('change', 'themes', function (ev) {
+    var name = ev.target.value;
+    theme(name).then(function (r) {
+      if (!r.ok) { listErrors($('t-errors'), r.errors); return; }
+      $('t-done').textContent = 'Saved: ' + name + ' is the theme from now on.';
+    });
+  });
+  document.addEventListener('click', function (e) {
+    var b = e.target.closest('[data-theme-pick]');
+    if (b) theme(b.dataset.themePick);
   });
 
   // ---- gateway keys: shown once, then only their names ---------------------
@@ -2011,7 +2080,7 @@
     // the Clients page use: up to four of the models just onboarded ticked (two to four is
     // what a panel wants), never an image generator. Nothing is made until it is saved.
     if (first.dataset.step === 'collection') {
-      show('collections').then(function () {
+      go('collections').then(function () {
         var members = C.models.filter(function (a) { return fact(a).role !== 'image'; }).slice(0, 4);
         fillForm(null, {name: 'core', description: 'General second opinions: any question, several models at once.',
                         tags: ['general', 'second-opinion'], members: members});
@@ -2019,7 +2088,7 @@
       });
       return;
     }
-    show('endpoints').then(function () { openEndpoint('add'); });
+    go('endpoints').then(function () { openEndpoint('add'); });
   }
   on('click', 'first-go', firstStep);                     // on the document: a new step brings a new button
   if (first && first.dataset.step === 'endpoint') firstStep();   // straight into Add: an empty bench offers nothing else
@@ -2832,14 +2901,16 @@
         signal = tok('--signal', '#fae66c'), sky = tok('--sky', '#69bdeb'), muted = tok('--muted', '#6b685a'),
         line = tok('--line', '#e4dfd2'), halo = tok('--paper-2', '#ffffff');
     var style = {background: 'transparent', color: ink, fontSize: '13px', overflow: 'visible'};
-    // Tabs other than the open one have no width yet, so size from the column
-    // the pages share. It was the whole page, which made every chart wider than
-    // its column beside the sidebar, scaled down, with smaller text.
+    // Benchmarks shown: a report's own width inside its padding, its column's (columns);
+    // another page: that page's. Benchmarks drawn while hidden is drawn again when shown.
     function width() {
-      // Benchmarks shown with its rail beside the reports: a report's own width, not the column's.
       var report = document.querySelector('.tab.active .panel.report');
-      if (report && report.clientWidth) return Math.max(520, report.clientWidth - 50);
-      var col = document.querySelector('.panes') || document.querySelector('main');
+      if (report && report.clientWidth) {
+        var cs = getComputedStyle(report);
+        drawnAt = report.clientWidth;
+        return Math.max(520, drawnAt - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight));
+      }
+      var col = document.querySelector('.tab.active') || document.querySelector('main');
       return Math.max(520, (col.clientWidth || 900) - 50);
     }
     if (part !== 'suite' && part !== 'uptime' && part !== 'trend') drawQuotaCharts(tok, style, width);
@@ -3456,9 +3527,39 @@
     });
 
   }
-  onLoad.suite = function () { drawCharts('suite'); jumpSpy(); };
-  // Benchmarks' jump bar: the report in view is marked (aria-current) and its link kept in
-  // sight in a bar that scrolls sideways. Set up again after a live swap (setUp, onLoad).
+  onLoad.suite = function () { columns(); drawCharts('suite'); jumpSpy(); };
+  onShow.suite = function () {            // drawn while another page was shown (a theme picked on Settings)
+    var r = document.querySelector('#tab-suite .panel.report');
+    if (r && Math.abs(r.clientWidth - drawnAt) > 1) drawCharts('suite');
+  };
+  // Benchmarks' reports in as many columns as fit, each kept whole: one under 1100px of
+  // room, three from 1640. In two or three they are a grid of 8px rows, each report
+  // spanning its own height, so the grid sets each one under the shortest column. The
+  // charts are drawn again at a new column width.
+  // The page is watched, not the grid, whose height the spans change: the grid's
+  // width follows the page's.
+  var drawnAt = 0, redraw = 0, laid = window.ResizeObserver && new ResizeObserver(function (entries) {
+    entries.forEach(function (e) {
+      var t = e.target;
+      if (t.classList.contains('tab')) fit(t.querySelector('.cols'));
+      else if (t.offsetHeight) t.style.gridRowEnd = 'span ' + Math.ceil(t.offsetHeight / 8);
+    });
+    var r = document.querySelector('.tab.active .panel.report');
+    if (r && Math.abs(r.clientWidth - drawnAt) > 1) { clearTimeout(redraw); redraw = setTimeout(function () { drawCharts('suite'); }, 150); }
+  });
+  function fit(g) {
+    var w = g && g.clientWidth, n = String(w >= 1640 ? 3 : w >= 1100 ? 2 : 1);
+    if (w && g.dataset.n !== n) g.dataset.n = n;      // not while the page is not shown: it has no width
+  }
+  function columns() {
+    var g = document.querySelector('#tab-suite .cols');
+    if (!g || !laid) return;
+    fit(g);                                            // now, so the charts are drawn once
+    laid.disconnect(); laid.observe($('tab-suite'));
+    g.querySelectorAll('.panel.report').forEach(function (p) { laid.observe(p); });
+  }
+  // "On this page": the report in view is marked (aria-current). Set up again after a
+  // live swap (setUp, onLoad).
   var spy = null;
   function jumpSpy() {
     if (spy) spy.disconnect();
@@ -3475,10 +3576,6 @@
       if (current) links[current].removeAttribute('aria-current');
       current = id;
       links[id].setAttribute('aria-current', 'true');
-      var a = links[id];
-      if (a.offsetLeft < nav.scrollLeft || a.offsetLeft + a.offsetWidth > nav.scrollLeft + nav.clientWidth) {
-        nav.scrollLeft = a.offsetLeft - 16;
-      }
     }, {rootMargin: '-15% 0px -80% 0px'});
     document.querySelectorAll('#tab-suite .panel.report').forEach(function (p) { spy.observe(p); });
   }

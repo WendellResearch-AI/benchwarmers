@@ -1,15 +1,16 @@
-/* Hardwood: a basketball gym. The page is a maple court seen from above:
+/* Hardwood: a basketball gym. The floor is a maple court seen from above:
    boards with staggered joints and grain, and the court painted on them
    (boundary, half-court line, centre circle, crimson lanes, free-throw
-   circles, three-point arcs, backboards), held still behind the page as it
-   scrolls. Hoosier crimson and cream; scoreboard amber; a crimson court line
-   across the top; the name sits on a crimson team bench. The sidebar and the
-   page's content sit on frosted cream so the court shows without fighting
-   the text. Named for the gym, not a film.
-   Crimson marks the team (button shadows, the bench, the court line, links);
+   circles, three-point arcs, backboards), held still as the page scrolls.
+   Hoosier crimson and cream; scoreboard amber; a crimson court line across
+   the top; the name sits on a crimson team bench. The dashboard shows the
+   boards behind its rail alone, edged by the court's sideline (bench.css);
+   the page itself is solid paper. Named for the gym, not a film.
+   Crimson marks the team (the bench, the court line, links, where you are);
    OK stays green and errors a burnt orange, so no state reads as the brand.
-   --floor is the page's ground; --floor-ground its darkest board, which the
-   theme check holds the page's text to. */
+   --floor is the whole court, its layers in this order: Wendell, the court's
+   lines, the boards' joints and grain, the seams, the boards. --floor-ground is its darkest
+   board, which the theme check holds the rail's text to. */
 :root {
   --ink: #1a1410;
   --ink-2: #2b211a;
@@ -34,10 +35,7 @@
   --bench-leg: #2b211a;
   --court-line: #990000;
   --floor-ground: #e1ba80;
-  --rail: rgb(255 250 243 / .9);
-  --rail-pad: .9rem 1rem;
-  --sheet: rgb(255 250 243 / .9);
-  --glass: blur(5px);
+  --sideline: rgb(26 20 16 / .55);
   /* Every layer is fixed, so the whole floor holds still as the page scrolls.
      The court starts just under the header (its top sideline 5rem down, its
      height the window's less 6rem), so the name's bench sits on the

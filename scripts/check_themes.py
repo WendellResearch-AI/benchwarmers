@@ -38,10 +38,11 @@ PAIRS = [
     ("on-err", "err", 4.5, "danger button"),
     ("log-ink", "log-ground", 4.5, "onboarding log"),
     ("ink-deep", "sky", 4.5, "'new' chip"),
-    ("brand", "paper", 3.0, "meters, step marks, button shadow"),
-    # Only for a theme with a floor (--floor, a page ground drawn as a
-    # pattern): the header and sidebar text sit on it, held to its darkest board.
-    ("ink", "floor-ground", 4.5, "header text on the floor"),
+    ("brand", "paper", 3.0, "meters, step marks, where you are"),
+    # Only for a theme with a floor (--floor, a ground drawn as a pattern): the
+    # rail's text sits on its boards (under a wash of paper, which only helps),
+    # held to the darkest board.
+    ("ink", "floor-ground", 4.5, "rail text on the floor"),
     ("muted", "floor-ground", 4.5, "secondary text on the floor"),
     ("link", "floor-ground", 4.5, "links on the floor"),
 ]
