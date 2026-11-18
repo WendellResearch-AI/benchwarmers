@@ -82,7 +82,7 @@ the rail is a bar with a menu.
   each kept whole (Benchmarks' reports: one on a laptop, three at 3440).
   Without script: `.cols.flow`, newspaper columns of 34rem, for sections of
   any height (Settings, Action needed); `.cols.fit`, a row the few groups
-  share when each has `--fit` (26rem, Info; 52rem, Quota's tables).
+  share when each has `--fit` (26rem, Info; 52rem, Quota's charts).
 - **Table**: spans its pane; hairline rows; a sticky head; numbers right in
   tabular figures, dates on one line (`td.when`); a heading sorts on click and
   shows its arrow; the row in hand carries the accent. A column nothing is

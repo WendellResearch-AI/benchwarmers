@@ -2821,11 +2821,14 @@
     }).catch(function (err) { $('v-errors').textContent = String(err); });
   });
 
-  // ---- Quota (serve.quotas_page): the tables are the server's; a connection's
-  // rows open it docked beside them (#q-models), from its tile in quota-data
-  // (metrics/quotaview.py): how it is reached, its models, its one Refresh,
-  // which picks a free read, one short call or the records (quotaview.refresh).
-  var QD = null, qOpen = '';           // the page's tiles, once it arrives (onLoad.quotas); the one docked
+  // ---- Quota (serve.quotas_page): a tile per connection, from quota-data
+  // (serve.quota_tiles, metrics/quotaview.py). Each takes its provider's shape:
+  // groups of windows (a 5-hour and a weekly limit boxed together), one pool
+  // (OpenRouter's free requests a day, a bar per key) or, where nothing is
+  // stated, each model's last day. A meter is ten segments filled like a bar:
+  // 85% is eight and a half. A tile's Models opens its connection docked beside
+  // the tiles (#q-models): how it is reached, and its models.
+  var QD = null, qBox = null, qOpen = '';   // the page's data and tiles, once it arrives (onLoad.quotas); the one docked
   function qWhen(iso) {
     if (!iso) return '';
     var d = new Date(iso), s = (d - Date.now()) / 1000;
@@ -2841,14 +2844,142 @@
     var s = (Date.now() - new Date(iso)) / 1000;
     return s < 90 ? 'just now' : s < 5400 ? Math.round(s / 60) + ' min ago' : s < 129600 ? Math.round(s / 3600) + ' h ago' : Math.round(s / 86400) + ' days ago';
   }
+  function qTone(pct) { return pct == null ? 'none' : pct >= 70 ? 'ok' : pct >= 25 ? 'warn' : 'err'; }
+  // `pct` null draws the ten segments empty: nothing to count yet. Calls
+  // ("answered") fill green over red, the failed share showing as red. One
+  // element filled to `pct`, cut into its segments by bench.css (.segs): a
+  // segment an element was 800 of them on a page.
+  function qSegs(pct, what) {
+    var tone = pct != null && what === 'answered' ? 'calls' : qTone(pct);
+    return el('div', {class: 'segs ' + tone, role: 'img', style: '--fill:' + Math.min(Math.max(pct || 0, 0), 100) + '%',
+                      'aria-label': pct == null ? 'nothing yet' : pct + '% ' + (what || 'left')});
+  }
+  function qNum(n) { return Number(n).toLocaleString(); }
   function qAlias(a) {                                 // as serve.named draws a model: its panel on a click
-    var link = el('a', {href: '#', class: 'model', 'data-alias': a, title: a});
+    var link = el('a', {href: '#', class: 'model', 'data-alias': a, draggable: 'false', title: a});
     link.appendChild(el('span', {class: 'alias mono'}, a));
     return link;
   }
+  // 189, 19,997, 494k, 12.5M: whole below 100,000, then short.
+  function qShort(n) {
+    n = Number(n);
+    if (n < 1e5) return Math.round(n * 100) / 100 >= 1000 ? Math.round(n).toLocaleString() : String(Math.round(n * 100) / 100);
+    if (n < 1e6) return Math.round(n / 1e3) + 'k';
+    return String(n >= 1e8 ? Math.round(n / 1e6) : Math.round(n / 1e5) / 10).replace(/\.0$/, '') + 'M';
+  }
+  // Every figure on a tile is one meter: what is left of what, in the
+  // provider's own unit, on the left (it may wrap); when it resets on the
+  // right (it never does); the segments under it.
+  function qMeter(label, value, pct, what, title) {
+    var box = el('div', {class: 'q-meter'}), row = el('div', {class: 'q-line'});
+    var l = typeof label === 'string' ? el('span', {class: 'q-label'}) : label;
+    if (typeof label === 'string') l.innerHTML = label;
+    row.appendChild(l);
+    var v = el('span', {class: 'q-val'}); v.innerHTML = value; row.appendChild(v);
+    if (title) box.title = title;
+    box.appendChild(row); box.appendChild(qSegs(pct, what));
+    return box;
+  }
+  function qReset(iso) {
+    return iso ? '<span title="Resets ' + new Date(iso).toLocaleString() + '">' + qWhen(iso) + '</span>' : '';
+  }
+  function qWindow(w) {
+    var raw = w.of != null && w.remaining != null;
+    // The percentage leads every meter, raw or not, so they line up. A label is the provider's words: escaped.
+    return qMeter('<b>' + w.left + '%</b> left · ' + (raw ? '<b>' + qShort(w.remaining) + '</b> of '
+                  + qShort(w.of) + ' ' + escH(w.label) : escH(w.label)),
+                  qReset(w.reset_at), w.left, 'left',
+                  (raw ? qNum(w.remaining) + ' of ' + qNum(w.of) + ' left, ' : '') + w.left + '%');
+  }
+  // How much of a last day answered: a model's (its link), or `label`'s.
+  function qCalls(m, label) {
+    var n = m.ok + m.failed, pct = n ? Math.round(100 * m.ok / n) : null;
+    var value = qResting(m) ? '<span class="warn">resting · ' + qWhen(m.until) + '</span>'
+              : n ? '<b>' + m.ok + '</b> of ' + n + ' answered' : '<span class="muted">no calls</span>';
+    return qMeter(label || qAlias(m.alias), value, pct, 'answered',
+                  n ? m.ok + ' answered, ' + m.failed + ' failed in the last 24 hours' : 'not called in the last 24 hours');
+  }
   function qResting(m) { return m.until && new Date(m.until) > Date.now(); }
-  function qMark() {                                   // the rows of the connection docked carry the accent
-    document.querySelectorAll('#tab-quotas tr[data-tag]').forEach(function (r) { r.classList.toggle('in-hand', r.dataset.tag === qOpen); });
+  function qTile(t) {
+    var node = el('article', {class: 'q-tile' + (t.out ? ' out' : ''), draggable: 'true', tabindex: '0',
+                              'data-id': t.id, 'aria-label': t.name + ': drag, or use the arrow keys, to move it'});
+    var head = el('div', {class: 'q-head'});
+    head.appendChild(el('b', {class: 'nm', title: t.name}, t.name));
+    var f = t.fresh, how = {live: 'read ', seen: 'seen ', answered: 'answered '}[f.how] || '';
+    head.appendChild(el('span', {class: 'chip ' + (f.how === 'live' ? 'ok' : 'via'),
+      title: {live: 'Last asked of the provider', seen: 'Last stated in a reply\'s headers',
+              answered: 'Last answer from one of its models'}[f.how] || 'Nothing known yet'},
+      f.at ? how + qAgo(f.at) : 'nothing yet'));
+    node.appendChild(head);
+    // Every word about the figures in one place, under the name: where they
+    // come from, its plan, your per-minute caps, what a live read said. The
+    // connection's own name and address are in Models.
+    var about = el('div', {class: 'q-about'});
+    var src = t.source || [];
+    about.appendChild(el('div', {class: 'q-from'}, (src.length && src[0] !== 'nothing stated'
+      ? 'From ' + src.join('; ') : 'No limit stated') + (t.plan ? ' · ' + t.plan + ' plan' : '')));
+    if (t.conn_limit) about.appendChild(el('div', {}, 'Your cap: ' + t.conn_limit + '.'));
+    (t.notes || []).forEach(function (n) { about.appendChild(el('div', {}, n)); });
+    node.appendChild(about);
+    var body = el('div', {class: 'q-body'});
+    // Day and month caps, counted by the bench: yours, else what the provider
+    // documents. The From line names the source; the title says the rest.
+    (t.caps || []).forEach(function (g) {
+      var box = el('section', {class: 'q-group bare', title: g.title || ''});
+      g.windows.forEach(function (w) { box.appendChild(qWindow(w)); });
+      body.appendChild(box);
+    });
+    if (t.kind === 'groups') {
+      t.groups.forEach(function (g) {
+        var box = el('section', {class: g.label ? 'q-group' : 'q-group bare'});
+        if (g.label) box.appendChild(el('h4', {}, g.label));
+        g.windows.forEach(function (w) { box.appendChild(qWindow(w)); });
+        body.appendChild(box);
+      });
+    } else if (t.kind === 'pool') {
+      t.pool.forEach(function (p) {
+        body.appendChild(p.of
+          ? qMeter('<b>' + p.left + '%</b> left · <b>' + qShort(Math.max(0, p.of - p.used)) + '</b> of '
+                   + qShort(p.of) + ' ' + escH(p.label),
+                   qReset(p.reset_at), p.left, 'left')
+          : qMeter('<b>' + qShort(p.used) + '</b> ' + escH(p.label) + ' · limit not known', qReset(p.reset_at), null));
+      });
+    } else if (!(t.caps || []).length) {
+      // Nothing stated to count against: how the provider's calls went, all
+      // its models together (each one's are in Models).
+      var all = t.models.reduce(function (s, m) { return {ok: s.ok + m.ok, failed: s.failed + m.failed}; }, {ok: 0, failed: 0});
+      body.appendChild(qCalls({alias: '', ok: all.ok, failed: all.failed, until: null}, 'Calls, last 24 hours'));
+    }
+    if (t.kind !== 'models') {
+      t.models.filter(qResting).forEach(function (m) {
+        var r = el('div', {class: 'q-rest'});
+        r.appendChild(qAlias(m.alias)); r.appendChild(document.createTextNode(' resting · back ' + qWhen(m.until)));
+        body.appendChild(r);
+      });
+    }
+    node.appendChild(body);
+    node.appendChild(el('div', {class: 'q-msg', 'aria-live': 'polite'}));
+    // One Refresh: the server picks a free read, one short call or the records.
+    var foot = el('div', {class: 'q-foot'});
+    var rb = el('button', {class: 'btn small', type: 'button', 'aria-label': 'Refresh ' + t.name,
+      title: {live: 'Asks the provider what is left (free)',
+              check: 'Sends one 16-token request; the reply\'s headers say what is left'}[t.refresh]
+             || 'Reads the bench\'s own records again (this provider states no limits to ask about)'});
+    rb.innerHTML = '&#x21bb; Refresh';
+    rb.addEventListener('click', function () { qAct([t.id]); });
+    foot.appendChild(rb);
+    var mb = el('button', {class: 'btn small q-open', type: 'button', 'aria-label': t.name + ' models, '
+                                + t.live + ' of ' + t.bench + ' free to call'}, 'Models ');
+    mb.appendChild(el('span', {class: 'chip ' + (t.live === t.bench ? 'ok' : t.live ? 'warn' : 'err')}, t.live + '/' + t.bench));
+    mb.title = t.live + ' of the ' + t.bench + ' bench models on it are free to call';
+    mb.addEventListener('click', function (e) { qModels(t, !e.detail); });
+    foot.appendChild(mb);
+    node.appendChild(foot);
+    return node;
+  }
+  function qNode(id) { return qBox && qBox.querySelector('.q-tile[data-id="' + CSS.escape(id) + '"]'); }
+  function qMark() {                                   // the tile docked carries the accent, as a row in hand does
+    if (qBox) qBox.querySelectorAll('.q-tile').forEach(function (n) { n.classList.toggle('in-hand', n.dataset.id === qOpen); });
   }
   function qModels(t, keyboard) {
     qOpen = t.id;
@@ -2885,50 +3016,129 @@
     });
     var list = $('q-models-list'); list.textContent = '';
     list.appendChild(el('table', {class: 'serves'})).appendChild(body);
-    $('q-refresh').title = {live: 'Asks the provider what is left (free)',
-                            check: 'Sends one 16-token request; the reply\'s headers say what is left'}[t.refresh]
-      || 'Reads the bench\'s own records again (it states no limits to ask about)';
-    $('q-models').setAttribute('open', ''); qMark();      // docked, not a popup: the tables stay live
+    $('q-models').setAttribute('open', ''); qMark();      // docked, not a popup: the tiles stay live
     if (keyboard) $('q-models-h').focus();
   }
-  document.addEventListener('click', function (e) {
-    var row = e.target.closest('#tab-quotas tr[data-tag]');
-    if (row && QD && !e.target.closest('a')) qModels(QD.tiles.filter(function (t) { return t.id === row.dataset.tag; })[0], !e.detail);
-  });
   on('click', 'q-models-close', function () { $('q-models').close(); });
-  on('close', 'q-models', function () {                // Escape or Close: the focus back to its row
-    var row = document.querySelector('#tab-quotas tr[data-tag="' + CSS.escape(qOpen) + '"]'), at = document.activeElement;
-    if (row && (this.contains(at) || at === document.body)) row.querySelector('button').focus();
+  on('close', 'q-models', function () {                // Escape or Close: the focus back to its tile's Models
+    var tile = qNode(qOpen), at = document.activeElement;
+    if (tile && (this.contains(at) || at === document.body)) tile.querySelector('.q-open').focus();
     qOpen = ''; qMark();
   });
-  // Refresh, one connection's or every one that tells for free, then the page again with the
-  // connection still docked (a page holding an open record waits for it to close: load).
+  function qSay(id, text, bad) {                       // a tile's own line: what its refresh said
+    var m = qNode(id) && qNode(id).querySelector('.q-msg');
+    if (m) { m.className = 'q-msg ' + (bad ? 'errors' : 'muted'); m.textContent = text; }
+  }
+  // Refresh, a tile's own or every one that tells for free (Refresh all live), one after
+  // another; then the page again, so the tiles, the charts and the limits are as now, the
+  // connection still docked (a page holding an open record waits for it to close: load),
+  // each tile saying what its refresh said and the focus back on the Refresh pressed.
   function qAct(tags) {
-    var open = qOpen, notes = [];
-    $('q-errors').textContent = ''; $('q-done').textContent = 'Refreshing…';
+    var open = qOpen, said = {}, at = document.activeElement, from = at && at.closest && at.closest('.q-tile');
+    $('q-errors').textContent = '';
+    $('q-done').textContent = tags.length === 1 ? '' : 'Refreshing ' + tags.length + '…';
     return tags.reduce(function (p, tag) {
       return p.then(function () {
+        qSay(tag, 'Refreshing…');
         return post('/api/quota/refresh', {tag: tag}).then(function (r) {
-          if (r.ok) notes.push(r.note || '');
-          else $('q-errors').textContent += tag + ': ' + r.errors.join('; ') + ' ';
-        });
+          said[tag] = r.ok ? [r.note || '', false] : [r.errors.join('; '), true];
+        }, function (e) { said[tag] = [String(e), true]; });
       });
     }, Promise.resolve()).then(function () {
       if ($('q-models').open) $('q-models').close();
       return refreshPanes(['quotas']);
     }).then(function () {
-      $('q-done').textContent = 'Refreshed ' + notes.length + ' of ' + tags.length + '.' + (tags.length === 1 && notes[0] ? ' ' + notes[0] : '');
-      var t = open && QD.tiles.filter(function (x) { return x.id === open; })[0];
+      tags.forEach(function (tag) { qSay(tag, said[tag][0], said[tag][1]); });
+      if (tags.length !== 1) $('q-done').textContent = 'Refreshed ' + tags.filter(function (g) { return !said[g][1]; }).length + ' of ' + tags.length + '.';
+      var t = open && QD.tiles.filter(function (x) { return x.id === open; })[0], back = from && qNode(from.dataset.id);
       if (t) qModels(t);
+      if (back) back.querySelector('.q-foot button').focus();
     }).catch(function (e) { $('q-errors').textContent = String(e); });
   }
-  on('click', 'q-refresh', function () { if (qOpen) qAct([qOpen]); });
   on('click', 'q-all', function () {                   // in the bar: there before the page's data
     load('quotas').then(function () {
       qAct(QD.tiles.filter(function (t) { return t.refresh === 'live'; }).map(function (t) { return t.id; }));
     });
   });
-  onLoad.quotas = function () { QD = JSON.parse($('quota-data').textContent); };
+  function qDefault(a, b) {
+    return (b.out - a.out) || ((a.next_reset || '9999') < (b.next_reset || '9999') ? -1 : (a.next_reset || '9999') > (b.next_reset || '9999') ? 1 : 0)
+           || (a.id < b.id ? -1 : 1);
+  }
+  function qDraw() {
+    if (!qBox) return;
+    qBox.textContent = '';
+    QD.tiles.forEach(function (t) { qBox.appendChild(qTile(t)); });
+    if (!QD.tiles.length) qBox.appendChild(el('p', {class: 'muted'}, 'No model on the bench yet.'));
+    qMark();
+  }
+  // The order the tiles stand in, kept (config/ui.json); every POST also drops the page the
+  // server kept (serve.wrote), so it is never answered in the order before.
+  function qSaveOrder() {
+    var ids = Array.prototype.map.call(qBox.querySelectorAll('.q-tile'), function (n) { return n.dataset.id; });
+    var at = {}; ids.forEach(function (id, i) { at[id] = i; });
+    QD.tiles.sort(function (a, b) { return at[a.id] - at[b.id]; });
+    post('/api/quota/order', {order: ids}).then(function (r) {
+      $('q-done').textContent = r.ok ? 'Order kept.' : ''; $('q-errors').textContent = r.ok ? '' : r.errors.join('; ');
+    });
+  }
+  on('click', 'q-reorder', function () {               // in the bar, as Refresh all live
+    load('quotas').then(function () {
+      QD.tiles.sort(qDefault); qDraw();
+      post('/api/quota/order', {order: []}).then(function (r) {
+        $('q-done').textContent = r.ok ? 'Sorted: out first, then the soonest reset.' : '';
+        $('q-errors').textContent = r.ok ? '' : r.errors.join('; ');
+      });
+    });
+  });
+  // Run each time the page arrives: its elements are new, so bound here.
+  onLoad.quotas = function () {
+    QD = JSON.parse($('quota-data').textContent); qBox = $('q-tiles');
+    if (!qBox) return;                         // nothing on the bench: the page says so (serve.empty_state)
+    qDraw();
+    var dragged = null;
+    qBox.addEventListener('dragstart', function (e) {
+      dragged = e.target.closest && e.target.closest('.q-tile');
+      if (!dragged) return;
+      dragged.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', dragged.dataset.id);
+    });
+    qBox.addEventListener('dragover', function (e) {
+      if (!dragged) return;
+      e.preventDefault();
+      var over = e.target.closest && e.target.closest('.q-tile');
+      if (!over || over === dragged) return;
+      var r = over.getBoundingClientRect();
+      var after = e.clientX > r.left + r.width / 2;
+      over.parentNode.insertBefore(dragged, after ? over.nextSibling : over);
+    });
+    qBox.addEventListener('dragend', function () {
+      if (!dragged) return;
+      dragged.classList.remove('dragging'); dragged = null; qSaveOrder();
+    });
+    qBox.addEventListener('keydown', function (e) {
+      var t = e.target;
+      if (!t.classList || !t.classList.contains('q-tile')) return;
+      var back = e.key === 'ArrowLeft' || e.key === 'ArrowUp', fwd = e.key === 'ArrowRight' || e.key === 'ArrowDown';
+      if (!back && !fwd) return;
+      e.preventDefault();
+      var sib = back ? t.previousElementSibling : t.nextElementSibling;
+      if (!sib) return;
+      qBox.insertBefore(t, back ? sib : sib.nextSibling);
+      t.focus(); qSaveOrder();
+    });
+    watchReports('quotas'); drawCharts('quotas'); drawNear();
+  };
+  // Its charts drawn again at their own new width: drawn while another page was shown (a
+  // theme picked), or the window or the docked panel changed the page's width.
+  var qRedraw = 0;
+  function qFit() {
+    var box = $('chart-resets');
+    if (box && box.dataset.w && Math.abs(box.clientWidth - box.dataset.w) > 1) {
+      clearTimeout(qRedraw); qRedraw = setTimeout(function () { drawCharts('quotas'); }, 150);
+    }
+  }
+  onShow.quotas = function () { qFit(); drawNear(); };
+  if (window.ResizeObserver) new ResizeObserver(qFit).observe($('tab-quotas'));
 
   // ---- Benchmarks charts: Observable Plot, data from serve.charts_data ------
   // d3 and Observable Plot (pinned, from jsDelivr) are asked the first time a page
@@ -2954,45 +3164,51 @@
   // chosen) only once it has been. Until then each waits in `queued`, by its id.
   // Undrawn, every report is short and all of them sit near the top, so the
   // observer only says when to look: drawNear measures each in turn, as the ones
-  // before it are drawn and grow.
+  // before it are drawn and grow. Benchmarks' and Quota's, each page its own observer.
   var shownReports = {}, queued = {};
-  var nearBy = window.IntersectionObserver && new IntersectionObserver(function (entries) {
-    if (entries.some(function (e) { return e.isIntersecting; })) drawNear();
-  }, {root: $('tab-suite'), rootMargin: '100% 0px'});
+  function nearer(page) {
+    return window.IntersectionObserver && new IntersectionObserver(function (entries) {
+      if (entries.some(function (e) { return e.isIntersecting; })) drawNear();
+    }, {root: $('tab-' + page), rootMargin: '100% 0px'});
+  }
+  var nearBy = {suite: nearer('suite'), quotas: nearer('quotas')};
   function drawNear() {
-    var page = $('tab-suite');
-    // Once Plot is in (or failed to come: each chart then says so), and only when shown.
-    if ((!window.Plot && plotAsked !== 2) || !page.classList.contains('active')) return;
+    var page = document.querySelector('.tab.active');
+    if (!page) return;
     var view = page.getBoundingClientRect(), reach = view.height;
     page.querySelectorAll('.panel.report').forEach(function (r) {
       var b = !shownReports[r.id] && r.getBoundingClientRect();
-      if (b && b.bottom > view.top - reach && b.top < view.bottom + reach) drawReport(r);
+      // Near: drawn once Plot is in (or failed to come: each chart then says so), asked for if not yet.
+      if (b && b.bottom > view.top - reach && b.top < view.bottom + reach && !needPlot()) drawReport(r);
     });
   }
   function drawReport(report) {
     if (shownReports[report.id]) return;
     shownReports[report.id] = true;
-    if (nearBy) nearBy.unobserve(report);
+    var watch = nearBy[report.closest('.tab').id.slice(4)];
+    if (watch) watch.unobserve(report);
     report.querySelectorAll('.chart[id]').forEach(function (box) {
       var draw = queued[box.id];
       delete queued[box.id];
       if (draw) draw();
     });
   }
-  // Each time Benchmarks arrives: its reports are new elements; one drawn before is
-  // drawn at once again (no empty frame after a live refresh), the rest when near.
-  function watchReports() {
-    if (nearBy) nearBy.disconnect();
-    document.querySelectorAll('#tab-suite .panel.report').forEach(function (r) {
-      if (shownReports[r.id] || !nearBy) shownReports[r.id] = true;
-      else nearBy.observe(r);
+  // Each time a page with reports arrives: its reports are new elements; one drawn before
+  // is drawn at once again (no empty frame after a live refresh), the rest when near.
+  function watchReports(page) {
+    var watch = nearBy[page];
+    if (watch) watch.disconnect();
+    document.querySelectorAll('#tab-' + page + ' .panel.report').forEach(function (r) {
+      if (shownReports[r.id] || !watch) shownReports[r.id] = true;
+      else watch.observe(r);
     });
   }
   // A function, not run once: a theme switched on Settings redraws them in its
-  // colours. `part` ('suite', 'uptime' or 'trend'): only that part, as it arrives.
+  // colours. `part` ('suite', 'uptime', 'trend' or 'quotas'): only that part, as it arrives.
   function drawCharts(part) {
     var holder = $('charts-data');
-    if (!holder || needPlot()) return;             // no page with charts yet: nothing to ask for
+    // No page with charts yet, or only Quota, which asks for Plot once a chart of its comes near (drawNear).
+    if ((!holder && (!QD || !plotAsked)) || needPlot()) return;
     var css = getComputedStyle(document.documentElement);
     function tok(name, fallback) { return (css.getPropertyValue(name) || '').trim() || fallback; }
     // `good` is the theme's OK colour, not its brand: in a theme whose brand is
@@ -3014,18 +3230,20 @@
       var col = document.querySelector('.tab.active') || document.querySelector('main');
       return Math.max(520, (col.clientWidth || 900) - 50);
     }
-    var C = JSON.parse(holder.textContent);
-    function put(id, make) {
+    // `own` (Quota's): drawn at its own box's width, kept on it (bench.js qFit), not at
+    // Benchmarks' column's (width), which would move the width Benchmarks was drawn at.
+    function put(id, make, own) {
       var box = $(id), report = box && box.closest('.report');
       if (!box) return;
-      if (report && !shownReports[report.id]) { queued[id] = function () { put(id, make); }; return; }
+      if (report && !shownReports[report.id]) { queued[id] = function () { put(id, make, own); }; return; }
       if (!window.Plot) {
         box.className += ' muted';
         box.textContent = 'Charts need Observable Plot from cdn.jsdelivr.net, which did not load; the table below has the same numbers.';
         return;
       }
       box.textContent = '';                      // a redraw replaces the chart
-      try { box.appendChild(make(width())); } catch (e) { box.textContent = 'Chart failed: ' + e; }
+      if (own) box.dataset.w = box.clientWidth;
+      try { box.appendChild(make(own ? Math.max(320, box.clientWidth || 900) : width())); } catch (e) { box.textContent = 'Chart failed: ' + e; }
     }
     // A label's width as Plot sets it (system-ui, 13px unless `size`), so a margin is
     // sized to its longest label, not guessed at so many px a character.
@@ -3078,7 +3296,80 @@
       for (var n = s.length, t = s; n > 6 && textW(t) > px; t = middle(s, s.length - --n));
       return t;
     }
-    var FEW = 10;                        // under this many tasks or answers, a row is drawn faint
+
+    // Quota's two reports (serve.quotas_page), from quota-data, in the theme's colours;
+    // the names' room measured, as above.
+    if (QD && (!part || part === 'quotas')) {
+      // Resets, next 7 days: a dot where a limit resets (a daily one every day), a bar while
+      // a model rests, a line for now; a row a connection with either.
+      put('chart-resets', function (w) {
+        var now = Date.now(), end = now + 7 * 86400e3, dots = [], bars = [];
+        QD.tiles.forEach(function (t) {
+          var wins = [];
+          t.groups.forEach(function (g) { g.windows.forEach(function (x) { wins.push({label: (g.label ? g.label + ' · ' : '') + x.label, at: x.reset_at}); }); });
+          (t.caps || []).forEach(function (g) { g.windows.forEach(function (x) { wins.push({label: x.label + ' (' + g.label + ')', at: x.reset_at, daily: / day$/.test(x.label)}); }); });
+          t.pool.forEach(function (p) { if (p.reset_at) wins.push({label: p.label, at: p.reset_at, daily: true}); });
+          wins.forEach(function (x) {
+            var at = +new Date(x.at), daily = x.daily || / day$/.test(x.label);
+            for (; at && at <= end; at += 86400e3) {
+              if (at >= now) dots.push({tile: t.name, at: new Date(at), what: x.label});
+              if (!daily) break;
+            }
+          });
+          t.models.filter(qResting).forEach(function (m) {
+            bars.push({tile: t.name, x1: new Date(now), x2: new Date(Math.min(+new Date(m.until), end)), what: m.alias + ' resting until ' + new Date(m.until).toLocaleString()});
+          });
+        });
+        var names = QD.tiles.map(function (t) { return t.name; }).filter(function (n) {
+          return dots.some(function (d) { return d.tile === n; }) || bars.some(function (b) { return b.tile === n; });
+        });
+        if (!names.length) return el('p', {class: 'hint'}, 'No reset or rest known for the next 7 days.');
+        var left = room(names, capL(w));
+        return Plot.plot({
+          width: w, height: 26 * names.length + 60, style: style, marginLeft: left, marginRight: 24,
+          // A tick each local midnight (every other one on a phone), each on one line: Wed 19.
+          x: {domain: [new Date(now), new Date(end)], label: null, grid: true, ticks: d3.timeDay.every(w < 640 ? 2 : 1),
+              tickFormat: function (d) { return d.toLocaleDateString([], {weekday: 'short', day: 'numeric'}); }},
+          y: {domain: names, label: null, tickFormat: function (n) { return clip(n, left - 12); }},
+          marks: [
+            Plot.barX(bars, {x1: 'x1', x2: 'x2', y: 'tile', fill: warn, fillOpacity: 0.35, insetTop: 6, insetBottom: 6, title: 'what'}),
+            Plot.dot(dots, {x: 'at', y: 'tile', r: 4, fill: good, stroke: ink, strokeWidth: 0.5,
+              title: function (d) { return d.what + ' resets ' + d.at.toLocaleString(); }}),
+            Plot.ruleX([new Date(now)], {stroke: err, strokeWidth: 1.5}),
+            Plot.ruleY(names, {stroke: line, strokeOpacity: 0.5})
+          ]});
+      }, true);
+      // What the bench sent: a row a connection, most this month first; this month's
+      // requests pale, the last 24 hours' dark inside them, both in the label at the end.
+      put('chart-sent', function (w) {
+        var R = QD.sent;
+        if (!R.length) return el('p', {class: 'hint'}, 'No call in the ledger this month.');
+        function say(r) { return qNum(r.day) + ' / ' + qNum(r.month); }
+        var box = el('div'), key = box.appendChild(el('div', {class: 'q-legend'}));
+        [['This month, requests', 0.3], ['Last 24 hours, requests', 1]].forEach(function (k) {
+          var s = key.appendChild(el('span')), sw = s.appendChild(el('i'));
+          sw.style.background = good; sw.style.opacity = k[1];
+          s.appendChild(document.createTextNode(k[0]));
+        });
+        var names = R.map(function (r) { return r.provider; }), left = room(names, capL(w));
+        box.appendChild(Plot.plot({
+          // Room under the ticks for the axis title, which beside the last tick met it on a wide screen.
+          width: w, height: 22 * R.length + 74, style: style, marginLeft: left, marginRight: 12 + widest(R.map(say)), marginBottom: 44,
+          x: {label: 'Requests →', grid: true},
+          y: {domain: names, label: null, tickFormat: function (n) { return clip(n, left - 12); }},
+          marks: [
+            Plot.barX(R, {x: 'month', y: 'provider', fill: good, fillOpacity: 0.3,
+              title: function (r) { return r.provider + '\nthis month: ' + qNum(r.month) + '\nlast 24 hours: ' + qNum(r.day); }}),
+            Plot.barX(R, {x: 'day', y: 'provider', fill: good, insetTop: 4, insetBottom: 4}),
+            Plot.text(R, {x: 'month', y: 'provider', text: say, dx: 6, textAnchor: 'start', fill: ink}),
+            Plot.ruleX([0], {stroke: ink})
+          ]}));
+        return box;
+      }, true);
+    }
+    if (!holder || part === 'quotas') { drawNear(); return; }
+    var C = JSON.parse(holder.textContent);
+    var FEW = 10;                       // under this many tasks or answers, a row is drawn faint
     // The 95% Wilson interval of k successes in n: [low, high]. Honest at small n and at
     // 0 or n of n, where k/n ± 1.96·se says nothing (3 of 3 is not "100% ± 0").
     function wilson(k, n) {
@@ -3665,7 +3956,7 @@
     });
     drawNear();                           // what is near the window now (the rest wait in `queued`)
   }
-  onLoad.suite = function () { columns(); watchReports(); drawCharts('suite'); jumpSpy(); };
+  onLoad.suite = function () { columns(); watchReports('suite'); drawCharts('suite'); jumpSpy(); };
   onShow.suite = function () {            // drawn while another page was shown (a theme picked on Settings)
     var r = document.querySelector('#tab-suite .panel.report');
     if (r && drawnAt && Math.abs(r.clientWidth - drawnAt) > 1) drawCharts('suite');

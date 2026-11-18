@@ -2129,8 +2129,8 @@ def ext_link(url: str, text: str) -> str:
 
 
 def meter(share: float, text: str, low: bool) -> str:
-    """A share as a bar beside its figure (Uptime, Confidently wrong, Quota's
-    Left), so how much reads at a glance and not by colour alone."""
+    """A share as a bar beside its figure (Uptime, Confidently wrong), so how
+    much reads at a glance and not by colour alone."""
     return (f"<span class='helped'><span class='meter'><span{' class=low' if low else ''}"
             f" style='width:{max(4, min(100, round(share * 100)))}%'></span></span>"
             f"<span class='mono'>{text}</span></span>")
@@ -4455,7 +4455,9 @@ BAR_TOOLS = {
                   "<button class='btn primary' type='button' id='e-add'>Add an endpoint</button>"),
     "quotas": ("<span class='spring'></span><span class='done' id='q-done' role='status'></span>"
                "<span class='errors' id='q-errors' role='alert'></span><button class='btn' type='button' id='q-all'"
-               " title='Asks each connection that tells for free what is left'>Refresh all live</button>"),
+               " title='Asks each connection that tells for free what is left'>Refresh all live</button>"
+               "<button class='btn' type='button' id='q-reorder' title='Forgets the order the tiles were moved into'>"
+               "Sort: out first, then soonest reset</button>"),
     # Collapse all while every connection is open, else Expand all (bench.js foldButtons).
     "models": ("<input type='search' data-filter='page' placeholder='Find a model or connection'"
                " aria-label='Find a model or connection' data-none='No model matches'><span class='spring'></span>"
@@ -4475,7 +4477,7 @@ BAR_TOOLS = {
 # The pages with their own facts (aside.facts), and the bar's button that opens them under 1280px.
 FACTS_OPEN = {"suite": "On this page", "collections": "Gateway settings", "endpoints": "All endpoints",
               "models": "All models", "clients": "This install", "discover": "About the catalog",
-              "settings": "On this page"}
+              "settings": "On this page", "quotas": "All connections"}
 
 
 def collections_and_gateway() -> str:
@@ -5796,29 +5798,24 @@ def quota_op(which: str, tag) -> dict:
             "tile": next((t for t in quota_tiles() if t["id"] == tag), None)}
 
 
-# Quota's tables (quotas_page): a row a limit, and a row a connection.
+# Quota's Known limits (quotas_page): a row a limit.
 QUOTA_COLS = (("conn", "Connection", "", ""), ("limit", "Limit", "", "What is counted, and over what window"),
               ("left", "Left", "num", "What is left of it now"), ("used", "Used", "num", "What is used of it now"),
               ("of", "Allowed", "num", "All of it, in the provider's own unit"),
               ("reset", "Resets", "when", "When it fills again, in local time"),
               ("from", "Known from", "", "The provider's quota endpoint, its replies' headers, or a cap the bench"
                                          " counts its own calls against"))
-SENT_COLS = (("conn", "Connection", "", ""),
-             ("ready", "Ready", "num", "Its models on the bench free to call now, not resting after a rate limit"),
-             ("day", "Requests, 24 h", "num", "Sent by the bench in the last 24 hours, retries too"),
-             ("tday", "Tokens, 24 h", "num", "In and out, the last 24 hours"),
-             ("month", "Requests, this month", "num", "Since the first of the month, UTC"),
-             ("tmonth", "Tokens, this month", "num", "In and out, since the first of the month, UTC"),
-             ("read", "Last read", "when", "When its figures were last asked of it, stated in a reply, or answered"))
 
 
 def quotas_page() -> str:
-    """Quota management, in tables: a row a limit (what is allowed, used and
-    left, when it resets, how it is known; metrics/quotaview.py), a row a
-    connection (its models free to call, what the bench sent through it, its
-    usage ledger, metrics/ledger.py), and every limit known, folded. A
-    connection opens beside them (bench.js qModels, from the tiles in
-    quota-data) with its models and its one Refresh."""
+    """Quota management: a tile per connection (bench.js qTile, from the tiles
+    in quota-data, metrics/quotaview.py): what is left and when it resets,
+    shaped by how its provider limits, who is resting, its Refresh, and its
+    Models, which opens it docked beside the tiles (qModels). Under them the
+    resets of the next week and what the bench sent (its usage ledger,
+    metrics/ledger.py), each chart drawn as it comes near; then every limit
+    known, a row a limit. With no connection docked the panel holds the counts
+    and how the page works."""
     import learn
     import ledger
     now = datetime.datetime.now().astimezone()
@@ -5836,11 +5833,9 @@ def quotas_page() -> str:
     def num(v):
         return (f"{v:,}" if isinstance(v, int) else f"{v:,.2f}", v) if isinstance(v, (int, float)) else None
     tiles = quota_tiles()
-    limits, conns = [], []
+    limits = []
     for q in tiles:
-        # Its rows open it docked (bench.js); the name a button, for a keyboard.
-        row = (f" class='c-row' data-tag='{esc(q['id'])}'", (f"<button type='button' class='c-open'>{esc(q['name'])}"
-                                                            "</button>", q["name"].lower()))
+        conn = (esc(q["name"]), q["name"].lower())
         src = (q.get("source") or [""])[0]
         # Its windows: what its quota endpoint or its replies' headers said, its pool, the caps counted for it.
         for label, w, frm, why in (
@@ -5850,33 +5845,30 @@ def quotas_page() -> str:
                 + [(w["label"], w, g["label"], g.get("title", "")) for g in q["caps"] for w in g["windows"]]):
             used = w.get("used", w["of"] - w["remaining"] if w.get("of") is not None and w.get("remaining") is not None
                          else None)
-            # Left: a bar beside the figure, short and red under a fifth.
+            # Left: the figure (the tiles carry the meters), what is left of what in its title.
             left = w.get("left")
-            limits.append((row[0], {"conn": row[1], "limit": (esc(label), label),
-                                    "left": None if left is None else
-                                    (meter(left / 100, f"{left}%", left < 20), left)
-                                    + ((f"{w['remaining']:,} of {w['of']:,} left",) if w.get("remaining") is not None
-                                       else ()),
-                                    "used": num(used), "of": num(w.get("of")), "reset": _at(w.get("reset_at")),
-                                    "from": (esc(frm), frm, why) if why else (esc(frm), frm) if frm else None}))
-        s = sent.pop(q["host"], None) or [0, 0, 0, 0]
-        resting = [m["alias"] for m in q["models"] if m.get("until") and (_at(m["until"]) or ("", 0))[1] > t]
-        how = {"live": "asked of it", "seen": "stated in a reply", "answered": "its last answer"}.get(q["fresh"]["how"], "")
-        conns.append((row[0], {"conn": row[1],
-                               "ready": (f"{q['live']} of {q['bench']}", q["live"])
-                               + ((f"resting: {', '.join(resting)}",) if resting else ()),
-                               "day": num(s[0]), "tday": num(s[1]), "month": num(s[2]), "tmonth": num(s[3]),
-                               "read": _at(q["fresh"]["at"]) and _at(q["fresh"]["at"])[:2] + (how,)}))
-    # What the ledger has from connections no model on the bench uses now.
-    conns += [("", {"conn": (esc(c) if c != "?" else "<span class='muted'>not recorded</span>", c), "day": num(s[0]), "tday": num(s[1]), "month": num(s[2]),
-                    "tmonth": num(s[3])}) for c, s in sorted(sent.items()) if s[2]]
-
-    def table(cols, rows, empty: str) -> str:
-        cols = _known(cols, [r for _, r in rows])
-        return (f"<div class='scroll'><table><thead><tr>{_head(cols)}</tr></thead><tbody>"
-                + "".join(f"<tr{a}>" + "".join(_cell(css, r.get(k)) for k, _, css, _ in cols) + "</tr>"
-                          for a, r in rows) + "</tbody></table></div>" if rows else f"<p class='muted'>{empty}</p>")
-    data = json.dumps({"tiles": tiles}, ensure_ascii=False).replace("</", "<\\/")
+            limits.append({"conn": conn, "limit": (esc(label), label),
+                           "left": None if left is None else (f"{left}%", left)
+                           + ((f"{w['remaining']:,} of {w['of']:,} left",) if w.get("remaining") is not None else ()),
+                           "used": num(used), "of": num(w.get("of")), "reset": _at(w.get("reset_at")),
+                           "from": (esc(frm), frm, why) if why else (esc(frm), frm) if frm else None})
+    cols = _known(QUOTA_COLS, limits)
+    # What the bench sent, a row a connection the ledger names, by the name the page gives it
+    # (two hosts of one provider are one row), most this month first: the chart (bench.js,
+    # from quota-data) and, folded under it, its numbers.
+    named_sent: dict = {}
+    for c, s in sent.items():
+        row = named_sent.setdefault(provider_label(c) if c != "?" else "", [0, 0, 0, 0])
+        row[:] = [a + b for a, b in zip(row, s)]
+    by_month = sorted(named_sent.items(), key=lambda kv: (-kv[1][2], kv[0]))
+    sent_table = ("<table><thead><tr>" + th("Connection") + th("Requests, 24 h", True) + th("Tokens, 24 h", True)
+                  + th("Requests, this month", True) + th("Tokens, this month", True) + "</tr></thead><tbody>"
+                  + "".join(f"<tr><td>{esc(c) or '<span class=muted>not recorded</span>'}</td>"
+                            + "".join(f"<td class='num'>{v:,}</td>" for v in s) + "</tr>" for c, s in by_month)
+                  + "</tbody></table>" if sent else "<p class='muted'>No call in the ledger this month.</p>")
+    data = json.dumps({"tiles": tiles,
+                       "sent": [{"provider": c or "not recorded", "day": s[0], "month": s[2]} for c, s in by_month if s[2]]},
+                      ensure_ascii=False).replace("</", "<\\/")
     entered = catalog.connection_limits()
     keys = catalog.CONNECTION_LIMIT_KEYS
     lim_rows = [f"<tr><td>{esc(conn)}</td>" + "".join(
@@ -5899,38 +5891,69 @@ def quotas_page() -> str:
                                 + "".join(f"<td class='num'>{ev['value']:,}</td>" if kk == k
                                           else "<td class='num muted'>—</td>" for kk in keys)
                                 + f"<td>learned {esc(ev.get('at', '')[:10])} (its 429s)</td></tr>")
-    tables = (
-        "<div class='cols fit'><section class='panel'><h2>Limits</h2><p class='sub'>What a provider states, or a cap the bench counts its"
-        " own calls against.</p>" + table(QUOTA_COLS, limits, "None stated, and none set: Endpoints sets a cap.")
-        + "<details class='key'><summary>How limits are known</summary><p>Refresh asks the provider for free where it can"
-          " (CLI Proxy API's credentials, OpenRouter); where a provider states its limits only in its replies, it"
-          " sends one 16-token request to read them; elsewhere it reads the bench's own records again. Its title"
-          " says which it will do.</p><p>A limit is what you enter per connection (Endpoints, Rate limits per"
-          " connection), or what a provider states in a rate-limit error, which the bench writes down by itself"
-          " (or, when the error names no number, works out for the connection from the requests it had sent). A"
-          " model's own limits (its panel) win, and learned ones only ever lower a limit, until they have not"
-          " been met again for 14 days and are forgotten.</p><p>What the bench sent counts retries; calls"
-          " through the llm CLI are not in its ledger.</p></details>"
+    # The tiles (bench.js qDraw), then the two charts, side by side where each has 52rem (.cols.fit;
+    # each a report: drawn when it comes near, bench.js drawNear), then Known limits.
+    body = (
+        "<p class='sub'>What is left with each connection, when it resets, and who is resting.</p>"
+        "<div class='panel'><div class='q-tiles' id='q-tiles'></div></div><div class='cols fit'>"
+        f"<div class='panel report' id='report-q-resets'>{report_head('Resets, next 7 days')}<p class='sub'>A dot"
+        " where a limit resets (a daily one every day), a bar while a model rests, the line is now.</p>"
+        "<div class='chart' id='chart-resets'></div></div>"
+        + chart_card("What the bench sent", "Requests per connection: this month, and the last 24 hours inside it.",
+                     "chart-sent", sent_table,
+                     "<p>One row per connection, most requests this month first. The pale bar is this month's"
+                     " requests, the dark one inside it the last 24 hours'; the label reads 24 h / month. Retries"
+                     " count. Calls through the llm CLI are not in the ledger.</p>", retired=False)
+        .replace("<div class='panel'", "<div class='panel report' id='report-q-sent'", 1)
+        + "</div><section class='panel'><h2>Known limits</h2><p class='sub'>What a provider states, or a cap the"
+          " bench counts its own calls against.</p>"
+        + (f"<div class='scroll'><table><thead><tr>{_head(cols)}</tr></thead><tbody>"
+           + "".join("<tr>" + "".join(_cell(css, r.get(k)) for k, _, css, _ in cols) + "</tr>" for r in limits)
+           + "</tbody></table></div>" if limits else "<p class='muted'>None stated, and none set: Endpoints sets a cap.</p>")
+        + "<details class='key'><summary>How limits are known</summary><p>A limit is what you enter per connection"
+          " (Endpoints, Rate limits per connection), or what a provider states in a rate-limit error, which the"
+          " bench writes down by itself (or, when the error names no number, works out for the connection from the"
+          " requests it had sent). A model's own limits (its panel) win, and learned ones only ever lower a limit,"
+          " until they have not been met again for 14 days and are forgotten.</p></details>"
           f"<details class='key'><summary>Every limit known · {len(lim_rows)}</summary>"
         + ("<div class='scroll'><table><thead><tr>" + th("Connection or model") + "".join(th(k, True) for k in keys)
            + th("From") + f"</tr></thead><tbody>{''.join(lim_rows)}</tbody></table></div>" if lim_rows
            else "<p class='muted'>None known yet.</p>")
-        + "</details></section><section class='panel'><h2>Connections</h2><p class='sub'>Its models free to call,"
-          " and what the bench sent through it.</p>" + table(SENT_COLS, conns, "No model on the bench yet.")
-        + "</section></div>")
-    if not (limits or conns or lim_rows):              # an empty bench: what goes here, and the step that fills it
-        tables = empty_state("Nothing to measure yet: each connection a model comes from is counted here.",
-                             step_button())
+        + "</details></section>")
+    if not (tiles or sent or lim_rows):                # an empty bench: what goes here, and the step that fills it
+        body = empty_state("Nothing to measure yet: each connection a model comes from is counted here.",
+                           step_button())
+    # With no connection docked, the panel: the counts, and how the page works.
+    soon = min(((a, q["name"]) for q in tiles for a in [_at(q.get("next_reset"))] if a),
+               key=lambda p: p[0][1], default=None)
+    facts = (("Connections", len(tiles)), ("Out", sum(1 for q in tiles if q["out"])),
+             ("Free to call", f"{sum(q['live'] for q in tiles)} of {sum(q['bench'] for q in tiles)} models"),
+             ("Next reset", f"{soon[0][0]} · {esc(soon[1])}" if soon else "<span class='muted'>—</span>"),
+             ("Sent this month", f"{sum(s[2] for s in sent.values()):,} requests"))
     return (
-        "<p class='sub'>What each connection allows, what is used and when it resets. A connection opens beside the"
-        f" tables with its models and its Refresh.</p>{tables}"
-        # The connection in hand, docked beside the tables (bench.js qModels fills it).
-        "<dialog class='dock' id='q-models' aria-labelledby='q-models-h'><div class='bar'><p>Connection</p></div>"
+        body
+        # The connection in hand, docked beside the tiles (bench.js qModels fills it).
+        + "<dialog class='dock' id='q-models' aria-labelledby='q-models-h'><div class='bar'><p>Connection</p></div>"
         "<div class='dock-body'><h2 class='dock-head' id='q-models-h' tabindex='-1'></h2>"
         "<div class='sub q-reach' id='q-models-about'></div><p class='sub' id='q-models-sub'></p>"
         "<h3>Its models</h3><div id='q-models-list'></div></div><div class='dock-foot'>"
-        "<button class='btn' type='button' id='q-refresh'>Refresh</button>"
         "<button class='btn' type='button' id='q-models-close'>Close</button></div></dialog>"
+        "<aside class='facts' id='facts-quotas' aria-labelledby='facts-quotas-h'>"
+        "<div class='bar'><h2 id='facts-quotas-h'>All connections</h2>"
+        "<button type='button' class='linkish facts-close'>Close</button></div><div class='facts-body'>"
+        "<dl class='rows'>" + "".join(f"<dt>{k}</dt><dd>{v}</dd>" for k, v in facts) + "</dl>"
+        "<p>A tile per connection: what is left of each limit it states and when that resets, who is resting"
+        " after a rate limit, and its models, which its Models button opens here.</p>"
+        "<h3>Refresh</h3><p>A tile's Refresh asks the provider for free where it can (CLI Proxy API's credentials,"
+        " OpenRouter); where a provider states its limits only in its replies, it sends one 16-token request to"
+        " read them; elsewhere it reads the bench's own records again. Its title says which. Refresh all live, in"
+        " the bar, asks every one that tells for free.</p>"
+        "<h3>The meters</h3><p>Ten segments filled like a bar, what is left leading the line and its reset at the"
+        " end: green from 70% left, amber from 25%, red under that. A connection that is out, a limit used up or"
+        " every model resting, has a red edge. Where nothing is stated, the meter is its calls of the last 24"
+        " hours, red for those that failed.</p>"
+        "<h3>Order</h3><p>Drag a tile, or move it with the arrow keys, to keep it where you want it. Sort puts"
+        " them back: out first, then the soonest reset.</p></div></aside>"
         f"<script type='application/json' id='quota-data'>{data}</script>")
 
 

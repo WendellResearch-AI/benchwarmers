@@ -127,7 +127,7 @@ h1, h2, h3 { line-height: 1.2; letter-spacing: -.01em; text-wrap: balance; }
 .cols.flow { columns: 34rem; column-gap: 0; column-rule: 1px solid var(--line); }
 .cols.flow > .panel { break-inside: avoid; }
 /* Info's groups, few and short: they share the row, wide or narrow. Quota's
-   tables share it where each has 52rem (--fit). */
+   charts share it where each has 52rem (--fit). */
 .cols.fit { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(var(--fit, 26rem), 100%), 1fr)); margin-left: -1px; }
 .cols.fit > .panel { min-width: 0; border-left: 1px solid var(--line); }
 #tab-quotas { --fit: 52rem; }
@@ -206,7 +206,7 @@ dialog.dock .dock-foot > :is(.errors, .done) { flex-basis: 100%; margin: 0; }
     grid-template-columns: var(--rail-w) minmax(0, 1fr) var(--aside-w); }
 }
 @media (min-width: 1280px) and (max-width: 1699px) {
-  .app:has(> .panes > :is(#tab-suite, #tab-discover).active):not(:has(dialog.dock[open])) { --aside-w: 320px; }
+  .app:has(> .panes > :is(#tab-suite, #tab-discover, #tab-quotas).active):not(:has(dialog.dock[open])) { --aside-w: 320px; }
 }
 /* Under 800px the rail is a bar across the top; Menu opens the pages under it. */
 @media (max-width: 799px) {
@@ -256,7 +256,7 @@ button { font: inherit; cursor: pointer; }
 .bench-art i + i + i { left: calc(10.4 * var(--u)); }
 .bench-art i::after { content: ""; position: absolute; inset: -1px; border: 1px solid var(--ink); border-radius: 3px; background: var(--band); opacity: 0; translate: 0 -5px; }
 .empty-bench:has(.btn.primary:is(:hover, :focus-visible)) .bench-art i:first-child::after { opacity: 1; translate: none; }
-.tab:has(.empty-bench) > .bar :is(input[type=search], .fold-all), .tab:not(:has(aside.facts)) .facts-open { display: none; }
+.tab:has(.empty-bench) > .bar :is(input[type=search], .fold-all, #q-all, #q-reorder), .tab:not(:has(aside.facts)) .facts-open { display: none; }
 /* First run (serve.first_run), in Benchmarks' place: the next step, the steps beside it. */
 .first { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--gap-5) 64px; padding: 48px var(--pad) 40px; }
 .first > .empty-bench { flex: 0 1 46rem; padding: 0; }
@@ -477,9 +477,51 @@ button.chip:hover { outline: 1px solid currentColor; }
 .meter span { display: block; height: 100%; background: var(--brand); }
 .meter span.low { background: var(--err); }
 td.why { white-space: nowrap; }                     /* Uptime's down / left out, with their reasons */
-/* A chart's key in the page (Uptime, Trend): a swatch before each name. */
+/* A chart's key in the page (Uptime, Trend, What the bench sent): a swatch before each name. */
 .q-legend { display: flex; flex-wrap: wrap; gap: var(--gap-1) var(--gap-4); margin: 0 0 .4rem; }
 .q-legend i { display: inline-block; width: .8rem; height: .7rem; border-radius: 2px; margin-right: .35rem; vertical-align: -1px; }
+
+/* Quota (bench.js qTile): a tile per connection, as many columns as fit; a group of
+   windows (a 5-hour and a weekly limit of one model group) boxed together; a meter
+   of ten segments filled like a bar. Nothing in a tile is wider than it. The tile
+   docked carries the accent, as a row in hand does. */
+.q-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(17rem, 100%), 1fr)); gap: var(--gap-3); align-items: stretch; }
+.q-tile { display: flex; flex-direction: column; gap: var(--gap-2); padding: var(--gap-3) 14px; background: var(--paper-2); min-width: 0; border: 1px solid var(--line); border-radius: var(--radius); cursor: grab; }
+/* What is out of sight is laid out when it nears (content-visibility), not as the page arrives. */
+.q-tile { content-visibility: auto; contain-intrinsic-size: auto 18rem; }
+#tab-quotas > section.panel { content-visibility: auto; contain-intrinsic-size: auto 60rem; }
+.q-tile:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.q-tile.out { border-color: var(--err); }
+.q-tile.in-hand { background: var(--tint); box-shadow: inset 3px 0 0 var(--mark); }
+.q-tile.dragging { opacity: .45; }
+.q-head { display: flex; justify-content: space-between; align-items: center; gap: var(--gap-2); min-width: 0; }
+.q-tile .nm { font-size: var(--t-lead); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.q-head .chip { flex: none; }
+.q-about { display: flex; flex-direction: column; gap: 2px; margin-top: -5px; font-size: var(--t-small); color: var(--muted); }
+.q-from { font-style: italic; }
+.q-body { display: flex; flex-direction: column; gap: var(--gap-2); min-width: 0; }
+.q-group { display: flex; flex-direction: column; gap: 7px; padding: 7px 9px 9px; border: 1px solid var(--line); border-radius: var(--radius); }
+.q-group.bare { border: 0; padding: 0; }
+.q-group h4 { margin: 0; font-size: var(--t-small); font-weight: 500; color: var(--muted); }
+.q-meter { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.q-line { display: flex; justify-content: space-between; align-items: baseline; gap: var(--gap-2); min-width: 0; }
+.q-line > :first-child { min-width: 0; }
+.q-line > a.model { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.q-val { flex: none; white-space: nowrap; }
+/* A meter: one bar filled to --fill (bench.js qSegs), cut into ten segments 2px apart by its mask. */
+.segs { --on: var(--ok); --off: color-mix(in oklab, var(--muted) 28%, var(--paper-2)); height: .5rem; border-radius: 2px;
+  background: linear-gradient(90deg, var(--on) var(--fill, 0%), var(--off) 0);
+  mask: repeating-linear-gradient(90deg, #000 0 calc(10% - 2px), transparent 0 10%); }   /* empty: seen in every theme */
+.segs.warn { --on: var(--warn); }
+.segs.err { --on: var(--err); }
+.segs.none { opacity: .6; }
+.segs.calls { --off: var(--err); }      /* calls: green for what answered, red for what failed */
+.q-rest { font-size: var(--t-small); background: var(--warn-ground); border-radius: var(--radius); padding: 3px 7px; }
+.q-msg { font-size: var(--t-small); }
+.q-msg:empty { display: none; }
+.q-foot { display: flex; justify-content: space-between; gap: 6px; margin-top: auto; padding-top: var(--gap-2); border-top: 1px solid var(--line); }
+.q-foot .chip { margin-left: 3px; }
+@media (max-width: 799px), (pointer: coarse) { .q-foot .btn { min-height: 44px; } }    /* a finger's room */
 
 /* ---- dialogs: popups for a confirm, a picker and a short create ------ */
 dialog { border: 1px solid var(--ink); border-radius: var(--radius); padding: 1.25rem 1.4rem; width: min(40rem, calc(100vw - 2rem)); max-height: calc(100vh - 2rem); background: var(--paper-2); color: var(--ink); }
