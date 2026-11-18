@@ -1627,6 +1627,7 @@
   // Polled while it runs, and once on every page load, so a batch started
   // before a reload still shows. Its results stay until Clear.
   var oq = {box: $('oq'), text: $('oq-text'), chip: $('oq-chip'), stop: $('oq-stop'), clear: $('oq-clear'),
+            cap: $('oq-cap'), steps: $('oq-steps'),
             view: $('o-queue'), sum: $('o-queue-sum'), list: $('o-queue-list')};
   var OQ_CHIP = {queued: '', running: 'new', done: 'ok', 'no answer': 'warn', failed: 'err', skipped: ''};
   var oqTimer = null, oqLast = '';
@@ -1646,16 +1647,21 @@
     var bad = oqCount(q, 'failed') + oqCount(q, 'no answer');
     oq.chip.classList.toggle('done', !q.running && n > 0 && oqCount(q, 'done') === n);
     oq.chip.classList.toggle('fail', !q.running && bad > 0);
+    // Down the sidebar: what it is doing, the model whole, then its five steps one a line.
+    oq.cap.textContent = q.running ? (q.stopping ? 'Stopping after this one' : 'Onboarding ' + (finished + 1) + ' of ' + n)
+      : 'Onboarded';
     if (q.running) {
-      oq.text.textContent = (q.stopping ? 'Stopping after ' : 'Onboarding ' + (finished + 1) + ' of ' + n
-        + (step ? ', step ' + step + '/5' : '') + ': ') + (now ? now.served : '…');
+      oq.text.textContent = now ? now.served : '…';
     } else {
-      oq.text.textContent = 'Onboarded ' + oqCount(q, 'done') + ' of ' + n
+      oq.text.textContent = oqCount(q, 'done') + ' of ' + n + ' on the bench'
         + [['failed', 'failed'], ['no answer', 'did not answer'], ['skipped', 'skipped']].map(function (s) {
           var c = oqCount(q, s[0]); return c ? ' · ' + c + ' ' + s[1] : '';
         }).join('');
     }
-    oq.text.title = oq.text.textContent;                 // cut short beside the button; whole on hover
+    oq.steps.hidden = !(q.running && now);
+    [].forEach.call(oq.steps.children, function (li, i) {
+      li.className = i + 1 < step ? 'done' : i + 1 === step ? 'now' : '';
+    });
     oq.stop.hidden = !q.running || q.stopping; oq.clear.hidden = q.running;
     var sig = JSON.stringify(q);
     if (sig !== oqLast) { oqLast = sig; oqLive = null; if (!oq.view.hidden) oqList(q); }

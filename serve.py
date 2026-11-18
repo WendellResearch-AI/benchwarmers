@@ -4939,8 +4939,12 @@ def tabs(shown: str = "suite", theme: str = DEFAULT_THEME) -> str:
         f"{nav}<div class='foot'>"
         "<button class='btn fresh' id='fresh' hidden>New results · Show</button>"
         # The onboarding queue's progress (bench.js fills it from /api/onboard-queue).
-        "<div class='oq' id='oq' hidden role='status'>"
+        "<div class='oq' id='oq' hidden role='status'><p class='oq-cap' id='oq-cap'>Onboarding</p>"
         "<span class='oq-chip' id='oq-chip'><span id='oq-text'></span></span>"
+        # onboard.py's five steps for the model running now, one a line (bench.js oqRender).
+        "<ol class='oq-steps' id='oq-steps' hidden>"
+        + "".join(f"<li>{s}</li>" for s in ("On the endpoint", "Registered", "Client set up", "Availability probed",
+                                             "Suite run")) + "</ol>"
         "<button class='linkish' id='oq-open'>Details</button>"
         "<button class='linkish' id='oq-stop'>Stop</button>"
         "<button class='linkish' id='oq-clear'>Clear</button></div>"

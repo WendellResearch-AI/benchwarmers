@@ -72,7 +72,7 @@ h1, h2, h3 { line-height: 1.2; letter-spacing: -.01em; text-wrap: balance; }
 .by a:hover { text-decoration: underline; }
 .brand .menu { display: none; }
 .rail-body { flex: 1; display: flex; flex-direction: column; }
-.tabs h2, .pick-theme p { margin: var(--gap-4) 20px var(--gap-1); font-size: var(--t-small); font-weight: 700; line-height: 1.5; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.tabs h2, .pick-theme p, .oq-cap { margin: var(--gap-4) 20px var(--gap-1); font-size: var(--t-small); font-weight: 700; line-height: 1.5; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
 .tabs ul { list-style: none; margin: 0; padding: 0; }
 .tabs li a { display: flex; justify-content: space-between; gap: var(--gap-2); padding: 5px 20px; color: var(--ink-2); font-weight: 500; line-height: 20px; text-decoration: none; }
 .tabs li a:hover { color: var(--ink); background: color-mix(in oklab, var(--paper-2) 45%, transparent); }
@@ -637,7 +637,15 @@ dialog h2 { margin: 0 0 .2rem; font-size: var(--t-head); font-weight: 700; }
 /* The status as a chip whose fill grows as models finish (bench.js sets --fill,
    0 to 1), ending green, or red. Motion 11: it fills; it never shakes. */
 .oq-chip { position: relative; isolation: isolate; overflow: hidden; display: flex; align-items: center; flex-basis: 100%; min-width: 0; min-height: 32px; padding: 0 var(--gap-3); border: 1px solid var(--field); border-radius: var(--radius); background: var(--paper-2); }
-#oq-text { min-width: 0; padding: 4px 0; overflow: hidden; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; }
+#oq-text { min-width: 0; padding: 5px 0; font-weight: 700; overflow-wrap: anywhere; }
+.tabs .oq-cap { flex-basis: 100%; margin: 0; }
+.oq-steps { flex-basis: 100%; list-style: none; margin: 0; padding: 0 0 0 2px; display: grid; gap: 3px; font-size: var(--t-small); color: var(--muted); }
+.oq-steps li { display: flex; align-items: center; gap: 8px; }
+.oq-steps li::before { content: ""; flex: none; width: 7px; height: 7px; border: 1px solid currentColor; border-radius: 50%; }
+.oq-steps .done { color: var(--ink-2); }
+.oq-steps .done::before { border-color: var(--ok); background: var(--ok); }
+.oq-steps .now { color: var(--ink); font-weight: 700; }
+.oq-steps .now::before { border-color: var(--brand); background: var(--brand); }
 .oq-chip::before { content: ""; position: absolute; inset: 0; z-index: -1; transform: scaleX(var(--fill, 0)); transform-origin: left; background: color-mix(in oklab, var(--brand) 22%, var(--paper-2)); }
 .oq-chip.done { border-color: var(--ok); }
 .oq-chip.done::before { background: var(--ok-ground); }
