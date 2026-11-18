@@ -103,12 +103,13 @@ def _tokens(name: str) -> dict[str, str]:
     return dict(re.findall(r"(--[\w-]+)\s*:\s*([^;]+);", block.group(1))) if block else {}
 
 
-def brand_css() -> str:
-    """Every theme's tokens, and the @font-face rules. The default theme
-    supplies every token on `:root` (faces, measure, radius); each other theme
-    lays its own over them under `html[data-theme=<name>]`, so the page holds
-    them all and switching is one attribute (bench.js), with no reload.
-    scripts/check_themes.py checks each one's contrast."""
+def brand_css(fonts: bool = True) -> str:
+    """Every theme's tokens, and the @font-face rules (not on the sign-in page:
+    the fonts are behind the login). The default theme supplies every token on
+    `:root` (faces, measure, radius); each other theme lays its own over them
+    under `html[data-theme=<name>]`, so the page holds them all and switching
+    is one attribute (bench.js), with no reload. scripts/check_themes.py checks
+    each one's contrast."""
     def block(name: str) -> str:
         return "".join(f"{k}:{v.strip()};" for k, v in _tokens(name).items())
     scoped = "".join(f"html[data-theme='{name}']{{{block(name)}}}" for name in themes() if name != BASE_THEME)
@@ -116,7 +117,7 @@ def brand_css() -> str:
         f"@font-face{{font-family:'{'Chivo Mono' if fam == 'chivo-mono' else 'Chivo'}';"
         f"font-weight:{name.split('-')[-2]};font-style:normal;font-display:swap;"
         f"src:url('/fonts/{name}') format('woff2');}}"
-        for name, fam in FONTS.items())
+        for name, fam in FONTS.items()) if fonts else ""
     return f":root{{{block(BASE_THEME)}}}{scoped}{faces}"
 
 
@@ -2127,6 +2128,14 @@ def ext_link(url: str, text: str) -> str:
     return f"<a href='{esc(url)}' target='_blank' rel='noopener'>{esc(text)}</a>"
 
 
+def meter(share: float, text: str, low: bool) -> str:
+    """A share as a bar beside its figure (Uptime, Confidently wrong, Quota's
+    Left), so how much reads at a glance and not by colour alone."""
+    return (f"<span class='helped'><span class='meter'><span{' class=low' if low else ''}"
+            f" style='width:{max(4, min(100, round(share * 100)))}%'></span></span>"
+            f"<span class='mono'>{text}</span></span>")
+
+
 STATUS = {
     # failure class -> (chip label, chip class, plain reading)
     "capacity": ("throttled", "warn", "rate limit or quota"),
@@ -2218,31 +2227,69 @@ def chip(label: str, css: str, why: str = "") -> str:
             + f">{esc(label)}</span>")
 
 
-def first_run() -> str:
-    """A fresh install's next step, until it has an endpoint, a model on the
-    bench and a collection: add an endpoint (sign in with a provider, or paste
-    a key), onboard a model from it, make a collection of them (RELEASE-PLAN
-    Phase 4: init's steps, in the dashboard). Each opens what every install
-    uses; bench.js opens the first on load, since an empty bench offers nothing else."""
+# The empty bench (ui/UI.md, Empty state): three seats on a bench, empty; pointing at
+# the action beside it takes one (bench.css, motion 4). A tick, drawn (bench.js TICK).
+BENCH_ART = "<div class='bench-art' aria-hidden='true'><i></i><i></i><i></i></div>"
+TICK = ("<svg class='tick' viewBox='0 0 20 20' aria-hidden='true'><circle cx='10' cy='10' r='8'/>"
+        "<path d='M5.8 10.4l2.9 2.8 5.6-6'/></svg>")
+# First run's steps (RELEASE-PLAN Phase 4: init's steps, in the dashboard), and what each is.
+FIRST_STEPS = (("endpoint", "An endpoint", "where models are served from: a provider, a hub or a local runtime"),
+               ("onboard", "A model on the bench", "picked from what an endpoint serves, probed and run through"
+                                                   " the suite"),
+               ("collection", "A collection", "the panel of models an app asks for, bench/core to begin"),
+               ("app", "An app", "pointed at the gateway: <a href='/clients' data-go='clients'>Clients</a> has"
+                                 " each one's set-up"))
+
+
+def first_step() -> tuple[str, str, str, str] | None:
+    """A fresh install's next step (its key, heading, button and what it does),
+    until it has an endpoint, a model on the bench and a collection; None then.
+    Each button opens what every install uses (bench.js firstStep)."""
     if not endpoints.load():
-        step, head, label = "endpoint", "Add your first endpoint", "Add an endpoint"
-        text = ("Where models are served from: sign in with a provider, or paste an API key for any"
+        return ("endpoint", "Add your first endpoint", "Add an endpoint",
+                "Where models are served from: sign in with a provider, or paste an API key for any"
                 " OpenAI-compatible API. Then onboard a model from it.")
-    elif not registered() and not decide.load():
-        step, head, label = "onboard", "Onboard your first model", "Onboard a model"
-        text = ("Pick a model your endpoints serve. Onboarding registers it, probes it (4 calls) and runs"
+    if not registered() and not decide.load():
+        return ("onboard", "Onboard your first model", "Onboard a model",
+                "Pick a model your endpoints serve. Onboarding registers it, probes it (4 calls) and runs"
                 " the internal suite, so it takes minutes and spends calls.")
-    elif not bench_collections.load():
-        step, head, label = "collection", "Make your first collection", "Make bench/core"
-        text = ("The models a panel always asks, and what it is for. It opens filled in as bench/core, the"
+    if not bench_collections.load():
+        return ("collection", "Make your first collection", "Make bench/core",
+                "The models a panel always asks, and what it is for. It opens filled in as bench/core, the"
                 " name the set-ups on Clients use, with the models you onboarded ticked: change anything,"
                 f" then save. Callers ask for it through the gateway at {esc(gateway_url())}.")
-    else:
+    return None
+
+
+def step_button() -> str:
+    """First run's next step as a button, the action of a page that is empty until it is done."""
+    s = first_step()
+    return f"<button class='btn primary' type='button' data-first='{s[0]}'>{s[2]}</button>" if s else ""
+
+
+def empty_state(say: str, action: str = "", more: str = "") -> str:
+    """An empty page (ui/UI.md): the empty bench, one sentence, the action that fills it, what that does."""
+    return (f"<div class='empty-bench'>{BENCH_ART}<p class='say'>{say}</p>{action}"
+            + (f"<p class='sub'>{more}</p>" if more else "") + "</div>")
+
+
+def first_run() -> str:
+    """A fresh install's home page, in Benchmarks' place until the install is
+    set up: what Benchwarmers is, the next step and the one button that takes
+    it, and the steps as a list that ticks off. "" once it is set up."""
+    step = first_step()
+    if not step:
         return ""
-    return (f"<section class='problems' id='first-run' data-step='{step}' aria-labelledby='first-head'>"
-            f"<div class='head'><h2 id='first-head'>{head}</h2></div>"
-            f"<div class='problem'><div class='why'>{text}</div><div class='acts'>"
-            f"<button class='btn primary' id='first-go'>{label}</button></div></div></section>")
+    key, head, label, text = step
+    at = [k for k, _, _ in FIRST_STEPS].index(key)
+    steps = "".join(f"<li class='{'done' if i < at else 'now' if i == at else ''}'>{TICK if i < at else ''}"
+                    f"{name}<small>{what}</small></li>" for i, (_, name, what) in enumerate(FIRST_STEPS))
+    return (f"<section class='first' id='first-run' data-step='{key}' aria-labelledby='first-head'>"
+            f"<div class='empty-bench'>{BENCH_ART}<p class='say'>Benchwarmers is a self-hosted panel gateway: an"
+            " app asks one of your collections, and every model on it answers.</p>"
+            f"<h2 id='first-head'>{head}</h2><p class='sub'>{text}</p>"
+            f"<button class='btn primary' type='button' id='first-go' data-first='{key}'>{label}</button></div>"
+            f"<ol class='steps' aria-label='Setting up'>{steps}</ol></section>")
 
 
 def said(detail: str) -> tuple[str, str]:
@@ -2393,17 +2440,20 @@ def actions_page(groups: dict, auto: list) -> str:
                 + (f"<button class='btn small danger' data-act='retire' data-aliases='{esc(' '.join(aliases))}'"
                    f" data-why='{esc(why)}'>Retire all {len(aliases)}</button>" if retire else ""))
 
-    def group(title: str, sub: str, items: list, acts: str = "") -> str:
+    def group(title: str, sub: str, items: list, acts: str = "", count: str = "") -> str:
         rest = items[FOLD_AT:]
-        return (f"<section class='panel'><header data-row><h2>{title} · {len(items)}</h2><span class='why'></span>"
+        return (f"<section class='panel'><header data-row><h2>{title} · {count or len(items)}</h2><span class='why'></span>"
                 f"<span class='acts'>{acts}</span></header><p class='sub'>{sub}</p>"
                 f"<ul class='items'>{''.join(items[:FOLD_AT])}</ul>"
                 + (f"<details class='more'><summary>{len(rest)} more</summary><ul class='items'>{''.join(rest)}</ul>"
                    "</details>" if rest else "") + "</section>")
 
     todo: dict[str, list] = {"held": [], "signin": [], "retire": [], "retry": [], "notices": []}
+    held = [0, 0]                                      # the rail counts a held connection and each of its models
     for conn, g in groups.items():
         if g["held"]:                                  # one cause for every model on it: the connection, its models under it
+            held[0] += len(g["held"])
+            held[1] += len(g["rows"])
             aliases = [r["alias"] for r in g["rows"] if r["alias"]]
             models = (f"<details class='more'><summary>Its {len(g['rows'])} model{'s' * (len(g['rows']) != 1)}"
                       f"</summary><ul class='items'>{''.join(model(r) for r in g['rows'])}</ul></details>")
@@ -2419,7 +2469,8 @@ def actions_page(groups: dict, auto: list) -> str:
     body = "".join(g for g in (
         todo["held"] and group("Check the connection", "Every model on it is failing, so the cause is likely its key,"
                                " credit or model prefix, and nothing was retired. Retry spends one call a model.",
-                               todo["held"]),
+                               todo["held"], count=f"{held[0]} connection{'s' * (held[0] != 1)}, "
+                                                   f"{held[1]} model{'s' * (held[1] != 1)}"),
         todo["signin"] and group("Sign in again", "The provider refused the key: it expired or was revoked. Sign in"
                                  " again on Endpoints, then Retry.", [h for _, h in todo["signin"]],
                                  both(every["signin"], "", False)),
@@ -3361,15 +3412,13 @@ def uptime_card() -> str:
                     th("Last down"), "</tr></thead><tbody>"]
             for k in sorted(totals, key=lambda k: (2 if totals[k]["pct"] is None else totals[k]["pct"], k)):
                 t, pct = totals[k], totals[k]["pct"]
-                meter = (f"<span class='helped'><span class='meter'><span{' class=low' if pct < .8 else ''}"
-                         f" style='width:{max(4, round(pct * 100))}%'></span></span>"
-                         f"<span class='mono'>{pct * 100:.1f}%</span></span>" if pct is not None
-                         else "<span class='muted'>no counted calls</span>")
+                bar = (meter(pct, f"{pct * 100:.1f}%", pct < .8) if pct is not None
+                       else "<span class='muted'>no counted calls</span>")
                 down = _why(t["kinds"], _down)
                 left = _why(t["kinds"], lambda kind: not _down(kind))
                 body.append(
                     (name(k) if models else f"<tr><td>{esc(k)}</td>")
-                    + f"<td data-sort='{-1 if pct is None else round(pct, 4)}'>{meter}</td>"
+                    + f"<td data-sort='{-1 if pct is None else round(pct, 4)}'>{bar}</td>"
                     f"<td class='num'>{t['up'] + t['down']}</td>"
                     f"<td class='why' data-sort='{t['down']}'>{t['down']}"
                     + (f" <span class='muted'>· {esc(down)}</span>" if down else "") + "</td>"
@@ -3672,13 +3721,11 @@ def wrong_card() -> str:
         r = rows[alias]
         if r["answers"]:
             rate = r["wrong"] / r["answers"]
-            meter = (f"<span class='helped'><span class='meter'><span{' class=low' if rate > .25 else ''}"
-                     f" style='width:{max(4, round(rate * 100))}%'></span></span>"
-                     f"<span class='mono'>{r['wrong']}/{r['answers']}</span></span>")
+            bar = meter(rate, f"{r['wrong']}/{r['answers']}", rate > .25)
         else:
-            rate, meter = -1, ("<span class='muted'>reads images: no code tasks</span>" if alias in images
-                               else "<span class='muted'>no tasks yet</span>")
-        body.append(f"<tr><td>{named(alias)}</td><td data-sort='{rate:.3f}'>{meter}</td>"
+            rate, bar = -1, ("<span class='muted'>reads images: no code tasks</span>" if alias in images
+                             else "<span class='muted'>no tasks yet</span>")
+        body.append(f"<tr><td>{named(alias)}</td><td data-sort='{rate:.3f}'>{bar}</td>"
                     + "".join(cell(*r["by"][k]) for k in wrong.KINDS)
                     + (f"<td class='num' data-sort='{r['review_false']}'>{r['review_false']} in {r['reviews']}</td>"
                        if r["reviews"] else "<td class='num muted' data-sort='-1'>—</td>") + "</tr>")
@@ -3694,6 +3741,9 @@ def wrong_card() -> str:
 
 
 def benchmarks_tab() -> str:
+    first = first_run()                        # a fresh install: its next step, in place of reports of nothing
+    if first:
+        return first
     data = json.dumps(charts_data(), ensure_ascii=False).replace("</", "<\\/")
     # Who to trust, then what moves day to day (Uptime, Trend, Performance), then Real work,
     # then the rest in the order they had, in as many columns as fit (bench.js columns).
@@ -4230,8 +4280,8 @@ def collection_list(rows: list[dict]) -> str:
                if row["tags"] else "")
             + f"</td><td><div class='seats'>{seats}</div></td><td class='together'>{together}</td></tr>")
     if not out:
-        return ("<p class='empty'>No collections yet. <b>New collection</b> makes one: a name callers ask for,"
-                " and two to four models that answer together.</p>")
+        return empty_state("No collection yet.", step_button(), "A collection is a name callers ask for, and two to"
+                           " four models that answer together; New collection makes one.")
     return ("<table class='c-table'><thead><tr>" + th("Collection") + "<th>Panel</th>"
             "<th title='What every member takes and does, as the catalog says: the longest prompt, what they"
             " all can do, and the lowest rate limits among their connections (requests or tokens a minute"
@@ -4397,8 +4447,10 @@ UI_CONFIG = DATA / "config" / "ui.json"
 # right. Fixed HTML, so they are there before the page arrives and a page fetched
 # again never replaces them: a filter keeps what is typed in it.
 BAR_TOOLS = {
+    # data-none: what a filter that matches nothing says under the table's head (bench.js applyFilter).
     "endpoints": ("<input type='search' data-filter='page' placeholder='Find an endpoint or a model it serves'"
-                  " aria-label='Find an endpoint or a model it serves'><span class='spring'></span>"
+                  " aria-label='Find an endpoint or a model it serves' data-none='No endpoint or model matches'>"
+                  "<span class='spring'></span>"
                   "<span class='done' id='el-done' role='status'></span><span class='errors' id='el-errors' role='alert'></span>"
                   "<button class='btn primary' type='button' id='e-add'>Add an endpoint</button>"),
     "quotas": ("<span class='spring'></span><span class='done' id='q-done' role='status'></span>"
@@ -4406,7 +4458,7 @@ BAR_TOOLS = {
                " title='Asks each connection that tells for free what is left'>Refresh all live</button>"),
     # Collapse all while every connection is open, else Expand all (bench.js foldButtons).
     "models": ("<input type='search' data-filter='page' placeholder='Find a model or connection'"
-               " aria-label='Find a model or connection'><span class='spring'></span>"
+               " aria-label='Find a model or connection' data-none='No model matches'><span class='spring'></span>"
                "<button class='fold-all' type='button' data-fold-all='close' aria-expanded='true'>"
                "<span class='fold-chev' aria-hidden='true'></span>Collapse all</button>"
                "<button class='btn primary' type='button' id='models-onboard'>Onboard a model</button>"),
@@ -4809,7 +4861,10 @@ def tabs(shown: str = "suite", theme: str = DEFAULT_THEME) -> str:
         # The credit is fixed, not a setting (RELEASE-PLAN decision 7).
         "<p class='by'>by <a href='https://wendellresearch.ai' target='_blank' rel='noopener'>Wendell Research</a></p>"
         "<button type='button' class='btn menu' id='menu' aria-expanded='false' aria-controls='rail-body'>Menu</button>"
-        f"</div><div class='rail-body' id='rail-body'>{nav}<div class='foot'>"
+        # Search: the palette (bench.js palOpen), Ctrl+K anywhere.
+        "</div><div class='rail-body' id='rail-body'><button type='button' class='search' id='pal-open'"
+        " aria-haspopup='dialog' aria-keyshortcuts='Control+K'>Search<kbd>Ctrl K</kbd></button>"
+        f"{nav}<div class='foot'>"
         "<button class='btn fresh' id='fresh' hidden>New results · Show</button>"
         # The onboarding queue's progress (bench.js fills it from /api/onboard-queue).
         "<div class='oq' id='oq' hidden role='status'>"
@@ -4820,8 +4875,12 @@ def tabs(shown: str = "suite", theme: str = DEFAULT_THEME) -> str:
         "<button class='btn primary' id='onboard-open'>Onboard a model</button>"
         # Saved as Settings' picker saves it (bench.js theme).
         f"<div class='pick-theme' role='group' aria-labelledby='theme-cap'><p id='theme-cap'>Theme</p>{picks}</div>"
-        # What needs a person first (first run), then the pages.
-        f"</div></div></nav><main class='panes'>{first_run()}{panes}</main>{editor()}</div>")
+        f"</div></div></nav><main class='panes'>{panes}</main>{editor()}"
+        # The palette: one field, one list of what it finds (bench.js palDraw).
+        "<dialog id='palette' aria-label='Go to a page, a model or a collection'><input id='pal-q' type='text'"
+        " role='combobox' aria-expanded='true' aria-controls='pal-list' aria-autocomplete='list' autocomplete='off'"
+        " spellcheck='false' aria-label='Go to' placeholder='Go to a page, a model, a collection…'>"
+        "<div id='pal-list' role='listbox' aria-label='Found'></div></dialog></div>")
 
 
 def saved_theme() -> str:
@@ -4927,25 +4986,64 @@ def gateway_keys_card() -> str:
         "<div class='actions'><button class='btn primary' id='k-make'>Make a key</button></div>")
 
 
-def login_page() -> str:
-    """The admin token goes in a JSON POST, through the same guard as every
-    write. Opened from a link on another site, SameSite=Strict holds the
-    cookie back, so a browser already signed in is sent on to the dashboard."""
-    return ("<!doctype html><html lang='en'><meta charset='utf-8'>"
-            "<meta name='viewport' content='width=device-width, initial-scale=1'><title>Benchwarmers</title>"
-            + favicon(saved_theme()) +
-            "<body style='font:16px system-ui;max-width:24rem;margin:4rem auto;padding:0 1rem'>"
-            "<h1>Benchwarmers</h1><form id='f'><label for='t'>Admin token</label>"
-            "<input id='t' type='password' autocomplete='current-password' required"
-            " style='display:block;width:100%;box-sizing:border-box;font:inherit;margin:.5rem 0 1rem'>"
-            "<button>Sign in</button><p id='e' role='alert'></p></form><script>"
+# The sign-in page's own styles: bench.css is behind the login it asks for. Hardwood's
+# court is the whole page here (--floor, Wendell at centre court) with the card in its
+# left half; the other themes, their plain ground. The name on its bench as the rail has it.
+SIGNIN_CSS = (
+    "body{margin:0;min-height:100vh;min-height:100dvh;display:grid;place-items:center;padding:16px;box-sizing:border-box;"
+    "background:var(--floor,var(--paper));border-top:.4rem solid var(--court-line,transparent);color:var(--ink);"
+    "font:400 .875rem/1.5 var(--font-display);color-scheme:var(--scheme,light)}"
+    "form{display:grid;gap:8px;width:min(22rem,100%);box-sizing:border-box;padding:26px 28px 22px;"
+    "border:1px solid var(--ink);border-radius:6px;background:var(--paper-2)}"
+    ".word{justify-self:start;margin-bottom:10px;font:800 30px/1 var(--font-display);letter-spacing:-.04em}"
+    ".word span{position:relative;display:inline-block;padding:0 .14em .6em}"
+    ".word span::after{content:'';position:absolute;left:-.08em;right:-.08em;bottom:.46em;height:.28em;"
+    "background:var(--bench-seat,var(--brand));border-radius:.06em}"
+    ".word span::before{content:'';position:absolute;left:.18em;right:.18em;bottom:0;height:.5em;--leg:var(--bench-leg,var(--ink-2));"
+    "background:linear-gradient(var(--leg),var(--leg)) left top/.11em 100% no-repeat,"
+    "linear-gradient(var(--leg),var(--leg)) right top/.11em 100% no-repeat,"
+    "linear-gradient(var(--leg),var(--leg)) center 66%/100% .07em no-repeat}"
+    "label{font-weight:500}p{margin:0}code{font-family:var(--font-mono)}"
+    "input,button{height:36px;box-sizing:border-box;border-radius:var(--radius);font:inherit}"
+    "input{padding:0 10px;border:1px solid color-mix(in oklab,var(--muted) 50%,var(--paper));background:var(--paper-2);"
+    "color:var(--ink);font-family:var(--font-mono)}"
+    "input[aria-invalid=true]{border-color:var(--err)}#e{color:var(--err)}#e:empty{display:none}"
+    "button{margin-top:6px;border:1px solid var(--ink);background:var(--ink);color:var(--paper);font-weight:500;cursor:pointer}"
+    "button:hover{background:var(--ink-2)}.hint{margin-top:6px;color:var(--muted);overflow-wrap:anywhere}"
+    ":focus-visible{outline:2px solid var(--link);outline-offset:1px}"
+    "@media (min-width:800px){html[data-theme='hardwood'] form{position:absolute;"
+    "left:max(12rem,calc(50% - (100vh - 6rem) * .47));top:calc(5rem + (100vh - 6rem) / 2);translate:-50% -50%}}"
+    "@media (max-width:799px){html[data-theme='hardwood'] body{place-items:start center}}")
+
+
+def login_page(theme: str | None = None, wrong: bool = False) -> str:
+    """Sign-in, when an admin token is set: one field. A plain form post (the
+    Handler's _login), so it works with scripts off; with them the token goes
+    as JSON, through the same guard as every write, and a wrong one is said
+    beside the field, which keeps what was typed. It loads nothing behind the
+    login: its styles inline, the mascot as data, the system's own face.
+    Opened from a link on another site, SameSite=Strict holds the cookie back,
+    so a browser already signed in is sent on to the dashboard."""
+    import base64
+    theme = theme if theme in themes() else saved_theme()
+    mascot = "data:image/png;base64," + base64.b64encode((UI / "mascot.png").read_bytes()).decode()
+    return (f"<!doctype html><html lang='en' data-theme='{esc(theme)}'><meta charset='utf-8'>"
+            "<meta name='viewport' content='width=device-width, initial-scale=1'><title>Sign in · Benchwarmers</title>"
+            + favicon(theme) + f"<style>{brand_css(fonts=False).replace('/ui/mascot.png', mascot)}{SIGNIN_CSS}</style>"
+            "<form method='post' action='/login'><span class='word'><span>Benchwarmers</span></span>"
+            "<label for='t'>Admin token</label><input id='t' name='token' type='password' autocomplete='current-password'"
+            f" required aria-describedby='e'{' aria-invalid=true autofocus' if wrong else ''}>"
+            f"<p id='e' role='alert'>{'That is not the admin token.' if wrong else ''}</p><button>Sign in</button>"
+            "<p class='hint'>The token this server was started with (<code>BENCHWARMERS_ADMIN_TOKEN</code>).</p></form>"
+            "<script>"
             "fetch('/api/stamp').then(function (r) { if (r.ok) location.replace('/'); });"
-            "document.getElementById('f').addEventListener('submit', function (ev) {"
+            "var f = document.forms[0], t = f.token, e = document.getElementById('e');"
+            "f.addEventListener('submit', function (ev) {"
             " ev.preventDefault();"
             " fetch('/login', {method: 'POST', headers: {'Content-Type': 'application/json'},"
-            "  body: JSON.stringify({token: document.getElementById('t').value})}).then(function (r) {"
-            "  if (r.ok) location.replace('/');"
-            "  else document.getElementById('e').textContent = 'That is not the admin token.'; });"
+            "  body: JSON.stringify({token: t.value})}).then(function (r) {"
+            "  if (r.ok) return location.replace('/');"
+            "  e.textContent = 'That is not the admin token.'; t.setAttribute('aria-invalid', 'true'); t.select(); });"
             "});</script>")
 
 
@@ -5458,8 +5556,9 @@ def endpoints_page() -> str:
            + th("On the bench", True) + "<th data-sortable tabindex='0' class='num' title='models its list held when"
            " the daily served check last asked'>Listed</th>" + th("Last listed")
            + f"</tr></thead><tbody>{''.join(table)}</tbody></table></div>" if eps else
-           "<p class='empty'>No endpoint yet. <b>Add an endpoint</b> pastes a key for any OpenAI-compatible API,"
-           " or signs in to a provider on its own page.</p>")
+           empty_state("No endpoint yet: every model is served from one.", step_button(),
+                       "Add an endpoint pastes a key for any OpenAI-compatible API, or signs in to a provider on its"
+                       " own page."))
         + "</div><div class='panel'><h2>Rate limits per connection</h2>"
         "<p class='sub'>What a key behind each connection allows; the models on that connection share it.</p>"
         "<details class='key'><summary>How these limits work</summary>"
@@ -5580,9 +5679,18 @@ def models_page() -> str:
     # Every model, decision models too (connections_view is chat models only,
     # for what a collection may hold): they are on the bench like any other.
     directory, status = model_directory(), model_status()
+
+    def aside(body: str) -> str:              # with no model open: what the panel is for (bench.css aside.facts)
+        return ("<aside class='facts' id='facts-models' aria-labelledby='facts-models-h'>"
+                "<div class='bar'><h2 id='facts-models-h'>All models</h2>"
+                f"<button type='button' class='linkish facts-close'>Close</button></div><div class='facts-body'>{body}"
+                "</div></aside>")
     if not directory:
-        return ("<div class='panel'><h2>No model on the bench yet</h2><p class='sub'><b>Onboard a model</b> picks"
-                " one your endpoints serve, probes it and runs the suite.</p></div>")
+        return (empty_state("Nobody is on the bench yet.", step_button(),
+                            "A model joins it by onboarding: picked from what an endpoint serves, probed with 4"
+                            " calls and run through the internal suite.")
+                + aside("<p>Nobody is on the bench yet. Once a model is onboarded, choosing it opens its editor"
+                        " here.</p>"))
     # The daily probe's latest reading per model and prompt (perf/history.csv), and its last answer.
     speed: dict[str, dict] = {}
     answered: dict[str, str] = {}
@@ -5647,17 +5755,14 @@ def models_page() -> str:
     return (
         "<p class='sub'>Every model on the bench, by the connection it comes from; a name opens it beside the list.</p>"
         f"<div class='list'><table class='m-table'><thead><tr>{_head(cols)}</tr></thead>{body}</table></div>"
-        # With no model open: the counts, and what the columns mean (bench.css aside.facts).
-        "<aside class='facts' id='facts-models' aria-labelledby='facts-models-h'>"
-        "<div class='bar'><h2 id='facts-models-h'>All models</h2>"
-        "<button type='button' class='linkish facts-close'>Close</button></div><div class='facts-body'>"
-        + rows(facts) + "<h3>By state</h3>"
-        + rows((chip(k, css), n) for k, (css, n) in sorted(states.items(), key=lambda kv: -kv[1][1]))
-        + "<h3>By connection</h3>" + rows((esc(c), len(m)) for c, m in sorted(by.items()))
-        + "<p>Open a model to change its alias, role, facts or call options, or to retire it.</p>"
-        "<details class='key'><summary>What the columns mean</summary><dl>"
-        + "".join(f"<dt>{esc(label)}</dt><dd>{esc(why)}</dd>" for _, label, _, why in cols if why)
-        + "</dl></details></div></aside>")
+        # With no model open: the counts, and what the columns mean.
+        + aside(rows(facts) + "<h3>By state</h3>"
+                + rows((chip(k, css), n) for k, (css, n) in sorted(states.items(), key=lambda kv: -kv[1][1]))
+                + "<h3>By connection</h3>" + rows((esc(c), len(m)) for c, m in sorted(by.items()))
+                + "<p>Open a model to change its alias, role, facts or call options, or to retire it.</p>"
+                "<details class='key'><summary>What the columns mean</summary><dl>"
+                + "".join(f"<dt>{esc(label)}</dt><dd>{esc(why)}</dd>" for _, label, _, why in cols if why)
+                + "</dl></details>"))
 
 
 def quota_tiles() -> list[dict]:
@@ -5745,10 +5850,13 @@ def quotas_page() -> str:
                 + [(w["label"], w, g["label"], g.get("title", "")) for g in q["caps"] for w in g["windows"]]):
             used = w.get("used", w["of"] - w["remaining"] if w.get("of") is not None and w.get("remaining") is not None
                          else None)
+            # Left: a bar beside the figure, short and red under a fifth.
+            left = w.get("left")
             limits.append((row[0], {"conn": row[1], "limit": (esc(label), label),
-                                    "left": (f"{w['left']}%", w["left"], f"{w['remaining']:,} of {w['of']:,} left")
-                                    if w.get("left") is not None and w.get("remaining") is not None else
-                                    (f"{w['left']}%", w["left"]) if w.get("left") is not None else None,
+                                    "left": None if left is None else
+                                    (meter(left / 100, f"{left}%", left < 20), left)
+                                    + ((f"{w['remaining']:,} of {w['of']:,} left",) if w.get("remaining") is not None
+                                       else ()),
                                     "used": num(used), "of": num(w.get("of")), "reset": _at(w.get("reset_at")),
                                     "from": (esc(frm), frm, why) if why else (esc(frm), frm) if frm else None}))
         s = sent.pop(q["host"], None) or [0, 0, 0, 0]
@@ -5791,10 +5899,8 @@ def quotas_page() -> str:
                                 + "".join(f"<td class='num'>{ev['value']:,}</td>" if kk == k
                                           else "<td class='num muted'>—</td>" for kk in keys)
                                 + f"<td>learned {esc(ev.get('at', '')[:10])} (its 429s)</td></tr>")
-    return (
-        "<p class='sub'>What each connection allows, what is used and when it resets. A connection opens beside the"
-        " tables with its models and its Refresh.</p><div class='cols fit'>"
-        "<section class='panel'><h2>Limits</h2><p class='sub'>What a provider states, or a cap the bench counts its"
+    tables = (
+        "<div class='cols fit'><section class='panel'><h2>Limits</h2><p class='sub'>What a provider states, or a cap the bench counts its"
         " own calls against.</p>" + table(QUOTA_COLS, limits, "None stated, and none set: Endpoints sets a cap.")
         + "<details class='key'><summary>How limits are known</summary><p>Refresh asks the provider for free where it can"
           " (CLI Proxy API's credentials, OpenRouter); where a provider states its limits only in its replies, it"
@@ -5811,7 +5917,13 @@ def quotas_page() -> str:
            else "<p class='muted'>None known yet.</p>")
         + "</details></section><section class='panel'><h2>Connections</h2><p class='sub'>Its models free to call,"
           " and what the bench sent through it.</p>" + table(SENT_COLS, conns, "No model on the bench yet.")
-        + "</section></div>"
+        + "</section></div>")
+    if not (limits or conns or lim_rows):              # an empty bench: what goes here, and the step that fills it
+        tables = empty_state("Nothing to measure yet: each connection a model comes from is counted here.",
+                             step_button())
+    return (
+        "<p class='sub'>What each connection allows, what is used and when it resets. A connection opens beside the"
+        f" tables with its models and its Refresh.</p>{tables}"
         # The connection in hand, docked beside the tables (bench.js qModels fills it).
         "<dialog class='dock' id='q-models' aria-labelledby='q-models-h'><div class='bar'><p>Connection</p></div>"
         "<div class='dock-body'><h2 class='dock-head' id='q-models-h' tabindex='-1'></h2>"
@@ -6011,9 +6123,11 @@ def _directory_json() -> str:
     options = {a: o for a, o in load_json(OPTIONS_PATH).items() if a in facts and isinstance(o, dict)}
     # A decision model's role suggestion from onboarding (decide.suggest_role): shown, never applied.
     suggested = {a: s for a, s in (locked.read_json(decide.DECIDED).get("roles") or {}).items() if isinstance(s, dict)}
+    # Each collection's name and size: the palette's (bench.js palDraw).
+    collections = {n: len(c.get("members") or []) for n, c in bench_collections.load().items()}
     return json.dumps({"models": directory, "facts": facts, "options": options, "roles": model_roles.load()["roles"],
                        "suggested": suggested, "retired": retired(), "onboard": onboard_issues(), "stamp": data_key()[1],
-                       "repo": connect.REPO},
+                       "repo": connect.REPO, "collections": collections},
                       ensure_ascii=False).replace("</", "<\\/")
 
 
@@ -6235,8 +6349,9 @@ class Handler(gateway.Handler):
         except guard.Refused as r:
             self._json(r.status, {"ok": False, "errors": [str(r)]})
             return
-        if path == "/login":
-            return self._page(login_page()) if guard.auth_on() else self._redirect("/")
+        if path == "/login":                           # ?theme= previews a theme, as on every page
+            theme = re.search(r"[?&]theme=([\w-]+)", self.path)
+            return self._page(login_page(theme and theme.group(1))) if guard.auth_on() else self._redirect("/")
         callback = self.path.startswith((connect.CALLBACK + "?", connect.CALLBACK + "/"))
         if not callback and not self._admitted(path):
             return
@@ -6536,23 +6651,37 @@ class Handler(gateway.Handler):
             return False
 
     def _login(self) -> None:
-        """POST /login {"token"}: the login cookie, for the admin token only."""
+        """POST /login {"token"}: the login cookie, for the admin token only.
+        The sign-in page's own form, posted with scripts off, may send it as a
+        form (token=...), through the same guard: then the answer is a page,
+        the dashboard or the sign-in again saying the token was wrong."""
+        from urllib.parse import parse_qs
+        form = (self.headers.get("Content-Type") or "").lower().startswith("application/x-www-form-urlencoded")
         try:
-            length = guard.check(self.headers, PORT, post=True, max_body=MAX_BODY)
-            given = json.loads(self.rfile.read(length) or b"{}").get("token")
+            length = guard.check(self.headers, PORT, post=True, max_body=MAX_BODY,
+                                 kind="application/x-www-form-urlencoded" if form else "application/json")
+            body = self.rfile.read(length) or b""
+            given = (parse_qs(body.decode("utf-8", "replace")).get("token", [""])[0] if form
+                     else json.loads(body or b"{}").get("token"))
         except guard.Refused as r:
             return self._json(r.status, {"ok": False, "errors": [str(r)]})
         except (ValueError, AttributeError):
             return self._json(400, {"ok": False, "errors": ['send {"token": "..."}']})
         if not (isinstance(given, str) and guard.login(given)):
+            if form:
+                return self._page(login_page(wrong=True), status=401)
             return self._json(401, {"ok": False, "errors": ["that is not the admin token"]})
         self.who = "admin"
+        if form:
+            return self._redirect("/", cookie=guard.session_cookie())
         self._json(200, {"ok": True, "errors": []}, cookie=guard.session_cookie())
 
-    def _redirect(self, where: str) -> None:
+    def _redirect(self, where: str, cookie: str = "") -> None:
         self.send_response(303)
         self.send_header("Location", where)
         self.send_header("Content-Length", "0")
+        if cookie:
+            self.send_header("Set-Cookie", cookie)
         self.end_headers()
 
     def _length(self, body: bytes) -> bytes:
@@ -6573,9 +6702,9 @@ class Handler(gateway.Handler):
         self.send_header("Content-Length", str(len(body)))
         return body
 
-    def _page(self, html_text: str) -> None:
+    def _page(self, html_text: str, status: int = 200) -> None:
         body = html_text.encode("utf-8")
-        self.send_response(200)
+        self.send_response(status)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         body = self._length(body)
         self.send_header("Cache-Control", "no-store")

@@ -112,18 +112,24 @@ the rail is a bar with a menu.
   `.btn.danger`, `.linkish` (reads as a link). A button whose action finishes
   says so on itself: a drawn tick and "Saved" or "Copied" for a second and a
   half.
-- **Empty state**: the bench with its seats empty, one sentence, the action
-  that fills it.
+- **Empty state** (`serve.empty_state`): the bench with its seats empty, one
+  sentence, the action that fills it. On a fresh install that action is first
+  run's next step, and Benchmarks' place holds first run itself: what
+  Benchwarmers is, that step's one button, and the steps as a list that ticks
+  off.
+- **Palette** (Search in the rail, Ctrl+K): one field and what it finds, in
+  groups (the last opened through it, pages, models, collections); the arrow
+  keys choose, Enter opens. A model or a collection opens docked on its page.
 
 ## Motion
 
 | What | Where |
 |---|---|
 | The marker slides to the page chosen | the rail |
-| A tick is drawn when a step finishes | onboarding's steps, Save, Copy |
+| A tick is drawn when a step finishes | onboarding's and first run's steps, Save, Copy |
 | The palette arrives in groups, recents first | Ctrl+K |
-| The empty bench answers its button | first run, an empty list |
-| The selection glides between rows | any table with a row in hand |
+| The empty bench answers its button | first run, an empty page |
+| The selection glides between rows; the arrow keys move it | a table in its own box with a row in hand; the keys on Models |
 | A popup rises as it opens | every `<dialog>` and sheet |
 | Rows glide to their new order | after a sort |
 | A fold opens and closes smoothly | every `<details>` |

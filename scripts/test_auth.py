@@ -22,6 +22,7 @@ import sys
 import tempfile
 import threading
 import urllib.error
+import urllib.parse
 import urllib.request
 from http.server import ThreadingHTTPServer
 
@@ -49,12 +50,15 @@ def serve_on(handler) -> ThreadingHTTPServer:
 
 
 def call(port: int, path: str, body: dict | None = None, method: str | None = None,
-         **headers) -> tuple[int, dict, str]:
-    """(status, headers, body text) for one request; HTTP errors are answers too."""
+         form: dict | None = None, **headers) -> tuple[int, dict, str]:
+    """(status, headers, body text) for one request, `body` sent as JSON or `form`
+    as a plain form; HTTP errors are answers too."""
     headers = {"Host": f"127.0.0.1:{port}", **headers}
     data = None
     if body is not None:
         data, headers["Content-Type"] = json.dumps(body).encode(), "application/json"
+    if form is not None:
+        data, headers["Content-Type"] = urllib.parse.urlencode(form).encode(), "application/x-www-form-urlencoded"
     req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", data, headers, method=method)
     try:
         with OPENER.open(req, timeout=10) as r:
@@ -123,6 +127,12 @@ def main() -> int:
             cookie = headers.get("Set-Cookie", "")
             assert status == 200 and "HttpOnly" in cookie and "SameSite=Strict" in cookie, headers
             assert TOKEN not in cookie
+            # With scripts off, the page's own form: the sign-in again saying so, or the dashboard.
+            status, _, page = call(d, "/login", form={"token": "wrong"})
+            assert status == 401 and "not the admin token" in page and "name='token'" in page, status
+            assert call(d, "/login", form={"token": TOKEN}, Origin="http://evil.example")[0] == 403
+            status, headers, _ = call(d, "/login", form={"token": TOKEN})
+            assert status == 303 and headers["Location"] == "/" and "HttpOnly" in headers.get("Set-Cookie", ""), headers
             jar = {"Cookie": cookie.split(";", 1)[0]}
             assert call(d, "/api/stamp", **jar)[0] == 200
             assert call(d, "/api/theme", {"theme": "nope"}, **jar)[0] == 400      # in, then the theme rule

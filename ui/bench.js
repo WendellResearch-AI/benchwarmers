@@ -36,6 +36,52 @@
     }
     handlers[type][id] = f;
   }
+  // ---- motion (ui/UI.md; bench.css "motion"): each follows the state it shows and
+  // never holds it up; under prefers-reduced-motion none runs and the state changes at
+  // once. The duration and the easing are bench.css's tokens, read at the first move (a
+  // read as the page loads worked out its every style once more).
+  var calm = matchMedia('(prefers-reduced-motion: reduce)'), timing = null;
+  function moved(node, from) {
+    if (!timing) {
+      var t = getComputedStyle(document.documentElement);
+      timing = {duration: parseFloat(t.getPropertyValue('--base')) || 180, easing: t.getPropertyValue('--ease').trim() || 'ease'};
+    }
+    return node.animate([{transform: from}, {transform: 'none'}], timing);
+  }
+  var TICK = '<svg class="tick" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="8"/><path d="M5.8 10.4l2.9 2.8 5.6-6"/></svg>';
+  // Motions 2 and 10: a button whose action finished says so on itself, a drawn tick
+  // and `text` (Saved, Copied), for a second and a half.
+  function doneOn(b, text) {
+    if (!b.dataset.was) b.dataset.was = b.textContent;
+    clearTimeout(b.back); b.innerHTML = TICK; b.append(text); b.classList.add('said');
+    b.back = setTimeout(function () { b.textContent = b.dataset.was; delete b.dataset.was; b.classList.remove('said'); }, 1500);
+  }
+  // Motion 2: a step done (ol.steps li.done) carries a tick; those done since `was` were draw theirs.
+  function ticks(list, was) {
+    list.querySelectorAll('li.done').forEach(function (li, i) {
+      if (!li.querySelector('.tick')) li.insertAdjacentHTML('afterbegin', TICK);
+      li.classList.toggle('just', i >= was);
+    });
+  }
+  // Motion 1: where you are is one mark in the rail (bench.css .ink), moved to the page
+  // chosen. The links' places are read once, in a frame (a read in the click forced a
+  // layout that cost two frames a page), and the mark is made where it already stands,
+  // so nothing slides in on load. Under 800px the rail is a menu, the link itself marked.
+  var mark = null, tops = null;
+  function marker() {
+    var a = document.querySelector('#rail-body a[aria-current]');
+    if (tops) { if (a && mark) mark.style.transform = 'translateY(' + tops[a.dataset.tab] + 'px)'; return; }
+    requestAnimationFrame(function () {
+      a = document.querySelector('#rail-body a[aria-current]');
+      if (tops || !a || !a.offsetParent) return;
+      tops = {};
+      document.querySelectorAll('#rail-body a[data-tab]').forEach(function (x) { tops[x.dataset.tab] = x.offsetTop; });
+      var at = 'translateY(' + tops[a.dataset.tab] + 'px)';
+      if (mark) mark.style.transform = at;
+      else $('rail-body').prepend(mark = el('i', {class: 'ink', 'aria-hidden': 'true', style: 'transform:' + at + ';height:' + a.offsetHeight + 'px'}));
+    });
+  }
+  matchMedia('(min-width: 800px)').addEventListener('change', function () { tops = null; marker(); });
   // The page's own confirm, a Promise of true/false: window.confirm is
   // silently false where a browser blocks dialogs. Opens over any open popup.
   var askD = $('ask-dialog'), askDone = null;
@@ -128,6 +174,7 @@
       if (a.dataset.tab === id) { a.setAttribute('aria-current', 'page'); document.title = (id === 'suite' ? '' : a.firstChild.textContent + ' · ') + 'Benchwarmers'; }
       else a.removeAttribute('aria-current');
     });
+    marker();
     document.querySelectorAll('.tab').forEach(function (s) { s.classList.toggle('active', s.id === 'tab-' + id); });
     document.querySelectorAll('.tab:not(.active) dialog[open]').forEach(function (d) { d.close(); });   // a record docked on a page left
     sheet('menu', false); sheet('facts', false);
@@ -278,13 +325,45 @@
     table.querySelectorAll('th[aria-sort]').forEach(function (o) { o.removeAttribute('aria-sort'); });
     th.setAttribute('aria-sort', dir);
     if (table.id === 'd-table') return dApply();          // Discover's rows are data, drawn in this order
+    // Motion 8: the rows in view glide from where they were (measure, reorder, play back).
+    // Not on more than 80 of them: a long table sorted again reads as a new list.
+    var was = new Map(), view = calm.matches ? null : (table.closest('.list') || table.closest('.tab')).getBoundingClientRect();
+    if (view) Array.prototype.forEach.call(table.querySelectorAll('tbody tr'), function (r) {
+      var y = r.offsetParent && r.getBoundingClientRect().top;
+      if (y && y < view.bottom && y > view.top - 40) was.set(r, y);
+    });
     Array.prototype.forEach.call(table.tBodies, function (body) {     // each group (Models' connections) in itself, under its heading
       ordered(Array.prototype.filter.call(body.rows, function (r) { return !r.classList.contains('grp'); }).map(function (r) {
         var c = r.cells[idx];
         return [key(c.dataset.sort != null ? c.dataset.sort : c.textContent.trim()), r];
       }), dir).forEach(function (r) { body.appendChild(r); });
     });
+    var moving = [];
+    was.forEach(function (y, r) { var d = y - r.getBoundingClientRect().top; if (d) moving.push([r, d]); });
+    if (moving.length <= 80) moving.forEach(function (p) { moved(p[0], 'translateY(' + p[1] + 'px)'); });
   }
+  // Motion 5: the row in hand (tr.in-hand) is marked at once; a mark glides there from the
+  // row that had it, when one row in the same table had it (bench.css .ghost).
+  new MutationObserver(function (changes) {
+    if (calm.matches) return;
+    var lost = [], got = [];
+    changes.forEach(function (c) {
+      var r = c.target, had = /\bin-hand\b/.test(c.oldValue || ''), has = r.classList.contains('in-hand');
+      if (r.tagName === 'TR' && had !== has) (has ? got : lost).push(r);
+    });
+    got.forEach(function (to) {
+      var t = to.closest('table'), from = lost.filter(function (r) { return r.closest('table') === t; });
+      var host = to.closest('.list, .scroll');
+      if (from.length !== 1 || !host || got.filter(function (r) { return r.closest('table') === t; }).length !== 1) return;
+      var a = from[0].getBoundingClientRect(), b = to.getBoundingClientRect(), h = host.getBoundingClientRect();
+      if (!a.height || !b.height) return;                  // filtered out or folded away: no path to show
+      var g = el('i', {class: 'ghost', style: 'top:' + (b.top - h.top + host.scrollTop) + 'px;left:' + (b.left - h.left + host.scrollLeft)
+        + 'px;width:' + b.width + 'px;height:' + b.height + 'px'});
+      host.appendChild(g); to.classList.add('gliding');
+      var p = moved(g, 'translateY(' + (a.top - b.top) + 'px) scaleY(' + a.height / b.height + ')');
+      p.onfinish = p.oncancel = function () { g.remove(); to.classList.remove('gliding'); };
+    });
+  }).observe(document.querySelector('.panes'), {subtree: true, attributeFilter: ['class'], attributeOldValue: true});
   // On the document, not each header: a part of the page swapped in after an
   // action (refreshNeeds) sorts too.
   document.addEventListener('click', function (e) {
@@ -315,6 +394,12 @@
       g.hidden = !!q && !any;
       if (q && any && g.hasAttribute('data-shut')) { fold(g, true); foldButtons(scope); }
     });
+    // Nothing left: one quiet line under the table's head says so (the box's data-none).
+    var none = box && box.dataset.none, line = scope.querySelector('.no-match'), table = scope.querySelector('table');
+    if (!none || !table) return;
+    if (!line) table.after(line = el('p', {class: 'no-match muted', role: 'status'}));
+    line.hidden = !q || !!scope.querySelector('tbody tr:not(.grp, [hidden])');
+    line.textContent = line.hidden ? '' : none + ' “' + box.value.trim() + '”.';
   }
   function scopeOf(c) {
     var box = c.closest('.toolbar') ? c.closest('.toolbar').querySelector('input[data-filter]') : c;
@@ -358,17 +443,17 @@
   // ---- A list beside a detail (.split: Logs' logs, Clients' apps): the one chosen
   // shown beside the list (its button's aria-controls), its button pressed; kept
   // when the page is fetched again.
-  var picked = {};
+  var chosenIn = {};                   // not `picked`: that is the collection editor's members
   function pick(b) {
     var tab = b && b.closest('.tab');
     if (!tab) return;
-    picked[tab.id] = b.getAttribute('aria-controls');
+    chosenIn[tab.id] = b.getAttribute('aria-controls');
     tab.querySelectorAll('.split > nav [aria-controls]').forEach(function (x) {
       x.setAttribute('aria-pressed', String(x === b));
       $(x.getAttribute('aria-controls')).hidden = x !== b;
     });
   }
-  function pickAgain(id) { pick(picked['tab-' + id] && $('tab-' + id).querySelector('[aria-controls="' + picked['tab-' + id] + '"]')); }
+  function pickAgain(id) { pick(chosenIn['tab-' + id] && $('tab-' + id).querySelector('[aria-controls="' + chosenIn['tab-' + id] + '"]')); }
   document.addEventListener('click', function (e) { pick(e.target.closest('.split > nav [aria-controls]')); });
   onLoad.logs = function () { pickAgain('logs'); };
 
@@ -944,6 +1029,93 @@
     var a = e.target.closest('a.model');
     if (a) { e.preventDefault(); opener = a; byKey = !e.detail; openModel(a.dataset.alias); }
   });
+  // On Models, the arrow keys move the model in hand to the row above or below that is
+  // shown; the focus goes with it, so the next key carries on from there.
+  document.addEventListener('keydown', function (e) {
+    var a = e.target.closest && e.target.closest('.m-table a.model'), down = e.key === 'ArrowDown';
+    if (!a || !(down || e.key === 'ArrowUp') || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+    var shown = Array.prototype.filter.call(a.closest('table').querySelectorAll('a.model'), function (x) { return x.offsetParent; });
+    var next = shown[shown.indexOf(a) + (down ? 1 : -1)];
+    if (!next) return;
+    e.preventDefault(); next.focus({preventScroll: true}); next.closest('tr').scrollIntoView({block: 'nearest'});
+    opener = next; openModel(next.dataset.alias);
+  });
+
+  // ---- the palette: Ctrl+K (Cmd+K on a Mac), or Search in the rail. The pages, every
+  // model (Models, it docked), every collection (Collections, it docked), and the last
+  // five opened through it first, from what the page holds: the rail and window.BENCH.
+  // Motion 3: its groups arrive one after another as it opens (bench.css .arriving).
+  var pal = $('palette'), palQ = $('pal-q'), palList = $('pal-list'), palAt = 0, palFound = [];
+  if (/Mac|iP/.test(navigator.platform)) document.querySelector('#pal-open kbd').textContent = '⌘ K';
+  function recent() { try { return JSON.parse(store('bench.recent')) || []; } catch (e) { return []; } }
+  function palDraw() {
+    var words = palQ.value.toLowerCase().split(/\s+/).filter(Boolean), cols = C ? C.collections.map(function (r) {
+      return [r.name, r.members.length]; }) : Object.keys(D.collections || {}).map(function (n) { return [n, D.collections[n]]; });
+    var all = Array.prototype.map.call(tabs, function (a) {
+      var n = a.querySelector('.n');
+      return {k: 'page', id: a.dataset.tab, name: a.firstChild.textContent, hint: n ? n.textContent + ' open' : '', href: a.getAttribute('href')};
+    }).concat(Object.keys(D.models).sort().map(function (m) {
+      var d = D.models[m];
+      return {k: 'model', id: m, name: m, hint: d.kind === 'decision' ? 'decision model' : (d.tag || d.endpoint || '').split('/')[0], href: '/models'};
+    }), cols.map(function (c) { return {k: 'collection', id: c[0], name: 'bench/' + c[0], hint: plural(c[1], 'member'), href: '/collections'}; }));
+    var fits = function (it) { var s = (it.name + ' ' + it.hint).toLowerCase(); return words.every(function (w) { return s.indexOf(w) !== -1; }); };
+    var kind = function (k) { return all.filter(function (it) { return it.k === k; }); };
+    var groups = [['Recent', recent().map(function (r) { return all.filter(function (it) { return it.k === r.k && it.id === r.id; })[0]; })
+      .filter(Boolean)], ['Pages', kind('page')], ['Models', kind('model')], ['Collections', kind('collection')]];
+    palFound = [];
+    palList.innerHTML = groups.map(function (g, i) {
+      var its = g[1].filter(fits).slice(0, 50);
+      return its.length ? '<div role="group" aria-label="' + g[0] + '" style="--i:' + i + '"><p aria-hidden="true">' + g[0] + '</p>'
+        + its.map(function (it) {
+          return '<a role="option" id="pal-' + palFound.push(it) + '" href="' + it.href + '"><span'
+            + (it.k === 'page' ? '>' : ' class="mono">') + escH(it.name)
+            + '</span><small>' + escH(it.hint) + '</small></a>';
+        }).join('') + '</div>' : '';
+    }).join('') || '<p>Nothing matches “' + escH(palQ.value.trim()) + '”.</p>';
+    palPick(0);
+  }
+  function palPick(i) {
+    var opts = palList.querySelectorAll('[role=option]');
+    palAt = Math.max(0, Math.min(opts.length - 1, i));
+    opts.forEach(function (o, k) { o.setAttribute('aria-selected', String(k === palAt)); });
+    if (opts.length) { palQ.setAttribute('aria-activedescendant', opts[palAt].id); opts[palAt].scrollIntoView({block: 'nearest'}); }
+    else palQ.removeAttribute('aria-activedescendant');
+  }
+  function palOpen() {
+    palQ.value = ''; palList.classList.add('arriving');
+    pal.showModal(); palDraw();
+  }
+  function palGo(it) {
+    store('bench.recent', JSON.stringify([{k: it.k, id: it.id}].concat(recent().filter(function (r) {
+      return r.k !== it.k || r.id !== it.id; })).slice(0, 5)));
+    pal.close();
+    if (it.k === 'page') return go(it.id);
+    if (it.k === 'collection') return go('collections').then(function () {
+      if (md.open) md.close();                         // one record docked at a time
+      var b = document.querySelector('#c-list .c-row[data-name="' + CSS.escape(it.id) + '"] .c-open'); if (b) b.click();
+    });
+    go('models').then(function () {
+      var a = document.querySelector('#tab-models a.model[data-alias="' + CSS.escape(it.id) + '"]'), g = a && a.closest('tbody[data-shut]');
+      if (g) { fold(g, true); foldButtons($('tab-models')); }
+      if (a) a.scrollIntoView({block: 'nearest'});
+      opener = a; byKey = true; openModel(it.id);
+    });
+  }
+  document.addEventListener('keydown', function (e) {
+    if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey || String(e.key).toLowerCase() !== 'k') return;
+    if (pal.open) { e.preventDefault(); pal.close(); }
+    else if (!document.querySelector('dialog:modal')) { e.preventDefault(); palOpen(); }
+  });
+  $('pal-open').addEventListener('click', palOpen);
+  palQ.addEventListener('input', function () { palList.classList.remove('arriving'); palDraw(); });
+  palQ.addEventListener('keydown', function (e) {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); palPick(palAt + (e.key === 'ArrowDown' ? 1 : -1)); }
+    if (e.key === 'Enter' && palFound.length) { e.preventDefault(); palGo(palFound[palAt]); }
+  });
+  palList.addEventListener('click', function (e) {
+    var o = e.target.closest('[role=option]');
+    if (o && !(e.ctrlKey || e.metaKey || e.shiftKey || e.button)) { e.preventDefault(); palGo(palFound[o.id.slice(4) - 1]); }
+  });
   m.close.addEventListener('click', function () { md.close(); });
   m.alias.addEventListener('input', refresh);
   m.role.addEventListener('change', refresh);
@@ -955,10 +1127,11 @@
   }
   // A saved change: the popup shows the model as it now is, with what was
   // done said in `node`, if it is still open on that model.
-  function shownAgain(alias, node, text) {
+  function shownAgain(alias, node, text, saved) {
     directory().then(function () {
       if (!md.open || m.title.textContent !== alias) return;
       openModel(alias); $(node).textContent = text;
+      if (saved) doneOn(m.save, 'Saved');
     }, function () { location.reload(); });
   }
   function done(res) { return 'Done: ' + (res.changed || []).join(', ') + (res.sync ? ' · ' + res.sync : '') + '.'; }
@@ -1015,7 +1188,7 @@
       m.save.disabled = true; m.save.textContent = 'Saving…';
       steps.reduce(function (p, step) { return p.then(step); }, Promise.resolve()).then(function () {
         // The tables that show facts follow once the popup closes (live).
-        shownAgain(body.new_alias, 'm-done', 'Saved: ' + said.join(' · ') + '.');
+        shownAgain(body.new_alias, 'm-done', 'Saved: ' + said.join(' · ') + '.', true);
       }).catch(function (err) {
         if (err !== 'refused') m.errors.textContent = String(err);
         if (said.length) m.done.textContent = 'Saved before that: ' + said.join(' · ') + '.';
@@ -1303,8 +1476,9 @@
     var reached = 0;
     for (var i = 1; i <= 5; i++) if (text.indexOf('[' + i + '/5]') !== -1) reached = i;
     var stopped = /STOPPING|is not served|cannot reach/.test(text) || (finished && exit !== 0);
-    var lines = text.split('\n');
+    var lines = text.split('\n'), was = o.steps.querySelectorAll('li.done').length;
     o.steps.textContent = '';
+    Promise.resolve().then(function () { ticks(o.steps, was); });     // once the list below is built
     if (preStep) {
       var li0 = el('li', {class: preStep.state}, preStep.label);
       if (preStep.note) li0.appendChild(el('small', {}, preStep.note));
@@ -1394,9 +1568,9 @@
     // log reaches each of onboard.py's five steps (serve.onboard_queue `step`):
     // a step is half a fifth while it runs, so step 5/5 is 90%, and full
     // means finished. At the end it is green when every one is on the bench,
-    // red (with one shake) when any failed or did not answer.
+    // red when any failed or did not answer. It fills; it never shakes.
     var step = now && now.step ? now.step : 0;
-    oq.chip.style.setProperty('--fill', (n ? Math.round(100 * (finished + (step ? step - 0.5 : 0) / 5) / n) : 0) + '%');
+    oq.chip.style.setProperty('--fill', n ? ((finished + (step ? step - 0.5 : 0) / 5) / n).toFixed(3) : 0);
     var bad = oqCount(q, 'failed') + oqCount(q, 'no answer');
     oq.chip.classList.toggle('done', !q.running && n > 0 && oqCount(q, 'done') === n);
     oq.chip.classList.toggle('fail', !q.running && bad > 0);
@@ -1519,7 +1693,7 @@
     dd().close(); waitToken++;
     preStep = {label: 'Added to ' + x.label, state: 'now', note: ''};
     runView(title, 'Adding it to ' + x.label + '…');
-    oq.box.hidden = false; oq.chip.classList.remove('done', 'fail'); oq.chip.style.setProperty('--fill', '3%');
+    oq.box.hidden = false; oq.chip.classList.remove('done', 'fail'); oq.chip.style.setProperty('--fill', '.03');
     oq.text.textContent = oq.text.title = title; oq.stop.hidden = oq.clear.hidden = true;
     post('/api/discover/add', Object.assign({connection: x.connection, model: x.model, endpoint: x.endpoint}, how)).then(function (res) {
       var hubDone = !!(res.served && res.steps && res.steps.length);   // in the hub, even if queueing it was refused
@@ -1751,8 +1925,9 @@
         if (!document.execCommand('copy')) throw new Error('no copy');
         sel.removeAllRanges();
       })
-      .then(function () { b.textContent = 'Copied'; }, function () { b.textContent = 'Selected: press Ctrl+C'; })
-      .then(function () { setTimeout(function () { b.textContent = 'Copy'; }, 2500); });
+      .then(function () { doneOn(b, 'Copied'); }, function () {
+        b.textContent = 'Selected: press Ctrl+C'; setTimeout(function () { b.textContent = 'Copy'; }, 2500);
+      });
   });
 
   // ---- scheduler: its mode and jobs (serve.save_scheduler) -----------------
@@ -1889,6 +2064,7 @@
     var list = $('l-list');
     get('/api/connections').then(function (res) {
       list.textContent = '';
+      if (!res.connections.length) { list.appendChild(el('p', {class: 'muted'}, 'None yet: a connection is listed once a model on the bench comes from it.')); return; }
       var table = el('table', {class: 'l-table'}), head = el('tr'), body = el('tbody');
       head.appendChild(el('th', {}, 'Connection'));
       res.keys.forEach(function (k) { head.appendChild(el('th', {class: 'num', title: (res.labels || {})[k] || k}, k)); });
@@ -2193,24 +2369,25 @@
     return row;
   }
 
-  // ---- first run: no endpoint yet, no model, no collection (serve.first_run) -
-  // Each waits for its page: it may not have arrived yet.
-  var first = $('first-run');
-  // A step done (an endpoint added, a model onboarded, a collection saved) moves first run on
-  // at once: refreshNeeds hands its next step, or "" when the install is set up.
+  // ---- first run: no endpoint yet, no model, no collection (serve.first_run, in
+  // Benchmarks' place; an empty page's button is the same step, serve.step_button).
+  // A step done (an endpoint added, a model onboarded, a collection saved) moves it on
+  // at once, its tick drawn: refreshNeeds hands its next step, or "" when the install is
+  // set up, when Benchmarks is fetched again for its reports.
   function showFirst(html) {
     var now = $('first-run');
     if ((now ? now.outerHTML : '') === (html || '')) return;
-    if (now) now.remove();
-    if (html) document.querySelector('main').insertAdjacentHTML('afterbegin', html);
-    first = $('first-run');
+    if (now && html) { var was = now.querySelectorAll('li.done').length; now.outerHTML = html; ticks($('first-run'), was); return; }
+    $('tab-suite').setAttribute('data-lazy', ++marks);
+    if (shown === 'suite') load('suite');
   }
-  function firstStep() {
-    if (first.dataset.step === 'onboard') { $('onboard-open').click(); return; }
+  // Each step waits for its page: it may not have arrived yet.
+  function firstStep(step) {
+    if (step === 'onboard') { $('onboard-open').click(); return; }
     // The first collection comes filled in as bench/core, the name the docs, CLIENTS.md and
     // the Clients page use: up to four of the models just onboarded ticked (two to four is
     // what a panel wants), never an image generator. Nothing is made until it is saved.
-    if (first.dataset.step === 'collection') {
+    if (step === 'collection') {
       go('collections').then(function () {
         var members = C.models.filter(function (a) { return fact(a).role !== 'image'; }).slice(0, 4);
         fillForm(null, {name: 'core', description: 'General second opinions: any question, several models at once.',
@@ -2221,8 +2398,10 @@
     }
     go('endpoints').then(function () { openEndpoint('add'); });
   }
-  on('click', 'first-go', firstStep);                     // on the document: a new step brings a new button
-  if (first && first.dataset.step === 'endpoint') firstStep();   // straight into Add: an empty bench offers nothing else
+  document.addEventListener('click', function (e) {       // on the document: a new step brings a new button
+    var b = e.target.closest('[data-first]');
+    if (b) firstStep(b.dataset.first);
+  });
 
   // ---- collections: what the bench gateway runs together (its own tab) -----
   // Its elements, the popup's too, are in the page: found again each time it arrives.
@@ -2566,6 +2745,7 @@
                              max_calls: c.ownCalls.value === '' ? null : Number(c.ownCalls.value),
                              max_explorers: c.ownExp.value === '' ? null : Number(c.ownExp.value)}).then(function (r) {
       if (!r.ok) { listErrors(c.errors, r.errors); return; }
+      doneOn($('c-save'), 'Saved');
       finished('Saved bench/' + name + '.', name);
     }).catch(function (err) { c.errors.textContent = String(err); });
   });

@@ -235,16 +235,38 @@ button { font: inherit; cursor: pointer; }
 .btn.fresh, .btn.fresh:hover { background: var(--signal); border-color: var(--ink); color: var(--ink-deep); }
 .linkish { background: none; border: 0; padding: 0; color: var(--link); text-decoration: underline; text-underline-offset: .18em; font-size: inherit; }
 
-/* first run: a fresh install's next step, above every page until it is done */
-.problems { flex: none; padding: var(--gap-3) var(--pad); background: var(--step-1); border-bottom: 1px solid var(--line); }
-.problems h2 { margin: 0 0 var(--gap-1); font-size: var(--t-lead); font-weight: 700; }
-.problem { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .25rem 1rem; align-items: center; padding: .55rem .75rem; margin: 0 -.75rem; border-radius: var(--radius); }
-.problem:hover { background: var(--step-1); }
-.problem .why { color: var(--muted); overflow-wrap: anywhere; }
-.problem .acts, .endpoint .acts { display: flex; gap: .5rem; flex-wrap: wrap; justify-content: flex-end; }
+.endpoint .acts { display: flex; gap: .5rem; flex-wrap: wrap; justify-content: flex-end; }
 .row-input { display: flex; gap: .5rem; align-items: center; margin-top: .35rem; }
 .row-input input { flex: 1; min-width: 0; margin: 0 !important; }
-.problems .head { display: flex; align-items: baseline; gap: .5rem; }
+
+/* An empty page (serve.empty_state): the bench with its seats empty, one sentence,
+   the action that fills it. Motion 4: pointing at the action, a seat is taken. A
+   page with nothing in it has no filter to offer, nor a panel to open. */
+.empty-bench { display: grid; justify-items: start; gap: var(--gap-3); max-width: 70ch; padding: 40px 0 var(--gap-5); }
+.tab > .empty-bench { max-width: calc(70ch + 2 * var(--pad)); padding: 48px var(--pad) 40px; }
+.empty-bench > p { margin: 0; }
+.empty-bench > .sub { color: var(--muted); }
+.empty-bench .say { font-size: var(--t-lead); font-weight: 700; }
+.bench-art { --u: clamp(18px, 1.4vw, 30px); position: relative; width: calc(15 * var(--u)); height: calc(4.6 * var(--u)); margin-bottom: var(--gap-1);
+  background: linear-gradient(var(--bench-seat, var(--brand)) 0 0) 0 calc(100% - 1.3 * var(--u)) / 100% calc(.7 * var(--u)) no-repeat,
+    linear-gradient(var(--bench-leg, var(--ink-2)) 0 0) calc(1.2 * var(--u)) 100% / calc(.3 * var(--u)) calc(1.3 * var(--u)) no-repeat,
+    linear-gradient(var(--bench-leg, var(--ink-2)) 0 0) calc(100% - 1.2 * var(--u)) 100% / calc(.3 * var(--u)) calc(1.3 * var(--u)) no-repeat; }
+.bench-art i { position: absolute; bottom: calc(2.15 * var(--u)); left: calc(.6 * var(--u)); width: calc(4 * var(--u)); height: calc(1.7 * var(--u)); border: 1px dashed var(--muted); border-radius: 3px; }
+.bench-art i + i { left: calc(5.5 * var(--u)); }
+.bench-art i + i + i { left: calc(10.4 * var(--u)); }
+.bench-art i::after { content: ""; position: absolute; inset: -1px; border: 1px solid var(--ink); border-radius: 3px; background: var(--band); opacity: 0; translate: 0 -5px; }
+.empty-bench:has(.btn.primary:is(:hover, :focus-visible)) .bench-art i:first-child::after { opacity: 1; translate: none; }
+.tab:has(.empty-bench) > .bar :is(input[type=search], .fold-all), .tab:not(:has(aside.facts)) .facts-open { display: none; }
+/* First run (serve.first_run), in Benchmarks' place: the next step, the steps beside it. */
+.first { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--gap-5) 64px; padding: 48px var(--pad) 40px; }
+.first > .empty-bench { flex: 0 1 46rem; padding: 0; }
+.first .empty-bench h2 { margin: var(--gap-3) 0 0; font-size: var(--t-head); }
+.first > ol.steps { flex: 0 1 28rem; gap: var(--gap-3); margin: 0; }
+.first > ol.steps li { row-gap: 0; }
+@media (min-width: 1100px) {     /* side by side, the steps level with the sentence under the bench; centred on a wide pane */
+  .first { flex-wrap: nowrap; justify-content: center; }
+  .first > ol.steps { padding-top: calc(4.6 * clamp(18px, 1.4vw, 30px) + var(--gap-4)); }
+}
 
 /* Action needed (serve.actions_page): a section per thing to do, in columns
    where there is room; each item its name and state, its actions at the
@@ -411,6 +433,7 @@ body:not(.show-retired) tr.retired { display: none; }
    leaves a narrow box (the panel has it), a `wide` one joins a wide one. */
 .list { flex: 1; min-height: 0; overflow: auto; scrollbar-width: thin; container-type: inline-size; }
 .list thead th { position: sticky; top: 0; z-index: 1; background: var(--paper-2); border-bottom: 0; box-shadow: inset 0 -1px 0 var(--line); }
+.list tbody tr { scroll-margin-top: 2.5rem; }          /* a row brought into view (arrow keys) clears the head */
 .list :is(th, td) { padding-left: var(--gap-2); padding-right: var(--gap-2); }
 .list :is(th, td):first-child { padding-left: var(--pad); }
 .list td { white-space: nowrap; }
@@ -427,6 +450,7 @@ body:not(.show-retired) tr.retired { display: none; }
 tr.grp th { padding-top: var(--gap-4); background: var(--paper-2); }
 tbody[data-shut] > tr:not(.grp) { display: none; }
 #d-more { margin: var(--gap-3) var(--pad) var(--gap-5); }
+p.no-match { margin: 0; padding: var(--gap-3) var(--pad); }      /* a filter that matched nothing (bench.js applyFilter) */
 #d-count { white-space: nowrap; }
 .muted { color: var(--muted); }
 .ok { color: var(--ok); } .warn { color: var(--warn); } .err { color: var(--err); }
@@ -453,6 +477,9 @@ button.chip:hover { outline: 1px solid currentColor; }
 .meter span { display: block; height: 100%; background: var(--brand); }
 .meter span.low { background: var(--err); }
 td.why { white-space: nowrap; }                     /* Uptime's down / left out, with their reasons */
+/* A chart's key in the page (Uptime, Trend): a swatch before each name. */
+.q-legend { display: flex; flex-wrap: wrap; gap: var(--gap-1) var(--gap-4); margin: 0 0 .4rem; }
+.q-legend i { display: inline-block; width: .8rem; height: .7rem; border-radius: 2px; margin-right: .35rem; vertical-align: -1px; }
 
 /* ---- dialogs: popups for a confirm, a picker and a short create ------ */
 dialog { border: 1px solid var(--ink); border-radius: var(--radius); padding: 1.25rem 1.4rem; width: min(40rem, calc(100vw - 2rem)); max-height: calc(100vh - 2rem); background: var(--paper-2); color: var(--ink); }
@@ -547,17 +574,15 @@ dialog h2 { margin: 0 0 .2rem; font-size: var(--t-head); font-weight: 700; }
 
 /* the onboarding queue: its progress at the rail's foot, its list in the popup */
 .oq { display: flex; flex-wrap: wrap; align-items: center; gap: var(--gap-1) var(--gap-3); color: var(--ink); }
-/* The status as a chip whose fill wipes across as models finish (bench.js
-   sets --fill), ending green, or red with one shake. */
+/* The status as a chip whose fill grows as models finish (bench.js sets --fill,
+   0 to 1), ending green, or red. Motion 11: it fills; it never shakes. */
 .oq-chip { position: relative; isolation: isolate; overflow: hidden; display: flex; align-items: center; flex-basis: 100%; min-width: 0; min-height: 32px; padding: 0 var(--gap-3); border: 1px solid var(--field); border-radius: var(--radius); background: var(--paper-2); }
 #oq-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.oq-chip::before { content: ""; position: absolute; inset: 0 auto 0 0; z-index: -1; width: var(--fill, 0%); background: color-mix(in oklab, var(--brand) 22%, var(--paper-2)); transition: width .6s ease; }
+.oq-chip::before { content: ""; position: absolute; inset: 0; z-index: -1; transform: scaleX(var(--fill, 0)); transform-origin: left; background: color-mix(in oklab, var(--brand) 22%, var(--paper-2)); }
 .oq-chip.done { border-color: var(--ok); }
 .oq-chip.done::before { background: var(--ok-ground); }
-.oq-chip.fail { border-color: var(--err); color: var(--err); animation: oq-shake .45s ease 1; }
+.oq-chip.fail { border-color: var(--err); color: var(--err); }
 .oq-chip.fail::before { background: var(--err-ground); }
-@keyframes oq-shake { 20% { transform: translateX(-5px); } 45% { transform: translateX(5px); }
-                      70% { transform: translateX(-3px); } 90% { transform: translateX(2px); } }
 ul.oq-list { list-style: none; padding: 0; margin: .75rem 0 0; display: grid; gap: .5rem; max-height: 22rem; overflow: auto; }
 ul.oq-list li { padding: .4rem .25rem; border-bottom: 1px solid var(--line); }
 ul.oq-list .what { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
@@ -571,7 +596,11 @@ ol.steps li::before { content: ""; width: .75rem; height: .75rem; margin-top: .4
 ol.steps li.now { color: var(--ink); font-weight: 500; }
 ol.steps li.now::before { border-color: var(--ink); background: var(--signal); }
 ol.steps li.done { color: var(--ink); }
-ol.steps li.done::before { border-color: var(--brand); background: var(--brand); }
+ol.steps li.done::before { border-color: var(--ok); background: var(--ok); }
+ol.steps li:has(> .tick)::before { display: none; }       /* a step done: its tick (bench.js ticks) */
+ol.steps .tick { width: .95rem; height: .95rem; margin-top: .3rem; }
+ol.steps .tick circle { display: inline; fill: var(--ok); }
+ol.steps .tick path { stroke: var(--paper-2); }
 ol.steps li.fail::before { border-color: var(--err); background: var(--err); }
 ol.steps small { display: block; grid-column: 2; color: var(--muted); font-weight: 400; font-size: inherit; overflow-wrap: anywhere; }
 pre.log { background: var(--log-ground, var(--ink-deep)); color: var(--log-ink, var(--paper)); font-size: var(--t-small); line-height: 1.45; padding: .7rem .8rem; border-radius: var(--radius); max-height: 16rem; overflow: auto; white-space: pre-wrap; margin: .5rem 0 0; }
@@ -663,8 +692,66 @@ body:is(.leaving, .loading)::before, body:is(.leaving, .loading) dialog[open]::b
   background: linear-gradient(90deg, transparent, var(--brand), transparent) 0 0 / 40% 100% no-repeat;
   animation: leaving 1.1s ease-in-out infinite; }
 @keyframes leaving { from { background-position: -70% 0; } to { background-position: 170% 0; } }
+
+/* ---- the palette (bench.js palDraw): Search in the rail, or Ctrl+K; one field, then
+   what it finds in groups, the one chosen marked as where you are is. -------- */
+.search { flex: none; display: flex; align-items: center; height: 32px; margin: var(--gap-1) 14px 0; padding: 0 var(--gap-2); border: 1px solid var(--field); border-radius: var(--radius); background: var(--paper-2); color: var(--muted); }
+.search:hover { color: var(--ink); }
+.search kbd { margin-left: auto; font: 500 var(--t-small)/1 var(--font-mono); }
+dialog#palette { width: min(38rem, calc(100vw - 2rem)); margin-top: 12vh; padding: 0; }
+#pal-q { display: block; width: 100%; padding: 13px 16px; border: 0; border-bottom: 1px solid var(--line); background: none; color: var(--ink); font: inherit; font-size: var(--t-lead); outline: none; }
+#pal-list { max-height: min(62vh, 30rem); overflow-y: auto; padding: var(--gap-1) 0 var(--gap-2); scrollbar-width: thin; }
+#pal-list p { margin: 0; padding: var(--gap-2) 16px 2px; font-size: var(--t-small); font-weight: 700; color: var(--muted); }
+#pal-list > p { padding: var(--gap-3) 16px; font-size: inherit; font-weight: 400; }       /* nothing found */
+#pal-list a { display: flex; justify-content: space-between; gap: var(--gap-4); padding: 5px 16px; color: var(--ink); line-height: 20px; text-decoration: none; scroll-margin: 28px 0 8px; }
+#pal-list span { min-width: 0; overflow-wrap: anywhere; }
+#pal-list small { flex: none; color: var(--muted); font-size: inherit; }
+#pal-list a:hover { background: var(--hover); }
+#pal-list [aria-selected=true] { background: var(--tint); box-shadow: inset 3px 0 0 var(--mark); }
+
+/* ---- motion (ui/UI.md): where you are, or what an action did. Transform and
+   opacity on --base and --ease (a fold's height is the browser's own), nothing
+   that loops or bounces, all of it behind prefers-reduced-motion: no-preference
+   (bench.js asks matchMedia first). A state never waits for its move. ------- */
+/* 1. Where you are in the rail: one mark under the links (bench.js marker), slid to the page chosen. */
+@media (min-width: 800px) {
+  .rail-body { position: relative; isolation: isolate; }
+  .ink { position: absolute; z-index: -1; inset: 0 0 auto; background: var(--tint); box-shadow: inset 3px 0 0 var(--mark); pointer-events: none; }
+  .tabs .ink ~ ul a[aria-current] { background: none; box-shadow: none; }
+}
+@media (max-width: 799px) { .ink { display: none; } }
+/* 2 and 10. A tick drawn on a step done (ol.steps), a Save or a Copy that worked (bench.js doneOn). */
+.tick { flex: none; width: 1em; height: 1em; }
+.tick circle { display: none; }
+.tick path { fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 16; }
+/* 5. The row in hand: a mark glides there from the row that had it (bench.js), under the rows. */
+:is(.list, .scroll) { position: relative; isolation: isolate; }
+.ghost { position: absolute; z-index: -1; background: var(--tint); box-shadow: inset 3px 0 0 var(--mark); transform-origin: top; pointer-events: none; }
+tr.in-hand.gliding > td { background: none; box-shadow: none; }
+@media (prefers-reduced-motion: no-preference) {
+  .ink { transition: transform var(--base) var(--ease); }
+  :is(.said, .just) .tick path { animation: draw var(--base) var(--ease) both; }
+  @keyframes draw { from { stroke-dashoffset: 16; } }
+  /* 3. The palette's groups arrive one after another as it opens, recents first. */
+  #pal-list.arriving > div { animation: rise var(--base) var(--ease) both; animation-delay: calc(var(--i) * 35ms); }
+  @keyframes rise { from { opacity: 0; translate: 0 6px; } }
+  /* 7. A popup rises into place, its backdrop fading in. */
+  dialog:not(.dock)[open], dialog[open]::backdrop { transition: opacity var(--base) var(--ease), translate var(--base) var(--ease); }
+  @starting-style { dialog:not(.dock)[open] { opacity: 0; translate: 0 10px; } dialog[open]::backdrop { opacity: 0; } }
+  /* 9. A fold opens and closes smoothly; not Share (a menu) or Discover's facets (opened by bench.js). */
+  details:not(.share, .facets)::details-content { overflow: clip; overflow-clip-margin: 4px; interpolate-size: allow-keywords;
+    transition: block-size var(--base) var(--ease), content-visibility var(--base) allow-discrete; }
+  details:not(.share, .facets):not([open])::details-content { block-size: 0; }
+  /* 4. The empty bench's seat, taken. 11. The queue chip's fill. */
+  .bench-art i::after { transition: opacity var(--base) var(--ease), translate var(--base) var(--ease); }
+  .oq-chip::before { transition: transform var(--base) var(--ease); }
+}
+/* 7. Under 1280px the docked panel is a sheet: it slides in from the right. */
+@media (prefers-reduced-motion: no-preference) and (max-width: 1279px) {
+  dialog.dock[open], .app.facts-open aside.facts { transition: translate var(--base) var(--ease); }
+  @starting-style { dialog.dock[open], .app.facts-open aside.facts { translate: 2rem 0; } }
+}
 @media (prefers-reduced-motion: reduce) {
   *, ::before, ::after { transition: none !important; }
-  .oq-chip { animation: none; }
   body:is(.leaving, .loading)::before, body:is(.leaving, .loading) dialog[open]::before { animation: none; background: var(--brand); }
 }

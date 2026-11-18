@@ -150,7 +150,8 @@ def check(headers, port: int, post: bool, max_body: int, cors: bool = False,
           kind: str = "application/json") -> int:
     """Raise Refused, or return how many body bytes to read (0 for a GET).
     `cors`: a gateway route, where an allowed origin may be cross-site.
-    `kind`: the body's type; never one a plain form can send (an import's zip)."""
+    `kind`: the body's type; never one a plain form can send (an import's zip),
+    but for the sign-in page's own form, which does nothing without the token."""
     host = (headers.get("Host") or "").strip().lower()
     if host not in hosts(port):
         raise Refused(403, f"unknown Host {host or '(none)'!r}; set BENCHWARMERS_PUBLIC_URL"
