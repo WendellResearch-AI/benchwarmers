@@ -634,23 +634,29 @@ dialog h2 { margin: 0 0 .2rem; font-size: var(--t-head); font-weight: 700; }
 
 /* the onboarding queue: its progress at the rail's foot, its list in the popup */
 .oq { display: flex; flex-wrap: wrap; align-items: center; gap: var(--gap-1) var(--gap-3); color: var(--ink); }
-/* The status as a chip whose fill grows as models finish (bench.js sets --fill,
-   0 to 1), ending green, or red. Motion 11: it fills; it never shakes. */
-.oq-chip { position: relative; isolation: isolate; overflow: hidden; display: flex; align-items: center; flex-basis: 100%; min-width: 0; min-height: 32px; padding: 0 var(--gap-3); border: 1px solid var(--field); border-radius: var(--radius); background: var(--paper-2); }
-#oq-text { min-width: 0; padding: 5px 0; font-weight: 700; overflow-wrap: anywhere; }
+/* Down the sidebar: the caption, a thin bar for the batch (bench.js sets --fill,
+   0 to 1, ending green, or red; Motion 11: it fills, it never shakes), then each
+   model a line with a dot, the running one's five steps under it. */
 .tabs .oq-cap { flex-basis: 100%; margin: 0; }
-.oq-steps { flex-basis: 100%; list-style: none; margin: 0; padding: 0 0 0 2px; display: grid; gap: 3px; font-size: var(--t-small); color: var(--muted); }
-.oq-steps li { display: flex; align-items: center; gap: 8px; }
-.oq-steps li::before { content: ""; flex: none; width: 7px; height: 7px; border: 1px solid currentColor; border-radius: 50%; }
-.oq-steps .done { color: var(--ink-2); }
-.oq-steps .done::before { border-color: var(--ok); background: var(--ok); }
+.oq-bar { position: relative; overflow: hidden; flex-basis: 100%; height: 4px; border-radius: 2px; background: color-mix(in oklab, var(--muted) 22%, transparent); }
+.oq-bar::before { content: ""; position: absolute; inset: 0; transform: scaleX(var(--fill, 0)); transform-origin: left; background: var(--brand); }
+.oq-bar.done::before { background: var(--ok); }
+.oq-bar.fail::before { background: var(--err); }
+.oq-models, .oq-steps { flex-basis: 100%; list-style: none; margin: 0; padding: 0; display: grid; gap: 5px; }
+.oq-models { max-height: 45vh; overflow-y: auto; color: var(--muted); }
+.oq-models li, .oq-steps li { display: grid; grid-template-columns: 7px minmax(0, 1fr); column-gap: 8px; }
+.oq-models li::before, .oq-steps li::before { content: ""; width: 7px; height: 7px; margin-top: .5em; border: 1px solid currentColor; border-radius: 50%; }
+.oq-models span { overflow-wrap: anywhere; }
+.oq-models li > small, .oq-steps { grid-column: 2; }
+.oq-models li > small { font-size: var(--t-small); }
+.oq-steps { gap: 2px; margin-top: 3px; font-size: var(--t-small); font-weight: 400; color: var(--muted); }
+.oq-models .done, .oq-steps .done { color: var(--ink-2); }
+.oq-models .now { color: var(--ink); font-weight: 700; }
 .oq-steps .now { color: var(--ink); font-weight: 700; }
-.oq-steps .now::before { border-color: var(--brand); background: var(--brand); }
-.oq-chip::before { content: ""; position: absolute; inset: 0; z-index: -1; transform: scaleX(var(--fill, 0)); transform-origin: left; background: color-mix(in oklab, var(--brand) 22%, var(--paper-2)); }
-.oq-chip.done { border-color: var(--ok); }
-.oq-chip.done::before { background: var(--ok-ground); }
-.oq-chip.fail { border-color: var(--err); color: var(--err); }
-.oq-chip.fail::before { background: var(--err-ground); }
+.oq-models .done::before, .oq-steps .done::before { border-color: var(--ok); background: var(--ok); }
+.oq-models .now::before, .oq-steps .now::before { border-color: var(--brand); background: var(--brand); }
+.oq-models .bad { color: var(--err); }
+.oq-models .bad::before { background: var(--err); }
 ul.oq-list { list-style: none; padding: 0; margin: .75rem 0 0; display: grid; gap: .5rem; max-height: 22rem; overflow: auto; }
 ul.oq-list li { padding: .4rem .25rem; border-bottom: 1px solid var(--line); }
 ul.oq-list .what { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
@@ -812,7 +818,7 @@ tr.in-hand.gliding > td { background: none; box-shadow: none; }
   details:not(.share, .facets):not([open])::details-content { block-size: 0; }
   /* 4. The empty bench's seat, taken. 11. The queue chip's fill. */
   .bench-art i::after { transition: opacity var(--base) var(--ease), translate var(--base) var(--ease); }
-  .oq-chip::before { transition: transform var(--base) var(--ease); }
+  .oq-bar::before { transition: transform var(--base) var(--ease); }
 }
 /* 7. Under 1280px the docked panel is a sheet: it slides in from the right. */
 @media (prefers-reduced-motion: no-preference) and (max-width: 1279px) {

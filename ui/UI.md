@@ -133,7 +133,7 @@ the rail is a bar with a menu.
 | A popup rises as it opens | every `<dialog>` and sheet |
 | Rows glide to their new order | after a sort |
 | A fold opens and closes smoothly | every `<details>` |
-| The queue chip fills as models finish | the rail's foot; it never shakes |
+| The onboarding bar fills as models finish | the rail's foot, over the batch's list; it never shakes |
 
 Pages swap at once: there is no fade between them.
 

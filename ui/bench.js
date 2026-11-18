@@ -1626,8 +1626,8 @@
   // ---- the onboarding queue: progress in the sidebar (serve.onboard_queue) -
   // Polled while it runs, and once on every page load, so a batch started
   // before a reload still shows. Its results stay until Clear.
-  var oq = {box: $('oq'), text: $('oq-text'), chip: $('oq-chip'), stop: $('oq-stop'), clear: $('oq-clear'),
-            cap: $('oq-cap'), steps: $('oq-steps'),
+  var oq = {box: $('oq'), cap: $('oq-cap'), bar: $('oq-bar'), models: $('oq-models'), stop: $('oq-stop'),
+            clear: $('oq-clear'),
             view: $('o-queue'), sum: $('o-queue-sum'), list: $('o-queue-list')};
   var OQ_CHIP = {queued: '', running: 'new', done: 'ok', 'no answer': 'warn', failed: 'err', skipped: ''};
   var oqTimer = null, oqLast = '';
@@ -1637,36 +1637,47 @@
     oq.box.hidden = !n;
     var now = q.items.filter(function (i) { return i.state === 'running'; })[0];
     var finished = n - oqCount(q, 'queued') - (now ? 1 : 0);
-    // The chip fills as models finish, and by fifths of the running one as its
+    // The bar fills as models finish, and by fifths of the running one as its
     // log reaches each of onboard.py's five steps (serve.onboard_queue `step`):
     // a step is half a fifth while it runs, so step 5/5 is 90%, and full
     // means finished. At the end it is green when every one is on the bench,
     // red when any failed or did not answer. It fills; it never shakes.
     var step = now && now.step ? now.step : 0;
-    oq.chip.style.setProperty('--fill', n ? ((finished + (step ? step - 0.5 : 0) / 5) / n).toFixed(3) : 0);
+    oq.bar.style.setProperty('--fill', n ? ((finished + (step ? step - 0.5 : 0) / 5) / n).toFixed(3) : 0);
     var bad = oqCount(q, 'failed') + oqCount(q, 'no answer');
-    oq.chip.classList.toggle('done', !q.running && n > 0 && oqCount(q, 'done') === n);
-    oq.chip.classList.toggle('fail', !q.running && bad > 0);
-    // Down the sidebar: what it is doing, the model whole, then its five steps one a line.
-    oq.cap.textContent = q.running ? (q.stopping ? 'Stopping after this one' : 'Onboarding ' + (finished + 1) + ' of ' + n)
-      : 'Onboarded';
-    if (q.running) {
-      oq.text.textContent = now ? now.served : '…';
-    } else {
-      oq.text.textContent = oqCount(q, 'done') + ' of ' + n + ' on the bench'
-        + [['failed', 'failed'], ['no answer', 'did not answer'], ['skipped', 'skipped']].map(function (s) {
-          var c = oqCount(q, s[0]); return c ? ' · ' + c + ' ' + s[1] : '';
-        }).join('');
-    }
-    oq.steps.hidden = !(q.running && now);
-    [].forEach.call(oq.steps.children, function (li, i) {
-      li.className = i + 1 < step ? 'done' : i + 1 === step ? 'now' : '';
-    });
+    oq.bar.classList.toggle('done', !q.running && n > 0 && oqCount(q, 'done') === n);
+    oq.bar.classList.toggle('fail', !q.running && bad > 0);
+    oq.cap.textContent = q.running
+      ? (q.stopping ? 'Stopping after this one' : 'Onboarding ' + (finished + 1) + ' of ' + n)
+      : 'Onboarded ' + oqCount(q, 'done') + ' of ' + n;
     oq.stop.hidden = !q.running || q.stopping; oq.clear.hidden = q.running;
     var sig = JSON.stringify(q);
-    if (sig !== oqLast) { oqLast = sig; oqLive = null; if (!oq.view.hidden) oqList(q); }
+    if (sig !== oqLast) { oqLast = sig; oqLive = null; oqModels(q); if (!oq.view.hidden) oqList(q); }
     // The log grows between steps, which the queue's state does not show.
     if (oqLive && !oq.view.hidden && od.open && oqLive.d.open) oqTail(oqLive.log, oqLive.pre);
+  }
+  // Each model of the batch a line, in the order they run; the running one's
+  // five steps under it, done ones ticked, the one it is on bold.
+  var OQ_STEPS = ['On the endpoint', 'Registered', 'Client set up', 'Availability probed', 'Suite run'];
+  var OQ_LINE = {done: ['done', ''], running: ['now', ''], queued: ['', ''], failed: ['bad', 'failed'],
+                 'no answer': ['bad', 'did not answer'], skipped: ['skip', 'skipped']};
+  function oqModels(q) {
+    oq.models.textContent = '';
+    q.items.forEach(function (it) {
+      var how = OQ_LINE[it.state] || ['', it.state], li = document.createElement('li'), name = document.createElement('span');
+      li.className = how[0]; name.textContent = it.served; li.appendChild(name);
+      if (how[1]) { var s = document.createElement('small'); s.textContent = how[1]; li.appendChild(s); }
+      if (it.state === 'running') {
+        var ol = document.createElement('ol'); ol.className = 'oq-steps';
+        OQ_STEPS.forEach(function (label, i) {
+          var st = document.createElement('li'); st.textContent = label;
+          st.className = i + 1 < (it.step || 0) ? 'done' : i + 1 === it.step ? 'now' : '';
+          ol.appendChild(st);
+        });
+        li.appendChild(ol);
+      }
+      oq.models.appendChild(li);
+    });
   }
   function oqList(q) {
     oq.sum.textContent = q.running
@@ -1721,7 +1732,7 @@
     });
   }
   function oqAct(path) {
-    post(path, {}).then(function (r) { if (r.ok) oqRender(r); else oq.text.textContent = r.errors.join(' '); });
+    post(path, {}).then(function (r) { if (r.ok) oqRender(r); else oq.cap.textContent = r.errors.join(' '); });
   }
   $('oq-open').addEventListener('click', function () {
     get('/api/onboard-queue').then(function (q) { showQueue(q); oqPoll(); });
@@ -1767,12 +1778,12 @@
     }
     // A hub's own steps take a while before the onboarding is even queued, so
     // the progress starts now: the onboarding popup with the hub as its first
-    // step, and the sidebar's chip. The queue's own poll takes the chip over.
+    // step, and the sidebar's bar. The queue's own poll takes the bar over.
     dd().close(); waitToken++;
     preStep = {label: 'Added to ' + x.label, state: 'now', note: ''};
     runView(title, 'Adding it to ' + x.label + '…');
-    oq.box.hidden = false; oq.chip.classList.remove('done', 'fail'); oq.chip.style.setProperty('--fill', '.03');
-    oq.text.textContent = oq.text.title = title; oq.stop.hidden = oq.clear.hidden = true;
+    oq.box.hidden = false; oq.bar.classList.remove('done', 'fail'); oq.bar.style.setProperty('--fill', '.03');
+    oq.cap.textContent = title; oq.models.textContent = ''; oqLast = ''; oq.stop.hidden = oq.clear.hidden = true;
     post('/api/discover/add', Object.assign({connection: x.connection, model: x.model, endpoint: x.endpoint}, how)).then(function (res) {
       var hubDone = !!(res.served && res.steps && res.steps.length);   // in the hub, even if queueing it was refused
       preStep.state = hubDone ? 'done' : 'fail';
