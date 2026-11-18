@@ -1,4 +1,4 @@
-/* Rainforest Dark: the rainforest greens on a near-neutral dark ground, tuned the way
+/* Dark: the rainforest greens on a near-neutral dark ground, tuned the way
    established dark themes are (Material, GitHub, Notion, VS Code):
    - no pure black: the page is a soft charcoal;
    - depth by lighter surfaces, not lines: panels sit a clear step above the
@@ -32,4 +32,9 @@
   --on-err: #1b1e1c;
   --log-ground: #0f1110;
   --log-ink: #e8ebe6;
+  /* The frame's three panes, each a step apart: the rail the darkest, the docked
+     panel between, the page (paper-2) the lightest, where the reading is. */
+  --rail-ground: #111412;
+  --rail-wash: transparent;
+  --aside-ground: #1a1d1b;
 }

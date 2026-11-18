@@ -167,6 +167,36 @@
   // them (refreshPanes). A link swaps the page in place, at once.
   var app = document.querySelector('.app');
   var tabs = document.querySelectorAll('.tabs a[data-tab]');
+  // The docked panel's width: its edge (bench.css .grip) dragged, or moved with the arrow
+  // keys, between 320 and 640px; a double-click gives the usual width back. Kept per browser.
+  var grip = el('div', {class: 'grip', role: 'separator', tabindex: '0', 'aria-orientation': 'vertical',
+    'aria-label': 'Panel width', 'aria-valuemin': '320', 'aria-valuemax': '640',
+    title: 'Drag to make the panel wider or narrower; double-click for its usual width'});
+  app.appendChild(grip);
+  function asideW(w, keep) {
+    if (w === null) app.style.removeProperty('--aside-w');
+    else {
+      w = Math.round(Math.max(320, Math.min(640, w)));
+      app.style.setProperty('--aside-w', w + 'px'); grip.setAttribute('aria-valuenow', w);
+    }
+    if (keep) store('bench.aside', w === null ? '' : String(w));
+  }
+  if (+store('bench.aside')) asideW(+store('bench.aside'));
+  grip.addEventListener('pointerdown', function (e) {
+    if (e.button) return;
+    e.preventDefault(); grip.setPointerCapture(e.pointerId); app.classList.add('resizing');
+  });
+  grip.addEventListener('pointermove', function (e) { if (grip.hasPointerCapture(e.pointerId)) asideW(innerWidth - e.clientX); });
+  grip.addEventListener('lostpointercapture', function () {
+    app.classList.remove('resizing');
+    if (app.style.getPropertyValue('--aside-w')) asideW(parseInt(app.style.getPropertyValue('--aside-w'), 10), true);
+  });
+  grip.addEventListener('dblclick', function () { asideW(null, true); });
+  grip.addEventListener('keydown', function (e) {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    e.preventDefault();
+    asideW(innerWidth - grip.getBoundingClientRect().right + 4 + (e.key === 'ArrowLeft' ? 16 : -16), true);
+  });
   var onShow = {};                     // a page's loader, run each time it is shown
   var onLoad = {};                     // a page's set-up, run each time its HTML arrives
   var shown = null, fetching = {}, ready = {}, marks = 0, last = {}, edited = {};

@@ -1,4 +1,4 @@
-/* Rainforest Light: the Wendell Research palette, and the base theme: it sets
+/* Light (rainforest.css): the Wendell Research palette, and the base theme: it sets
    every token (faces, measure, radius), and the others lay theirs over it.
    Copied 2026-10-19 from the AI site's src/styles/global.css (:root, less the
    grid tokens), which the dashboard used to read live from the sibling repo.

@@ -86,7 +86,7 @@ THEMES = UI / "themes"
 BASE_THEME = "rainforest"      # sets every token (faces, measure, radius); the others lay theirs over it
 DEFAULT_THEME = "hardwood"     # what an install shows until someone picks a theme
 # The names and the order on Settings; a theme file not named here follows, by its own name.
-THEME_LABELS = {"rainforest": "Rainforest Light", "dark": "Rainforest Dark", "hardwood": "Hardwood"}
+THEME_LABELS = {"rainforest": "Light", "dark": "Dark", "hardwood": "Hardwood"}   # the files' names stay
 FONTS = {f"{family}-latin-{weight}-normal.woff2": family
          for family, weights in (("chivo", (400, 500, 700, 800)),
                                  ("chivo-mono", (400, 500)))
@@ -4863,7 +4863,7 @@ def tabs(shown: str = "suite", theme: str = DEFAULT_THEME) -> str:
                     if key == shown else f"<section class='tab' id='tab-{key}' data-lazy>{bar(key, label)}</section>"
                     for key, label, _ in TABS)
     picks = "".join(f"<button type='button' data-theme-pick='{esc(t)}' aria-pressed='{str(t == theme).lower()}'"
-                    f" title='{esc(THEME_LABELS.get(t, t.title()))}'>{esc(t.title())}</button>" for t in themes())
+                    f">{esc(THEME_LABELS.get(t, t.title()))}</button>" for t in themes())
     return (
         "<div class='app'><nav class='tabs' aria-label='Pages'><div class='brand'>"
         "<a class='word' href='/' data-go='suite'><span>Benchwarmers</span></a>"
