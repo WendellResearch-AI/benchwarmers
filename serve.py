@@ -5225,7 +5225,7 @@ def access_card() -> str:
 
 
 def restart_block() -> str:
-    """Settings' Restart: what runs now, and its button (bench.js restart())."""
+    """Settings' Restart: what runs now, and its button (bench.js restart()). Info has one too (info_page)."""
     running, disk = on_disk()
     now = (f"Running {esc(RELEASE)} ({esc(running)}), the code on disk." if running == disk else
            f"<strong>Newer code is on disk</strong> ({esc(disk)}; running {esc(RELEASE)}, {esc(running)}).")
@@ -6136,9 +6136,19 @@ def info_page() -> str:
             ("Your apps", "CLIENTS.md"), ("The benchmarks", "BENCHMARKS.md"), ("Hosting", "HOSTING.md")))),
         ("Your data", tuple((label, doc(name)) for label, name in (
             ("Privacy", "PRIVACY.md"), ("Security", "SECURITY.md"), ("Terms", "TERMS.md")))))
+    # Restart here too, as on Settings, with its own ids: both pages can be in the document at once.
+    running, disk = on_disk()
+    now = (f"Running {esc(RELEASE)} ({esc(running)}), the code on disk." if running == disk else
+           f"<strong>Newer code is on disk</strong> ({esc(disk)}; running {esc(RELEASE)}, {esc(running)}).")
+    restart_panel = ("<div class='panel'><h2>Restart</h2>"
+                     f"<p>{now}</p><p class='rules'>Starts the dashboard again on the code on disk, whatever runs"
+                     " it. It waits for onboarding, a scheduled job and gateway calls in progress, or cuts them off"
+                     " if you insist; the page comes back in a few seconds.</p>"
+                     "<div class='actions'><button class='btn' type='button' id='restart-info'>Restart Benchwarmers"
+                     "</button> <span id='restart-info-out' role='status'></span></div></div>")
     return ("<div class='cols fit'>" + "".join(
         f"<div class='panel'><h2>{t}</h2><dl class='rows'>" + "".join(f"<dt>{k}</dt><dd>{v}</dd>" for k, v in rows)
-        + "</dl></div>" for t, rows in groups) + "</div>")
+        + "</dl></div>" for t, rows in groups) + restart_panel + "</div>")
 
 
 def directory_json() -> str:
