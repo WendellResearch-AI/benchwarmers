@@ -167,6 +167,15 @@
   // them (refreshPanes). A link swaps the page in place, at once.
   var app = document.querySelector('.app');
   var tabs = document.querySelectorAll('.tabs a[data-tab]');
+  // A box's scroll bar shows while it scrolls and a moment after (bench.css .scrolling).
+  var stillAt = new Map();
+  document.addEventListener('scroll', function (e) {
+    var box = e.target === document ? document.documentElement : e.target;
+    if (!box.classList) return;
+    if (!stillAt.has(box)) box.classList.add('scrolling');
+    clearTimeout(stillAt.get(box));
+    stillAt.set(box, setTimeout(function () { box.classList.remove('scrolling'); stillAt.delete(box); }, 900));
+  }, {capture: true, passive: true});
   // The docked panel's width: its edge (bench.css .grip) dragged, or moved with the arrow
   // keys, between 320 and 640px; a double-click gives the usual width back. Kept per browser.
   var grip = el('div', {class: 'grip', role: 'separator', tabindex: '0', 'aria-orientation': 'vertical',

@@ -23,9 +23,11 @@
   color-scheme: var(--scheme, light);
 }
 
-* { box-sizing: border-box; scrollbar-width: thin; }
-/* Scroll bars: a thin thumb in the theme's muted ink on no track, inherited by every box that scrolls. */
-html { scrollbar-color: color-mix(in oklab, var(--muted) 40%, transparent) transparent; }
+/* Scroll bars: thin, and unseen until their box scrolls (bench.js marks it .scrolling for a
+   moment); then a thumb in the theme's muted ink on no track. Set per box, not inherited, so a
+   page scrolling does not show the bars of the lists inside it. */
+* { box-sizing: border-box; scrollbar-width: thin; scrollbar-color: transparent transparent; }
+.scrolling { scrollbar-color: color-mix(in oklab, var(--muted) 45%, transparent) transparent; }
 [hidden] { display: none !important; }
 html { -webkit-text-size-adjust: 100%; }
 body { margin: 0; overflow: hidden; background: var(--paper-2); color: var(--ink); font: 400 var(--t-body)/1.5 var(--font-display); -webkit-font-smoothing: antialiased; }
