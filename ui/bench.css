@@ -493,6 +493,7 @@ td.why { white-space: nowrap; }                     /* Uptime's down / left out,
 .q-tile:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
 .q-tile.out { border-color: var(--err); }
 .q-tile.in-hand { background: var(--tint); box-shadow: inset 3px 0 0 var(--mark); }
+.q-tile.in-hand .segs { --off: color-mix(in oklab, var(--muted) 45%, var(--tint)); }   /* an empty meter still shows on the tint */
 .q-tile.dragging { opacity: .45; }
 .q-head { display: flex; justify-content: space-between; align-items: center; gap: var(--gap-2); min-width: 0; }
 .q-tile .nm { font-size: var(--t-lead); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

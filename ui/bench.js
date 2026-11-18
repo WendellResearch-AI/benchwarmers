@@ -327,13 +327,14 @@
     if (table.id === 'd-table') return dApply();          // Discover's rows are data, drawn in this order
     // Motion 8: the rows in view glide from where they were (measure, reorder, play back).
     // Not on more than 80 of them: a long table sorted again reads as a new list.
-    var was = new Map(), view = calm.matches ? null : (table.closest('.list') || table.closest('.tab')).getBoundingClientRect();
+    var was = new Map(), view = calm.matches ? null : (table.closest('.list') || table.closest('.tab') || document.documentElement).getBoundingClientRect();
     if (view) Array.prototype.forEach.call(table.querySelectorAll('tbody tr'), function (r) {
       var y = r.offsetParent && r.getBoundingClientRect().top;
       if (y && y < view.bottom && y > view.top - 40) was.set(r, y);
     });
     Array.prototype.forEach.call(table.tBodies, function (body) {     // each group (Models' connections) in itself, under its heading
-      ordered(Array.prototype.filter.call(body.rows, function (r) { return !r.classList.contains('grp'); }).map(function (r) {
+      // Not a group's heading, nor a row that spans the table ("None yet"): it has no such cell.
+      ordered(Array.prototype.filter.call(body.rows, function (r) { return !r.classList.contains('grp') && r.cells[idx]; }).map(function (r) {
         var c = r.cells[idx];
         return [key(c.dataset.sort != null ? c.dataset.sort : c.textContent.trim()), r];
       }), dir).forEach(function (r) { body.appendChild(r); });
@@ -1047,7 +1048,9 @@
   // Motion 3: its groups arrive one after another as it opens (bench.css .arriving).
   var pal = $('palette'), palQ = $('pal-q'), palList = $('pal-list'), palAt = 0, palFound = [];
   if (/Mac|iP/.test(navigator.platform)) document.querySelector('#pal-open kbd').textContent = '⌘ K';
-  function recent() { try { return JSON.parse(store('bench.recent')) || []; } catch (e) { return []; } }
+  function recent() {                  // a list of {k, id}, whatever the browser has stored there
+    try { var r = JSON.parse(store('bench.recent')); return Array.isArray(r) ? r.filter(Boolean) : []; } catch (e) { return []; }
+  }
   function palDraw() {
     var words = palQ.value.toLowerCase().split(/\s+/).filter(Boolean), cols = C ? C.collections.map(function (r) {
       return [r.name, r.members.length]; }) : Object.keys(D.collections || {}).map(function (n) { return [n, D.collections[n]]; });

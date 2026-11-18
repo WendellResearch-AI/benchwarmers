@@ -164,7 +164,12 @@ def data_stamp() -> float:
              DATA / "perf" / "history.csv", *DATA.glob("runs/*.md"),
              *DATA.glob("runs/gateway/*.jsonl"), DATA / "runs" / "scheduler.log"]
     paths = [p for p in paths if p.name != UI_CONFIG.name]     # a theme switch is already on the page
-    return max((p.stat().st_mtime for p in paths if p.exists()), default=0.0)
+    def at(p: pathlib.Path) -> float:
+        try:
+            return p.stat().st_mtime
+        except OSError:                        # not there, or gone since it was listed (a writer's temporary file)
+            return 0.0
+    return max(map(at, paths), default=0.0)
 
 
 # ---- kept between requests -------------------------------------------------
@@ -177,6 +182,7 @@ KEEP_FOR = 30
 _kept: dict = {}                       # name -> (key, made at, value)
 _kept_locks: dict = {}
 _writes = [0]
+_writes_lock = threading.Lock()        # += from two POSTs at once could step the count back to one a page was kept under
 
 
 def data_key() -> tuple:
@@ -204,7 +210,8 @@ def kept(name: str, make):
 
 def wrote() -> None:
     """The dashboard changed something: nothing kept from before is answered again."""
-    _writes[0] += 1
+    with _writes_lock:
+        _writes[0] += 1
 
 
 def _warm() -> None:
@@ -6677,12 +6684,16 @@ class Handler(gateway.Handler):
         """POST /login {"token"}: the login cookie, for the admin token only.
         The sign-in page's own form, posted with scripts off, may send it as a
         form (token=...), through the same guard: then the answer is a page,
-        the dashboard or the sign-in again saying the token was wrong."""
+        the dashboard or the sign-in again saying the token was wrong. A form
+        is a type another site's page can post, so it must also name this
+        dashboard as its Origin: a browser that sends none gets no answer."""
         from urllib.parse import parse_qs
         form = (self.headers.get("Content-Type") or "").lower().startswith("application/x-www-form-urlencoded")
         try:
             length = guard.check(self.headers, PORT, post=True, max_body=MAX_BODY,
                                  kind="application/x-www-form-urlencoded" if form else "application/json")
+            if form and (self.headers.get("Origin") or "").strip().lower() not in guard.origins(PORT):
+                raise guard.Refused(403, "the sign-in form is posted from its own page")
             body = self.rfile.read(length) or b""
             given = (parse_qs(body.decode("utf-8", "replace")).get("token", [""])[0] if form
                      else json.loads(body or b"{}").get("token"))

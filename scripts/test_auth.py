@@ -128,10 +128,13 @@ def main() -> int:
             assert status == 200 and "HttpOnly" in cookie and "SameSite=Strict" in cookie, headers
             assert TOKEN not in cookie
             # With scripts off, the page's own form: the sign-in again saying so, or the dashboard.
-            status, _, page = call(d, "/login", form={"token": "wrong"})
+            # A form is a type any page can post, so it must name this dashboard as its Origin.
+            own = f"http://127.0.0.1:{d}"
+            status, _, page = call(d, "/login", form={"token": "wrong"}, Origin=own)
             assert status == 401 and "not the admin token" in page and "name='token'" in page, status
             assert call(d, "/login", form={"token": TOKEN}, Origin="http://evil.example")[0] == 403
-            status, headers, _ = call(d, "/login", form={"token": TOKEN})
+            assert call(d, "/login", form={"token": TOKEN})[0] == 403                # no Origin at all
+            status, headers, _ = call(d, "/login", form={"token": TOKEN}, Origin=own)
             assert status == 303 and headers["Location"] == "/" and "HttpOnly" in headers.get("Set-Cookie", ""), headers
             jar = {"Cookie": cookie.split(";", 1)[0]}
             assert call(d, "/api/stamp", **jar)[0] == 200
