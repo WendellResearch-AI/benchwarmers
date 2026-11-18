@@ -83,7 +83,7 @@ h1, h2, h3 { line-height: 1.2; letter-spacing: -.01em; text-wrap: balance; }
 .tabs .n { align-self: center; padding: 0 7px; border-radius: 999px; font: 700 var(--t-small)/18px var(--font-mono); background: var(--err-ground); color: var(--err); }
 .tabs a[data-tab=collections]::after { content: ""; flex: none; align-self: flex-start; width: .75em; height: .75em; margin: 1px auto 0 -2px;
   background: var(--brand); clip-path: polygon(50% 0, 62% 38%, 100% 50%, 62% 62%, 50% 100%, 38% 62%, 0 50%, 38% 38%); }
-.foot { flex: none; margin-top: auto; display: grid; gap: 14px; padding: var(--gap-4) 18px 14px 20px; }
+.foot { flex: none; margin-top: auto; display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; padding: var(--gap-4) 18px 14px 20px; }
 .pick-theme { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0 6px; }
 .pick-theme p { flex-basis: 100%; margin: 0 0 2px; }
 .pick-theme button { border: 0; padding: 2px 0; background: none; color: var(--ink-2); }
@@ -637,7 +637,7 @@ dialog h2 { margin: 0 0 .2rem; font-size: var(--t-head); font-weight: 700; }
 /* The status as a chip whose fill grows as models finish (bench.js sets --fill,
    0 to 1), ending green, or red. Motion 11: it fills; it never shakes. */
 .oq-chip { position: relative; isolation: isolate; overflow: hidden; display: flex; align-items: center; flex-basis: 100%; min-width: 0; min-height: 32px; padding: 0 var(--gap-3); border: 1px solid var(--field); border-radius: var(--radius); background: var(--paper-2); }
-#oq-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#oq-text { min-width: 0; padding: 4px 0; overflow: hidden; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; }
 .oq-chip::before { content: ""; position: absolute; inset: 0; z-index: -1; transform: scaleX(var(--fill, 0)); transform-origin: left; background: color-mix(in oklab, var(--brand) 22%, var(--paper-2)); }
 .oq-chip.done { border-color: var(--ok); }
 .oq-chip.done::before { background: var(--ok-ground); }
