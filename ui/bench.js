@@ -176,6 +176,33 @@
     clearTimeout(stillAt.get(box));
     stillAt.set(box, setTimeout(function () { box.classList.remove('scrolling'); stillAt.delete(box); }, 900));
   }, {capture: true, passive: true});
+  // And while the mouse is near the edge a bar sits on (bench.css .near), so it can be grabbed:
+  // the nearest box under the pointer that scrolls that way, its right edge or its bottom.
+  var near = null, nearAsked = false;
+  function scrolls(box, axis) {
+    return axis === 'y' ? box.scrollHeight > box.clientHeight + 1 && /auto|scroll/.test(getComputedStyle(box).overflowY)
+                        : box.scrollWidth > box.clientWidth + 1 && /auto|scroll/.test(getComputedStyle(box).overflowX);
+  }
+  function nearTo(on) {
+    if (on === near) return;
+    if (near) near.classList.remove('near');
+    if (on) on.classList.add('near');
+    near = on;
+  }
+  document.addEventListener('pointermove', function (e) {
+    if (e.pointerType !== 'mouse' || nearAsked) return;
+    nearAsked = true;
+    var t = e.target, x = e.clientX, y = e.clientY;
+    requestAnimationFrame(function () {                  // once a frame, however fast the mouse moves
+      nearAsked = false;
+      for (var box = t; box && box.nodeType === 1 && box !== document.documentElement; box = box.parentElement) {
+        var r = box.getBoundingClientRect();
+        if ((r.right - x < 18 && scrolls(box, 'y')) || (r.bottom - y < 18 && scrolls(box, 'x'))) return nearTo(box);
+      }
+      nearTo(null);
+    });
+  }, {passive: true});
+  document.documentElement.addEventListener('mouseleave', function () { nearTo(null); });
   // The docked panel's width: its edge (bench.css .grip) dragged, or moved with the arrow
   // keys, between 320 and 640px; a double-click gives the usual width back. Kept per browser.
   var grip = el('div', {class: 'grip', role: 'separator', tabindex: '0', 'aria-orientation': 'vertical',
