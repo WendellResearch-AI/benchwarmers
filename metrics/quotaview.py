@@ -472,6 +472,12 @@ def _bench() -> list[str]:
 
 
 def _tags() -> dict[str, list[str]]:
+    """tag -> its bench aliases; once a dashboard render (locked.once): the Quota
+    page asked 38 times, 40 ms of its 160. Read, never changed, by its callers."""
+    return locked.once(("quotaview tags",), _tags_now)
+
+
+def _tags_now() -> dict[str, list[str]]:
     import route
     out: dict[str, list[str]] = {}
     for a in _bench():

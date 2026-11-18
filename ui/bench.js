@@ -272,16 +272,18 @@
     }).map(function (p) { return p[1]; });
   }
   function sort(th, dir) {
-    var table = th.closest('table'), body = table.tBodies[0];
+    var table = th.closest('table');
     var idx = Array.prototype.indexOf.call(th.parentNode.children, th);
     dir = dir || (th.getAttribute('aria-sort') === 'descending' ? 'ascending' : 'descending');
     table.querySelectorAll('th[aria-sort]').forEach(function (o) { o.removeAttribute('aria-sort'); });
     th.setAttribute('aria-sort', dir);
     if (table.id === 'd-table') return dApply();          // Discover's rows are data, drawn in this order
-    ordered(Array.prototype.map.call(body.rows, function (r) {
-      var c = r.cells[idx];
-      return [key(c.dataset.sort != null ? c.dataset.sort : c.textContent.trim()), r];
-    }), dir).forEach(function (r) { body.appendChild(r); });
+    Array.prototype.forEach.call(table.tBodies, function (body) {     // each group (Models' connections) in itself, under its heading
+      ordered(Array.prototype.filter.call(body.rows, function (r) { return !r.classList.contains('grp'); }).map(function (r) {
+        var c = r.cells[idx];
+        return [key(c.dataset.sort != null ? c.dataset.sort : c.textContent.trim()), r];
+      }), dir).forEach(function (r) { body.appendChild(r); });
+    });
   }
   // On the document, not each header: a part of the page swapped in after an
   // action (refreshNeeds) sorts too.
@@ -300,7 +302,7 @@
   function applyFilter(scope) {
     var box = scope.querySelector('input[data-filter]'), q = box ? box.value.trim().toLowerCase() : '';
     var facets = Array.prototype.filter.call(scope.querySelectorAll('select[data-facet]'), function (s) { return s.value; });
-    scope.querySelectorAll('tbody tr, .log-line').forEach(function (r) {
+    scope.querySelectorAll('tbody tr:not(.grp), .log-line').forEach(function (r) {
       // A group's name (data-conn: Models' connection) counts as text of each of its rows,
       // and so does what a row is found by beside its text (data-find: an endpoint's models).
       var g = r.closest('[data-conn]'), text = r.textContent + (g ? ' ' + g.dataset.conn : '') + ' ' + (r.dataset.find || '');
@@ -309,9 +311,9 @@
     });
     // A group with no row left is hidden; one with a match opens.
     scope.querySelectorAll('[data-conn]').forEach(function (g) {
-      var any = !!g.querySelector('tbody tr:not([hidden])');
+      var any = !!g.querySelector('tr:not([hidden], .grp)');
       g.hidden = !!q && !any;
-      if (q && any && g.tagName === 'DETAILS') g.open = true;
+      if (q && any && g.hasAttribute('data-shut')) { fold(g, true); foldButtons(scope); }
     });
   }
   function scopeOf(c) {
@@ -321,14 +323,17 @@
   document.addEventListener('input', function (ev) { if (ev.target.matches('input[data-filter]')) applyFilter(scopeOf(ev.target)); });
   document.addEventListener('change', function (ev) { if (ev.target.matches('select[data-facet]')) applyFilter(scopeOf(ev.target)); });
 
-  // ---- Expand all / Collapse all: every fold of the page's groups (Models' connections).
-  // One labelled toggle, as accordions have it: Collapse all while every one is open,
-  // else Expand all. Kept right after any fold opens or shuts, by hand, by it or by a live swap.
-  var FOLDS = 'details.model-card';                           // the groups a page folds: Models' connections
+  // ---- Models' connections: each a group of rows whose heading folds it (serve.models_page),
+  // and one Collapse all / Expand all in the bar, as accordions have it: Collapse all while
+  // every one is open, else Expand all. Which are shut is kept when the page comes again.
+  var shut = {};
+  function fold(g, open) {
+    g.toggleAttribute('data-shut', !open);
+    g.querySelector('tr.grp button').setAttribute('aria-expanded', String(open));
+    shut[g.dataset.conn] = !open;
+  }
   function foldButtons(tab) {
-    var folds = tab.querySelectorAll(FOLDS), open = 0;
-    folds.forEach(function (d) { if (d.open) open++; });
-    var all = open === folds.length;
+    var all = !tab.querySelector('tbody[data-shut]');
     tab.querySelectorAll('[data-fold-all]').forEach(function (b) {
       b.dataset.foldAll = all ? 'close' : 'open';
       b.setAttribute('aria-expanded', String(all));
@@ -336,31 +341,36 @@
     });
   }
   document.addEventListener('click', function (e) {
-    var b = e.target.closest('[data-fold-all]');
+    var b = e.target.closest('[data-fold-all], tr.grp button');
     if (!b) return;
-    var tab = b.closest('.tab');
-    tab.querySelectorAll(FOLDS).forEach(function (d) { d.open = b.dataset.foldAll === 'open'; });
+    var tab = b.closest('.tab'), g = b.closest('tbody');
+    if (g) fold(g, g.hasAttribute('data-shut'));
+    else tab.querySelectorAll('tbody[data-conn]').forEach(function (x) { fold(x, b.dataset.foldAll === 'open'); });
     foldButtons(tab);
   });
-  document.addEventListener('toggle', function (e) {            // toggle does not bubble: caught on its way down
-    if (e.target.matches && e.target.matches(FOLDS)) foldButtons(e.target.closest('.tab'));
-  }, true);
+  onLoad.models = function () {
+    var tab = $('tab-models');
+    tab.querySelectorAll('tbody[data-conn]').forEach(function (g) { if (shut[g.dataset.conn]) fold(g, false); });
+    foldButtons(tab);
+  };
+  on('click', 'models-onboard', function () { $('onboard-open').click(); });     // the bar's, as the rail's
 
-  // ---- Logs: the list down the left, the log chosen beside it (serve.logs_page),
-  // kept when the page is fetched again.
-  var logShown = '';
-  function pickLog(name) {
-    var tab = $('tab-logs'), pick = tab.querySelector('[data-log-pick="' + CSS.escape(name) + '"]');
-    if (!pick) return;
-    logShown = name;
-    tab.querySelectorAll('[data-log-pick]').forEach(function (b) { b.setAttribute('aria-pressed', String(b === pick)); });
-    tab.querySelectorAll('section[data-log]').forEach(function (s) { s.hidden = s.dataset.log !== name; });
+  // ---- A list beside a detail (.split: Logs' logs, Clients' apps): the one chosen
+  // shown beside the list (its button's aria-controls), its button pressed; kept
+  // when the page is fetched again.
+  var picked = {};
+  function pick(b) {
+    var tab = b && b.closest('.tab');
+    if (!tab) return;
+    picked[tab.id] = b.getAttribute('aria-controls');
+    tab.querySelectorAll('.split > nav [aria-controls]').forEach(function (x) {
+      x.setAttribute('aria-pressed', String(x === b));
+      $(x.getAttribute('aria-controls')).hidden = x !== b;
+    });
   }
-  document.addEventListener('click', function (e) {
-    var b = e.target.closest('[data-log-pick]');
-    if (b) pickLog(b.dataset.logPick);
-  });
-  onLoad.logs = function () { if (logShown) pickLog(logShown); };
+  function pickAgain(id) { pick(picked['tab-' + id] && $('tab-' + id).querySelector('[aria-controls="' + picked['tab-' + id] + '"]')); }
+  document.addEventListener('click', function (e) { pick(e.target.closest('.split > nav [aria-controls]')); });
+  onLoad.logs = function () { pickAgain('logs'); };
 
   // Export as text (every log in one .txt, to read) and CSV (one log, its
   // own columns, for a spreadsheet). Both as the page shows them, the filter applied.
@@ -1718,7 +1728,7 @@
       p.textContent = p.textContent.split('<your gateway key>').join(clientKey);      // serve.KEY_HOLDER
     });
   }
-  onLoad.clients = fillKey;
+  onLoad.clients = function () { pickAgain('clients'); fillKey(); };
   on('click', 'cl-make', function () {
     $('cl-errors').textContent = '';
     post('/api/gateway-key', {name: $('cl-name').value}).then(function (r) {
@@ -2631,12 +2641,11 @@
     }).catch(function (err) { $('v-errors').textContent = String(err); });
   });
 
-  // ---- Quota: a tile per provider (serve.quota_tiles, metrics/quotaview.py) ----
-  // Each tile takes its provider's shape: groups of windows (a 5-hour and a
-  // weekly limit boxed together), one pool (OpenRouter's free requests a day,
-  // a bar per key) or, where nothing is stated, each model's last day. A
-  // meter is ten segments filled like a bar: 85% is eight and a half.
-  var QD = null, qBox = null;          // the page's data and tiles, once it arrives (onLoad.quotas)
+  // ---- Quota (serve.quotas_page): the tables are the server's; a connection's
+  // rows open it docked beside them (#q-models), from its tile in quota-data
+  // (metrics/quotaview.py): how it is reached, its models, its one Refresh,
+  // which picks a free read, one short call or the records (quotaview.refresh).
+  var QD = null, qOpen = '';           // the page's tiles, once it arrives (onLoad.quotas); the one docked
   function qWhen(iso) {
     if (!iso) return '';
     var d = new Date(iso), s = (d - Date.now()) / 1000;
@@ -2652,162 +2661,21 @@
     var s = (Date.now() - new Date(iso)) / 1000;
     return s < 90 ? 'just now' : s < 5400 ? Math.round(s / 60) + ' min ago' : s < 129600 ? Math.round(s / 3600) + ' h ago' : Math.round(s / 86400) + ' days ago';
   }
-  function qTone(pct) { return pct == null ? 'none' : pct >= 70 ? 'ok' : pct >= 25 ? 'warn' : 'err'; }
-  // `pct` null draws the ten segments empty: nothing to count yet. Calls
-  // ("answered") fill green over red, the failed share showing as red.
-  function qSegs(pct, what) {
-    var tone = pct != null && what === 'answered' ? 'calls' : qTone(pct);
-    var box = el('div', {class: 'segs ' + tone, role: 'img',
-                         'aria-label': pct == null ? 'nothing yet' : pct + '% ' + (what || 'left')});
-    for (var i = 0; i < 10; i++) {
-      var s = el('span'), f = el('i');
-      f.style.width = Math.round(Math.min(Math.max((pct || 0) / 10 - i, 0), 1) * 100) + '%';
-      s.appendChild(f); box.appendChild(s);
-    }
-    return box;
-  }
-  function qNum(n) { return Number(n).toLocaleString(); }
-  function qAlias(a) {                                 // as serve.named draws a model: its popup on a click
-    var link = el('a', {href: '#', class: 'model', 'data-alias': a, draggable: 'false', title: a});
+  function qAlias(a) {                                 // as serve.named draws a model: its panel on a click
+    var link = el('a', {href: '#', class: 'model', 'data-alias': a, title: a});
     link.appendChild(el('span', {class: 'alias mono'}, a));
     return link;
   }
-  // 189, 19,997, 494k, 12.5M: whole below 100,000, then short.
-  function qShort(n) {
-    n = Number(n);
-    if (n < 1e5) return Math.round(n * 100) / 100 >= 1000 ? Math.round(n).toLocaleString() : String(Math.round(n * 100) / 100);
-    if (n < 1e6) return Math.round(n / 1e3) + 'k';
-    return String(n >= 1e8 ? Math.round(n / 1e6) : Math.round(n / 1e5) / 10).replace(/\.0$/, '') + 'M';
-  }
-  // Every figure on a tile is one meter: what is left of what, in the
-  // provider's own unit, on the left (it may wrap); when it resets on the
-  // right (it never does); the segments under it.
-  function qMeter(label, value, pct, what, title) {
-    var box = el('div', {class: 'q-meter'}), row = el('div', {class: 'q-line'});
-    var l = typeof label === 'string' ? el('span', {class: 'q-label'}) : label;
-    if (typeof label === 'string') l.innerHTML = label;
-    row.appendChild(l);
-    var v = el('span', {class: 'q-val'}); v.innerHTML = value; row.appendChild(v);
-    if (title) box.title = title;
-    box.appendChild(row); box.appendChild(qSegs(pct, what));
-    return box;
-  }
-  function qReset(iso) {
-    return iso ? '<span title="Resets ' + new Date(iso).toLocaleString() + '">' + qWhen(iso) + '</span>' : '';
-  }
-  function qWindow(w) {
-    var raw = w.of != null && w.remaining != null;
-    // The percentage leads every meter, raw or not, so they line up.
-    return qMeter('<b>' + w.left + '%</b> left · ' + (raw ? '<b>' + qShort(w.remaining) + '</b> of '
-                  + qShort(w.of) + ' ' + w.label : w.label),
-                  qReset(w.reset_at), w.left, 'left',
-                  (raw ? qNum(w.remaining) + ' of ' + qNum(w.of) + ' left, ' : '') + w.left + '%');
-  }
-  // How much of a last day answered: a model's (its link), or `label`'s.
-  function qCalls(m, label) {
-    var n = m.ok + m.failed, pct = n ? Math.round(100 * m.ok / n) : null;
-    var value = qResting(m) ? '<span class="warn-t">resting · ' + qWhen(m.until) + '</span>'
-              : n ? '<b>' + m.ok + '</b> of ' + n + ' answered' : '<span class="muted">no calls</span>';
-    return qMeter(label || qAlias(m.alias), value, pct, 'answered',
-                  n ? m.ok + ' answered, ' + m.failed + ' failed in the last 24 hours' : 'not called in the last 24 hours');
-  }
   function qResting(m) { return m.until && new Date(m.until) > Date.now(); }
-  function qTile(t) {
-    var node = el('article', {class: 'q-tile' + (t.out ? ' out' : ''), draggable: 'true', tabindex: '0',
-                              'data-id': t.id, 'aria-label': t.name + ': drag, or use the arrow keys, to move it'});
-    var head = el('div', {class: 'q-head'});
-    head.appendChild(el('b', {class: 'nm', title: t.name}, t.name));
-    var f = t.fresh, how = {live: 'read ', seen: 'seen ', answered: 'answered '}[f.how] || '';
-    head.appendChild(el('span', {class: 'chip ' + (f.how === 'live' ? 'ok' : 'via'),
-      title: {live: 'Last asked of the provider', seen: 'Last stated in a reply\'s headers',
-              answered: 'Last answer from one of its models'}[f.how] || 'Nothing known yet'},
-      f.at ? how + qAgo(f.at) : 'nothing yet'));
-    node.appendChild(head);
-    // Every word about the figures in one place, under the name: where they
-    // come from, its plan, your per-minute caps, what a live read said. The
-    // connection's own name and address are in Models.
-    var about = el('div', {class: 'q-about'});
-    var src = t.source || [];
-    about.appendChild(el('div', {class: 'q-from'}, (src.length && src[0] !== 'nothing stated'
-      ? 'From ' + src.join('; ') : 'No limit stated') + (t.plan ? ' · ' + t.plan + ' plan' : '')));
-    if (t.conn_limit) about.appendChild(el('div', {}, 'Your cap: ' + t.conn_limit + '.'));
-    (t.notes || []).forEach(function (n) { about.appendChild(el('div', {}, n)); });
-    node.appendChild(about);
-    var body = el('div', {class: 'q-body'});
-    // Day and month caps, counted by the bench: yours, else what the provider
-    // documents. The From line names the source; the title says the rest.
-    (t.caps || []).forEach(function (g) {
-      var box = el('section', {class: 'q-group bare', title: g.title || ''});
-      g.windows.forEach(function (w) { box.appendChild(qWindow(w)); });
-      body.appendChild(box);
-    });
-    if (t.kind === 'groups') {
-      t.groups.forEach(function (g) {
-        var box = el('section', {class: g.label ? 'q-group' : 'q-group bare'});
-        if (g.label) box.appendChild(el('h4', {}, g.label));
-        g.windows.forEach(function (w) { box.appendChild(qWindow(w)); });
-        body.appendChild(box);
-      });
-    } else if (t.kind === 'pool') {
-      t.pool.forEach(function (p) {
-        body.appendChild(p.of
-          ? qMeter('<b>' + p.left + '%</b> left · <b>' + qShort(Math.max(0, p.of - p.used)) + '</b> of '
-                   + qShort(p.of) + ' ' + p.label,
-                   qReset(p.reset_at), p.left, 'left')
-          : qMeter('<b>' + qShort(p.used) + '</b> ' + p.label + ' · limit not known', qReset(p.reset_at), null));
-      });
-    } else if (!(t.caps || []).length) {
-      // Nothing stated to count against: how the provider's calls went, all
-      // its models together (each one's are in Models).
-      var all = t.models.reduce(function (s, m) { return {ok: s.ok + m.ok, failed: s.failed + m.failed}; }, {ok: 0, failed: 0});
-      body.appendChild(qCalls({alias: '', ok: all.ok, failed: all.failed, until: null}, 'Calls, last 24 hours'));
-    }
-    if (t.kind !== 'models') {
-      t.models.filter(qResting).forEach(function (m) {
-        var r = el('div', {class: 'q-rest'});
-        r.appendChild(qAlias(m.alias)); r.appendChild(document.createTextNode(' resting · back ' + qWhen(m.until)));
-        body.appendChild(r);
-      });
-    }
-    node.appendChild(body);
-    var msg = el('div', {class: 'q-msg', 'aria-live': 'polite'});
-    node.appendChild(msg);
-    // One Refresh: the server picks a free read, one short call or the records.
-    var foot = el('div', {class: 'q-foot'});
-    var rb = el('button', {class: 'btn small', type: 'button', 'aria-label': 'Refresh ' + t.name,
-      title: {live: 'Asks the provider what is left (free)',
-              check: 'Sends one 16-token request; the reply\'s headers say what is left'}[t.refresh]
-             || 'Reads the bench\'s own records again (this provider states no limits to ask about)'});
-    rb.innerHTML = '&#x21bb; Refresh';
-    rb.addEventListener('click', function () { qAct(t.id, node); });
-    foot.appendChild(rb);
-    var mb = el('button', {class: 'btn small', type: 'button'}, 'Models ');
-    mb.appendChild(el('span', {class: 'chip ' + (t.live === t.bench ? 'ok' : t.live ? 'warn' : 'err')}, t.live + '/' + t.bench));
-    mb.title = t.live + ' of the ' + t.bench + ' bench models on it are free to call';
-    mb.addEventListener('click', function () { qModels(t); });
-    foot.appendChild(mb);
-    node.appendChild(foot);
-    return node;
+  function qMark() {                                   // the rows of the connection docked carry the accent
+    document.querySelectorAll('#tab-quotas tr[data-tag]').forEach(function (r) { r.classList.toggle('in-hand', r.dataset.tag === qOpen); });
   }
-  function qAct(id, node) {
-    var msg = node.querySelector('.q-msg');
-    msg.className = 'q-msg muted'; msg.textContent = 'Refreshing…';
-    return post('/api/quota/refresh', {tag: id}).then(function (r) {
-      if (!r.ok) { msg.className = 'q-msg errors'; msg.textContent = r.errors.join('; '); return; }
-      var i = QD.tiles.findIndex(function (t) { return t.id === id; });
-      if (r.tile && i >= 0) {
-        QD.tiles[i] = r.tile;
-        var fresh = qTile(r.tile);
-        node.replaceWith(fresh);
-        if (r.note) { var m = fresh.querySelector('.q-msg'); m.className = 'q-msg muted'; m.textContent = r.note; }
-      }
-      drawCharts();
-    }).catch(function (e) { msg.className = 'q-msg errors'; msg.textContent = String(e); });
-  }
-  function qModels(t) {
-    $('q-models-h').textContent = t.name + ': ' + t.bench + ' on the bench';
-    $('q-models-sub').textContent = t.live + ' free to call now · the last 24 hours of calls';
-    // How it is reached, asked when the popup opens (it reads Open WebUI's connections).
+  function qModels(t, keyboard) {
+    qOpen = t.id;
+    $('q-models-h').textContent = t.name;
+    $('q-models-sub').textContent = [t.live + ' of its ' + plural(t.bench, 'model') + ' free to call now'].concat(
+      t.plan ? [t.plan + ' plan'] : [], t.conn_limit ? ['your cap: ' + t.conn_limit] : [], t.notes || []).join(' · ');
+    // How it is reached, asked as it opens (it reads Open WebUI's connections).
     var reach = $('q-models-about');
     function reachLine(after) {
       reach.textContent = '';
@@ -2817,6 +2685,7 @@
     }
     reachLine('finding how it is reached…');
     post('/api/quota/about', {tag: t.id}).then(function (r) {
+      if (qOpen !== t.id) return;
       if (!r.ok) { reachLine(r.errors.join('; ')); return; }
       reachLine(r.routes.length ? '' : 'no endpoint or Open WebUI connection by this name');
       r.routes.forEach(function (x) {
@@ -2824,163 +2693,62 @@
         d.appendChild(el('code', {}, x.url)); reach.appendChild(d);
       });
     }).catch(function (e) { reachLine(String(e)); });
-    var list = $('q-models-list'); list.textContent = '';
-    var tb = el('table'), hd = el('tr');
-    ['Model', 'Now', 'Last 24 h', 'Last answered', 'Known limit'].forEach(function (h) { hd.appendChild(el('th', {}, h)); });
-    tb.appendChild(el('thead')).appendChild(hd);
-    var body = tb.appendChild(el('tbody'));
+    // A model a row: its name and whether it is free to call, how its last day went under them.
+    var body = el('tbody');
     t.models.forEach(function (m) {
-      var tr = el('tr'), name = el('td');
-      name.appendChild(qAlias(m.alias)); tr.appendChild(name);
-      var now = el('td'); now.appendChild(el('span', {class: 'chip ' + (qResting(m) ? 'warn' : 'ok')}, qResting(m) ? 'resting · ' + qWhen(m.until) : 'ready'));
-      tr.appendChild(now);
-      var n = m.ok + m.failed, calls = el('td', {class: 'q-calls', title: m.failed + ' failed'});
-      calls.appendChild(qSegs(n ? Math.round(100 * m.ok / n) : null, 'answered'));
-      calls.appendChild(el('span', {}, n ? m.ok + ' of ' + n + ' answered' : 'no calls'));
-      tr.appendChild(calls);
-      tr.appendChild(el('td', {}, m.last_ok ? qAgo(m.last_ok) : '—'));
-      tr.appendChild(el('td', {}, m.limit || '—'));
-      body.appendChild(tr);
+      var tr = body.appendChild(el('tr')), n = m.ok + m.failed;
+      tr.appendChild(el('td')).appendChild(qAlias(m.alias));
+      tr.appendChild(el('td', {}, [n ? m.ok + ' of ' + n + ' answered in 24 h' : 'not called in 24 h'].concat(
+        m.last_ok ? ['last answered ' + qAgo(m.last_ok)] : [], m.limit ? ['limit: ' + m.limit] : []).join(' · ')));
+      tr.appendChild(el('td')).appendChild(el('span', {class: 'chip ' + (qResting(m) ? 'warn' : 'ok')},
+                                               qResting(m) ? 'resting · ' + qWhen(m.until) : 'ready'));
     });
-    list.appendChild(tb);
-    $('q-models').showModal();
+    var list = $('q-models-list'); list.textContent = '';
+    list.appendChild(el('table', {class: 'serves'})).appendChild(body);
+    $('q-refresh').title = {live: 'Asks the provider what is left (free)',
+                            check: 'Sends one 16-token request; the reply\'s headers say what is left'}[t.refresh]
+      || 'Reads the bench\'s own records again (it states no limits to ask about)';
+    $('q-models').setAttribute('open', ''); qMark();      // docked, not a popup: the tables stay live
+    if (keyboard) $('q-models-h').focus();
   }
-  function qDefault(a, b) {
-    return (b.out - a.out) || ((a.next_reset || '9999') < (b.next_reset || '9999') ? -1 : (a.next_reset || '9999') > (b.next_reset || '9999') ? 1 : 0)
-           || (a.id < b.id ? -1 : 1);
-  }
-  function qDraw() {
-    qBox.textContent = '';
-    QD.tiles.forEach(function (t) { qBox.appendChild(qTile(t)); });
-    if (!QD.tiles.length) qBox.appendChild(el('p', {class: 'muted'}, 'No model on the bench yet.'));
-  }
-  function qSaveOrder() {
-    var ids = Array.prototype.map.call(qBox.querySelectorAll('.q-tile'), function (n) { return n.dataset.id; });
-    var at = {}; ids.forEach(function (id, i) { at[id] = i; });
-    QD.tiles.sort(function (a, b) { return at[a.id] - at[b.id]; });
-    post('/api/quota/order', {order: ids}).then(function (r) {
-      $('q-done').textContent = r.ok ? 'Order kept.' : ''; $('q-errors').textContent = r.ok ? '' : r.errors.join('; ');
-    });
-  }
-  // Run each time the page arrives: its elements are new, so bound here.
-  onLoad.quotas = function () {
-    QD = JSON.parse($('quota-data').textContent); qBox = $('q-tiles');
-    qDraw();
-    $('q-models-close').addEventListener('click', function () { $('q-models').close(); });
-    var dragged = null;
-    qBox.addEventListener('dragstart', function (e) {
-      dragged = e.target.closest && e.target.closest('.q-tile');
-      if (!dragged) return;
-      dragged.classList.add('dragging');
-      e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', dragged.dataset.id);
-    });
-    qBox.addEventListener('dragover', function (e) {
-      if (!dragged) return;
-      e.preventDefault();
-      var over = e.target.closest && e.target.closest('.q-tile');
-      if (!over || over === dragged) return;
-      var r = over.getBoundingClientRect();
-      var after = e.clientX > r.left + r.width / 2;
-      over.parentNode.insertBefore(dragged, after ? over.nextSibling : over);
-    });
-    qBox.addEventListener('dragend', function () {
-      if (!dragged) return;
-      dragged.classList.remove('dragging'); dragged = null; qSaveOrder();
-    });
-    qBox.addEventListener('keydown', function (e) {
-      var t = e.target;
-      if (!t.classList || !t.classList.contains('q-tile')) return;
-      var back = e.key === 'ArrowLeft' || e.key === 'ArrowUp', fwd = e.key === 'ArrowRight' || e.key === 'ArrowDown';
-      if (!back && !fwd) return;
-      e.preventDefault();
-      var sib = back ? t.previousElementSibling : t.nextElementSibling;
-      if (!sib) return;
-      qBox.insertBefore(t, back ? sib : sib.nextSibling);
-      t.focus(); qSaveOrder();
-    });
-    $('q-reorder').addEventListener('click', function () {
-      QD.tiles.sort(qDefault); qDraw();
-      post('/api/quota/order', {order: []}).then(function (r) { $('q-done').textContent = r.ok ? 'Sorted: out first, then the soonest reset.' : ''; });
-    });
-    $('q-all').addEventListener('click', function () {
-      var live = QD.tiles.filter(function (t) { return t.refresh === 'live'; });
-      $('q-done').textContent = 'Refreshing ' + live.length + '…';
-      live.reduce(function (p, t) {
-        return p.then(function () {
-          var node = qBox.querySelector('.q-tile[data-id="' + CSS.escape(t.id) + '"]');
-          return node ? qAct(t.id, node) : null;
-        });
-      }, Promise.resolve()).then(function () { $('q-done').textContent = 'Refreshed ' + live.length + '.'; });
-    });
-    drawCharts('quotas');
-  };
-
-  // The Quota page's two charts, in the theme's colours like the Benchmarks ones.
-  function drawQuotaCharts(tok, style, width) {
-    if (!QD) return;
-    if (!window.Plot) {
-      ['chart-sent', 'chart-resets'].forEach(function (id) {
-        if ($(id)) $(id).textContent = 'Charts need Observable Plot from cdn.jsdelivr.net, which did not load.';
-      });
-      return;
-    }
-    var ink = tok('--ink', '#24331f'), good = tok('--ok', '#327a16'), warn = tok('--warn', '#7a4d00'), line = tok('--line', '#e4dfd2');
-    var sent = $('chart-sent');
-    if (sent) {
-      var R = QD.sent.slice().sort(function (a, b) { return b.month - a.month; });
-      sent.textContent = '';
-      var lg = el('div', {class: 'q-legend'});
-      [['This month, requests', 0.3], ['Last 24 hours, requests', 1]].forEach(function (k) {
-        var s = el('span'), sw = el('i'); sw.style.background = good; sw.style.opacity = k[1];
-        s.appendChild(sw); s.appendChild(document.createTextNode(k[0])); lg.appendChild(s);
-      });
-      sent.appendChild(lg);
-      sent.appendChild(R.length ? Plot.plot({
-        width: width(), height: 22 * R.length + 60, style: style, marginLeft: 120, marginRight: 90,
-        x: {label: 'Requests →', grid: true}, y: {domain: R.map(function (r) { return r.provider; }), label: null},
-        marks: [
-          Plot.barX(R, {x: 'month', y: 'provider', fill: good, fillOpacity: 0.3,
-            title: function (r) { return r.provider + '\nthis month: ' + qNum(r.month) + '\nlast 24 hours: ' + qNum(r.day); }}),
-          Plot.barX(R, {x: 'day', y: 'provider', fill: good, insetTop: 4, insetBottom: 4}),
-          Plot.text(R, {x: 'month', y: 'provider', text: function (r) { return qNum(r.day) + ' / ' + qNum(r.month); }, dx: 6, textAnchor: 'start', fill: ink}),
-          Plot.ruleX([0], {stroke: ink})
-        ]}) : el('p', {class: 'hint'}, 'No call in the ledger this month.'));
-    }
-    var res = $('chart-resets');
-    if (res) {
-      var now = Date.now(), end = now + 7 * 86400e3, dots = [], bars = [];
-      QD.tiles.forEach(function (t) {
-        var wins = [];
-        t.groups.forEach(function (g) { g.windows.forEach(function (w) { wins.push({label: (g.label ? g.label + ' · ' : '') + w.label, at: w.reset_at}); }); });
-        (t.caps || []).forEach(function (g) { g.windows.forEach(function (w) { wins.push({label: w.label + ' (' + g.label + ')', at: w.reset_at, daily: / day$/.test(w.label)}); }); });
-        t.pool.forEach(function (p) { if (p.reset_at) wins.push({label: p.label, at: p.reset_at, daily: true}); });
-        wins.forEach(function (w) {
-          var at = +new Date(w.at), daily = w.daily || / day$/.test(w.label);
-          for (; at && at <= end; at += 86400e3) {
-            if (at >= now) dots.push({tile: t.name, at: new Date(at), what: w.label});
-            if (!daily) break;
-          }
-        });
-        t.models.filter(qResting).forEach(function (m) {
-          bars.push({tile: t.name, x1: new Date(now), x2: new Date(Math.min(+new Date(m.until), end)), what: m.alias + ' resting until ' + new Date(m.until).toLocaleString()});
+  document.addEventListener('click', function (e) {
+    var row = e.target.closest('#tab-quotas tr[data-tag]');
+    if (row && QD && !e.target.closest('a')) qModels(QD.tiles.filter(function (t) { return t.id === row.dataset.tag; })[0], !e.detail);
+  });
+  on('click', 'q-models-close', function () { $('q-models').close(); });
+  on('close', 'q-models', function () {                // Escape or Close: the focus back to its row
+    var row = document.querySelector('#tab-quotas tr[data-tag="' + CSS.escape(qOpen) + '"]'), at = document.activeElement;
+    if (row && (this.contains(at) || at === document.body)) row.querySelector('button').focus();
+    qOpen = ''; qMark();
+  });
+  // Refresh, one connection's or every one that tells for free, then the page again with the
+  // connection still docked (a page holding an open record waits for it to close: load).
+  function qAct(tags) {
+    var open = qOpen, notes = [];
+    $('q-errors').textContent = ''; $('q-done').textContent = 'Refreshing…';
+    return tags.reduce(function (p, tag) {
+      return p.then(function () {
+        return post('/api/quota/refresh', {tag: tag}).then(function (r) {
+          if (r.ok) notes.push(r.note || '');
+          else $('q-errors').textContent += tag + ': ' + r.errors.join('; ') + ' ';
         });
       });
-      var names = QD.tiles.map(function (t) { return t.name; }).filter(function (n) {
-        return dots.some(function (d) { return d.tile === n; }) || bars.some(function (b) { return b.tile === n; });
-      });
-      res.textContent = '';
-      res.appendChild(names.length ? Plot.plot({
-        width: width(), height: 26 * names.length + 60, style: style, marginLeft: 120,
-        x: {domain: [new Date(now), new Date(end)], label: null, grid: true}, y: {domain: names, label: null},
-        marks: [
-          Plot.barX(bars, {x1: 'x1', x2: 'x2', y: 'tile', fill: warn, fillOpacity: 0.35, insetTop: 6, insetBottom: 6, title: 'what'}),
-          Plot.dot(dots, {x: 'at', y: 'tile', r: 4, fill: good, stroke: ink, strokeWidth: 0.5,
-            title: function (d) { return d.what + ' resets ' + d.at.toLocaleString(); }}),
-          Plot.ruleX([new Date(now)], {stroke: tok('--err', '#a12b2b'), strokeWidth: 1.5}),
-          Plot.ruleY(names, {stroke: line, strokeOpacity: 0.5})
-        ]}) : el('p', {class: 'hint'}, 'No reset or rest known for the next 7 days.'));
-    }
+    }, Promise.resolve()).then(function () {
+      if ($('q-models').open) $('q-models').close();
+      return refreshPanes(['quotas']);
+    }).then(function () {
+      $('q-done').textContent = 'Refreshed ' + notes.length + ' of ' + tags.length + '.' + (tags.length === 1 && notes[0] ? ' ' + notes[0] : '');
+      var t = open && QD.tiles.filter(function (x) { return x.id === open; })[0];
+      if (t) qModels(t);
+    }).catch(function (e) { $('q-errors').textContent = String(e); });
   }
+  on('click', 'q-refresh', function () { if (qOpen) qAct([qOpen]); });
+  on('click', 'q-all', function () {                   // in the bar: there before the page's data
+    load('quotas').then(function () {
+      qAct(QD.tiles.filter(function (t) { return t.refresh === 'live'; }).map(function (t) { return t.id; }));
+    });
+  });
+  onLoad.quotas = function () { QD = JSON.parse($('quota-data').textContent); };
 
   // ---- Benchmarks charts: Observable Plot, data from serve.charts_data ------
   // d3 and Observable Plot (pinned, from jsDelivr) are asked the first time a page
@@ -3041,11 +2809,10 @@
     });
   }
   // A function, not run once: a theme switched on Settings redraws them in its
-  // colours. `part` ('suite' or 'quotas'): only that page's, as it arrives.
+  // colours. `part` ('suite', 'uptime' or 'trend'): only that part, as it arrives.
   function drawCharts(part) {
-    if (!$('charts-data') && !QD) return;          // no page with charts yet: nothing to ask for
-    if (needPlot()) return;
     var holder = $('charts-data');
+    if (!holder || needPlot()) return;             // no page with charts yet: nothing to ask for
     var css = getComputedStyle(document.documentElement);
     function tok(name, fallback) { return (css.getPropertyValue(name) || '').trim() || fallback; }
     // `good` is the theme's OK colour, not its brand: in a theme whose brand is
@@ -3067,8 +2834,6 @@
       var col = document.querySelector('.tab.active') || document.querySelector('main');
       return Math.max(520, (col.clientWidth || 900) - 50);
     }
-    if (part !== 'suite' && part !== 'uptime' && part !== 'trend') drawQuotaCharts(tok, style, width);
-    if (!holder || part === 'quotas') return;
     var C = JSON.parse(holder.textContent);
     function put(id, make) {
       var box = $(id), report = box && box.closest('.report');

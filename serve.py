@@ -2344,79 +2344,108 @@ def open_count(groups: dict) -> int:
     return sum(len(g["rows"]) + len(g["held"]) for g in groups.values())
 
 
+FOLD_AT = 8                    # Action needed: a group's items past this many fold away
+
+
 def actions_page(groups: dict, auto: list) -> str:
     """Action needed, its own page since 2026-11-02: it sat above every page
-    and grew to a screen and more of red. Grouped by connection, because
-    one cause usually reaches every model on it (nine models on one free
-    tier's rate limit); each model one line, its error in the provider's own
-    words, with Retry a click away."""
+    and grew to a screen and more of red. Grouped by what to do (open_actions
+    has it by connection): a connection whose every model fails, which is its
+    key, credit or prefix, with its models under it; a key to sign in again;
+    models to retire or retry; models to retry; notices. Each item its name,
+    its state, its actions at the right and its reason, in the provider's own
+    words, under them; each counted in the rail (open_count). The week's
+    automatic retirements are folded, each with Restore."""
     def link(url: str) -> str:
         if not url:
             return ""
         shown = re.sub(r"^https?://", "", url).split("?")[0]
         return " " + ext_link(url, shown + " ↗")
 
-    def why(text: str, url: str, title: str) -> str:
-        return (f"<td class='why' title='{esc(title)}'><div class='said-line'><span class='said'>{esc(text)}</span>"
-                f"{link(url)}</div></td>")
+    def item(what: str, acts: str, why: str, title: str = "", more: str = "", counted: bool = True) -> str:
+        return (f"<li data-row{' data-item' * counted}><span class='what'>{what}</span><span class='acts'>{acts}</span>"
+                f"<p class='why'" + (f" title='{esc(title)}'" if title else "") + f">{why}</p>{more}</li>")
 
-    def model_row(r: dict) -> str:
+    def name(alias: str) -> str:
+        return f"<a href='#' class='model' data-alias='{esc(alias)}'><span class='alias'>{breakable(esc(alias))}</span></a>"
+
+    def model(r: dict) -> str:
         if not r["alias"]:                             # a notice: what it says, and Got it if it goes once seen
-            got = (f"<button class='linkish' data-act='dismiss' data-key='{esc(r['key'])}'>Got it</button>"
-                   if r.get("dismiss") else "")
-            return (f"<tr data-row><td class='what'>{esc(r['said'])}</td><td>{chip(r['label'], r['css'])}</td>"
-                    f"<td class='why'>{esc(r['title'])}</td><td class='acts'>{got}</td></tr>")
+            return item(f"{esc(r['said'])} {chip(r['label'], r['css'])}",
+                        f"<button class='linkish' data-act='dismiss' data-key='{esc(r['key'])}'>Got it</button>"
+                        if r.get("dismiss") else "", esc(r["title"]))
         alias = esc(r["alias"])
-        return (f"<tr data-row><td><a href='#' class='model' data-alias='{alias}'><span class='alias'>{breakable(alias)}"
-                f"</span></a></td><td data-sort='{r['days']:03d}{esc(r['label'])}'>{chip(r['label'], r['css'])}</td>"
-                + why(r["said"], r["url"], r["title"])
-                + f"<td class='acts'><button class='linkish' data-act='retry' data-alias='{alias}'"
-                " title='One call now; an answer clears the alert'>Retry</button>"
-                f"<button class='linkish danger' data-act='retire' data-alias='{alias}'"
-                f" data-why='{esc(r['why'] or r['label'])}'>Retire</button></td></tr>")
+        signin = (f"<a href='/endpoints' data-go='endpoints'>Sign in again</a>"
+                  if r["label"] == STATUS["signin"][0] else "")
+        return item(f"{name(r['alias'])} {chip(r['label'], r['css'])}",
+                    signin + f"<button class='linkish' data-act='retry' data-alias='{alias}'"
+                    " title='One call now; an answer clears the alert'>Retry</button>"
+                    + ("" if signin else f"<button class='linkish danger' data-act='retire' data-alias='{alias}'"
+                                         f" data-why='{esc(r['why'] or r['label'])}'>Retire</button>"),
+                    esc(r["said"]) + link(r["url"]), r["title"])
 
-    # One column plan for every table, as on Models, so they line up down the page.
-    cols = "<colgroup><col class='c-model'><col class='c-state'><col><col class='c-acts'></colgroup>"
-
-    def table(first: str, second: str, rows: str) -> str:
-        return (f"<table class='a-table'>{cols}<thead><tr>{th(first)}{th(second)}{th('Reason')}<th></th></tr></thead>"
-                f"<tbody>{rows}</tbody></table>")
-
-    def section(conn: str, g: dict) -> str:
-        aliases = [r["alias"] for r in g["rows"] if r["alias"]]
-        both = (f"<button class='btn small' data-act='retry' data-aliases='{esc(' '.join(aliases))}'"
+    def both(aliases: list, why: str, retire: bool = True) -> str:
+        """Retry all and Retire all, over two or more models."""
+        if len(aliases) < 2:
+            return ""
+        return (f"<button class='btn small' data-act='retry' data-aliases='{esc(' '.join(aliases))}'"
                 f" title='One call each'>Retry all {len(aliases)}</button>"
-                f"<button class='btn small danger' data-act='retire' data-aliases='{esc(' '.join(aliases))}'"
-                f" data-why='every model on {esc(conn)} needed action'>Retire all {len(aliases)}</button>"
-                if len(aliases) > 1 else "")
-        held = "".join(
-            f"<div class='a-held' title='{esc(h['title'])}'><span class='chip'>held</span><span>Every model"
-            f" here is failing, likely the connection (key, credit, prefix), so nothing was retired."
-            f" Latest: {esc(h['said'])}{link(h['url'])}</span></div>" for h in g["held"])
-        n, notices = len(g["rows"]), conn == "Notices"
-        return (f"<div class='panel'><div class='a-head' data-row><h3 class='chart-head'>{esc(conn)} · {n}"
-                f" {'notice' if notices else 'model'}{'s' * (n != 1)}</h3><span class='why'></span>"
-                f"<span class='acts'>{both}</span></div>{held}"
-                + table("Notice" if notices else "Model", "Kind" if notices else "State",
-                        "".join(model_row(r) for r in g["rows"])) + "</div>")
+                + (f"<button class='btn small danger' data-act='retire' data-aliases='{esc(' '.join(aliases))}'"
+                   f" data-why='{esc(why)}'>Retire all {len(aliases)}</button>" if retire else ""))
 
+    def group(title: str, sub: str, items: list, acts: str = "") -> str:
+        rest = items[FOLD_AT:]
+        return (f"<section class='panel'><header data-row><h2>{title} · {len(items)}</h2><span class='why'></span>"
+                f"<span class='acts'>{acts}</span></header><p class='sub'>{sub}</p>"
+                f"<ul class='items'>{''.join(items[:FOLD_AT])}</ul>"
+                + (f"<details class='more'><summary>{len(rest)} more</summary><ul class='items'>{''.join(rest)}</ul>"
+                   "</details>" if rest else "") + "</section>")
+
+    todo: dict[str, list] = {"held": [], "signin": [], "retire": [], "retry": [], "notices": []}
+    for conn, g in groups.items():
+        if g["held"]:                                  # one cause for every model on it: the connection, its models under it
+            aliases = [r["alias"] for r in g["rows"] if r["alias"]]
+            models = (f"<details class='more'><summary>Its {len(g['rows'])} model{'s' * (len(g['rows']) != 1)}"
+                      f"</summary><ul class='items'>{''.join(model(r) for r in g['rows'])}</ul></details>")
+            todo["held"] += [item(f"<b>{esc(conn)}</b> {chip('held', '')}", both(aliases, f"every model on {conn} needed action"),
+                                  f"Latest: {esc(h['said'])}{link(h['url'])}", h["title"], models if i == 0 else "")
+                             for i, h in enumerate(g["held"])]
+            continue
+        for r in g["rows"]:
+            kind = ("notices" if not r["alias"] else "signin" if r["label"] == STATUS["signin"][0]
+                    else "retire" if r["label"].startswith("retiring") or r["css"] == "err" else "retry")
+            todo[kind].append((r, model(r)))
+    every = {k: [r["alias"] for r, _ in v] for k, v in todo.items() if k != "held"}
+    body = "".join(g for g in (
+        todo["held"] and group("Check the connection", "Every model on it is failing, so the cause is likely its key,"
+                               " credit or model prefix, and nothing was retired. Retry spends one call a model.",
+                               todo["held"]),
+        todo["signin"] and group("Sign in again", "The provider refused the key: it expired or was revoked. Sign in"
+                                 " again on Endpoints, then Retry.", [h for _, h in todo["signin"]],
+                                 both(every["signin"], "", False)),
+        todo["retire"] and group("Retire, or retry", "Gone from the provider, no longer free, or failing for days:"
+                                 " retire it, or Retry once (one call), as an answer clears it.",
+                                 [h for _, h in todo["retire"]], both(every["retire"], "it needed action")),
+        todo["retry"] and group("Retry", "Failing for now, often a limit or a timeout. Retry spends one call; an"
+                                " answer clears it.", [h for _, h in todo["retry"]],
+                                both(every["retry"], "it needed action")),
+        todo["notices"] and group("Notices", "What a daily check found that is not one model's.",
+                                  [h for _, h in todo["notices"]])) if g)
     tags = load_json(DATA / "config" / "provider-tags.json")      # a retired model's connection, by served name
-    gone = "".join(
-        f"<tr data-row><td><a href='#' class='model' data-alias='{esc(alias)}'>"
-        f"<span class='alias'>{breakable(esc(alias))}</span></a></td><td class='when'>{esc(r['at'][:10])}</td>"
-        + why(f"{tags.get(r.get('served', ''), '').strip('?') or r.get('endpoint') or endpoints.default()}"
-              f" · {said(r.get('why', '').removeprefix('auto: '))[0]}", "", r.get("why", ""))
-        + f"<td class='acts'><button class='linkish' data-act='restore' data-alias='{esc(alias)}'>Restore</button></td></tr>"
-        for alias, r in auto)
+    gone = "".join(item(f"{name(alias)} <span class='muted'>{esc(r['at'][:10])}</span>",
+                        f"<button class='linkish' data-act='restore' data-alias='{esc(alias)}'>Restore</button>",
+                        esc(f"{tags.get(r.get('served', ''), '').strip('?') or r.get('endpoint') or endpoints.default()}"
+                            f" · {said(r.get('why', '').removeprefix('auto: '))[0]}"), r.get("why", ""), counted=False)
+                   for alias, r in auto)
     # Folded: a week of automatic retirements is a record to check, not a list of things to do.
-    folded = (f"<div class='panel'><details class='a-retired'><summary><h3 class='chart-head'>Retired automatically"
-              f" this week · {len(auto)}</h3> <span class='muted'>each can be restored</span></summary>"
-              f"{table('Model', 'Retired', gone)}</details></div>" if auto else "")
-    body = "".join(section(conn, g) for conn, g in groups.items())
-    return ("<div class='panel'><h2>Action needed</h2><p class='sub'>States that will not fix themselves, by the"
-            " connection they come from. A reason's full error is on hover, and a name opens the model."
-            " Retry spends one call; an answer clears the alert.</p>"
-            + ("" if body else "<p class='a-none'>Nothing open.</p>") + f"</div>{body}{folded}")
+    folded = (f"<section class='panel'><details class='more'><summary><h2>Retired automatically this week ·"
+              f" {len(auto)}</h2></summary><p class='sub'>Each can be restored.</p><ul class='items'>{gone}</ul>"
+              "</details></section>" if auto else "")
+    return ("<p class='sub'>What will not fix itself, by what to do about it. A name opens the model; a reason's"
+            " whole error is on hover.</p><div class='cols flow'>"
+            + (body or "<section class='panel'><h2>Nothing needs doing</h2><p class='sub'>No model is failing in a"
+                       " way that will not fix itself, and no notice is waiting.</p></section>")
+            + folded + "</div>")
 
 
 CAP_LABELS = {"tools": "tools", "vision": "vision", "structured_output": "json", "reasoning": "reasons"}
@@ -4130,7 +4159,7 @@ def discover_card() -> str:
         what the provider serves that neither catalog has yet. All are fetched daily;
         <em>Refresh lists</em> fetches them now.</dd>
     </dl>"""
-    return (f"<div class='discover'>{rail}<div class='d-list'><table id='d-table'><thead><tr>{heads}<th class='opt'></th></tr>"
+    return (f"<div class='discover'>{rail}<div class='list'><table id='d-table'><thead><tr>{heads}<th class='opt'></th></tr>"
             "</thead><tbody></tbody></table>"
             "<button class='btn small' type='button' id='d-more' hidden>Show more</button></div></div>"
             f"<script type='application/json' id='d-data'>{_DISCOVER['data']}</script>"
@@ -4372,6 +4401,15 @@ BAR_TOOLS = {
                   " aria-label='Find an endpoint or a model it serves'><span class='spring'></span>"
                   "<span class='done' id='el-done' role='status'></span><span class='errors' id='el-errors' role='alert'></span>"
                   "<button class='btn primary' type='button' id='e-add'>Add an endpoint</button>"),
+    "quotas": ("<span class='spring'></span><span class='done' id='q-done' role='status'></span>"
+               "<span class='errors' id='q-errors' role='alert'></span><button class='btn' type='button' id='q-all'"
+               " title='Asks each connection that tells for free what is left'>Refresh all live</button>"),
+    # Collapse all while every connection is open, else Expand all (bench.js foldButtons).
+    "models": ("<input type='search' data-filter='page' placeholder='Find a model or connection'"
+               " aria-label='Find a model or connection'><span class='spring'></span>"
+               "<button class='fold-all' type='button' data-fold-all='close' aria-expanded='true'>"
+               "<span class='fold-chev' aria-hidden='true'></span>Collapse all</button>"
+               "<button class='btn primary' type='button' id='models-onboard'>Onboard a model</button>"),
     "collections":("<span class='spring'></span><span class='done' id='c-status' role='status'></span>"
                     "<button class='btn primary' type='button' id='c-new'>New collection</button>"),
     "logs": ("<input type='search' data-filter='page' placeholder='Filter every log' aria-label='Filter every log'>"
@@ -4384,7 +4422,8 @@ BAR_TOOLS = {
 }
 # The pages with their own facts (aside.facts), and the bar's button that opens them under 1280px.
 FACTS_OPEN = {"suite": "On this page", "collections": "Gateway settings", "endpoints": "All endpoints",
-              "discover": "About the catalog", "settings": "On this page"}
+              "models": "All models", "clients": "This install", "discover": "About the catalog",
+              "settings": "On this page"}
 
 
 def collections_and_gateway() -> str:
@@ -4636,9 +4675,13 @@ def client_setups(root: str, cols: list, keys: bool) -> list[dict]:
 
 
 def clients_page() -> str:
-    """Clients: a panel per app (client_setups), from this install's address,
-    collections and whether keys are asked for. A key made here is shown once
-    and goes only into this page's blocks marked data-key (bench.js)."""
+    """Clients: the apps down the left, the one chosen beside them (bench.js
+    pick), the first on arrival: what it gets, its base URL, model and key, where
+    its set-up goes and the snippets (client_setups) from this install's address,
+    collections and whether keys are asked for, each with Copy. In the panel
+    beside the page, what holds for every app, and the gateway key: one made
+    there is shown once and goes only into this page's blocks marked data-key
+    (bench.js)."""
     root = gateway_url().removesuffix("/v1")
     offered = sorted((n, c) for n, c in bench_collections.load().items() if not c.get("ad_hoc"))
     offered.sort(key=lambda nc: nc[0] != "core")                   # core first, where there is one
@@ -4647,42 +4690,58 @@ def clients_page() -> str:
         together = bench_collections.described(n, c).get("together") or {}
         cols.append((n, together.get("context_window"), "vision" in (together.get("capabilities") or [])))
     keys = guard.keys_required()
-    head = ("<div class='panel form-panel'><h2>Clients</h2><p class='sub'>A ready set-up for each app, filled in from"
-            " this install: copy it into the file or screen named. Agents get a collection in route mode (one"
-            " member with its tools, <code>bench/&lt;collection&gt;:route</code>); chat windows a merged answer"
-            " (<code>:merged</code>); the MCP server the panel itself, as ask and verdict tools.</p>"
-            f"<p class='where'>Gateway <code>{esc(root)}/v1</code> · MCP server <code>{esc(root)}/mcp</code><br>"
-            f"Collections: {esc(', '.join(n for n, _ in offered)) or 'none yet'}"
-            "<span class='muted'> (ad hoc ones are left out: name one yourself to use it)</span></p>")
-    if not cols:
-        return head + ("<p>No collection yet: make one on <button class='btn' type='button' data-go='collections'>"
-                       "Collections</button>, and the set-ups appear here.</p></div>")
+
+    def rows(pairs) -> str:
+        return "<dl class='rows'>" + "".join(f"<dt>{k}</dt><dd>{v}</dd>" for k, v in pairs) + "</dl>"
     if keys:
-        head += ("<h3 class='form-head'>Gateway key</h3><p class='rules'>Every call needs one. Make one for these"
-                 f" apps and it fills in every <code>{esc(KEY_HOLDER)}</code> below that is not in a file, on this"
-                 " page only: it is shown this once and kept as a hash. Or use one you have.</p>"
-                 "<label class='field' for='cl-name'>Name for a new key</label>"
-                 "<input id='cl-name' placeholder='e.g. opencode' autocomplete='off'>"
-                 "<div class='errors' id='cl-errors' role='alert'></div>"
-                 "<div class='done' id='cl-done' hidden>Made: copy what you need now, as it is gone when this page"
-                 " reloads. Settings lists it.</div>"
-                 "<div class='actions'><button class='btn primary' type='button' id='cl-make'>Make a key</button></div>"
-                 f"<p class='rules'>Most snippets read it from <code>{KEY_ENV}</code>:</p>"
-                 + "".join(_snip_html("key", i, s) for i, s in enumerate(_env_snips(KEY_ENV))))
+        key = ("<h3>Gateway key</h3><div class='form-panel'><p class='rules'>Every call needs one. Make one for these"
+               f" apps and it fills in every <code>{esc(KEY_HOLDER)}</code> on this page that is not in a file: it"
+               " is shown this once and kept as a hash. Or use one you have.</p>"
+               "<label class='field' for='cl-name'>Name for a new key</label>"
+               "<input id='cl-name' placeholder='e.g. opencode' autocomplete='off'>"
+               "<div class='errors' id='cl-errors' role='alert'></div>"
+               "<div class='done' id='cl-done' hidden>Made: copy what you need now, as it is gone when this page"
+               " reloads. Settings lists it.</div>"
+               "<div class='actions'><button class='btn primary' type='button' id='cl-make'>Make a key</button></div>"
+               f"<p class='rules'>Most snippets read it from <code>{KEY_ENV}</code>:</p>"
+               + "".join(_snip_html("key", i, s) for i, s in enumerate(_env_snips(KEY_ENV))) + "</div>")
     else:
-        head += ("<p class='rules'>Keys are not asked for on this machine, so the snippets carry none where an"
-                 f" app allows it; where one wants a key, any text works in place of <code>{esc(KEY_HOLDER)}</code>."
-                 " Set <code>BENCHWARMERS_REQUIRE_KEYS=1</code> (or an admin token) and this page offers to make"
-                 " one.</p>")
-    panels = "".join(
-        f"<div class='panel client' id='client-{c['id']}'><h2>{esc(c['name'])}</h2>"
-        f"<p class='sub'>{c['gets']}</p><p class='where'>{c['where']}</p>"
+        key = ("<p>Keys are not asked for on this machine, so the snippets carry none where an app allows it;"
+               f" where one wants a key, any text works in place of <code>{esc(KEY_HOLDER)}</code>. Turn them on"
+               " (<a href='/settings' data-go='settings'>Settings</a>, Gateway keys) and this panel offers to make"
+               " one.</p>")
+    aside = ("<aside class='facts' id='facts-clients' aria-labelledby='facts-clients-h'>"
+             "<div class='bar'><h2 id='facts-clients-h'>This install</h2>"
+             "<button type='button' class='linkish facts-close'>Close</button></div><div class='facts-body'>"
+             + rows((("Gateway", f"<span class='mono'>{esc(root)}/v1</span>"),
+                     ("MCP server", f"<span class='mono'>{esc(root)}/mcp</span>"),
+                     ("Collections", (esc(", ".join(n for n, _ in offered)) or "none yet")
+                      + "<br><span class='muted'>ad hoc ones are left out: name one yourself to use it</span>"),
+                     ("Keys", "asked for on every call" if keys else "not asked for here")))
+             + "<p>Agents get a collection in route mode (one member with its tools,"
+             " <code>bench/&lt;collection&gt;:route</code>); chat windows a merged answer (<code>:merged</code>);"
+             " the MCP server the panel itself, as ask and verdict tools.</p>" + key + "</div></aside>")
+    if not cols:
+        return ("<div class='panel'><p>No collection yet: make one on <button class='btn' type='button'"
+                " data-go='collections'>Collections</button>, and the set-ups appear here.</p></div>" + aside)
+    apps = client_setups(root, cols, keys)
+    nav = "".join(f"<li><button type='button' aria-controls='client-{c['id']}' aria-pressed='{str(not i).lower()}'>"
+                  f"{esc(c['name'])}</button></li>" for i, c in enumerate(apps))
+    views = "".join(
+        f"<section class='client' id='client-{c['id']}' aria-labelledby='client-{c['id']}-h'{' hidden' * bool(i)}>"
+        f"<h2 id='client-{c['id']}-h'>{esc(c['name'])}</h2><p class='sub'>{c['gets']}</p><div>"
+        + rows((("Base URL", f"<span class='mono'>{esc(root)}/v1</span>"),
+                ("Model", f"<span class='mono'>bench/{esc(cols[0][0])}:{'merged' if c['id'] == 'chat' else 'route'}</span>"
+                          + (", or another collection" if len(cols) > 1 else "")),
+                ("Key", "a gateway key: make one in This install" if keys else "none needed here")))
+        + f"<p class='where'>{c['where']}</p>"
         + "".join(_snip_html(c["id"], i, s) for i, s in enumerate(c["blocks"]))
         + f"<p class='watch'><b>Watch for:</b> {c['watch']}</p>"
         + "<p class='rules'>Written from " + ", ".join(ext_link(u, t) for u, t in c["docs"])
-        + f", read {CLIENTS_READ}" + (f": {c['docs_note']}" if c.get("docs_note") else ".") + "</p></div>"
-        for c in client_setups(root, cols, keys))
-    return head + "</div>" + panels
+        + f", read {CLIENTS_READ}" + (f": {c['docs_note']}" if c.get("docs_note") else ".") + "</p></div></section>"
+        for i, c in enumerate(apps))
+    return ("<p class='sub'>A ready set-up for each app, filled in from this install: copy it into the file or"
+            f" screen named.</p><div class='split'><nav aria-label='Apps'><ul>{nav}</ul></nav>{views}</div>{aside}")
 
 
 def _snip_html(group: str, i: int, s: dict) -> str:
@@ -4699,9 +4758,9 @@ def pane(key: str, actions: tuple | None = None) -> str:
     if key == "needs":
         groups, auto = actions or open_actions()
         return actions_page(groups, auto)
-    if key == "suite":                         # a second of work, the home page: kept between requests
-        return kept("suite", benchmarks_tab)
-    return globals()[next(fn for k, _, fn in TABS if k == key)]()
+    make = globals()[next(fn for k, _, fn in TABS if k == key)]
+    # Kept between requests: Benchmarks, a second of work and the home page; Quota, a month of the ledger read.
+    return kept(key, make) if key in ("suite", "quotas") else make()
 
 
 def href(key: str) -> str:
@@ -5390,7 +5449,8 @@ def endpoints_page() -> str:
              ("Models through them", sum(len(m) for m in on.values())),
              ("Last listed", f"{esc(checked)}, by the daily served check" if checked else "not yet"))
     return (
-        "<div class='panel'><p class='sub'>Where models are served from, a base URL and a key: prompts go"
+        # The list and the rate limits: one under the other, side by side on a wide screen (bench.css).
+        "<div class='cols'><div class='panel'><p class='sub'>Where models are served from, a base URL and a key: prompts go"
         " straight there, so add only endpoints you would send private source to.</p>"
         # Model servers running here, not endpoints yet: bench.js asks /api/connect/local on show.
         "<div class='found' id='e-found' hidden><h2>Found on this machine</h2><div id='e-found-list'></div></div>"
@@ -5400,8 +5460,7 @@ def endpoints_page() -> str:
            + f"</tr></thead><tbody>{''.join(table)}</tbody></table></div>" if eps else
            "<p class='empty'>No endpoint yet. <b>Add an endpoint</b> pastes a key for any OpenAI-compatible API,"
            " or signs in to a provider on its own page.</p>")
-        + "</div>" + "".join(docks) +
-        "<div class='panel'><h2>Rate limits per connection</h2>"
+        + "</div><div class='panel'><h2>Rate limits per connection</h2>"
         "<p class='sub'>What a key behind each connection allows; the models on that connection share it.</p>"
         "<details class='key'><summary>How these limits work</summary>"
         "<p>From the provider's docs or freellmapi.co/models. A model's own limits (its panel) win, and limits the"
@@ -5415,7 +5474,7 @@ def endpoints_page() -> str:
         " A learned limit not met again for 14 days is forgotten, so a raised limit is found; Forget drops"
         " one now.</p></details>"
         "<div class='scroll' id='l-list'></div><div class='errors' id='l-errors' role='alert'></div>"
-        "<div class='done' id='l-done'></div></div>"
+        "<div class='done' id='l-done'></div></div></div>" + "".join(docks) +
         # What applies to every endpoint, beside the list (bench.css aside.facts).
         "<aside class='facts' id='facts-endpoints' aria-labelledby='facts-endpoints-h'>"
         "<div class='bar'><h2 id='facts-endpoints-h'>All endpoints</h2>"
@@ -5433,10 +5492,10 @@ def endpoints_page() -> str:
         "<div class='done' id='cn-app-done'></div></div></div></aside>")
 
 
-def _reply_cell(by_prompt: dict) -> str:
+def _reply(by_prompt: dict) -> tuple | None:
     """Models' Reply: the daily probe's median seconds to a one-word answer (tiny),
-    with the 18 KB prompt's (large) and tokens a second on hover. Was on Benchmarks'
-    Performance, beside whether it answered, which is Uptime's now."""
+    with the 18 KB prompt's (large) and tokens a second on hover, as a cell
+    (text, sort, title); None when it never answered."""
     def p50(r):
         try:
             return float(r["p50_s"]) if r and int(r.get("answered") or 0) > 0 else None
@@ -5444,20 +5503,74 @@ def _reply_cell(by_prompt: dict) -> str:
             return None
     tiny, large = p50(by_prompt.get("tiny")), p50(by_prompt.get("large"))
     if tiny is None and large is None:
-        return "<td class='num muted' data-sort='999999'>—</td>"
+        return None
     shown = tiny if tiny is not None else large
     why = "; ".join(b for b in (
         f"one-word prompt {tiny:.1f}s" if tiny is not None else "",
         f"18 KB prompt {large:.1f}s" if large is not None else "",
         f"{(by_prompt.get('large') or {}).get('tokens_per_s')} tok/s"
         if (by_prompt.get("large") or {}).get("tokens_per_s") else "") if b)
-    return (f"<td class='num' data-sort='{shown:.2f}' title='median, the daily probe: {esc(why)}'>"
-            f"{shown:.1f}s</td>")
+    return f"{shown:.1f}s", f"{shown:.2f}", f"median, the daily probe: {why}"
+
+
+# ---- a table whose columns are (key, heading, class, what it means), its cells
+# (text, sort[, title]) or None where nothing is known (Models, Quota) ------------
+def _cell(css: str, v) -> str:
+    """A cell, or a quiet dash where nothing is known, below every figure in a sort."""
+    if not v:
+        return f"<td class='{css} muted'" + (" data-sort='-1'" if "num" in css else "") + ">—</td>"
+    text, sort, *title = v
+    return (f"<td class='{css}'" + (f" data-sort='{esc(sort)}'" if sort is not None else "")
+            + (f" title='{esc(title[0])}'" if title else "") + f">{text}</td>")
+
+
+def _known(cols: tuple, rows: list) -> list:
+    """The columns something is known in, in some row; the first always."""
+    return [c for i, c in enumerate(cols) if not i or any(r.get(c[0]) for r in rows)]
+
+
+def _head(cols) -> str:
+    """The sortable headings, each with what it means in its title."""
+    return "".join(f"<th data-sortable tabindex='0'" + (f" class='{css}'" if css else "")
+                   + (f" title='{esc(why)}'" if why else "") + f">{esc(label)}</th>" for _, label, css, why in cols)
+
+
+def _at(iso) -> tuple | None:
+    """A moment as a cell (text, sort, title): local time on one line, a weekday
+    and the time within six days of now, else the date and time."""
+    try:
+        when = datetime.datetime.fromisoformat(str(iso).replace("Z", "+00:00")).astimezone()
+    except ValueError:
+        return None
+    near = abs(when.timestamp() - time.time()) < 6 * 86400
+    return when.strftime("%a %H:%M" if near else "%Y-%m-%d %H:%M"), int(when.timestamp()), when.strftime("%Y-%m-%d %H:%M")
+
+
+# Models' columns (models_page): key, heading, class, what it means (the heading's
+# title and the panel's key). As on Discover, an `opt` column leaves a narrow list
+# and a `wide` one joins a wide one (bench.css .list); a column with nothing known
+# in any row is left out.
+MODEL_COLS = (
+    ("model", "Model", "", ""),
+    ("state", "State", "", "What its last probe found: healthy, throttled, not found and the like; hover one for why"),
+    ("through", "Through", "", "The endpoint of this install it is reached through"),
+    ("context", "Context", "num", "Context window, in tokens"),
+    ("output", "Max output", "num", "The longest answer, in tokens"),
+    ("input", "Input", "opt", "What it takes in"),
+    ("reply", "Reply", "num", "The daily probe's median seconds to a one-word answer; hover one for the 18 KB prompt's"),
+    ("role", "Role", "wide", "What the bench picks it for"),
+    ("can", "Can", "wide", "Calls tools, reads images, keeps to a JSON schema, reasons before answering"),
+    ("price", "Price", "num wide", "List price, dollars per million tokens in / out; a free tier may still apply"),
+    ("answered", "Last answered", "wide when", "The day the daily probe last had an answer from it"),
+    *((k, k, "num opt", catalog.LIMIT_LABELS[k].capitalize()) for k in catalog.LIMIT_KEYS))
 
 
 def models_page() -> str:
-    """Every model on the bench by the connection it comes from."""
-    cards = []
+    """Every model on the bench in one table, a group of rows per connection it
+    comes from, each folding under its heading (bench.js fold): its state, the
+    endpoint it is reached through and what is known of its size, speed, price
+    and limits, more columns as the pane widens. A name opens the model docked
+    beside the list; with none open, the panel holds the counts and the key."""
     # Which of this install's endpoints each model is reached THROUGH, beside
     # the connection (provider) it comes FROM: an OpenRouter model may be on
     # OpenRouter's own endpoint or arrive through Open WebUI's.
@@ -5466,59 +5579,85 @@ def models_page() -> str:
     through.update({a: d["endpoint"] for a, d in decisions.items()})
     # Every model, decision models too (connections_view is chat models only,
     # for what a collection may hold): they are on the bench like any other.
-    by: dict[str, list[str]] = {}
-    directory = model_directory()
-    # The daily probe's latest reading per model and prompt (perf/history.csv), for Reply.
+    directory, status = model_directory(), model_status()
+    if not directory:
+        return ("<div class='panel'><h2>No model on the bench yet</h2><p class='sub'><b>Onboard a model</b> picks"
+                " one your endpoints serve, probes it and runs the suite.</p></div>")
+    # The daily probe's latest reading per model and prompt (perf/history.csv), and its last answer.
     speed: dict[str, dict] = {}
+    answered: dict[str, str] = {}
     for r in perf_rows():
         speed.setdefault(r["model"], {})[r.get("prompt", "")] = r
-    for a in directory:
+        if int(r.get("answered") or 0) > 0:
+            answered[r["model"]] = max(answered.get(r["model"], ""), r.get("timestamp", ""))
+
+    def num(v):
+        return (f"{v:,}", v) if isinstance(v, int) else None
+    # Each model's cells, (text, sort[, title]) by column, None where nothing is known.
+    cells: dict[str, dict] = {}
+    for a, d in directory.items():
+        f = catalog.info(a)
+        lim, cost = f.get("limits") or {}, f.get("cost") or {}
+        label, css, why = status.get(a, ("", "", ""))
+        free, ep = price_of(a, d["served"], f), through.get(a, "?")
+        can = ", ".join(v for k, v in CAP_LABELS.items() if f.get(k))
+        cells[a] = {"state": (chip(label, css, why), label) if label else None,
+                    "through": (chip(ep, "via", f"reached through the {ep} endpoint"), ep),
+                    "context": num(f.get("context_window")), "output": num(f.get("max_output")),
+                    "input": (esc(", ".join(f["input_modalities"])), None) if f.get("input_modalities") else None,
+                    "reply": _reply(speed.get(a, {})), "role": (esc(d["role"]), d["role"]),
+                    "can": (can, can) if can else None,
+                    "price": ("free", 0) if free == "free" else
+                    (f"{cost['input']:g} / {cost['output']:g}", cost["input"])
+                    if all(isinstance(cost.get(k), (int, float)) for k in ("input", "output")) else
+                    ("paid", 1e9) if free == "paid" else None,
+                    "answered": (answered[a][:10], answered[a]) if a in answered else None,
+                    **{k: num(lim.get(k)) for k in catalog.LIMIT_KEYS}}
+    cols = _known(MODEL_COLS, list(cells.values()))
+
+    def row(a: str) -> str:
+        kind = (" " + chip("decision", "", "a decision model: answers typed questions, not chat")
+                if a in decisions else "")
+        if directory[a].get("ad_hoc"):
+            kind += " " + chip("ad hoc", "adhoc", "ad hoc only: never chosen by the bench on its own, only when you"
+                               " name it (a collection member, with, --model)")
+        return (f"<tr><td><a href='#' class='model' data-alias='{esc(a)}'><span class='alias'>{esc(a)}</span></a>"
+                f"{kind}</td>" + "".join(_cell(css, cells[a].get(k)) for k, _, css, _ in cols[1:]) + "</tr>")
+    by: dict[str, list[str]] = {}
+    for a in sorted(directory):
         by.setdefault(catalog.connection_of(a), []).append(a)
-    for c in ({"name": n, "models": sorted(m)} for n, m in sorted(by.items())):
-        rows = []
-        for a in c["models"]:
-            f = catalog.info(a)
-            lim = f.get("limits") or {}
-            num = lambda v: f"{v:,}" if isinstance(v, int) else "—"          # noqa: E731
-            ep = through.get(a, "?")
-            kind = (" " + chip("decision", "", "a decision model: answers typed questions, not chat")
-                    if a in decisions else "")
-            if directory[a].get("ad_hoc"):
-                kind += " " + chip("ad hoc", "adhoc", "ad hoc only: never chosen by the bench on its own, only when you"
-                                   " name it (a collection member, with, --model)")
-            rows.append(f"<tr><td><a href='#' class='model' data-alias='{esc(a)}'>"
-                        f"<span class='alias'>{esc(a)}</span></a>{kind}</td>"
-                        f"<td data-sort='{esc(ep)}'>{chip(ep, 'via', f'reached through the {ep} endpoint')}</td>"
-                        f"<td class='num' data-sort='{f.get('context_window') or 0}'>{num(f.get('context_window'))}</td>"
-                        f"<td class='num' data-sort='{f.get('max_output') or 0}'>{num(f.get('max_output'))}</td>"
-                        f"<td>{esc(', '.join(f.get('input_modalities') or []) or '—')}</td>"
-                        + _reply_cell(speed.get(a, {}))
-                        + "".join(f"<td class='num'>{num(lim.get(k))}</td>" for k in catalog.LIMIT_KEYS) + "</tr>")
-        # One column plan for every card, so the cards line up under each other
-        # (each table sized its own columns, so they drifted from card to card).
-        cols = "<colgroup><col class='c-model'><col class='c-via'><col class='c-n'><col class='c-n'>" \
-               "<col class='c-input'><col class='c-reply'>" + "<col class='c-lim'>" * len(catalog.LIMIT_KEYS) + "</colgroup>"
-        # Each connection folds; the page's one box filters them all (bench.js applyFilter, data-conn).
-        cards.append(f"<details class='panel model-card' open data-conn='{esc(c['name'])}'><summary>"
-                     f"<h3 class='chart-head'>{esc(c['name'])} · {len(c['models'])} models</h3></summary>"
-                     f"<table class='model-cards'>{cols}<thead><tr>" + th("Model") + th("Through")
-                     + th("Context", True) + th("Max output", True)
-                     + th("Input") + th("Reply", True) + "".join(th(k, True) for k in catalog.LIMIT_KEYS)
-                     + f"</tr></thead><tbody>{''.join(rows)}</tbody></table></details>")
-    return ("<div class='panel'><h2>Models</h2><p class='sub'>Every model on the bench by the connection it"
-            " comes from, with the endpoint it is reached through and what is known of its limits. A name"
-            " opens the model.</p><div class='toolbar'><input type='search' data-filter='page'"
-            " placeholder='Find a model or connection' aria-label='Filter models'>"
-            f"{fold_toggle(True)}</div></div>" + "".join(cards))
+    # A group per connection, its heading a button that folds it; the page's one box
+    # filters them all (bench.js applyFilter, data-conn), a heading sorts within each.
+    body = "".join(
+        f"<tbody data-conn='{esc(c)}'><tr class='grp'><th colspan='{len(cols)}' scope='rowgroup'>"
+        f"<button type='button' aria-expanded='true'><span class='fold-chev' aria-hidden='true'></span>{esc(c)}"
+        f"<span class='muted'>{len(m)} model{'s' * (len(m) != 1)}</span></button></th></tr>"
+        + "".join(row(a) for a in m) + "</tbody>" for c, m in sorted(by.items()))
+    states: dict[str, list] = {}
+    for a in directory:
+        label, css, _ = status.get(a) or ("decision model", "", "")
+        states.setdefault(re.sub(r" in \d+d$", "", label), [css, 0])[1] += 1
 
-
-def fold_toggle(all_open: bool) -> str:
-    """One labelled toggle over a page's folds (Models' connections, Logs' logs), as
-    accordions do it (GOV.UK's "Show all sections"): Collapse all while every one is
-    open, else Expand all. bench.js foldButtons keeps it right as folds change."""
-    return (f"<button class='fold-all' type='button' data-fold-all='{'close' if all_open else 'open'}'"
-            f" aria-expanded='{str(all_open).lower()}'><span class='fold-chev' aria-hidden='true'></span>"
-            f"{'Collapse all' if all_open else 'Expand all'}</button>")
+    def rows(pairs) -> str:
+        return "<dl class='rows'>" + "".join(f"<dt>{k}</dt><dd>{v}</dd>" for k, v in pairs) + "</dl>"
+    facts = (("On the bench", f"{len(directory)} models"), ("Connections", len(by)),
+             ("Endpoints", len({through.get(a) for a in directory})),
+             ("Ad hoc only", sum(1 for d in directory.values() if d.get("ad_hoc"))),
+             ("Decision models", len(decisions)))
+    return (
+        "<p class='sub'>Every model on the bench, by the connection it comes from; a name opens it beside the list.</p>"
+        f"<div class='list'><table class='m-table'><thead><tr>{_head(cols)}</tr></thead>{body}</table></div>"
+        # With no model open: the counts, and what the columns mean (bench.css aside.facts).
+        "<aside class='facts' id='facts-models' aria-labelledby='facts-models-h'>"
+        "<div class='bar'><h2 id='facts-models-h'>All models</h2>"
+        "<button type='button' class='linkish facts-close'>Close</button></div><div class='facts-body'>"
+        + rows(facts) + "<h3>By state</h3>"
+        + rows((chip(k, css), n) for k, (css, n) in sorted(states.items(), key=lambda kv: -kv[1][1]))
+        + "<h3>By connection</h3>" + rows((esc(c), len(m)) for c, m in sorted(by.items()))
+        + "<p>Open a model to change its alias, role, facts or call options, or to retire it.</p>"
+        "<details class='key'><summary>What the columns mean</summary><dl>"
+        + "".join(f"<dt>{esc(label)}</dt><dd>{esc(why)}</dd>" for _, label, _, why in cols if why)
+        + "</dl></details></div></aside>")
 
 
 def quota_tiles() -> list[dict]:
@@ -5552,29 +5691,84 @@ def quota_op(which: str, tag) -> dict:
             "tile": next((t for t in quota_tiles() if t["id"] == tag), None)}
 
 
+# Quota's tables (quotas_page): a row a limit, and a row a connection.
+QUOTA_COLS = (("conn", "Connection", "", ""), ("limit", "Limit", "", "What is counted, and over what window"),
+              ("left", "Left", "num", "What is left of it now"), ("used", "Used", "num", "What is used of it now"),
+              ("of", "Allowed", "num", "All of it, in the provider's own unit"),
+              ("reset", "Resets", "when", "When it fills again, in local time"),
+              ("from", "Known from", "", "The provider's quota endpoint, its replies' headers, or a cap the bench"
+                                         " counts its own calls against"))
+SENT_COLS = (("conn", "Connection", "", ""),
+             ("ready", "Ready", "num", "Its models on the bench free to call now, not resting after a rate limit"),
+             ("day", "Requests, 24 h", "num", "Sent by the bench in the last 24 hours, retries too"),
+             ("tday", "Tokens, 24 h", "num", "In and out, the last 24 hours"),
+             ("month", "Requests, this month", "num", "Since the first of the month, UTC"),
+             ("tmonth", "Tokens, this month", "num", "In and out, since the first of the month, UTC"),
+             ("read", "Last read", "when", "When its figures were last asked of it, stated in a reply, or answered"))
+
+
 def quotas_page() -> str:
-    """A tile per provider: what is left and when it resets, shaped by how the
-    provider limits (metrics/quotaview.py), who is resting, one Refresh; the
-    resets of the next week; what the bench sent (its usage ledger,
-    metrics/ledger.py); every limit known. bench.js draws tiles and charts."""
+    """Quota management, in tables: a row a limit (what is allowed, used and
+    left, when it resets, how it is known; metrics/quotaview.py), a row a
+    connection (its models free to call, what the bench sent through it, its
+    usage ledger, metrics/ledger.py), and every limit known, folded. A
+    connection opens beside them (bench.js qModels, from the tiles in
+    quota-data) with its models and its one Refresh."""
     import learn
     import ledger
     now = datetime.datetime.now().astimezone()
     t = now.timestamp()
     sent: dict = {}
-    for row in ledger.rows(min(t - 86400, ledger.month_start(t))):
+    month = ledger.month_start(t)
+    for row in ledger.rows(min(t - 86400, month)):
         s = sent.setdefault(row.get("connection") or "?", [0, 0, 0, 0])
         n, tok = row.get("attempts") or 0, (row.get("tokens_in") or 0) + (row.get("tokens_out") or 0)
         if row["t"] >= t - 86400:
             s[0], s[1] = s[0] + n, s[1] + tok
-        if row["t"] >= ledger.month_start(t):
+        if row["t"] >= month:
             s[2], s[3] = s[2] + n, s[3] + tok
-    sent_rows = [f"<tr><td>{esc(c)}</td>" + "".join(f"<td class='num'>{v:,}</td>" for v in s) + "</tr>"
-                 for c, s in sorted(sent.items())]
-    data = json.dumps({"tiles": quota_tiles(),
-                       "sent": [{"provider": provider_label(c) if c != "?" else "?", "day": s[0], "month": s[2]}
-                                for c, s in sent.items() if s[2]]},
-                      ensure_ascii=False).replace("</", "<\\/")
+
+    def num(v):
+        return (f"{v:,}" if isinstance(v, int) else f"{v:,.2f}", v) if isinstance(v, (int, float)) else None
+    tiles = quota_tiles()
+    limits, conns = [], []
+    for q in tiles:
+        # Its rows open it docked (bench.js); the name a button, for a keyboard.
+        row = (f" class='c-row' data-tag='{esc(q['id'])}'", (f"<button type='button' class='c-open'>{esc(q['name'])}"
+                                                            "</button>", q["name"].lower()))
+        src = (q.get("source") or [""])[0]
+        # Its windows: what its quota endpoint or its replies' headers said, its pool, the caps counted for it.
+        for label, w, frm, why in (
+                [((g["label"] + " · " if g["label"] else "") + w["label"], w, src, "") for g in q["groups"]
+                 for w in g["windows"]]
+                + [(p["label"], dict(p, remaining=None), src, "") for p in q["pool"]]
+                + [(w["label"], w, g["label"], g.get("title", "")) for g in q["caps"] for w in g["windows"]]):
+            used = w.get("used", w["of"] - w["remaining"] if w.get("of") is not None and w.get("remaining") is not None
+                         else None)
+            limits.append((row[0], {"conn": row[1], "limit": (esc(label), label),
+                                    "left": (f"{w['left']}%", w["left"], f"{w['remaining']:,} of {w['of']:,} left")
+                                    if w.get("left") is not None and w.get("remaining") is not None else
+                                    (f"{w['left']}%", w["left"]) if w.get("left") is not None else None,
+                                    "used": num(used), "of": num(w.get("of")), "reset": _at(w.get("reset_at")),
+                                    "from": (esc(frm), frm, why) if why else (esc(frm), frm) if frm else None}))
+        s = sent.pop(q["host"], None) or [0, 0, 0, 0]
+        resting = [m["alias"] for m in q["models"] if m.get("until") and (_at(m["until"]) or ("", 0))[1] > t]
+        how = {"live": "asked of it", "seen": "stated in a reply", "answered": "its last answer"}.get(q["fresh"]["how"], "")
+        conns.append((row[0], {"conn": row[1],
+                               "ready": (f"{q['live']} of {q['bench']}", q["live"])
+                               + ((f"resting: {', '.join(resting)}",) if resting else ()),
+                               "day": num(s[0]), "tday": num(s[1]), "month": num(s[2]), "tmonth": num(s[3]),
+                               "read": _at(q["fresh"]["at"]) and _at(q["fresh"]["at"])[:2] + (how,)}))
+    # What the ledger has from connections no model on the bench uses now.
+    conns += [("", {"conn": (esc(c) if c != "?" else "<span class='muted'>not recorded</span>", c), "day": num(s[0]), "tday": num(s[1]), "month": num(s[2]),
+                    "tmonth": num(s[3])}) for c, s in sorted(sent.items()) if s[2]]
+
+    def table(cols, rows, empty: str) -> str:
+        cols = _known(cols, [r for _, r in rows])
+        return (f"<div class='scroll'><table><thead><tr>{_head(cols)}</tr></thead><tbody>"
+                + "".join(f"<tr{a}>" + "".join(_cell(css, r.get(k)) for k, _, css, _ in cols) + "</tr>"
+                          for a, r in rows) + "</tbody></table></div>" if rows else f"<p class='muted'>{empty}</p>")
+    data = json.dumps({"tiles": tiles}, ensure_ascii=False).replace("</", "<\\/")
     entered = catalog.connection_limits()
     keys = catalog.CONNECTION_LIMIT_KEYS
     lim_rows = [f"<tr><td>{esc(conn)}</td>" + "".join(
@@ -5597,45 +5791,34 @@ def quotas_page() -> str:
                                 + "".join(f"<td class='num'>{ev['value']:,}</td>" if kk == k
                                           else "<td class='num muted'>—</td>" for kk in keys)
                                 + f"<td>learned {esc(ev.get('at', '')[:10])} (its 429s)</td></tr>")
-    sent_table = ("<table><thead><tr>" + th("Connection") + th("Requests, 24 h", True) + th("Tokens, 24 h", True)
-                  + th("Requests, this month", True) + th("Tokens, this month", True)
-                  + f"</tr></thead><tbody>{''.join(sent_rows)}</tbody></table>"
-                  if sent_rows else "<p class='muted'>No call in the ledger this month.</p>")
-    sent_key = ("<p>One row per provider, most requests this month first. The pale bar is this month's"
-                " requests, the dark one inside it the last 24 hours'; the label reads 24 h / month."
-                " Retries count. Calls through the llm CLI are not in the ledger.</p>")
     return (
-        "<div class='panel'><h2>Quota</h2><p class='sub'>What is left with each provider and when it"
-        " resets, and who is resting after a rate limit. Refresh asks the provider for free where it can"
-        " (CLI Proxy API's credentials, OpenRouter); where a provider states its limits only in its replies,"
-        " it sends one 16-token request to read them; elsewhere it reads the bench's own records again."
-        " Hover a Refresh to see which it will do."
-        " Drag a tile, or move it with the arrow keys, to keep it where you want it.</p>"
-        "<div class='list-actions'><button class='btn' id='q-all'>Refresh all live</button>"
-        "<button class='btn' id='q-reorder'>Sort: out first, then soonest reset</button>"
-        "<span class='done' id='q-done' aria-live='polite'></span>"
-        "<span class='errors' id='q-errors' aria-live='polite'></span></div>"
-        "<div class='q-tiles' id='q-tiles'></div></div>"
-        "<div class='panel'><h3 class='chart-head'>Resets, next 7 days</h3><p class='sub'>A dot where a"
-        " limit resets (a daily one every day), a bar while a model rests, the line is now.</p>"
-        "<div class='chart' id='chart-resets'></div></div>"
-        + chart_card("What the bench sent", "Requests per provider: this month, and the last 24 hours inside it.",
-                     "chart-sent", sent_table, sent_key, retired=False)
-        + "<details class='panel'><summary><b>Known limits</b></summary><p class='sub'>How much each"
-        " connection or model allows (tokens or requests per minute or day), so the bench can space its"
-        " calls. Two sources: what you enter per connection (Endpoints, Rate limits per connection), and"
-        " what a provider states in a rate-limit error, which the bench writes down by itself (or, when the"
-        " error names no number, works out for the connection from the requests it had sent). A model's"
-        " own limits (its popup) win, and learned ones only ever lower a limit, until they have not been"
-        " met again for 14 days and are forgotten.</p>"
-        + ("<table><thead><tr>" + th("Connection or model") + "".join(th(k, True) for k in keys) + th("From")
-           + f"</tr></thead><tbody>{''.join(lim_rows)}</tbody></table>" if lim_rows
+        "<p class='sub'>What each connection allows, what is used and when it resets. A connection opens beside the"
+        " tables with its models and its Refresh.</p><div class='cols fit'>"
+        "<section class='panel'><h2>Limits</h2><p class='sub'>What a provider states, or a cap the bench counts its"
+        " own calls against.</p>" + table(QUOTA_COLS, limits, "None stated, and none set: Endpoints sets a cap.")
+        + "<details class='key'><summary>How limits are known</summary><p>Refresh asks the provider for free where it can"
+          " (CLI Proxy API's credentials, OpenRouter); where a provider states its limits only in its replies, it"
+          " sends one 16-token request to read them; elsewhere it reads the bench's own records again. Its title"
+          " says which it will do.</p><p>A limit is what you enter per connection (Endpoints, Rate limits per"
+          " connection), or what a provider states in a rate-limit error, which the bench writes down by itself"
+          " (or, when the error names no number, works out for the connection from the requests it had sent). A"
+          " model's own limits (its panel) win, and learned ones only ever lower a limit, until they have not"
+          " been met again for 14 days and are forgotten.</p><p>What the bench sent counts retries; calls"
+          " through the llm CLI are not in its ledger.</p></details>"
+          f"<details class='key'><summary>Every limit known · {len(lim_rows)}</summary>"
+        + ("<div class='scroll'><table><thead><tr>" + th("Connection or model") + "".join(th(k, True) for k in keys)
+           + th("From") + f"</tr></thead><tbody>{''.join(lim_rows)}</tbody></table></div>" if lim_rows
            else "<p class='muted'>None known yet.</p>")
-        + "</details>"
-        "<dialog id='q-models' aria-labelledby='q-models-h'><h3 id='q-models-h'></h3>"
-        "<div class='sub q-reach' id='q-models-about'></div>"
-        "<p class='sub' id='q-models-sub'></p><div class='scroll' id='q-models-list'></div>"
-        "<div class='list-actions'><button class='btn' id='q-models-close'>Close</button></div></dialog>"
+        + "</details></section><section class='panel'><h2>Connections</h2><p class='sub'>Its models free to call,"
+          " and what the bench sent through it.</p>" + table(SENT_COLS, conns, "No model on the bench yet.")
+        + "</section></div>"
+        # The connection in hand, docked beside the tables (bench.js qModels fills it).
+        "<dialog class='dock' id='q-models' aria-labelledby='q-models-h'><div class='bar'><p>Connection</p></div>"
+        "<div class='dock-body'><h2 class='dock-head' id='q-models-h' tabindex='-1'></h2>"
+        "<div class='sub q-reach' id='q-models-about'></div><p class='sub' id='q-models-sub'></p>"
+        "<h3>Its models</h3><div id='q-models-list'></div></div><div class='dock-foot'>"
+        "<button class='btn' type='button' id='q-refresh'>Refresh</button>"
+        "<button class='btn' type='button' id='q-models-close'>Close</button></div></dialog>"
         f"<script type='application/json' id='quota-data'>{data}</script>")
 
 
@@ -5669,7 +5852,7 @@ def _log_rows(path: pathlib.Path, limit: int = 200) -> list[str]:
 
 def logs_page() -> str:
     """The logs down the left (name, size, last written), the one chosen beside
-    them in a box that scrolls by itself (bench.js pickLog): the newest 200
+    them in a box that scrolls by itself (bench.js pick): the newest 200
     lines of each, newest first, from the files that already exist. Gateway
     calls show who sat and how it went, never the prompt or the answers."""
     gw_file, changes_file, sched_file = (DATA / "runs" / "gateway" / "calls.jsonl", DATA / "config" / "changes.jsonl",
@@ -5721,7 +5904,7 @@ def logs_page() -> str:
              " <code>runs/onboard-*.log</code>, by name.", f"<ul>{''.join(onboard)}</ul>" if onboard else "", len(onboard)))
     slug = {name: "log-" + re.sub(r"[^a-z]+", "-", name.lower()) for name, *_ in logs}
     empty = "<div class='log-line muted'>Nothing yet.</div>"
-    nav = "".join(f"<li><button type='button' data-log-pick='{name}' aria-controls='{slug[name]}'"
+    nav = "".join(f"<li><button type='button' aria-controls='{slug[name]}'"
                   f" aria-pressed='{str(i == 0).lower()}'><span>{name}</span><span class='n'>{n}</span>"
                   f"<small>{size(paths)}</small></button></li>"
                   for i, (name, paths, _, _, n) in enumerate(logs))

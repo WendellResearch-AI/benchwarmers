@@ -359,7 +359,7 @@ def main() -> int:
     check(gone["ok"] and learn.connection_learned() == {} and not serve.forget_connection_learned("monthprov", "rpd")["ok"],
           "Forget drops a learned limit", gone)
     page = serve.quotas_page()
-    check("id='quota-data'" in page and "fakeprov" in page and "What the bench sent" in page,
+    check("id='quota-data'" in page and "fakeprov" in page and "Requests, 24 h" in page,
           "the Quotas page carries its tiles and the ledger's counts")
 
     srv.shutdown()

@@ -61,7 +61,7 @@ theme's court line):
   filter, a `.spring`, its own actions at the right; `serve.BAR_TOOLS`, fixed
   HTML that a page fetched again never replaces), then its sections.
 - **The docked panel** (`aside.facts`, or the record in hand, `dialog.dock`:
-  the model editor, a collection, an endpoint): what the page holds in facts,
+  the model editor, a collection, an endpoint, a connection's quota): what the page holds in facts,
   the contents of a long page, or the record in hand with its actions at a
   fixed foot. With nothing in hand it says what it is for. A record is a
   `<dialog>` opened by its `open` attribute (not `showModal`), so the page
@@ -81,16 +81,25 @@ the rail is a bar with a menu.
 - **Columns of sections** (`.cols`): sections flow in as many columns as fit,
   each kept whole (Benchmarks' reports: one on a laptop, three at 3440).
   Without script: `.cols.flow`, newspaper columns of 34rem, for sections of
-  any height (Settings); `.cols.fit`, a row the few short groups share at
-  any width (Info).
+  any height (Settings, Action needed); `.cols.fit`, a row the few groups
+  share when each has `--fit` (26rem, Info; 52rem, Quota's tables).
 - **Table**: spans its pane; hairline rows; a sticky head; numbers right in
-  tabular figures; a heading sorts on click and shows its arrow; the row in
-  hand carries the accent. A group of rows folds under its heading
-  (`<details>`), with one Collapse all / Expand all for the page.
+  tabular figures, dates on one line (`td.when`); a heading sorts on click and
+  shows its arrow; the row in hand carries the accent. A column nothing is
+  known in, in any row, is left out; an unknown is a quiet dash. A group of
+  rows is a `<tbody>` under a heading row whose button folds it (Models'
+  connections; a sort orders each group), with one Collapse all / Expand all
+  in the page's bar.
+- **A long table in its own box** (`.list`, Models, Discover): it scrolls by
+  itself under its sticky head, and sideways on a phone; an `opt` column
+  leaves a narrow box (the docked panel has it), a `wide` one joins a wide one.
+- **A list to act on** (`ul.items`, Action needed): each item its name and
+  state, its actions at the right, its reason under them; past eight, the
+  rest fold (`details.more`).
 - **A list beside a detail** (`.split`): the things down the left, the chosen
   one beside it (Clients' apps, Logs' logs), each scrolling by itself so the
-  page does not; the one chosen is the list's button with `aria-pressed`.
-  Under 800px the list sits above.
+  page does not; the one chosen is the list's button with `aria-pressed`,
+  its `aria-controls` naming what it shows. Under 800px the list sits above.
 - **Facts** (`dl.rows`): a label and its value on a line, the labels in one
   column. A value the environment sets names its variable under it
   (`.set-by`), as Settings shows each setting read at start.

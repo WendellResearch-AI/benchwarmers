@@ -99,7 +99,7 @@ h1, h2, h3 { line-height: 1.2; letter-spacing: -.01em; text-wrap: balance; }
 /* A page's own controls in its bar (serve.BAR_TOOLS): its filter after the name,
    a spring, then its actions at the right. */
 .bar .spring { flex: 1; }
-.bar .btn { flex: none; }                  /* a narrower filter, never a button's name on two lines */
+.bar :is(.btn, .fold-all) { flex: none; }  /* a narrower filter, never a button's name on two lines */
 .bar .done { color: var(--ok); }
 .bar .errors { color: var(--err); }
 .bar input[type=search] { width: 22rem; min-width: 0; height: 32px; padding: 0 10px; border: 1px solid var(--field); border-radius: var(--radius); background: var(--paper-2); color: var(--ink); font: inherit; }
@@ -111,7 +111,8 @@ h1, h2, h3 { line-height: 1.2; letter-spacing: -.01em; text-wrap: balance; }
 .panel > h2, .panel > header > h2 { margin: 0; font-size: var(--t-lead); font-weight: 700; }
 /* A section's heading line: its name, its own controls (Benchmarks' windows), Share at the right. */
 .panel > header { display: flex; flex-wrap: wrap; align-items: center; gap: var(--gap-2) var(--gap-4); min-height: 32px; }
-:is(.panel, .split > section) > .sub { margin: var(--gap-1) 0 var(--gap-3); color: var(--muted); max-width: 70ch; }
+:is(.panel, .split > section, .tab) > .sub { margin: var(--gap-1) 0 var(--gap-3); color: var(--muted); max-width: 70ch; }
+.tab > .sub { flex: none; margin: 0; padding: var(--gap-3) var(--pad) var(--gap-2); }     /* a page's one sentence, under its bar */
 
 /* Benchmarks' reports, in as many columns as fit (bench.js columns sets
    data-n): a grid of 8px rows, each report spanning its own height, so each
@@ -125,11 +126,13 @@ h1, h2, h3 { line-height: 1.2; letter-spacing: -.01em; text-wrap: balance; }
 /* Settings' sections: as many columns as fit, each section whole, a hairline between. */
 .cols.flow { columns: 34rem; column-gap: 0; column-rule: 1px solid var(--line); }
 .cols.flow > .panel { break-inside: avoid; }
-/* Info's groups, few and short: they share the row, wide or narrow. */
-.cols.fit { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(26rem, 100%), 1fr)); margin-left: -1px; }
-.cols.fit > .panel { border-left: 1px solid var(--line); }
+/* Info's groups, few and short: they share the row, wide or narrow. Quota's
+   tables share it where each has 52rem (--fit). */
+.cols.fit { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(var(--fit, 26rem), 100%), 1fr)); margin-left: -1px; }
+.cols.fit > .panel { min-width: 0; border-left: 1px solid var(--line); }
+#tab-quotas { --fit: 52rem; }
 .panel > h3 { margin: var(--gap-4) 0 var(--gap-1); font-size: var(--t-body); }
-.panel dl.rows { margin: var(--gap-2) 0 var(--gap-3); }
+:is(.panel, .client) dl.rows { margin: var(--gap-2) 0 var(--gap-3); }
 .set-by { display: block; font: var(--t-small)/1.5 var(--font-mono); color: var(--muted); }   /* the environment variable that sets it */
 
 /* ---- the docked panel: a page's own facts (aside.facts), or the record in
@@ -243,33 +246,19 @@ button { font: inherit; cursor: pointer; }
 .row-input input { flex: 1; min-width: 0; margin: 0 !important; }
 .problems .head { display: flex; align-items: baseline; gap: .5rem; }
 
-/* Action needed: its own page, a panel per connection as on Models, each a
-   table (name, state, the provider's words, actions). */
-.a-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: .25rem .6rem; }
-.a-head .why:empty { display: none; }
-.a-head .acts { margin-left: auto; display: flex; gap: .5rem; }
-.a-held { display: flex; gap: .6rem; align-items: baseline; margin: .35rem 0 .6rem; padding: .5rem .75rem; background: var(--warn-ground); border-radius: var(--radius); overflow-wrap: anywhere; }
-.a-held .chip { flex: none; background: var(--ink); color: var(--paper); }
-.a-held a { color: var(--ink); font-weight: 500; }
-/* The same fixed columns in every table, so they line up down the page. */
-#tab-needs > .panel { container-type: inline-size; }
-table.a-table { table-layout: fixed; }
-table.a-table col.c-model { width: 30%; }
-table.a-table col.c-state { width: 9.5rem; }
-table.a-table col.c-acts { width: 7.5rem; }
-.a-table .alias, .a-table .what { font-weight: 500; overflow-wrap: anywhere; }   /* a name breaks at its dots first (<wbr>) */
-.a-table .why, .a-table .when { color: var(--muted); overflow-wrap: anywhere; }
-/* One line a model: the provider's words cut to the column, whole on hover; the link gives way last. */
-.a-table .said-line { display: flex; gap: .5rem; min-width: 0; }
-.a-table .said { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.a-table .said-line > a { flex: none; max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.a-table td.acts { white-space: nowrap; }
-.a-table td.acts .linkish + .linkish { margin-left: .9rem; }
+/* Action needed (serve.actions_page): a section per thing to do, in columns
+   where there is room; each item its name and state, its actions at the
+   right, its reason under them. A long list folds (details.more). */
+ul.items { list-style: none; margin: 0; padding: 0; }
+ul.items > li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--gap-1) var(--gap-3); align-items: baseline; padding: var(--gap-2) 0; border-top: 1px solid var(--line); }
+ul.items .alias { font-weight: 500; overflow-wrap: anywhere; }   /* a name breaks at its dots first (<wbr>) */
+ul.items :is(.why, details) { grid-column: 1 / -1; margin: 0; overflow-wrap: anywhere; }
+:is(ul.items, .panel > header) .why { color: var(--muted); }
+:is(ul.items, .panel > header) .acts { display: flex; flex-wrap: wrap; gap: var(--gap-1) var(--gap-3); }
+.panel > header .acts { margin-left: auto; }
+details.more > summary { cursor: pointer; padding: var(--gap-1) 0; color: var(--link); }
+details.more > summary > h2 { display: inline; margin: 0; font-size: var(--t-lead); color: var(--ink); }
 .linkish.danger { color: var(--err); }
-.a-retired > summary { cursor: pointer; }
-.a-retired > summary h3 { display: inline; }
-.a-retired > summary .muted { color: var(--muted); }
-.a-none { color: var(--muted); }
 
 /* Settings' theme cards (the rail's switch, bigger: bench.js theme), logs */
 .themes { display: flex; flex-wrap: wrap; gap: var(--gap-3); margin-top: var(--gap-3); }
@@ -279,7 +268,6 @@ table.a-table col.c-acts { width: 7.5rem; }
 .swatch { display: flex; gap: 2px; }
 .swatch span { width: 1rem; height: 1rem; border-radius: 2px; border: 1px solid var(--line); }
 #tab-settings td { vertical-align: top; }
-#tab-settings td.when { white-space: nowrap; }
 [data-log] td:last-child { overflow-wrap: anywhere; }   /* Logs' seats: wrap on a phone */
 [data-log] td { overflow-wrap: break-word; }                             /* a short word stays whole; a long id breaks */
 details.panel > summary { cursor: pointer; }
@@ -289,7 +277,7 @@ details.panel[open] > summary { margin-bottom: .75rem; }
 /* A list beside a detail (.split, Logs): the list down the left, the one chosen
    beside it, each scrolling by itself, so the page itself does not. Under 800px
    the list sits above, two to a row. */
-#tab-logs.active { display: flex; flex-direction: column; }
+:is(#tab-logs, #tab-clients, #tab-discover, #tab-models).active { display: flex; flex-direction: column; }
 .split { flex: 1; min-height: 0; display: grid; grid-template-columns: 16rem minmax(0, 1fr); }
 .split > nav { min-height: 0; overflow-y: auto; border-right: 1px solid var(--line); }
 .split > nav ul { list-style: none; margin: 0; padding: var(--gap-2) 0; }
@@ -301,7 +289,6 @@ details.panel[open] > summary { margin-bottom: .75rem; }
 .split > section > h2 { margin: 0; font-size: var(--t-lead); }
 .log-box { flex: 1; min-height: 0; overflow: auto; container-type: inline-size; font: var(--t-small)/1.5 var(--font-mono); border: 1px solid var(--line); border-radius: var(--radius); background: var(--paper); }
 .log-box th { position: sticky; top: 0; z-index: 1; font-family: var(--font-display); background: var(--paper); }
-.log-box td.when { white-space: nowrap; }
 .log-box .log-line { padding: 2px var(--gap-3); }
 /* A narrow box: each row of a table a block, its short cells on one line, its last (the seats, the new value) under them. */
 @container (max-width: 36rem) {
@@ -320,11 +307,16 @@ details.panel[open] > summary { margin-bottom: .75rem; }
   .split > nav ul { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 0; }
   .bar input[type=search] { order: 5; width: 100%; margin-bottom: var(--gap-2); }
 }
-/* Clients (serve.clients_page): each snippet under its label and Copy button */
+/* Clients (serve.clients_page): an app's set-up beside the list, scrolling by
+   itself, its parts in up to three columns where there is room; each snippet
+   under its label and Copy button. */
+.split > section.client { overflow-y: auto; }
+.client > div { columns: 3 36rem; column-gap: var(--gap-5); }
+.client > div > * { break-inside: avoid; }
 .snip { margin-top: .9rem; }
 .snip-head { display: flex; align-items: center; justify-content: space-between; gap: .5rem; color: var(--muted); overflow-wrap: anywhere; }
 .snip-head .btn { flex: none; }
-.snip pre.log { max-height: 30rem; margin-top: .3rem; overflow-wrap: anywhere; }
+.snip pre.log { max-height: max(30rem, 60vh); margin-top: .3rem; overflow-wrap: anywhere; }
 #tab-clients :is(.where, .watch) { max-width: 70ch; overflow-wrap: anywhere; }
 #tab-clients .watch { background: var(--step-1); border-radius: var(--radius); padding: .5rem .75rem; margin: 1rem 0 0; }
 
@@ -343,7 +335,11 @@ a.dmodel:hover .alias { box-shadow: inset 0 -.3em 0 var(--signal); }
 .ep-table td.base { max-width: 24rem; }
 .ep-table td.base .mono { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--t-small); }
 .ep-table td .chip + .chip, .ep-table .c-open + .chip { margin-left: var(--gap-1); }
-.ep-table td.when { white-space: nowrap; }
+/* On a wide screen the table, as wide as what it holds, and the rate limits beside it. */
+@media (min-width: 2560px) {
+  #tab-endpoints .cols { display: grid; grid-template-columns: auto minmax(0, 1fr); }
+  #tab-endpoints .cols > .panel + .panel { border-left: 1px solid var(--line); }
+}
 .l-table input { width: 5rem; padding: .2rem .4rem; border: 1px solid var(--field); border-radius: var(--radius); background: var(--paper-2); color: var(--ink); font: inherit; text-align: right; }
 .l-table { width: auto; }                  /* a form: its boxes beside the connection's name, not across the pane */
 .l-table td:first-child { min-width: 10rem; }
@@ -380,21 +376,11 @@ th[data-sortable]::after { content: ""; display: inline-block; width: .9em; colo
 th[aria-sort=ascending]::after { content: " \2191"; }
 th[aria-sort=descending]::after { content: " \2193"; }
 td.num, th.num { text-align: right; }
+td:is(.num, .when) { white-space: nowrap; }          /* a figure, a date or a time on one line */
 /* A grid of figures (Our code's table): every cell between the first and the last is one, and an empty one a task not run. */
 table.grid td:not(:first-child, :last-child) { text-align: right; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 table.grid td:empty::after { content: "—"; color: var(--muted); }
 table.grid td:last-child { min-width: 24rem; }      /* what a model invented, in lines, not a column of words */
-/* the per-connection model cards on Connections: one fixed column plan */
-table.model-cards { table-layout: fixed; min-width: 52rem; }
-.panel:has(> table.model-cards) { overflow-x: auto; }        /* scrolls on a narrow window instead of wrapping numbers */
-table.model-cards td.num { white-space: nowrap; }
-table.model-cards col.c-model { width: 23%; }
-table.model-cards col.c-via { width: 11%; }
-table.model-cards col.c-n { width: 10%; }
-table.model-cards col.c-input { width: 15%; }
-table.model-cards col.c-reply { width: 7%; }
-table.model-cards col.c-lim { width: 6%; }
-table.model-cards td { overflow-wrap: anywhere; }
 tbody tr:hover > td { background: var(--hover); }
 /* The row whose model is open in the docked editor (bench.js markHand). */
 tr.in-hand > td, tr.in-hand:hover > td { background: var(--tint); }
@@ -407,7 +393,6 @@ body:not(.show-retired) tr.retired { display: none; }
    sticky head, so the page does not. Columns as the box allows: In → out,
    Released and Limits leave a narrow one (the panel has them), Max output to
    First seen join a wide one. */
-#tab-discover.active { display: flex; flex-direction: column; }
 .discover { flex: 1; min-height: 0; display: grid; grid-template: auto minmax(0, 1fr) / minmax(0, 1fr); }
 .facets { min-height: 0; max-height: 45vh; overflow-y: auto; scrollbar-width: thin; padding: 0 var(--pad); border-bottom: 1px solid var(--line); }
 .facets > summary { padding: var(--gap-2) 0; cursor: pointer; font-weight: 500; }
@@ -421,19 +406,26 @@ body:not(.show-retired) tr.retired { display: none; }
   .facets { max-height: none; padding: var(--gap-4) var(--gap-3) 0 var(--pad); border: 0; border-right: 1px solid var(--line); }
   .facets > summary { display: none; }
 }
-.d-list { min-height: 0; overflow: auto; scrollbar-width: thin; container-type: inline-size; }
-.d-list th { position: sticky; top: 0; z-index: 1; background: var(--paper-2); border-bottom: 0; box-shadow: inset 0 -1px 0 var(--line); }
-.d-list :is(th, td) { padding-left: var(--gap-2); padding-right: var(--gap-2); }
-.d-list :is(th, td):first-child { padding-left: var(--pad); }
-.d-list td { white-space: nowrap; }
-/* The model, its provider, what it can do and its limits wrap; the rest is one line each. */
-.d-list td:is(:nth-child(1), :nth-child(3), :nth-child(8), :nth-child(10)) { white-space: normal; }
-.d-list td:first-child { min-width: 9rem; }
-.d-list .conn { overflow-wrap: anywhere; }
-.d-list td.dim { color: var(--muted); }
-.d-list .wide { display: none; }
-@container (min-width: 120rem) { .d-list .wide { display: table-cell; } .d-list td:nth-child(8) { white-space: nowrap; } }
-@container (max-width: 56rem) { .d-list .opt { display: none; } }
+/* A long table in a box that scrolls by itself under its sticky head, so the
+   page does not (Discover, Models). Columns as the box allows: an `opt` one
+   leaves a narrow box (the panel has it), a `wide` one joins a wide one. */
+.list { flex: 1; min-height: 0; overflow: auto; scrollbar-width: thin; container-type: inline-size; }
+.list thead th { position: sticky; top: 0; z-index: 1; background: var(--paper-2); border-bottom: 0; box-shadow: inset 0 -1px 0 var(--line); }
+.list :is(th, td) { padding-left: var(--gap-2); padding-right: var(--gap-2); }
+.list :is(th, td):first-child { padding-left: var(--pad); }
+.list td { white-space: nowrap; }
+.list .wide { display: none; }
+@container (min-width: 120rem) { .list .wide { display: table-cell; } #d-table td:nth-child(8) { white-space: nowrap; } }
+@container (max-width: 56rem) { .list .opt { display: none; } }
+/* Discover: the model, its provider, what it can do and its limits wrap; the rest is one line each. */
+#d-table td:is(:nth-child(1), :nth-child(3), :nth-child(8), :nth-child(10)) { white-space: normal; }
+#d-table td:first-child { min-width: 9rem; }
+#d-table .conn { overflow-wrap: anywhere; }
+#d-table td.dim { color: var(--muted); }
+/* Models (serve.models_page): a group of rows per connection under a heading that folds it (bench.js fold). */
+.m-table td:first-child { min-width: 12rem; white-space: normal; }
+tr.grp th { padding-top: var(--gap-4); background: var(--paper-2); }
+tbody[data-shut] > tr:not(.grp) { display: none; }
 #d-more { margin: var(--gap-3) var(--pad) var(--gap-5); }
 #d-count { white-space: nowrap; }
 .muted { color: var(--muted); }
@@ -585,50 +577,6 @@ ol.steps small { display: block; grid-column: 2; color: var(--muted); font-weigh
 pre.log { background: var(--log-ground, var(--ink-deep)); color: var(--log-ink, var(--paper)); font-size: var(--t-small); line-height: 1.45; padding: .7rem .8rem; border-radius: var(--radius); max-height: 16rem; overflow: auto; white-space: pre-wrap; margin: .5rem 0 0; }
 pre.log.answer { max-height: 40vh; }
 
-/* Quota: a tile per provider, as many columns as fit; a group of windows (a
-   5-hour and a weekly limit of one model group) boxed together; a meter of
-   ten segments filled like a bar. Nothing in a tile is wider than it. */
-.q-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr)); gap: .75rem; align-items: stretch; margin-top: .75rem; }
-.q-tile { display: flex; flex-direction: column; gap: .5rem; padding: .75rem .85rem; background: var(--paper-2); min-width: 0; border: 1px solid var(--line); border-radius: var(--radius); cursor: grab; }
-.q-tile:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
-.q-tile.out { border-color: var(--err); }
-.q-tile.dragging { opacity: .45; }
-.q-tile .q-head { display: flex; justify-content: space-between; align-items: center; gap: .5rem; min-width: 0; }
-.q-tile .nm { font-size: var(--t-lead); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.q-tile .q-head .chip { flex: none; white-space: nowrap; }
-.q-about { display: flex; flex-direction: column; gap: .1rem; margin-top: -.3rem; font-size: var(--t-small); color: var(--muted); }
-.q-about .q-from { font-style: italic; }
-.q-body { display: flex; flex-direction: column; gap: .5rem; min-width: 0; }
-.q-group { border: 1px solid var(--line); border-radius: var(--radius); padding: .45rem .55rem .55rem; display: flex; flex-direction: column; gap: .45rem; }
-.q-group.bare { border: 0; padding: 0; }
-.q-group h4 { margin: 0; font-size: var(--t-small); font-weight: 500; color: var(--muted); }
-.q-meter { display: flex; flex-direction: column; gap: .2rem; min-width: 0; }
-.q-line { display: flex; justify-content: space-between; align-items: baseline; gap: .5rem; min-width: 0; }
-.q-line b { font-weight: 700; }
-.q-line > :first-child { min-width: 0; }
-.q-line > a.model { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.q-line .q-val { flex: none; white-space: nowrap; }
-.segs.none span { background: var(--step-1); opacity: .6; }
-/* Calls: green for what answered, red for what failed, out of every call. */
-.segs.calls span { background: var(--err); }
-.segs.calls i { background: var(--ok); }
-.q-calls { white-space: nowrap; }
-.q-calls .segs { display: inline-flex; width: 5.5rem; margin-right: .5rem; vertical-align: middle; }
-.segs { display: flex; gap: 2px; }
-.segs span { flex: 1; height: .5rem; border-radius: 2px; background: var(--step-1); overflow: hidden; }
-.segs i { display: block; height: 100%; background: var(--ok); }
-.segs.warn i { background: var(--warn); }
-.segs.err i { background: var(--err); }
-.q-rest { font-size: var(--t-small); background: var(--warn-ground); border-radius: var(--radius); padding: .2rem .45rem; }
-.warn-t { color: var(--warn); }
-.q-msg { font-size: var(--t-small); }
-.q-msg:empty { display: none; }
-.q-tile .q-foot { display: flex; gap: .4rem; justify-content: space-between; margin-top: auto; padding-top: .5rem; border-top: 1px solid var(--line); }
-.q-tile .q-foot .chip { margin-left: .2rem; }
-.q-legend { display: flex; flex-wrap: wrap; gap: var(--gap-1) var(--gap-4); margin: 0 0 .4rem; }
-.q-legend i { display: inline-block; width: .8rem; height: .7rem; border-radius: 2px; margin-right: .35rem; vertical-align: -1px; }
-#q-models { width: min(48rem, 94vw); max-width: none; }
-#q-models td:first-child { white-space: nowrap; }
 
 /* Benchmarks charts (Observable Plot) */
 .chart { margin: .5rem 0 .75rem; overflow-x: auto; }
@@ -638,13 +586,13 @@ pre.log.answer { max-height: 40vh; }
 #chart-speed:empty { min-height: 436px; }
 h3.chart-head { font-size: var(--t-body); font-weight: 700; margin: 1rem 0 .2rem; }
 .chart-label { font-weight: 700; margin: .9rem 0 .1rem; }
-/* Models: each connection a fold, its heading the summary */
-.model-card > summary h3.chart-head { display: inline; margin: 0; }
-/* Expand all / Collapse all: a text toggle with a chevron that turns, like a fold's own marker */
-button.fold-all { display: inline-flex; align-items: center; gap: .4rem; margin-left: auto; border: 0; padding: .2rem 0; background: none; color: var(--link); font: inherit; cursor: pointer; }
-button.fold-all:hover, button.fold-all:focus-visible { text-decoration: underline; text-underline-offset: .18em; }
-.fold-chev { width: .5rem; height: .5rem; border: solid currentColor; border-width: 0 2px 2px 0; transform: rotate(-45deg); transition: transform .15s; }
-button.fold-all[aria-expanded="true"] .fold-chev { transform: rotate(45deg); margin-top: -.3rem; }
+/* Expand all / Collapse all, and a group's heading (Models): text with a chevron that turns, like a fold's own marker */
+:is(button.fold-all, tr.grp button) { display: inline-flex; align-items: center; gap: .4rem; border: 0; padding: .2rem 0; background: none; color: var(--link); font: inherit; cursor: pointer; }
+tr.grp button { color: var(--ink); font-weight: 700; }
+tr.grp button .muted { font-weight: 400; }
+:is(button.fold-all, tr.grp button):hover { text-decoration: underline; text-underline-offset: .18em; }
+.fold-chev { width: .5rem; height: .5rem; border: solid currentColor; border-width: 0 2px 2px 0; transform: rotate(-45deg); }
+[aria-expanded="true"] > .fold-chev { transform: rotate(45deg); margin-top: -.3rem; }
 /* a form on a page, kept to a readable width */
 .panel.form-panel > :not(table) { max-width: 46rem; }
 /* a list of things you open (endpoints), with its Add button above */
@@ -705,18 +653,6 @@ dialog .pick { display: flex; gap: 1.5rem; }
   .problem .acts { justify-content: flex-start; }
   details.key dl { grid-template-columns: minmax(0, 1fr); }
   .toolbar input[type=search] { min-width: 0; width: 100%; }
-}
-/* A narrow page: name and state on one line, the words and actions under
-   them, the line above a model unbroken. */
-@container (max-width: 46rem) {
-  .a-table thead { display: none; }
-  .a-table, .a-table tbody { display: block; }
-  .a-table tr { display: grid; grid-template-columns: minmax(0, 1fr) max-content; border-bottom: 1px solid var(--line); }
-  .a-table td { border-bottom: 0; }
-  .a-table td.why, .a-table td.acts { grid-column: 1 / -1; padding-top: 0; }
-  .a-table .said-line { flex-wrap: wrap; }
-  .a-table .said { white-space: normal; }           /* the height to read it whole */
-  .a-table .said-line > a { max-width: none; }
 }
 /* A reload under way (bench.js marks the page as it goes), or a page being
    fetched (.loading): a bar sweeping the top, over an open popup too, so the
