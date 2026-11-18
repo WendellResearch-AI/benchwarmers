@@ -99,9 +99,9 @@ with [AGENTS.md](AGENTS.md).
 
 ## Try it
 
-**Pre-1.0, early.** It runs with Python 3.11 or later on Windows, macOS and
-Linux, from PyPI, npm, a checkout or Docker. Expect rough edges, and read the
-code where these pages are thin.
+**Version 1.0.** It runs with Python 3.11 or later on Windows, macOS and
+Linux, from PyPI, npm, a checkout or Docker. Report rough edges as issues, and
+read the code where these pages are thin.
 
 **Quickest**, with Python 3.11+ installed, from PyPI:
 
