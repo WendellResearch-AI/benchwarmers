@@ -125,8 +125,8 @@ popup ticks Vision / OCR.
 After the person checks an answer against the real work, record a verdict
 (dashboard, or `POST /bench/verdict`); verdicts choose the next panels. See
 GATEWAY.md for the whole contract. To set an app up on the gateway (opencode,
-VS Code, Codex, Zed, Continue, Cline, Kilo Code, Claude Code, goose, chat
-apps), CLIENTS.md has each one's configuration, file by file.
+VS Code, Codex, Zed, Continue, Cline, Kilo Code, Claude Code, LangChain and
+the OpenAI Agents SDK, goose, chat apps), CLIENTS.md has each one's configuration, file by file.
 
 ## Beyond this machine
 

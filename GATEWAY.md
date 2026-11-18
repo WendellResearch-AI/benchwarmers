@@ -452,7 +452,7 @@ the caller sees would wait for or change because of them. Not built.
 
 The dashboard's **Clients** page has each app's set-up filled in from the
 install (opencode, VS Code chat, Codex, Zed, Continue, Cline and Kilo Code,
-Claude Code, goose, chat apps), each written from that app's docs on the date
+Claude Code, LangChain and agent SDKs, goose, chat apps), each written from that app's docs on the date
 it shows. By hand:
 
 The base URL is the server: `http://127.0.0.1:8122` (the dashboard's port)

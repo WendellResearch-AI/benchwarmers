@@ -217,7 +217,8 @@ def main() -> int:
         parsed = {}
         for c in setups.values():
             for b in c["blocks"]:
-                parse = {"json": json.loads, "toml": tomllib.loads, "yaml": load_yaml}.get(b["lang"])
+                parse = {"json": json.loads, "toml": tomllib.loads, "yaml": load_yaml,
+                         "python": lambda t: compile(t, "<snippet>", "exec")}.get(b["lang"])
                 try:
                     parsed[c["id"], b["label"]] = parse(b["text"]) if parse else b["text"]
                 except Exception as exc:                # noqa: BLE001
@@ -226,7 +227,7 @@ def main() -> int:
                     bad.append(f"{c['id']} {b['label']}: a key would go into a file")
             alltext = "\n".join(b["text"] for b in c["blocks"])
             want = ("bench/core:merged", "bench/fast:merged") if c["id"] == "chat" else \
-                ("bench/core:route", "bench/fast:route") if c["id"] != "codex" else ("bench/core:route",)
+                ("bench/core:route", "bench/fast:route") if c["id"] not in ("codex", "code") else ("bench/core:route",)
             bad += [f"{c['id']} lacks {w}" for w in want if w not in alltext]
         oc, cx = parsed.get(("opencode", "opencode.json")), parsed.get(("codex", "config.toml"))
         if oc and cx:

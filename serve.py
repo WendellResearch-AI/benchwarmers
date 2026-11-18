@@ -4606,6 +4606,48 @@ def client_setups(root: str, cols: list, keys: bool) -> list[dict]:
                       "    enabled: true", f"    uri: {q(mcp)}",
                       f"    headers: {{Authorization: {q('Bearer ' + KEY_HOLDER)}}}" if keys else "    headers: {}",
                       "    timeout: 900")
+    # Your own code (Python): the key from the environment, as every file here; "local" where none is asked.
+    key_py = f"os.environ[{q(env)}]" if keys else q("local")
+    auth_py = f'"headers": {{"Authorization": "Bearer " + {key_py}}}' if keys else ""
+    imp_os = "import os\n" if keys else ""
+    llm_py = f"llm = ChatOpenAI(base_url={q(base)}, api_key={key_py},\n                 model={q(model)})"
+    ask = q("How many words are in 'the bench is deep'?")
+    lc_agent = (f"# pip install langchain langchain-openai\n{imp_os}"
+                "from langchain.agents import create_agent\nfrom langchain_openai import ChatOpenAI\n\n"
+                f"{llm_py}\n\n\n"
+                "def word_count(text: str) -> int:\n    \"\"\"Count the words in a text.\"\"\"\n"
+                "    return len(text.split())\n\n\n"
+                "agent = create_agent(llm, tools=[word_count])\n"
+                f"reply = agent.invoke({{\"messages\": [{{\"role\": \"user\", \"content\": {ask}}}]}})\n"
+                "print(reply[\"messages\"][-1].content)")
+    lc_panel = (f"# pip install langchain-openai\n{imp_os}from langchain_openai import ChatOpenAI\n\n"
+                f"panel = ChatOpenAI(base_url={q(base)}, api_key={key_py},\n"
+                f"                   model={q(f'bench/{cols[0][0]}:merged')}, timeout=900, max_retries=0)\n"
+                "print(panel.invoke(\"Where can a cache keyed by user id return another user's data?\").content)")
+    lc_mcp = ("# pip install langchain langchain-openai langchain-mcp-adapters\nimport asyncio\n" + imp_os
+              + "from langchain.agents import create_agent\n"
+                "from langchain_mcp_adapters.client import MultiServerMCPClient\n"
+                "from langchain_openai import ChatOpenAI\n\n"
+              + f"{llm_py}\nbench = MultiServerMCPClient({{\"benchwarmers\": {{\n"
+              + f"    \"transport\": \"streamable_http\", \"url\": {q(mcp)}, \"sse_read_timeout\": 900"
+              + (f",\n    {auth_py}" if keys else "") + "}})\n\n\n"
+                "async def main():\n    agent = create_agent(llm, tools=await bench.get_tools())\n"
+                "    reply = await agent.ainvoke({\"messages\": [{\"role\": \"user\", \"content\":\n"
+                "        \"Ask the bench where a cache keyed by user id can leak data, then judge each seat.\"}]})\n"
+                "    print(reply[\"messages\"][-1].content)\n\n\nasyncio.run(main())")
+    oa_agents = ("# pip install openai-agents\nimport asyncio\n" + imp_os
+                 + "from agents import Agent, OpenAIChatCompletionsModel, Runner, set_tracing_disabled\n"
+                   "from agents.mcp import MCPServerStreamableHttp\nfrom openai import AsyncOpenAI\n\n"
+                   "set_tracing_disabled(True)\n"
+                 + f"bench = AsyncOpenAI(base_url={q(base)}, api_key={key_py})\n\n\n"
+                   "async def main():\n    async with MCPServerStreamableHttp(\n"
+                 + "            name=\"benchwarmers\", client_session_timeout_seconds=900,\n"
+                 + f"            params={{\"url\": {q(mcp)}, \"sse_read_timeout\": 900"
+                 + (f",\n                    {auth_py}" if keys else "") + "}) as panel:\n"
+                   "        agent = Agent(name=\"Assistant\", instructions=\"Answer briefly.\", mcp_servers=[panel],\n"
+                 + f"                      model=OpenAIChatCompletionsModel(model={q(model)}, openai_client=bench))\n"
+                 + f"        result = await Runner.run(agent, {ask})\n"
+                   "        print(result.final_output)\n\n\nasyncio.run(main())")
     plugin_at = ("" if root == DEFAULT_SERVER else f", so set it to <code>{esc(root)}</code>")
     any_text = "" if keys else " Keys are not asked for here, so any text works."
     return [
@@ -4704,6 +4746,27 @@ def client_setups(root: str, cols: list, keys: bool) -> list[dict]:
          "docs": [("https://github.com/WendellResearch-AI/benchwarmers#from-claude-code-and-other-agents",
                    "README, From Claude Code and other agents")],
          "docs_note": "checked end to end with Claude Code 2.1.299 on 2026-10-23 (GATEWAY.md, Route mode)."},
+        {"id": "code", "name": "LangChain and agent SDKs",
+         "gets": "Your own Python: a LangChain (LangGraph) agent or an OpenAI Agents SDK agent on a collection with"
+                 " your tools (route mode), a panel's merged answer as one step of a chain, and the panel as ask"
+                 " and verdict tools.",
+         "where": "Your code, with Python 3.10 or later and the packages on each snippet's first line. Any other"
+                  " framework that takes an OpenAI-compatible model (a base URL, a key, a model name) is set up the"
+                  " same way." + (f" The key comes from <code>{env}</code>." if keys else ""),
+         "blocks": [_snip("LangChain: an agent with your tools", "python", lc_agent),
+                    _snip("LangChain: a panel's merged answer, as one step", "python", lc_panel),
+                    _snip("LangChain: the panel as tools (MCP)", "python", lc_mcp),
+                    _snip("OpenAI Agents SDK: an agent with the panel as tools", "python", oa_agents)],
+         "watch": "A panel refuses a request that carries tools, so an agent's model is always <code>:route</code>"
+                  " and <code>:merged</code> is for a step without them. A panel takes minutes: keep the long"
+                  " timeouts (in seconds), and <code>max_retries=0</code> on a panel, as a retry runs every seat"
+                  " again. Without <code>set_tracing_disabled(True)</code> the Agents SDK sends its traces to"
+                  " OpenAI.",
+         "docs": [("https://docs.langchain.com/oss/python/langchain/agents", "LangChain: agents"),
+                  ("https://docs.langchain.com/oss/python/langchain/mcp", "LangChain: MCP"),
+                  ("https://openai.github.io/openai-agents-python/models/", "Agents SDK: models"),
+                  ("https://openai.github.io/openai-agents-python/mcp/", "Agents SDK: MCP")],
+         "docs_note": "langchain 1.5.1, langchain-mcp-adapters 0.3.2 and openai-agents 0.25.0."},
         {"id": "chat", "name": "Chat apps",
          "gets": "LobeHub, AnythingLLM, Cherry Studio, Chatbox and LibreChat: a chat window on a collection, one"
                  " merged answer per question, every seat still called and recorded.",

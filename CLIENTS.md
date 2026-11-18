@@ -31,6 +31,7 @@ setx BENCHWARMERS_KEY "<your gateway key>"
 - [Continue](#continue)
 - [Cline and Kilo Code](#cline)
 - [Claude Code](#claude-code)
+- [LangChain and agent SDKs](#code)
 - [Chat apps](#chat)
 - [goose](#goose)
 
@@ -393,6 +394,107 @@ claude
 **Watch for:** The plugin's Stop hook needs the server on the same machine; with none running, every turn ends with a hook error.
 
 Written from [README, From Claude Code and other agents](https://github.com/WendellResearch-AI/benchwarmers#from-claude-code-and-other-agents), read 2026-11-08: checked end to end with Claude Code 2.1.299 on 2026-10-23 (GATEWAY.md, Route mode).
+
+<a id='code'></a>
+
+## LangChain and agent SDKs
+
+Your own Python: a LangChain (LangGraph) agent or an OpenAI Agents SDK agent on a collection with your tools (route mode), a panel's merged answer as one step of a chain, and the panel as ask and verdict tools.
+
+**Where it goes:** Your code, with Python 3.10 or later and the packages on each snippet's first line. Any other framework that takes an OpenAI-compatible model (a base URL, a key, a model name) is set up the same way. The key comes from `BENCHWARMERS_KEY`.
+
+**LangChain: an agent with your tools**
+
+```python
+# pip install langchain langchain-openai
+import os
+from langchain.agents import create_agent
+from langchain_openai import ChatOpenAI
+
+llm = ChatOpenAI(base_url="http://127.0.0.1:8122/v1", api_key=os.environ["BENCHWARMERS_KEY"],
+                 model="bench/core:route")
+
+
+def word_count(text: str) -> int:
+    """Count the words in a text."""
+    return len(text.split())
+
+
+agent = create_agent(llm, tools=[word_count])
+reply = agent.invoke({"messages": [{"role": "user", "content": "How many words are in 'the bench is deep'?"}]})
+print(reply["messages"][-1].content)
+```
+
+**LangChain: a panel's merged answer, as one step**
+
+```python
+# pip install langchain-openai
+import os
+from langchain_openai import ChatOpenAI
+
+panel = ChatOpenAI(base_url="http://127.0.0.1:8122/v1", api_key=os.environ["BENCHWARMERS_KEY"],
+                   model="bench/core:merged", timeout=900, max_retries=0)
+print(panel.invoke("Where can a cache keyed by user id return another user's data?").content)
+```
+
+**LangChain: the panel as tools (MCP)**
+
+```python
+# pip install langchain langchain-openai langchain-mcp-adapters
+import asyncio
+import os
+from langchain.agents import create_agent
+from langchain_mcp_adapters.client import MultiServerMCPClient
+from langchain_openai import ChatOpenAI
+
+llm = ChatOpenAI(base_url="http://127.0.0.1:8122/v1", api_key=os.environ["BENCHWARMERS_KEY"],
+                 model="bench/core:route")
+bench = MultiServerMCPClient({"benchwarmers": {
+    "transport": "streamable_http", "url": "http://127.0.0.1:8122/mcp", "sse_read_timeout": 900,
+    "headers": {"Authorization": "Bearer " + os.environ["BENCHWARMERS_KEY"]}}})
+
+
+async def main():
+    agent = create_agent(llm, tools=await bench.get_tools())
+    reply = await agent.ainvoke({"messages": [{"role": "user", "content":
+        "Ask the bench where a cache keyed by user id can leak data, then judge each seat."}]})
+    print(reply["messages"][-1].content)
+
+
+asyncio.run(main())
+```
+
+**OpenAI Agents SDK: an agent with the panel as tools**
+
+```python
+# pip install openai-agents
+import asyncio
+import os
+from agents import Agent, OpenAIChatCompletionsModel, Runner, set_tracing_disabled
+from agents.mcp import MCPServerStreamableHttp
+from openai import AsyncOpenAI
+
+set_tracing_disabled(True)
+bench = AsyncOpenAI(base_url="http://127.0.0.1:8122/v1", api_key=os.environ["BENCHWARMERS_KEY"])
+
+
+async def main():
+    async with MCPServerStreamableHttp(
+            name="benchwarmers", client_session_timeout_seconds=900,
+            params={"url": "http://127.0.0.1:8122/mcp", "sse_read_timeout": 900,
+                    "headers": {"Authorization": "Bearer " + os.environ["BENCHWARMERS_KEY"]}}) as panel:
+        agent = Agent(name="Assistant", instructions="Answer briefly.", mcp_servers=[panel],
+                      model=OpenAIChatCompletionsModel(model="bench/core:route", openai_client=bench))
+        result = await Runner.run(agent, "How many words are in 'the bench is deep'?")
+        print(result.final_output)
+
+
+asyncio.run(main())
+```
+
+**Watch for:** A panel refuses a request that carries tools, so an agent's model is always `:route` and `:merged` is for a step without them. A panel takes minutes: keep the long timeouts (in seconds), and `max_retries=0` on a panel, as a retry runs every seat again. Without `set_tracing_disabled(True)` the Agents SDK sends its traces to OpenAI.
+
+Written from [LangChain: agents](https://docs.langchain.com/oss/python/langchain/agents), [LangChain: MCP](https://docs.langchain.com/oss/python/langchain/mcp), [Agents SDK: models](https://openai.github.io/openai-agents-python/models/), [Agents SDK: MCP](https://openai.github.io/openai-agents-python/mcp/), read 2026-11-08: langchain 1.5.1, langchain-mcp-adapters 0.3.2 and openai-agents 0.25.0.
 
 <a id='chat'></a>
 

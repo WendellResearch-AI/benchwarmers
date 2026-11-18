@@ -416,7 +416,8 @@ OpenAI-, Responses- or Ollama-speaking agents with the same base URL.
 **Ready set-ups.** The dashboard's **Clients** page (Gateway) gives each
 popular app's configuration, filled in from your install's address,
 collections and MCP server, with a Copy button: opencode, VS Code chat, Codex
-CLI, Zed, Continue, Cline and Kilo Code, Claude Code, goose, and chat apps
+CLI, Zed, Continue, Cline and Kilo Code, Claude Code, your own Python with
+LangChain or the OpenAI Agents SDK, goose, and chat apps
 (LobeHub, AnythingLLM, Cherry Studio, Chatbox, LibreChat). Where keys are
 asked for, it makes one and fills it in, never into a file that may sync.
 The same set-ups are in [CLIENTS.md](CLIENTS.md), with a fresh install's
