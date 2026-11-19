@@ -113,7 +113,7 @@ jobs:
       !cancelled() && needs.npm.result == 'success'
       && (needs.pypi.result == 'success' || needs.pypi.result == 'skipped')
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15     # the tries below wait up to 10.5 minutes; at 10, v1.0.4's was stopped mid-wait
     environment: release
     permissions:
       contents: read
