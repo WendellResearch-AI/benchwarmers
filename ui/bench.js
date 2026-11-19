@@ -1540,22 +1540,22 @@
     row.appendChild(name);
     var side = el('span'), b = el('button', {type: 'button', class: 'linkish'}, 'Restore');
     side.appendChild(b); row.appendChild(side);
+    // Restore lifts the retirement only (serve.unretire): the model goes back into its
+    // provider's group, ticked, to be onboarded like the rest. A decision model is put
+    // back on the bench whole instead, so it leaves the list.
     b.addEventListener('click', function () {
       b.disabled = true;
-      post('/api/restore', {alias: c.alias}).then(function (res) {
+      post('/api/unretire', {alias: c.alias}).then(function (res) {
         if (!res.ok) { b.disabled = false; listErrors(o.errors, res.errors); return; }
         data.retired = data.retired.filter(function (x) { return x.key !== c.key; });
-        side.textContent = '';
-        var run = el('button', {type: 'button', class: 'linkish'}, 'Probe and run its suite');
-        side.appendChild(el('span', {class: 'muted'}, 'Restored. '));
-        side.appendChild(run);
-        run.addEventListener('click', function () {
-          run.disabled = true;
-          post('/api/onboard-queue', {items: [{served: c.served, endpoint: c.endpoint, mode: 'rerun'}]}).then(function (q) {
-            if (!q.ok) { run.disabled = false; listErrors(o.errors, q.errors); return; }
-            run.textContent = 'Queued: the sidebar shows it'; oqPoll();
-          });
-        });
+        if ((res.changed || []).indexOf('config/decision-models.json') === -1) {
+          var back = Object.assign({}, c); delete back.alias; delete back.at; delete back.why;
+          data.candidates.push(back);
+          data.candidates.sort(function (a, b) { return a.served < b.served ? -1 : a.served > b.served ? 1 : 0; });
+          chosen[c.key] = {served: c.served, endpoint: c.endpoint};
+          delete folded[c.group];
+        }
+        renderPicker(); armStart();
       });
     });
     return row;

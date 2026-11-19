@@ -976,6 +976,26 @@ def restore_model(alias: str, who: str = "ui") -> dict:
     return {"ok": True, "errors": [], "changed": changed, "sync": _sync_cli()}
 
 
+def unretire(alias: str, who: str = "ui") -> dict:
+    """The Onboard picker's Restore: lift the retirement only, so the model is a
+    candidate again under its provider and is onboarded like any other (its probe
+    and suite, in the mode chosen). Logged as `restored`, so the deprecation check
+    ignores its old failures, as restore_model's are. Its old alias is free again,
+    and onboarding derives the same one from the same served name. A decision
+    model is restored whole (restore_model): the picker's onboarding is for chat."""
+    retired = load_json(RETIRED_PATH)
+    entry = retired.get(alias)
+    if not entry:
+        return {"ok": False, "errors": [f"{alias!r} is not a retired alias"]}
+    if entry.get("decision"):
+        return restore_model(alias, who)
+    del retired[alias]
+    _write_atomic(RETIRED_PATH, _dump(retired))
+    _log_change(datetime.datetime.now().astimezone().isoformat(timespec="seconds"), who, alias, "restored",
+                None, entry["served"])
+    return {"ok": True, "errors": [], "changed": ["config/retired.json"]}
+
+
 DISMISSED_PATH = DATA / "config" / "dismissed.json"
 
 
@@ -6714,6 +6734,7 @@ class Handler(gateway.Handler):
                                                     new_question_types=p.get("new_question_types")),
                "/api/remove": lambda p: remove_model(str(p.get("alias", "")), str(p.get("reason", ""))),
                "/api/restore": lambda p: restore_model(str(p.get("alias", ""))),
+               "/api/unretire": lambda p: unretire(str(p.get("alias", ""))),
                "/api/retry": lambda p: retry_model(str(p.get("alias") or "")),
                "/api/discover/refresh": lambda p: discover_refresh(),
                "/api/discover/add": lambda p: discover_add(str(p.get("connection") or ""),
