@@ -2642,12 +2642,29 @@ NEW_DAYS = 7                   # a model first scored this recently is marked ne
 
 
 def new_since() -> set[str]:
-    """The models whose first suite score is within NEW_DAYS (today counted): new to the reports."""
+    """The models whose first suite score is within NEW_DAYS (today counted): new to the reports.
+    First from the run notes and the kept answers (runs/answers/<task>/<model>/<run start>.md):
+    a suite stopped at its hour writes no note, but its answers are kept and scored."""
+    return locked.once(("new_since",), _new_since)
+
+
+def _new_since() -> set[str]:
     since, first = (datetime.date.today() - datetime.timedelta(days=NEW_DAYS - 1)).isoformat(), {}
+
+    def saw(alias: str, day: str) -> None:
+        a = current_alias(alias)
+        first[a] = min(first.get(a, day), day)
     for day, _run, _task, alias, *_ in _note_table()[1]:
         if day:
-            a = current_alias(alias)
-            first[a] = min(first.get(a, day), day)
+            saw(alias, day)
+    try:
+        for task in os.scandir(DATA / "runs" / "answers"):
+            for model in (os.scandir(task.path) if task.is_dir() else ()):
+                days = [e.name[:10] for e in os.scandir(model.path)] if model.is_dir() else []
+                if days:
+                    saw(model.name, min(days))
+    except OSError:                                    # no archive yet, or a folder gone mid-read: the notes still count
+        pass
     return {a for a, d in first.items() if d >= since}
 
 
