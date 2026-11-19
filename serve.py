@@ -3672,6 +3672,12 @@ def work_card() -> str:
                       "chart-work", "".join(body), how)
 
 
+def zoom_button(chart: str) -> str:
+    """Who to trust's and Performance's heading button: the chart closer in on its zone (bench.js zoomed)."""
+    return (f"<button type='button' class='btn small' data-zoom='{chart}' aria-pressed='false'"
+            " title='The shaded zone and a margin round it, every model there named'>Zoom to the zone</button>")
+
+
 def new_legend(rows: list[dict]) -> str:
     """Under Who to trust and Performance, while a model on them is new: what its ring means."""
     return (f"<p class='new-key' title='Onboarded (first probed) in the last {NEW_DAYS} days'><i></i>new</p>"
@@ -3694,7 +3700,7 @@ def overview_card() -> str:
            f" probed) in the last {NEW_DAYS} days is new: its dot is ringed and named.</p>")
     return chart_card("Who to trust with a review", "Top right is the reviewer to pick: finds the real bugs"
                       " and makes little up.", "chart-overview", "".join(body), how, retired=False,
-                      extra=new_legend(rows))
+                      extra=new_legend(rows), tools=zoom_button("overview"))
 
 
 def suite_card() -> str:
@@ -3869,7 +3875,8 @@ def perf_card() -> str:
            " and thorough corner; the models in or near it are named, hover a dot for the rest. The table is the"
            " daily probe instead: each model's latest timings per prompt.</p>")
     return chart_card("Performance", "How fast each model answers our own tasks, against how much it finds.",
-                      "chart-speed", body, how, extra=new_legend(perf_charts()["speed"]))
+                      "chart-speed", body, how, extra=new_legend(perf_charts()["speed"]),
+                      tools=zoom_button("speed"))
 
 
 def favicon(theme: str) -> str:

@@ -3356,6 +3356,7 @@
   }
   // A function, not run once: a theme switched on Settings redraws them in its
   // colours. `part` ('suite', 'uptime', 'trend' or 'quotas'): only that part, as it arrives.
+  var zoomed = {};                     // Who to trust (overview) and Performance (speed) zoomed to their zone
   function drawCharts(part) {
     var holder = $('charts-data');
     // No page with charts yet, or only Quota, which asks for Plot once a chart of its comes near (drawNear).
@@ -3792,9 +3793,15 @@
       // warnings (most made up). The rest are on hover: named all at once they ran together.
       // The zone: finds 90% or more of the real bugs, makes up 15% or less.
       var zoneX = Math.max(x0, 0.9), zoneY = 0.15;
+      // Zoomed (the heading's Zoom to the zone): the zone and a margin round it, every model there named.
+      var D = C.overview;
+      if (zoomed.overview) {
+        x0 = Math.max(0, zoneX - (1 - zoneX) * 0.5); worst = zoneY * 1.5;
+        D = D.filter(function (d) { return d.recall >= x0 && d.wrong <= worst; });
+      }
       var near = function (d) { return d.recall >= zoneX - (1 - x0) * 0.08 && d.wrong <= zoneY * 1.4; };
-      var worstFew = C.overview.slice().sort(function (a, b) { return b.wrong - a.wrong; }).slice(0, 3);
-      var pts = C.overview.filter(function (d) { return near(d) || d.new || worstFew.indexOf(d) !== -1; })
+      var worstFew = D.slice().sort(function (a, b) { return b.wrong - a.wrong; }).slice(0, 3);
+      var pts = D.filter(function (d) { return zoomed.overview || near(d) || d.new || worstFew.indexOf(d) !== -1; })
         .sort(function (a, b) { return a.wrong - b.wrong || b.recall - a.recall; });
       var offs = spread(pts, function (d) { return 60 + (d.recall - x0) / (1 - x0) * pxW; },
                         function (d) { return d.wrong / worst * pxH; }, w);
@@ -3810,10 +3817,10 @@
           Plot.rect([{x1: zoneX, x2: 1, y1: 0, y2: zoneY}], {x1: 'x1', x2: 'x2', y1: 'y1', y2: 'y2',
             fill: good, fillOpacity: 0.12, stroke: good, strokeOpacity: 0.5, strokeDasharray: '4 3'}),
           // New to the report (first scored in the last NEW_DAYS): the signal colour, ringed and named.
-          Plot.dot(C.overview, {x: 'recall', y: 'wrong', r: 6, fill: function (d) { return d.new ? signal : good; }, stroke: ink, strokeWidth: 0.5}),
-          Plot.dot(C.overview.filter(function (d) { return d.new; }), {x: 'recall', y: 'wrong', r: 10, fill: 'none', stroke: signal, strokeWidth: 2}),
+          Plot.dot(D, {x: 'recall', y: 'wrong', r: 6, fill: function (d) { return d.new ? signal : good; }, stroke: ink, strokeWidth: 0.5}),
+          Plot.dot(D.filter(function (d) { return d.new; }), {x: 'recall', y: 'wrong', r: 10, fill: 'none', stroke: signal, strokeWidth: 2}),
           names(labels, 'recall'),
-          Plot.tip(C.overview, Plot.pointer({x: 'recall', y: 'wrong',
+          Plot.tip(D, Plot.pointer({x: 'recall', y: 'wrong',
             title: function (d) { return d.model + (d.new ? ' (new)' : '') + '\nfinds ' + d.found + ' real findings\nconfidently wrong in ' + d.wrongN + ' answers'; }}))
         ]
       });
@@ -3908,7 +3915,13 @@
       // The zone: 90% or more of the findings, in 40 seconds or less. Named: the models in
       // or next to it, as on Who to trust; the rest are on hover.
       var zoneS = Math.min(hi, Math.max(lo, 40)), zoneR = Math.max(y0, 0.9);
-      var pts = C.speed.filter(function (d) { return d.new || d.seconds <= zoneS * 1.25 && d.recall >= zoneR - (1 - y0) * 0.08; })
+      // Zoomed: the zone and a margin round it, every model there named.
+      var D = C.speed;
+      if (zoomed.speed) {
+        hi = Math.max(zoneS * 1.6, lo * 2); y0 = Math.max(0, zoneR - (1 - zoneR) * 0.5);
+        D = D.filter(function (d) { return d.seconds <= hi && d.recall >= y0; });
+      }
+      var pts = D.filter(function (d) { return zoomed.speed || d.new || d.seconds <= zoneS * 1.25 && d.recall >= zoneR - (1 - y0) * 0.08; })
         .sort(function (a, b) { return b.recall - a.recall; });
       var offs = spread(pts, function (d) { return 60 + (Math.log(d.seconds) - Math.log(lo)) / (Math.log(hi) - Math.log(lo)) * pxW; },
                         function (d) { return (1 - d.recall) / (1 - y0) * pxH; }, w);
@@ -3923,10 +3936,10 @@
           // Outlined, so it reads on a dark ground too.
           Plot.rect([{x1: lo, x2: zoneS, y1: zoneR, y2: 1}], {x1: 'x1', x2: 'x2', y1: 'y1', y2: 'y2',
             fill: good, fillOpacity: 0.12, stroke: good, strokeOpacity: 0.5, strokeDasharray: '4 3'}),
-          Plot.dot(C.speed, {x: 'seconds', y: 'recall', r: 6, fill: function (d) { return d.new ? signal : sky; }, stroke: ink, strokeWidth: 0.5}),
-          Plot.dot(C.speed.filter(function (d) { return d.new; }), {x: 'seconds', y: 'recall', r: 10, fill: 'none', stroke: signal, strokeWidth: 2}),
+          Plot.dot(D, {x: 'seconds', y: 'recall', r: 6, fill: function (d) { return d.new ? signal : sky; }, stroke: ink, strokeWidth: 0.5}),
+          Plot.dot(D.filter(function (d) { return d.new; }), {x: 'seconds', y: 'recall', r: 10, fill: 'none', stroke: signal, strokeWidth: 2}),
           names(labels, 'seconds'),
-          Plot.tip(C.speed, Plot.pointer({x: 'seconds', y: 'recall',
+          Plot.tip(D, Plot.pointer({x: 'seconds', y: 'recall',
             title: function (d) { return d.model + (d.new ? ' (new)' : '') + '\nmedian ' + d.seconds.toFixed(0) + 's over ' + d.tasks + ' tasks\nfinds ' + Math.round(d.recall * 100) + '%'; }}))
         ]
       });
@@ -4181,6 +4194,15 @@
     target.setAttribute('tabindex', '-1');
     target.focus({preventScroll: true});
     history.replaceState(null, '', a.getAttribute('href'));
+  });
+  // Who to trust's and Performance's Zoom to the zone: that chart drawn again, closer in (drawCharts).
+  document.addEventListener('click', function (ev) {
+    var b = ev.target.closest('button[data-zoom]');
+    if (!b) return;
+    var on = zoomed[b.dataset.zoom] = !zoomed[b.dataset.zoom];
+    b.setAttribute('aria-pressed', String(on));
+    b.textContent = on ? 'Show all' : 'Zoom to the zone';
+    drawCharts();
   });
   // Uptime's or Trend's window: that window's tables (and Uptime's list) shown, its charts drawn again.
   document.addEventListener('change', function (ev) {
