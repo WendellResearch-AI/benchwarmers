@@ -2638,33 +2638,22 @@ def wrong_table() -> dict:
     return seen[1]
 
 
-NEW_DAYS = 7                   # a model first scored this recently is marked new on Who to trust and Performance
+NEW_DAYS = 7                   # a model first probed (onboarded) this recently is marked new on Who to trust and Performance
 
 
 def new_since() -> set[str]:
-    """The models whose first suite score is within NEW_DAYS (today counted): new to the reports.
-    First from the run notes and the kept answers (runs/answers/<task>/<model>/<run start>.md):
-    a suite stopped at its hour writes no note, but its answers are kept and scored."""
+    """The models new to the bench: their first probe (perf/history.csv; onboarding's step 4 is a
+    model's first) within NEW_DAYS, today counted. Not its first suite score, which a late or
+    stopped suite pass would move. A model restored from retirement keeps its old first probe."""
     return locked.once(("new_since",), _new_since)
 
 
 def _new_since() -> set[str]:
     since, first = (datetime.date.today() - datetime.timedelta(days=NEW_DAYS - 1)).isoformat(), {}
-
-    def saw(alias: str, day: str) -> None:
-        a = current_alias(alias)
-        first[a] = min(first.get(a, day), day)
-    for day, _run, _task, alias, *_ in _note_table()[1]:
+    for r in perf_rows():
+        day = (r.get("timestamp") or "")[:10]
         if day:
-            saw(alias, day)
-    try:
-        for task in os.scandir(DATA / "runs" / "answers"):
-            for model in (os.scandir(task.path) if task.is_dir() else ()):
-                days = [e.name[:10] for e in os.scandir(model.path)] if model.is_dir() else []
-                if days:
-                    saw(model.name, min(days))
-    except OSError:                                    # no archive yet, or a folder gone mid-read: the notes still count
-        pass
+            first[r["model"]] = min(first.get(r["model"], day), day)
     return {a for a, d in first.items() if d >= since}
 
 
@@ -3679,7 +3668,7 @@ def work_card() -> str:
 
 def new_legend(rows: list[dict]) -> str:
     """Under Who to trust and Performance, while a model on them is new: what its ring means."""
-    return (f"<p class='new-key' title='First scored in the last {NEW_DAYS} days'><i></i>new</p>"
+    return (f"<p class='new-key' title='Onboarded (first probed) in the last {NEW_DAYS} days'><i></i>new</p>"
             if any(r.get("new") for r in rows) else "")
 
 
@@ -3695,8 +3684,8 @@ def overview_card() -> str:
     how = ("<p>A dot per model with both scores: the share of the real findings in our own code tasks it located"
            " (right), and the share of its answers that were confidently wrong (up is fewer). The shaded zone, 90%"
            " or more found and 15% or less made up, is where to pick a reviewer from. The models in or near it,"
-           " and the three that make the most up, are named; hover a dot for any other. A model first scored in"
-           f" the last {NEW_DAYS} days is new: its dot is ringed and named.</p>")
+           " and the three that make the most up, are named; hover a dot for any other. A model onboarded (first"
+           f" probed) in the last {NEW_DAYS} days is new: its dot is ringed and named.</p>")
     return chart_card("Who to trust with a review", "Top right is the reviewer to pick: finds the real bugs"
                       " and makes little up.", "chart-overview", "".join(body), how, retired=False,
                       extra=new_legend(rows))
