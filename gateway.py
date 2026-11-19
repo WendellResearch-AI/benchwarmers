@@ -917,11 +917,13 @@ def route_plan(name: str, ask: dict, who: str) -> dict:
 def _fit(upstream: dict, alias: str) -> dict:
     """The request's fields for `alias`: an output budget over the model's
     known maximum is cut to it rather than refused (Claude Code asks every
-    model for 32,000)."""
+    model for 32,000), and one of zero or less is left out so the model's
+    own default applies (Roo Code's -1 means "let the server decide")."""
     import catalog
     cap = catalog.info(alias).get("max_output")
-    return {k: min(v, cap) if k in ("max_tokens", "max_completion_tokens") and isinstance(v, int)
-            and isinstance(cap, int) and cap > 0 else v for k, v in upstream.items()}
+    budget = ("max_tokens", "max_completion_tokens")
+    return {k: min(v, cap) if k in budget and isinstance(v, int) and isinstance(cap, int) and cap > 0 else v
+            for k, v in upstream.items() if not (k in budget and isinstance(v, (int, float)) and v <= 0)}
 
 
 def route_turn(name: str, plan: dict, ask: dict, who: str, emit) -> None:

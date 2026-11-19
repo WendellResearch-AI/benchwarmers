@@ -193,6 +193,8 @@ def main() -> int:
         assert sent["tools"] == [WEATHER] and sent["tool_choice"] == "auto" and sent["parallel_tool_calls"] is False
         assert sent["temperature"] == 0.1 and sent["seed"] == 7 and sent["response_format"] == {"type": "text"}
         assert sent["max_tokens"] == 8192, sent                       # cut to the model's known maximum
+        # A budget of zero or less (Roo Code's -1, "let the server decide") is left out.
+        assert gateway._fit({"max_tokens": -1, "max_completion_tokens": 0, "seed": 7}, "tooler") == {"seed": 7}
         assert sent["messages"] == q and sent["stream"] is True
         got = sse_json(raw)
         deltas = [c["choices"][0]["delta"].get("tool_calls") for c in got if c["choices"]]
