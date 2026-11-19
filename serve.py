@@ -3662,8 +3662,7 @@ def work_card() -> str:
 
 def new_legend(rows: list[dict]) -> str:
     """Under Who to trust and Performance, while a model on them is new: what its ring means."""
-    return ("<div class='q-legend'><span><i style='background:var(--signal);box-shadow:0 0 0 2px var(--paper),"
-            f"0 0 0 4px var(--signal)'></i>new: first scored in the last {NEW_DAYS} days</span></div>"
+    return (f"<p class='new-key' title='First scored in the last {NEW_DAYS} days'><i></i>new</p>"
             if any(r.get("new") for r in rows) else "")
 
 
