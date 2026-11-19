@@ -1482,22 +1482,29 @@
     });
     return row;
   }
+  // Search ignores case, spaces, dots, dashes, slashes and underscores: "glm 5-3 flash" finds
+  // z-ai/glm-5-3-flash, and "glm 5.3" finds glm-5-3 as well as glm-5.3.
+  function squash(s) { return String(s || '').toLowerCase().replace(/[\s._\/:-]+/g, ''); }
+  function hit(q, fields) { return !q || fields.some(function (s) { return squash(s).indexOf(q) !== -1; }); }
   function renderPicker() {
     o.picker.textContent = '';
     if (!data) return;
-    var q = o.find.value.trim().toLowerCase();
+    var q = squash(o.find.value);
     var groups = {};
+    // Retired ones a search finds come first: onboarding refuses them, Restore is the way back.
+    var old = (data.retired || []).filter(function (c) { return hit(q, [c.served, c.alias, c.endpoint]); });
+    if (old.length && q) o.picker.appendChild(retiredGroup(old, true));
     data.candidates.forEach(function (c) {
       // The endpoint too: "Onboard a model from it" filters on it, and the default
       // endpoint's models are grouped by connection, not by its name.
-      if (q && [c.served, c.group, c.endpoint].every(function (s) { return s.toLowerCase().indexOf(q) === -1; })) return;
+      if (!hit(q, [c.served, c.group, c.endpoint])) return;
       // New ones in a group of their own, first: just added to the hub is what
       // you came to onboard, and it is there without scrolling or unfolding.
       var g = c.new ? NEW : c.group;
       (groups[g] = groups[g] || []).push(c);
     });
     var names = Object.keys(groups).sort(function (a, b) { return (b === NEW) - (a === NEW) || (a < b ? -1 : a > b ? 1 : 0); });
-    if (!names.length) o.picker.appendChild(el('p', {class: 'empty'}, data.candidates.length ? 'Nothing matches.' : 'Everything the endpoints serve is already on the bench, retired or dismissed.'));
+    if (!names.length && !(old.length && q)) o.picker.appendChild(el('p', {class: 'empty'}, data.candidates.length ? 'Nothing matches.' : 'Everything the endpoints serve is already on the bench, retired or dismissed.'));
     names.forEach(function (g) {
       // Folds, remembered per browser; a search opens every group it matches in.
       var d = el('details', {class: 'grp'});
@@ -1516,17 +1523,15 @@
       data.dismissed.forEach(function (c) { d.appendChild(pickRow(c, true)); });
       o.picker.appendChild(d);
     }
-    // Served, but retired from the bench (by hand or by the daily check): when and why, and
-    // Restore, which puts back its alias, role and endpoint; then its probe and suite again.
-    var old = (data.retired || []).filter(function (c) {
-      return !q || [c.served, c.alias, c.endpoint].some(function (s) { return s.toLowerCase().indexOf(q) !== -1; });
-    });
-    if (old.length) {
-      var r = el('details', {class: 'retired-grp'}); r.open = !!q;
-      r.appendChild(el('summary', {}, old.length + ' retired'));
-      old.forEach(function (c) { r.appendChild(retiredRow(c)); });
-      o.picker.appendChild(r);
-    }
+    if (old.length && !q) o.picker.appendChild(retiredGroup(old, false));
+  }
+  // Served, but retired from the bench (by hand or by the daily check): when and why, and
+  // Restore, which puts back its alias, role and endpoint; then its probe and suite again.
+  function retiredGroup(old, open) {
+    var r = el('details', {class: 'retired-grp'}); r.open = open;
+    r.appendChild(el('summary', {}, old.length + ' retired: Restore brings one back'));
+    old.forEach(function (c) { r.appendChild(retiredRow(c)); });
+    return r;
   }
   function retiredRow(c) {
     var row = el('div', {class: 'pick retired'});
