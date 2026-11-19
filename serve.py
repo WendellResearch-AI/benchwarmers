@@ -1048,9 +1048,11 @@ def onboard_candidates(fresh: bool = False) -> dict:
     if not names:
         return {"ok": False, "errors": ["no endpoint yet: add one first (Endpoints, then Manage, then"
                                         " Add an endpoint), and what it serves is listed here"]}
+    # Retired ones are listed apart, with when and why and a Restore: onboarding refuses them
+    # (a second alias for one model), and silence read as "it is not served".
+    was = {endpoints.snapshot_key(r.get("served", ""), r.get("endpoint") or endpoints.default()): (a, r)
+           for a, r in retired().items()}
     taken = ({endpoints.snapshot_key(r["served"], r["endpoint"]) for r in endpoints.registry()}
-             | {endpoints.snapshot_key(r.get("served", ""), r.get("endpoint") or endpoints.default())
-                for r in retired().values()}
              | {endpoints.snapshot_key(d["served"], d["endpoint"]) for d in decide.load().values()})
     with _OQ_LOCK:                                  # on its way: Start would refuse it anyway
         taken |= {endpoints.snapshot_key(i["served"], i["endpoint"]) for i in _OQ["items"]
@@ -1058,7 +1060,7 @@ def onboard_candidates(fresh: bool = False) -> dict:
     tags = load_json(DATA / "config" / "provider-tags.json")
     dismissed = load_json(DISMISSED_PATH)
     first_seen = load_json(DATA / "config" / "served-snapshot.json").get("last_seen", {})
-    open_, gone, errors = [], [], []
+    open_, gone, old, errors = [], [], [], []
     from concurrent.futures import ThreadPoolExecutor
 
     def ask(name: str):
@@ -1107,10 +1109,14 @@ def onboard_candidates(fresh: bool = False) -> dict:
             # aggregator that records only registered models, everything would be.
             row = {"served": served, "endpoint": name, "key": key, "group": group,
                    "new": whole and served not in first_seen, **_modalities(entry, served, mods)}
-            (gone if key in dismissed else open_).append(row)
-    if not open_ and not gone and errors:
+            if key in was:
+                alias, r = was[key]
+                old.append({**row, "alias": alias, "at": (r.get("at") or "")[:10], "why": r.get("why") or ""})
+            else:
+                (gone if key in dismissed else open_).append(row)
+    if not open_ and not gone and not old and errors:
         return {"ok": False, "errors": errors}
-    return {"ok": True, "errors": errors, "candidates": open_, "dismissed": gone,
+    return {"ok": True, "errors": errors, "candidates": open_, "dismissed": gone, "retired": old,
             "age": round(time.time() - listed)}
 
 
@@ -1907,8 +1913,8 @@ def _onboard_refusal(served: str, endpoint: str, mode: str = "full") -> list[str
                 and (r.get("endpoint") or endpoints.default()) == endpoint), None)
     if hit:
         errors.append(f"{served} was retired from the bench as {hit!r} on {retired[hit]['at'][:10]}"
-                      f" ({retired[hit]['why']}); remove that entry from config/retired.json"
-                      " first if you mean it")
+                      f" ({retired[hit]['why']}); Restore it instead (the Onboard picker's retired"
+                      " list, or the model on Models benched with Show retired)")
     return errors
 
 

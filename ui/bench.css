@@ -668,6 +668,8 @@ dialog h2 { margin: 0 0 .2rem; font-size: var(--t-head); font-weight: 700; }
 /* Who to trust's and Performance's key for a new model's ringed dot: small, a word. */
 .new-key { display: flex; align-items: center; gap: 6px; margin: 0 0 4px; font-size: var(--t-small); color: var(--muted); }
 .new-key i { width: 7px; height: 7px; border-radius: 50%; background: var(--signal); box-shadow: 0 0 0 1.5px var(--paper), 0 0 0 3px var(--signal); }
+/* The Onboard picker's retired ones: when and why under the name, Restore beside it. */
+.pick.retired .alias small { display: block; color: var(--muted); font-size: var(--t-small); overflow-wrap: anywhere; }
 /* A model's Run suite, under its profile. */
 .rerun { margin: var(--gap-3) 0; }
 .rerun .rules { margin: 6px 0 0; }

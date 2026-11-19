@@ -1516,6 +1516,44 @@
       data.dismissed.forEach(function (c) { d.appendChild(pickRow(c, true)); });
       o.picker.appendChild(d);
     }
+    // Served, but retired from the bench (by hand or by the daily check): when and why, and
+    // Restore, which puts back its alias, role and endpoint; then its probe and suite again.
+    var old = (data.retired || []).filter(function (c) {
+      return !q || [c.served, c.alias, c.endpoint].some(function (s) { return s.toLowerCase().indexOf(q) !== -1; });
+    });
+    if (old.length) {
+      var r = el('details', {class: 'retired-grp'}); r.open = !!q;
+      r.appendChild(el('summary', {}, old.length + ' retired'));
+      old.forEach(function (c) { r.appendChild(retiredRow(c)); });
+      o.picker.appendChild(r);
+    }
+  }
+  function retiredRow(c) {
+    var row = el('div', {class: 'pick retired'});
+    var name = el('span', {class: 'alias'}, c.served);
+    name.appendChild(el('small', {}, 'retired ' + c.at + ' as ' + c.alias + ': ' + c.why));
+    row.appendChild(name);
+    var side = el('span'), b = el('button', {type: 'button', class: 'linkish'}, 'Restore');
+    side.appendChild(b); row.appendChild(side);
+    b.addEventListener('click', function () {
+      b.disabled = true;
+      post('/api/restore', {alias: c.alias}).then(function (res) {
+        if (!res.ok) { b.disabled = false; listErrors(o.errors, res.errors); return; }
+        data.retired = data.retired.filter(function (x) { return x.key !== c.key; });
+        side.textContent = '';
+        var run = el('button', {type: 'button', class: 'linkish'}, 'Probe and run its suite');
+        side.appendChild(el('span', {class: 'muted'}, 'Restored. '));
+        side.appendChild(run);
+        run.addEventListener('click', function () {
+          run.disabled = true;
+          post('/api/onboard-queue', {items: [{served: c.served, endpoint: c.endpoint, mode: 'rerun'}]}).then(function (q) {
+            if (!q.ok) { run.disabled = false; listErrors(o.errors, q.errors); return; }
+            run.textContent = 'Queued: the sidebar shows it'; oqPoll();
+          });
+        });
+      });
+    });
+    return row;
   }
   // The server keeps each endpoint's list a few minutes (serve.LISTED_FOR);
   // Refresh asks them all again.
