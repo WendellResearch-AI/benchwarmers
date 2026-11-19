@@ -87,6 +87,12 @@ BASE_THEME = "rainforest"      # sets every token (faces, measure, radius); the 
 DEFAULT_THEME = "hardwood"     # what an install shows until someone picks a theme
 # The names and the order on Settings; a theme file not named here follows, by its own name.
 THEME_LABELS = {"rainforest": "Light", "dark": "Dark", "hardwood": "Hardwood"}   # the files' names stay
+# The rail's theme pill: Light and Dark as a sun and a moon, the rest by name.
+_SVG = ("<svg viewBox='0 0 16 16' width='15' height='15' fill='none' stroke='currentColor' stroke-width='1.5'"
+        " stroke-linecap='round' aria-hidden='true'>")
+THEME_ICONS = {"rainforest": _SVG + "<circle cx='8' cy='8' r='3'/><path d='M8 1v1.5M8 13.5V15M1 8h1.5M13.5 8H15"
+                                    "M3 3l1.1 1.1M11.9 11.9L13 13M3 13l1.1-1.1M11.9 4.1L13 3'/></svg>",
+               "dark": _SVG + "<path d='M13.5 9.8A5.8 5.8 0 0 1 6.2 2.5a5.8 5.8 0 1 0 7.3 7.3z'/></svg>"}
 FONTS = {f"{family}-latin-{weight}-normal.woff2": family
          for family, weights in (("chivo", (400, 500, 700, 800)),
                                  ("chivo-mono", (400, 500)))
@@ -1848,7 +1854,8 @@ def save_gateway_settings(max_calls, max_explorers, who: str = "ui", pick_collec
 # registered: a seat only for requests that carry images, and its suite is the
 # vision tasks alone (suite/run.applies), now or through the scheduled passes.
 ONBOARD_MODES = {"full": [], "full-adhoc": ["--ad-hoc"], "quick": ["--skip-suite"],
-                 "quick-adhoc": ["--skip-suite", "--ad-hoc"]}
+                 "quick-adhoc": ["--skip-suite", "--ad-hoc"],
+                 "rerun": ["--rerun"]}             # one on the bench: its probe and whole suite again (a model's Run suite)
 
 
 def onboard_choice(prefix: str) -> str:
@@ -1889,6 +1896,8 @@ def _onboard_refusal(served: str, endpoint: str, mode: str = "full") -> list[str
     if endpoint not in endpoints.load():
         errors.append(f"{endpoint!r} is not an endpoint in config/endpoints.json")
     on_it = {r["served"]: r["alias"] for r in endpoints.registry() if r["endpoint"] == endpoint}
+    if mode == "rerun":                                # the opposite: it must be on the bench, as a chat model
+        return errors + ([] if served in on_it else [f"{served} is not on the bench from {endpoint}"])
     on_it.update({d["served"]: a for a, d in decide.load().items() if d["endpoint"] == endpoint})
     if served in on_it or (endpoint == endpoints.default() and served in registered()):
         errors.append(f"{served} is already registered as"
@@ -1969,6 +1978,8 @@ def onboard_queue() -> dict:
         if i["state"] == "running":
             text = read(DATA / "runs" / i["log"]) if i["log"] else ""
             i["step"] = max((int(s) for s in re.findall(r"\[([1-5])/5\]", text)), default=0)
+            at = re.findall(r"^\s+suite (\d+)/(\d+|\?): (.*)$", text, re.M)    # step 5: the task it is on
+            i["suite"] = list(at[-1]) if at else None
     return out
 
 
@@ -2058,7 +2069,7 @@ def _onboard_worker(who: str) -> None:
                     nxt["log"] = res["log"]
                 code = proc.wait()
                 text = read(DATA / "runs" / res["log"])
-                alias = re.search(r"->\s+alias\s+(\S+)", text)
+                alias = re.search(r"(?:->\s+alias|already on the bench as)\s+(\S+)", text)
                 with _OQ_LOCK:
                     nxt["alias"] = alias.group(1) if alias else None
                 state, note = _onboard_outcome(code, text)
@@ -2077,7 +2088,7 @@ def discover_add(connection: str, model: str, who: str = "ui", endpoint: str = "
     normal onboarding, in the mode and with the Vision box the confirm chose
     (ONBOARD_MODES). Only for a connection the hub already has. No endpoint
     means Open WebUI's, as before there were other hubs."""
-    if mode not in ONBOARD_MODES:                      # before the hub has it, not after
+    if mode not in ONBOARD_MODES or mode == "rerun":   # before the hub has it, not after
         return {"ok": False, "errors": [f"mode must be one of {', '.join(ONBOARD_MODES)}; got {mode!r}"]}
     if not re.fullmatch(r"[\w./:@+-]{1,200}", model or ""):
         return {"ok": False, "errors": ["the model id is the provider's id, e.g. vendor/model:free"]}
@@ -2627,6 +2638,19 @@ def wrong_table() -> dict:
     return seen[1]
 
 
+NEW_DAYS = 7                   # a model first scored this recently is marked new on Who to trust and Performance
+
+
+def new_since() -> set[str]:
+    """The models whose first suite score is within NEW_DAYS (today counted): new to the reports."""
+    since, first = (datetime.date.today() - datetime.timedelta(days=NEW_DAYS - 1)).isoformat(), {}
+    for day, _run, _task, alias, *_ in _note_table()[1]:
+        if day:
+            a = current_alias(alias)
+            first[a] = min(first.get(a, day), day)
+    return {a for a, d in first.items() if d >= since}
+
+
 def overview_rows() -> list[dict]:
     """Who to trust, a row per registered model with both suite scores and answers:
     the share of real findings located, and the share of answers confidently wrong.
@@ -2636,9 +2660,10 @@ def overview_rows() -> list[dict]:
 
 def _overview_rows() -> list[dict]:
     import route
-    recall, wr = route.suite_recall(), wrong_table()
+    recall, wr, new = route.suite_recall(), wrong_table(), new_since()
     return [{"model": m, "recall": recall[m][0] / recall[m][1], "wrong": wr[m]["wrong"] / wr[m]["answers"],
-             "found": f"{recall[m][0]}/{recall[m][1]}", "wrongN": f"{wr[m]['wrong']}/{wr[m]['answers']}"}
+             "found": f"{recall[m][0]}/{recall[m][1]}", "wrongN": f"{wr[m]['wrong']}/{wr[m]['answers']}",
+             "new": m in new}
             for m in sorted(on_bench()) if recall.get(m) and recall[m][1] and wr.get(m, {}).get("answers")]
 
 
@@ -2924,8 +2949,9 @@ def perf_charts() -> dict:
     for (_task, m), v in suite_scores().items():
         if m in live and re.match(r"\d+/\d+", v["found"]):
             seconds.setdefault(m, []).append(v["seconds"])
-    recall = route.suite_recall()
-    speed = [{"model": m, "seconds": sorted(s)[len(s) // 2], "recall": recall[m][0] / recall[m][1], "tasks": len(s)}
+    recall, new = route.suite_recall(), new_since()
+    speed = [{"model": m, "seconds": sorted(s)[len(s) // 2], "recall": recall[m][0] / recall[m][1], "tasks": len(s),
+              "new": m in new}
              for m, s in sorted(seconds.items()) if recall.get(m) and recall[m][1]]
     return {"speed": speed}
 
@@ -3634,6 +3660,13 @@ def work_card() -> str:
                       "chart-work", "".join(body), how)
 
 
+def new_legend(rows: list[dict]) -> str:
+    """Under Who to trust and Performance, while a model on them is new: what its ring means."""
+    return ("<div class='q-legend'><span><i style='background:var(--signal);box-shadow:0 0 0 2px var(--paper),"
+            f"0 0 0 4px var(--signal)'></i>new: first scored in the last {NEW_DAYS} days</span></div>"
+            if any(r.get("new") for r in rows) else "")
+
+
 def overview_card() -> str:
     rows = sorted(overview_rows(), key=lambda d: (d["wrong"], -d["recall"]))
     body = ["<table><thead><tr>", th("Model"), th("Finds real bugs", True), th("Makes things up", True),
@@ -3646,9 +3679,11 @@ def overview_card() -> str:
     how = ("<p>A dot per model with both scores: the share of the real findings in our own code tasks it located"
            " (right), and the share of its answers that were confidently wrong (up is fewer). The shaded zone, 90%"
            " or more found and 15% or less made up, is where to pick a reviewer from. The models in or near it,"
-           " and the three that make the most up, are named; hover a dot for any other.</p>")
+           " and the three that make the most up, are named; hover a dot for any other. A model first scored in"
+           f" the last {NEW_DAYS} days is new: its dot is ringed and named.</p>")
     return chart_card("Who to trust with a review", "Top right is the reviewer to pick: finds the real bugs"
-                      " and makes little up.", "chart-overview", "".join(body), how, retired=False)
+                      " and makes little up.", "chart-overview", "".join(body), how, retired=False,
+                      extra=new_legend(rows))
 
 
 def suite_card() -> str:
@@ -3823,7 +3858,7 @@ def perf_card() -> str:
            " and thorough corner; the models in or near it are named, hover a dot for the rest. The table is the"
            " daily probe instead: each model's latest timings per prompt.</p>")
     return chart_card("Performance", "How fast each model answers our own tasks, against how much it finds.",
-                      "chart-speed", body, how)
+                      "chart-speed", body, how, extra=new_legend(perf_charts()["speed"]))
 
 
 def favicon(theme: str) -> str:
@@ -4442,10 +4477,10 @@ SECTIONS = (("Observe", (("suite", "Benchmarks", "benchmarks_tab"),
                          ("quotas", "Quota management", "quotas_page"),
                          ("logs", "Logs", "logs_page"))),
             ("Gateway", (("endpoints", "Endpoints", "endpoints_page"),
-                         ("models", "Models", "models_page"),
+                         ("models", "Models benched", "models_page"),
                          ("collections", "Collections", "collections_and_gateway"),
-                         ("clients", "Clients", "clients_page"),
-                         ("discover", "Discover", "discover_card"))),
+                         ("discover", "Discover new models", "discover_card"),
+                         ("clients", "Clients setup", "clients_page"))),
             ("Control", (("settings", "Settings", "settings_page"),
                          ("info", "Info", "info_page"))))
 TABS = tuple(page for _, pages in SECTIONS for page in pages)
@@ -4926,7 +4961,9 @@ def tabs(shown: str = "suite", theme: str = DEFAULT_THEME) -> str:
                     if key == shown else f"<section class='tab' id='tab-{key}' data-lazy>{bar(key, label)}</section>"
                     for key, label, _ in TABS)
     picks = "".join(f"<button type='button' data-theme-pick='{esc(t)}' aria-pressed='{str(t == theme).lower()}'"
-                    f">{esc(THEME_LABELS.get(t, t.title()))}</button>" for t in themes())
+                    + (f" aria-label='{esc(THEME_LABELS[t])}' title='{esc(THEME_LABELS[t])}'>{THEME_ICONS[t]}"
+                       if t in THEME_ICONS else f">{esc(THEME_LABELS.get(t, t.title()))}") + "</button>"
+                    for t in themes())
     return (
         "<div class='app'><nav class='tabs' aria-label='Pages'><div class='brand'>"
         "<a class='word' href='/' data-go='suite'><span>Benchwarmers</span></a>"
@@ -4948,7 +4985,8 @@ def tabs(shown: str = "suite", theme: str = DEFAULT_THEME) -> str:
         "<button class='linkish' id='oq-clear'>Clear</button></div>"
         "<button class='btn primary' id='onboard-open'>Onboard a model</button>"
         # Saved as Settings' picker saves it (bench.js theme).
-        f"<div class='pick-theme' role='group' aria-labelledby='theme-cap'><p id='theme-cap'>Theme</p>{picks}</div>"
+        f"<div class='pick-theme' role='group' aria-labelledby='theme-cap'><p id='theme-cap'>Theme</p>"
+        f"<span class='pill'>{picks}</span></div>"
         f"</div></div></nav><main class='panes'>{panes}</main>{editor()}"
         # The palette: one field, one list of what it finds (bench.js palDraw).
         "<dialog id='palette' aria-label='Go to a page, a model or a collection'><input id='pal-q' type='text'"
@@ -6270,6 +6308,11 @@ def editor() -> str:
         " adding one sends a test question first and is refused if the model does not answer"
         " it.</p></fieldset>"
         "<div class='profile' id='m-profile'></div>"
+        # The probe and the whole suite again, now (onboard.py --rerun), through the onboarding queue.
+        "<div class='rerun' id='m-rerun-box'><button class='btn' type='button' id='m-rerun'>Run the probe and"
+        " full suite now</button><p class='rules'>Its 4-call probe and every suite task, one model at a time"
+        " through the onboarding queue, which the sidebar shows. For a model onboarded quick, or to see where it"
+        " stands today.</p><div class='errors' id='m-rerun-errors' role='alert'></div></div>"
         "<details id='m-facts' class='facts-box'><summary>Model facts</summary>"
         "<p class='rules'>From models.dev, FreeLLMAPI, OpenRouter, the endpoint and what the bench"
         " learned from errors and probes; the grey text is the current value and its source. Fill"

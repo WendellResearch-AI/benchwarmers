@@ -1,6 +1,7 @@
 """The Open WebUI hub adapter: add a model as it is otherwise done by hand, then hand it to onboarding.
 
     python metrics/owui.py <connection> <model id>     # what would change, changes nothing
+    python metrics/owui.py --dress <served id>         # step 2 alone, for a model it already serves
 
 One of three hub adapters (litellm_hub.py, cliproxy.py), each exposing
 SUPPORTS, CHECKED, endpoint(), plan() and add(); serve.discover_add picks one
@@ -192,24 +193,11 @@ def add(connection: str, model_id: str) -> tuple[str, list[str]]:
             ids.append(model_id)
             _call("/openai/config/update", cfg)
             done.append(f"added {model_id} to the {connection} connection's Model IDs")
-    records = {m["id"]: m for m in _call("/api/v1/models/base")}
-    old = records.get(p["served"]) or {}
-    meta = dict(old.get("meta") or {})
-    sib = (records.get(p["copy_from"]) or {}).get("meta") or {}
-    for k in COPIED:
-        if sib.get(k) and not meta.get(k):
-            meta[k] = sib[k]
-    tags = [t for t in meta.get("tags") or [] if t.get("name") != p["tag"]]
-    meta["tags"] = tags + [{"name": p["tag"]}]
-    form = {"id": p["served"], "name": old.get("name") or p["served"], "base_model_id": old.get("base_model_id"),
-            "meta": meta, "params": old.get("params") or {}, "access_grants": PUBLIC, "is_active": True}
     try:
-        _call("/api/v1/models/model/update" if old else "/api/v1/models/create", form)
+        done.append(_record(p["served"], p["tag"], p["copy_from"]))
     except Exception as exc:                          # noqa: BLE001
         raise ValueError("; ".join(done + [f"then the model record failed ({exc}); finish it in"
                                            " Admin > Models"])) from exc
-    done.append(f"{'updated' if old else 'created'} its model record: public, tagged {p['tag']}"
-                + (f", logo and switches from {p['copy_from']}" if p["copy_from"] else ", no logo found to copy"))
     # Open WebUI rebuilds its model list on request; wait until it serves the new id.
     for _ in range(10):
         if p["served"] in endpoints.models(endpoint()):
@@ -220,8 +208,51 @@ def add(connection: str, model_id: str) -> tuple[str, list[str]]:
     return p["served"], done
 
 
+def _record(served: str, tag: str, copy_from: str | None) -> str:
+    """Hand step 2 on Open WebUI's record of `served`: public, tagged `tag`, and
+    the logo and switches of `copy_from` where it has none of its own. What was done."""
+    records = {m["id"]: m for m in _call("/api/v1/models/base")}
+    old = records.get(served) or {}
+    meta = dict(old.get("meta") or {})
+    sib = (records.get(copy_from) or {}).get("meta") or {}
+    for k in COPIED:
+        if sib.get(k) and not meta.get(k):
+            meta[k] = sib[k]
+    tags = [t for t in meta.get("tags") or [] if t.get("name") != tag]
+    meta["tags"] = tags + [{"name": tag}]
+    form = {"id": served, "name": old.get("name") or served, "base_model_id": old.get("base_model_id"),
+            "meta": meta, "params": old.get("params") or {}, "access_grants": PUBLIC, "is_active": True}
+    _call("/api/v1/models/model/update" if old else "/api/v1/models/create", form)
+    return (f"{'updated' if old else 'created'} its model record: public, tagged {tag}"
+            + (f", logo and switches from {copy_from}" if copy_from else ", no logo found to copy"))
+
+
+def dress(served: str) -> str:
+    """Hand step 2 for a model Open WebUI already serves (onboarding one picked from
+    its list, not added through Discover): its connection's tag, logo and switches,
+    from the models already on that connection. What was done. ValueError when
+    Open WebUI does not serve it, or no model on its connection carries a tag."""
+    data = _call("/api/models").get("data", [])
+    idx = next((m.get("urlIdx") for m in data if m.get("id") == served), None)
+    if idx is None:
+        raise ValueError(f"Open WebUI serves no {served} from a connection")
+    tags = collections.Counter(t["name"] for m in data if m.get("urlIdx") == idx and m.get("id") != served
+                               for t in m.get("tags") or [])
+    if not tags:
+        raise ValueError(f"no other model on its connection carries a tag to copy")
+    tag = tags.most_common(1)[0][0]
+    records = {m["id"]: m for m in _call("/api/v1/models/base")}
+    sibling = next((i for i, m in records.items() if i != served
+                    and any(t.get("name") == tag for t in (m.get("meta") or {}).get("tags") or [])
+                    and (m.get("meta") or {}).get("profile_image_url")), None)
+    return _record(served, tag, sibling)
+
+
 def main() -> None:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if len(sys.argv) == 3 and sys.argv[1] == "--dress":          # do it: one Open WebUI already serves
+        print(dress(sys.argv[2]))
+        return
     if len(sys.argv) != 3:
         sys.exit(__doc__)
     print(json.dumps(plan(sys.argv[1], sys.argv[2]), indent=2))

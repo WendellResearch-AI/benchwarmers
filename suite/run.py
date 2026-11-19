@@ -1247,6 +1247,7 @@ def main() -> int:
     if left:
         print(f"{left} task/model pair(s) left out: vision tasks go to models that take images,"
               " text and code tasks to models that are not vision or image only")
+    print(f"{len({t for t, _ in pairs})} task(s) to ask")      # onboarding counts "## " headings against it
 
     if args.dry_run:
         for spec in tasks:

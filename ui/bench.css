@@ -84,11 +84,14 @@ h1, h2, h3 { line-height: 1.2; letter-spacing: -.01em; text-wrap: balance; }
 .tabs a[data-tab=collections]::after { content: ""; flex: none; align-self: flex-start; width: .75em; height: .75em; margin: 1px auto 0 -2px;
   background: var(--brand); clip-path: polygon(50% 0, 62% 38%, 100% 50%, 62% 62%, 50% 100%, 38% 62%, 0 50%, 38% 38%); }
 .foot { flex: none; margin-top: auto; display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; padding: var(--gap-4) 18px 14px 20px; }
-.pick-theme { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0 6px; }
-.pick-theme p { flex-basis: 100%; margin: 0 0 2px; }
-.pick-theme button { border: 0; padding: 2px 0; background: none; color: var(--ink-2); }
-.pick-theme button:hover { color: var(--ink); text-decoration: underline; text-underline-offset: .18em; }
-.pick-theme [aria-pressed=true] { color: var(--ink); font-weight: 700; }
+/* The theme pill: a sun, a moon and Hardwood by name; the one in use filled. */
+.pick-theme p { margin: 0 0 6px; }
+.pick-theme .pill { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--field); border-radius: 999px; background: var(--paper-2); }
+.pick-theme button { display: inline-grid; place-items: center; min-width: 30px; height: 30px; padding: 0; border: 0; border-radius: 999px;
+  background: none; color: var(--muted); font-size: var(--t-small); line-height: 1; transition: background-color var(--fast), color var(--fast); }
+.pick-theme button:not(:has(svg)) { padding: 0 12px; }
+.pick-theme button:hover { color: var(--ink); }
+.pick-theme [aria-pressed=true], .pick-theme [aria-pressed=true]:hover { background: var(--ink); color: var(--paper); font-weight: 600; }
 
 /* The page: its bar (its name, and later its own controls), then its sections,
    edge to edge on solid paper, parted by hairlines. */
@@ -243,8 +246,13 @@ dialog.dock .dock-foot > :is(.errors, .done) { flex-basis: 100%; margin: 0; }
 button { font: inherit; cursor: pointer; }
 .btn { display: inline-flex; align-items: center; justify-content: center; gap: var(--gap-2); min-height: 32px; padding: 0 var(--gap-3); border: 1px solid var(--field); border-radius: var(--radius); background: var(--paper-2); color: var(--ink); font-weight: 500; transition: background-color var(--fast); }
 .btn:hover { background: var(--hover); }
-.btn.primary { background: var(--ink); border-color: var(--ink); color: var(--paper); }
-.btn.primary:hover { background: var(--ink-2); border-color: var(--ink-2); }
+/* The primary button stands on a block of the brand colour and rises off it on hover;
+   New results the same on ink (as before 1.0). */
+.btn.primary { background: var(--ink); border-color: var(--ink); color: var(--paper); box-shadow: 4px 4px 0 var(--brand); }
+.btn.primary:hover { background: var(--ink); transform: translate(-2px, -2px); box-shadow: 6px 6px 0 var(--brand); }
+.btn.fresh:hover { transform: translate(-1px, -1px); box-shadow: 3px 3px 0 var(--ink); }
+.btn:is(.primary, .fresh) { transition: background-color var(--fast), transform var(--fast), box-shadow var(--fast); }
+.btn:is(.primary, .fresh):disabled { transform: none; box-shadow: none; }
 .btn.danger { background: var(--err); border-color: var(--err); color: var(--on-err, #fff); }
 .btn.danger:hover { background: color-mix(in oklab, var(--err) 86%, #000); }
 .btn.small { min-height: 26px; padding: 0 var(--gap-2); }
@@ -648,7 +656,7 @@ dialog h2 { margin: 0 0 .2rem; font-size: var(--t-head); font-weight: 700; }
 .oq-models li::before, .oq-steps li::before { content: ""; width: 7px; height: 7px; margin-top: .5em; border: 1px solid currentColor; border-radius: 50%; }
 .oq-models span { overflow-wrap: anywhere; }
 .oq-models li > small, .oq-steps { grid-column: 2; }
-.oq-models li > small { font-size: var(--t-small); }
+.oq-models li > small { font-size: var(--t-small); font-weight: 400; }
 .oq-steps { gap: 2px; margin-top: 3px; font-size: var(--t-small); font-weight: 400; color: var(--muted); }
 .oq-models .done, .oq-steps .done { color: var(--ink-2); }
 .oq-models .now { color: var(--ink); font-weight: 700; }
@@ -656,6 +664,10 @@ dialog h2 { margin: 0 0 .2rem; font-size: var(--t-head); font-weight: 700; }
 .oq-models .done::before, .oq-steps .done::before { border-color: var(--ok); background: var(--ok); }
 .oq-models .now::before, .oq-steps .now::before { border-color: var(--brand); background: var(--brand); }
 .oq-models .bad { color: var(--err); }
+.oq-steps .oq-sub { grid-column: 2; font-weight: 400; color: var(--muted); overflow-wrap: anywhere; }
+/* A model's Run suite, under its profile. */
+.rerun { margin: var(--gap-3) 0; }
+.rerun .rules { margin: 6px 0 0; }
 .oq-models .bad::before { background: var(--err); }
 ul.oq-list { list-style: none; padding: 0; margin: .75rem 0 0; display: grid; gap: .5rem; max-height: 22rem; overflow: auto; }
 ul.oq-list li { padding: .4rem .25rem; border-bottom: 1px solid var(--line); }

@@ -47,6 +47,7 @@ import pathlib
 import re
 import subprocess
 import sys
+import threading
 import urllib.request
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -231,6 +232,83 @@ def onboard_decision(name: str, endpoint: str, via: str, alias: str, path: str =
     print(f"\nwrote {note}")
 
 
+def probe_and_suite(args: argparse.Namespace, name: str, endpoint: str, alias: str, connection: str) -> None:
+    """Steps 4 and 5, the run's note: an onboarding's end, and all of --rerun."""
+    # 4. availability
+    print("  [4/5] probing availability (4 calls)...")
+    since = dt.datetime.now().isoformat(timespec="seconds")
+    probe = run("perf/run.py", "--model", alias, "-n", "2", "--timeout", "90",
+                timeout=1200)
+    answered = probe_answered(probe.stdout, alias)
+    for line in probe.stdout.splitlines():
+        if alias in line and ("tiny" in line or "large" in line):
+            print(f"        {line.strip()}")
+    failed = [] if answered else probe_failures(alias, since)
+    for r in failed:                               # why, not only "error"
+        print(f"        {r['prompt']}: {r.get('failure') or 'other'} — {(r.get('detail') or '').strip()[:240]}")
+    if not answered:
+        worst = failed[0] if failed else {}
+        record_issue(alias, {"at": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
+                             "served": name, "endpoint": endpoint, "step": "availability probe",
+                             "failure": worst.get("failure") or "other",
+                             "detail": (worst.get("detail") or probe.stdout.strip()[-400:]
+                                        or f"perf/run.py exited {probe.returncode}")[:1000],
+                             "log": os.environ.get("BENCH_ONBOARD_LOG", "")})
+        print("\n  STOPPING: it answered nothing. Registered so availability "
+              "keeps watching it,\n  but there is no point spending suite "
+              "calls on a model that cannot reply.")
+        return
+    record_issue(alias, None)
+
+    # 5. the tier that decides routing
+    # A vision model's suite is the vision tasks alone (suite/run.applies picks
+    # them by its role); a general model that takes images gets both.
+    if args.skip_suite:
+        print("  [5/5] suite skipped by request")
+    else:
+        print("  [5/5] running the internal suite" + (" (its vision tasks)..." if args.vision else "..."))
+        # Read as it runs, so the log (and the sidebar, serve.onboard_queue) says which
+        # task it is on: "suite 12/52: <task>" as each starts, its result under it.
+        proc = subprocess.Popen([str(PY), "suite/run.py", "--model", alias, "--timeout", "300"], cwd=str(ROOT),
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8",
+                                errors="replace", env={**os.environ, "PYTHONUNBUFFERED": "1",
+                                                       "PYTHONIOENCODING": "utf-8"})
+        # A slow model can need more than the hour for 52 tasks. Crashing
+        # here lost the onboarding note of a model that is on the bench
+        # and answering (step-5-preview, 2026-10-22); the answers saved so
+        # far stay, and the scheduled passes (--next) ask only its gaps.
+        hour = threading.Timer(3600, proc.kill)
+        hour.start()
+        total, at = "?", 0
+        for line in proc.stdout:
+            if m := re.match(r"(\d+) task\(s\) to ask", line):
+                total = m.group(1)
+            elif line.startswith("## "):
+                at += 1
+                print(f"        suite {at}/{total}: {line[3:].strip()[:100]}", flush=True)
+            elif alias in line:
+                print(f"          {line.strip()[:110]}", flush=True)
+        proc.wait()
+        if not hour.is_alive():
+            print("        stopped after an hour; the scheduled suite passes fill in the rest")
+        hour.cancel()
+
+    print("\nWhere it lands:")
+    panel = run("metrics/route.py", timeout=300)
+    for line in panel.stdout.splitlines()[:8]:
+        print(f"  {line}")
+
+    stamp = dt.date.today().isoformat()
+    note = DATA / "runs" / f"onboard-{stamp}.md"
+    with note.open("a", encoding="utf-8") as fh:
+        fh.write(f"\n## {'Probed and ran the suite again for' if args.rerun else 'Onboarded'} `{alias}` ({name})"
+                 f" — {stamp}\n\nConnection: {connection}. "
+                 f"Availability probe: {'answered' if answered else 'NO ANSWER'}.\n\n"
+                 f"Suite scores are in the dated suite note. Whether to route "
+                 f"work here is a judgement, not an output of this script.\n")
+    print(f"\nwrote {note}")
+
+
 def main() -> None:
     # route.py's panel contains em dashes, and this script inherits Windows'
     # cp1252 stdout when run from a scheduled task or a plain console. Without
@@ -251,7 +329,11 @@ def main() -> None:
     ap.add_argument("--vision", action="store_true",
                     help="role vision as it is registered: it sits only for requests that carry"
                          " images, and its suite is the vision tasks (suite/run.applies)")
+    ap.add_argument("--rerun", action="store_true",
+                    help="already on the bench: probe it and run its whole suite again (steps 4 and 5)")
     args = ap.parse_args()
+    if args.rerun and args.skip_suite:
+        sys.exit("--rerun runs the suite; --skip-suite says not to")
 
     name = args.served_name
     endpoint = args.endpoint or endpoints.default()
@@ -262,7 +344,8 @@ def main() -> None:
         sys.exit(f"cannot reach the {endpoint} endpoint: {exc}")
     alias = alias_for(name, existing_aliases(),
                       connection_prefix(live.get(name, {})))
-    print(f"onboarding {name} from {endpoint}  ->  alias {alias}\n")
+    print(f"probing and running the suite again for {name} from {endpoint}\n" if args.rerun
+          else f"onboarding {name} from {endpoint}  ->  alias {alias}\n")
     if name not in live:
         near = [s for s in live if alias.split("-")[0] in s][:5]
         sys.exit(f"{name} is not served.\n"
@@ -271,6 +354,17 @@ def main() -> None:
                  f"endpoint does not serve is how a model scores 0/11 for a "
                  f"fortnight before anyone looks.")
     print("  [1/5] served by the endpoint")
+    if args.rerun:
+        # Its own alias, not one derived again: steps 2 and 3 were done when it was onboarded.
+        alias = next((r["alias"] for r in endpoints.registry() if r["served"] == name and r["endpoint"] == endpoint),
+                     None)
+        if not alias:
+            sys.exit(f"  STOPPING: {name} is not on the bench from {endpoint}; onboard it instead.")
+        import route
+        print(f"  [2/5] already on the bench as {alias}")
+        print("  [3/5] nothing to set up again")
+        probe_and_suite(args, name, endpoint, alias, route.full_tag_of(alias))
+        return
 
     # A decision model refuses chat, so registering it in the llm yaml, the
     # chat probe and the suite would only record failures against it. Some
@@ -357,6 +451,14 @@ def main() -> None:
                else f"catalog refresh failed (exit {catalog.returncode}); details at its next run")
     print(f"  [3/5] {'synced to the llm CLI' if synced else 'the llm CLI not synced (the built-in client is in use)'};"
           f" connection is {connection}; {details}")
+    # Through Open WebUI: its record there made like the rest of its connection's (public,
+    # the connection's tag and logo), as Discover's Add does before it hands a model here.
+    if endpoint == endpoints.find_hub("openwebui"):
+        import owui
+        try:
+            print(f"        Open WebUI: {owui.dress(name)}")
+        except Exception as exc:                   # noqa: BLE001 -- the record is a nicety; never stops an onboarding
+            print(f"        Open WebUI record left as it is: {exc}")
 
     # An image generator: role image, which no chat shape admits, so it never
     # fills a seat or a collection; a chat probe and the suite would only
@@ -388,67 +490,7 @@ def main() -> None:
     except Exception as exc:                       # noqa: BLE001 -- a suggestion never stops an onboarding
         print(f"        no role suggestion: {type(exc).__name__}: {exc}")
 
-    # 4. availability
-    print("  [4/5] probing availability (4 calls)...")
-    since = dt.datetime.now().isoformat(timespec="seconds")
-    probe = run("perf/run.py", "--model", alias, "-n", "2", "--timeout", "90",
-                timeout=1200)
-    answered = probe_answered(probe.stdout, alias)
-    for line in probe.stdout.splitlines():
-        if alias in line and ("tiny" in line or "large" in line):
-            print(f"        {line.strip()}")
-    failed = [] if answered else probe_failures(alias, since)
-    for r in failed:                               # why, not only "error"
-        print(f"        {r['prompt']}: {r.get('failure') or 'other'} — {(r.get('detail') or '').strip()[:240]}")
-    if not answered:
-        worst = failed[0] if failed else {}
-        record_issue(alias, {"at": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
-                             "served": name, "endpoint": endpoint, "step": "availability probe",
-                             "failure": worst.get("failure") or "other",
-                             "detail": (worst.get("detail") or probe.stdout.strip()[-400:]
-                                        or f"perf/run.py exited {probe.returncode}")[:1000],
-                             "log": os.environ.get("BENCH_ONBOARD_LOG", "")})
-        print("\n  STOPPING: it answered nothing. Registered so availability "
-              "keeps watching it,\n  but there is no point spending suite "
-              "calls on a model that cannot reply.")
-        return
-    record_issue(alias, None)
-
-    # 5. the tier that decides routing
-    # A vision model's suite is the vision tasks alone (suite/run.applies picks
-    # them by its role); a general model that takes images gets both.
-    if args.skip_suite:
-        print("  [5/5] suite skipped by request")
-    else:
-        print("  [5/5] running the internal suite" + (" (its vision tasks)..." if args.vision else "..."))
-        try:
-            suite = run("suite/run.py", "--model", alias, "--timeout", "300",
-                        timeout=3600)
-        except subprocess.TimeoutExpired:
-            # A slow model can need more than the hour for 52 tasks. Crashing
-            # here lost the onboarding note of a model that is on the bench
-            # and answering (step-5-preview, 2026-10-22); the answers saved so
-            # far stay, and the scheduled passes (--next) ask only its gaps.
-            suite = None
-            print("        stopped after an hour; the scheduled suite passes fill in the rest")
-        for line in (suite.stdout if suite else "").splitlines():
-            if alias in line or line.startswith("## "):
-                print(f"        {line.strip()[:110]}")
-
-    print("\nWhere it lands:")
-    panel = run("metrics/route.py", timeout=300)
-    for line in panel.stdout.splitlines()[:8]:
-        print(f"  {line}")
-
-    stamp = dt.date.today().isoformat()
-    note = DATA / "runs" / f"onboard-{stamp}.md"
-    with note.open("a", encoding="utf-8") as fh:
-        fh.write(f"\n## Onboarded `{alias}` ({name}) — {stamp}\n\n"
-                 f"Connection: {connection}. "
-                 f"Availability probe: {'answered' if answered else 'NO ANSWER'}.\n\n"
-                 f"Suite scores are in the dated suite note. Whether to route "
-                 f"work here is a judgement, not an output of this script.\n")
-    print(f"\nwrote {note}")
+    probe_and_suite(args, name, endpoint, alias, connection)
 
 
 def _selftest() -> None:

@@ -238,6 +238,7 @@
   var shown = null, fetching = {}, ready = {}, marks = 0, last = {}, edited = {};
   var KEPT = 'input[data-filter], select[data-facet], input[data-retired], input[data-df], #d-q, [data-kept]';    // controls a swap keeps (or may reset)
   function show(id) {
+    if (id !== shown && md && md.open && !md.matches(':modal')) md.close();   // a model docked on a page left: the new page's own panel shows
     shown = id;
     tabs.forEach(function (a) {
       if (a.dataset.tab === id) { a.setAttribute('aria-current', 'page'); document.title = (id === 'suite' ? '' : a.firstChild.textContent + ' · ') + 'Benchwarmers'; }
@@ -935,6 +936,10 @@
       // A decision model answers typed questions, never chat: its role is fixed both ways.
       var decision = model.kind === 'decision';
       m.role.disabled = decision;
+      // Run suite: for a chat model (a decision model has no suite; an image model no chat probe).
+      $('m-rerun-box').hidden = decision || model.role === 'image';
+      $('m-rerun').disabled = false; $('m-rerun').textContent = 'Run the probe and full suite now';
+      $('m-rerun-errors').textContent = '';
       m.qtypes.hidden = !decision;
       m.qtypes.querySelectorAll('input').forEach(function (c) {
         c.checked = decision && model.question_types.indexOf(c.value) !== -1;
@@ -960,6 +965,16 @@
     }
     dock();                            // open already: shown again as it now is (shownAgain)
   }
+  $('m-rerun').addEventListener('click', function () {
+    var b = this, model = D.models[editing];
+    if (!model) return;
+    b.disabled = true; b.textContent = 'Queueing…'; $('m-rerun-errors').textContent = '';
+    post('/api/onboard-queue', {items: [{served: model.served, endpoint: model.endpoint, mode: 'rerun'}]}).then(function (res) {
+      if (!res.ok) { listErrors($('m-rerun-errors'), res.errors); b.disabled = false; b.textContent = 'Run the probe and full suite now'; return; }
+      b.textContent = 'Queued: the sidebar shows it';
+      oqPoll();
+    }).catch(function (err) { $('m-rerun-errors').textContent = String(err); b.disabled = false; });
+  });
   // The editor docks beside the page (bench.css): opened by its attribute, not show(),
   // so a click leaves the focus where it was; a keyboard's goes to it, and back to the
   // link that opened it when it closes. The rows of its model are marked (markHand).
@@ -1643,7 +1658,9 @@
     // means finished. At the end it is green when every one is on the bench,
     // red when any failed or did not answer. It fills; it never shakes.
     var step = now && now.step ? now.step : 0;
-    oq.bar.style.setProperty('--fill', n ? ((finished + (step ? step - 0.5 : 0) / 5) / n).toFixed(3) : 0);
+    // In the suite, by its tasks: the fifth fifth fills as they are asked.
+    var part = step === 5 && now.suite && +now.suite[1] ? 4 + now.suite[0] / now.suite[1] : step ? step - 0.5 : 0;
+    oq.bar.style.setProperty('--fill', n ? ((finished + part / 5) / n).toFixed(3) : 0);
     var bad = oqCount(q, 'failed') + oqCount(q, 'no answer');
     oq.bar.classList.toggle('done', !q.running && n > 0 && oqCount(q, 'done') === n);
     oq.bar.classList.toggle('fail', !q.running && bad > 0);
@@ -1666,12 +1683,19 @@
     q.items.forEach(function (it) {
       var how = OQ_LINE[it.state] || ['', it.state], li = document.createElement('li'), name = document.createElement('span');
       li.className = how[0]; name.textContent = it.served; li.appendChild(name);
-      if (how[1]) { var s = document.createElement('small'); s.textContent = how[1]; li.appendChild(s); }
+      var said = how[1] || (it.mode === 'rerun' ? 'probe and suite again' : '');
+      if (said) { var s = document.createElement('small'); s.textContent = said; li.appendChild(s); }
       if (it.state === 'running') {
         var ol = document.createElement('ol'); ol.className = 'oq-steps';
         OQ_STEPS.forEach(function (label, i) {
           var st = document.createElement('li'); st.textContent = label;
           st.className = i + 1 < (it.step || 0) ? 'done' : i + 1 === it.step ? 'now' : '';
+          // The suite says which task it is on (serve.onboard_queue `suite`: at, of, task).
+          if (i === 4 && it.step === 5 && it.suite) {
+            var sub = document.createElement('small'); sub.className = 'oq-sub';
+            sub.textContent = 'task ' + it.suite[0] + ' of ' + it.suite[1] + ': ' + it.suite[2];
+            st.appendChild(sub);
+          }
           ol.appendChild(st);
         });
         li.appendChild(ol);
@@ -3732,7 +3756,7 @@
       var zoneX = Math.max(x0, 0.9), zoneY = 0.15;
       var near = function (d) { return d.recall >= zoneX - (1 - x0) * 0.08 && d.wrong <= zoneY * 1.4; };
       var worstFew = C.overview.slice().sort(function (a, b) { return b.wrong - a.wrong; }).slice(0, 3);
-      var pts = C.overview.filter(function (d) { return near(d) || worstFew.indexOf(d) !== -1; })
+      var pts = C.overview.filter(function (d) { return near(d) || d.new || worstFew.indexOf(d) !== -1; })
         .sort(function (a, b) { return a.wrong - b.wrong || b.recall - a.recall; });
       var offs = spread(pts, function (d) { return 60 + (d.recall - x0) / (1 - x0) * pxW; },
                         function (d) { return d.wrong / worst * pxH; }, w);
@@ -3747,10 +3771,12 @@
           // The zone a reviewer should be in: outlined, so it reads on a dark ground too.
           Plot.rect([{x1: zoneX, x2: 1, y1: 0, y2: zoneY}], {x1: 'x1', x2: 'x2', y1: 'y1', y2: 'y2',
             fill: good, fillOpacity: 0.12, stroke: good, strokeOpacity: 0.5, strokeDasharray: '4 3'}),
-          Plot.dot(C.overview, {x: 'recall', y: 'wrong', r: 6, fill: good, stroke: ink, strokeWidth: 0.5}),
+          // New to the report (first scored in the last NEW_DAYS): the signal colour, ringed and named.
+          Plot.dot(C.overview, {x: 'recall', y: 'wrong', r: 6, fill: function (d) { return d.new ? signal : good; }, stroke: ink, strokeWidth: 0.5}),
+          Plot.dot(C.overview.filter(function (d) { return d.new; }), {x: 'recall', y: 'wrong', r: 10, fill: 'none', stroke: signal, strokeWidth: 2}),
           names(labels, 'recall'),
           Plot.tip(C.overview, Plot.pointer({x: 'recall', y: 'wrong',
-            title: function (d) { return d.model + '\nfinds ' + d.found + ' real findings\nconfidently wrong in ' + d.wrongN + ' answers'; }}))
+            title: function (d) { return d.model + (d.new ? ' (new)' : '') + '\nfinds ' + d.found + ' real findings\nconfidently wrong in ' + d.wrongN + ' answers'; }}))
         ]
       });
     });
@@ -3844,7 +3870,7 @@
       // The zone: 90% or more of the findings, in 40 seconds or less. Named: the models in
       // or next to it, as on Who to trust; the rest are on hover.
       var zoneS = Math.min(hi, Math.max(lo, 40)), zoneR = Math.max(y0, 0.9);
-      var pts = C.speed.filter(function (d) { return d.seconds <= zoneS * 1.25 && d.recall >= zoneR - (1 - y0) * 0.08; })
+      var pts = C.speed.filter(function (d) { return d.new || d.seconds <= zoneS * 1.25 && d.recall >= zoneR - (1 - y0) * 0.08; })
         .sort(function (a, b) { return b.recall - a.recall; });
       var offs = spread(pts, function (d) { return 60 + (Math.log(d.seconds) - Math.log(lo)) / (Math.log(hi) - Math.log(lo)) * pxW; },
                         function (d) { return (1 - d.recall) / (1 - y0) * pxH; }, w);
@@ -3859,10 +3885,11 @@
           // Outlined, so it reads on a dark ground too.
           Plot.rect([{x1: lo, x2: zoneS, y1: zoneR, y2: 1}], {x1: 'x1', x2: 'x2', y1: 'y1', y2: 'y2',
             fill: good, fillOpacity: 0.12, stroke: good, strokeOpacity: 0.5, strokeDasharray: '4 3'}),
-          Plot.dot(C.speed, {x: 'seconds', y: 'recall', r: 6, fill: sky, stroke: ink, strokeWidth: 0.5}),
+          Plot.dot(C.speed, {x: 'seconds', y: 'recall', r: 6, fill: function (d) { return d.new ? signal : sky; }, stroke: ink, strokeWidth: 0.5}),
+          Plot.dot(C.speed.filter(function (d) { return d.new; }), {x: 'seconds', y: 'recall', r: 10, fill: 'none', stroke: signal, strokeWidth: 2}),
           names(labels, 'seconds'),
           Plot.tip(C.speed, Plot.pointer({x: 'seconds', y: 'recall',
-            title: function (d) { return d.model + '\nmedian ' + d.seconds.toFixed(0) + 's over ' + d.tasks + ' tasks\nfinds ' + Math.round(d.recall * 100) + '%'; }}))
+            title: function (d) { return d.model + (d.new ? ' (new)' : '') + '\nmedian ' + d.seconds.toFixed(0) + 's over ' + d.tasks + ' tasks\nfinds ' + Math.round(d.recall * 100) + '%'; }}))
         ]
       });
     });
