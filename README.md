@@ -247,7 +247,10 @@ Any OpenAI-compatible client works: ask for the model `bench/<collection>`.
       -d '{"model": "bench/<collection>", "messages": [{"role": "user", "content": "Where can this function return a stale value? ..."}]}'
 
 The reply carries every seat's answer in the message, and the same seats as
-data in a `bench` field: model, seat, status, seconds and a call id. For a chat
+data in a `bench` field: model, seat, status, seconds and a call id. It does
+not wait for the slowest seat: once two have answered, the rest get 60
+seconds, and one still answering is named `late` and recorded when it
+finishes. For a chat
 window that shows one answer, ask for `bench/<collection>:merged`: a merger
 model writes one answer saying where the seats agreed and disagreed, and every
 seat is still in `bench`. Record a verdict per call once you have checked it:
@@ -528,6 +531,10 @@ backs up the ones it replaces, in the data folder's `backups/`.
   not yet against the real services.
 - **A merged reply arrives in one piece** once the merger has finished; the
   seats before it stream as they finish.
+- **A late seat's answer is not in the reply.** A seat still answering a
+  minute after two others did is named `late`; its answer reaches the
+  dashboard and its call id `pending_verdicts`, not the caller. `quorum`
+  and `grace` in `config/gateway.json` change that (GATEWAY.md, "The reply").
 - **Pacing and the ledger cover the built-in client.** Calls made through the
   `llm` CLI, when you choose it, are neither paced nor counted.
 - **Calls cost.** Probes, onboarding, the suite and the decision benchmark

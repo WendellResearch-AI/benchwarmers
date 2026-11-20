@@ -3999,11 +3999,12 @@ def gateway_card(limit: int = 30) -> str:
         skipped = [k for k in r.get("skipped", []) if isinstance(k, dict)]
         owed += row_owed
         # The request's own time: its seats ran at once, so the slowest of
-        # them, then the merge (a merger seat answers after the rest).
+        # them (or, with a seat late, until the panel stopped waiting), then
+        # the merge (a merger seat answers after the rest).
         secs = [(s.get("seat"), float(s.get("seconds") or 0)) for s in r.get("seats", [])]
-        panel = max((t for seat, t in secs if seat != "merger"), default=0.0)
+        panel = float(r["waited"]) if "waited" in r else max((t for seat, t in secs if seat != "merger"), default=0.0)
         merge = sum(t for seat, t in secs if seat == "merger")
-        took = (f"<td class='num' data-sort='{panel + merge:.1f}' title='slowest seat {panel:.1f}s"
+        took = (f"<td class='num' data-sort='{panel + merge:.1f}' title='{'waited' if 'waited' in r else 'slowest seat'} {panel:.1f}s"
                 f"{f' + merge {merge:.1f}s' if merge else ''}'>{panel + merge:.0f}s</td>" if secs
                 else "<td class='num muted' data-sort='-1'>—</td>")
         said = f"{len(seats)} seat{'s' * (len(seats) != 1)} · {answered} answered"
@@ -4032,7 +4033,9 @@ def gateway_card(limit: int = 30) -> str:
         it helped. The orchestrator that called can also record one:
         <code>python metrics/offload.py verdict &lt;call id&gt; --useful</code>.</dd>
       <dt>Time</dt><dd>How long the caller waited: the seats run at once, so the
-        slowest of them, plus the merge when the reply was merged.</dd>
+        slowest of them, plus the merge when the reply was merged. A seat still
+        answering when the panel stopped waiting (late) is left out, and the
+        request shows here once that seat is in.</dd>
     </dl>"""
     dock = ("<dialog class='dock' id='request-dock' aria-labelledby='rq-title'>"
             "<div class='bar'><p>Request</p></div><div class='dock-body'>"

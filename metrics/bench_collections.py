@@ -4,7 +4,8 @@
                                          "description": "...", "tags": ["general"],
                                          "reply": "all", "merger": ""}}
     config/gateway.json       {"max_calls": 5, "max_explorers": 2,
-                               "pick_collection": true, "pick_confidence": 0.6}
+                               "pick_collection": true, "pick_confidence": 0.6,
+                               "quorum": 2, "grace": 60}
 
 A request for `bench/core` runs every member, plus explorer seats that
 `route.py` fills by staleness so the roster keeps getting evidence even when
@@ -86,6 +87,20 @@ def pick_settings() -> dict:
     on, at = raw.get("pick_collection"), raw.get("pick_confidence")
     return {"pick_collection": on is not False,
             "pick_confidence": at if isinstance(at, (int, float)) and not isinstance(at, bool) and 0 < at <= 1 else None}
+
+
+def wait_settings() -> dict:
+    """gateway.json's `quorum` (usable answers after which a panel stops
+    waiting for every seat: a whole number from 1; 10 waits for all) and
+    `grace` (seconds the other seats then get, 0 or more); out of range counts
+    as unset. Two answers are the least a panel is for. 60 s, on 5,233 real
+    panels: the median wait 91 s to 69 s, the slowest tenth 250 s to 84 s,
+    seven usable answers in eight still in the reply (30 s: 41 s, 58 s, four
+    in five). Kept beside the limits, which save_gateway_settings leaves alone."""
+    raw = _read(SETTINGS_FILE)
+    q, g = raw.get("quorum"), raw.get("grace")
+    return {"quorum": q if isinstance(q, int) and not isinstance(q, bool) and q >= 1 else 2,
+            "grace": g if isinstance(g, (int, float)) and not isinstance(g, bool) and g >= 0 else 60}
 
 
 def limit_ok(key: str, value) -> bool:
@@ -188,6 +203,11 @@ if __name__ == "__main__":
         assert pick_settings() == {"pick_collection": False, "pick_confidence": 0.8}
         SETTINGS_FILE.write_text('{"pick_confidence": 2}', encoding="utf-8")                   # out of range: unset
         assert pick_settings() == {"pick_collection": True, "pick_confidence": None}
+        assert wait_settings() == {"quorum": 2, "grace": 60}                                    # the defaults
+        SETTINGS_FILE.write_text('{"quorum": 3, "grace": 0.5}', encoding="utf-8")
+        assert wait_settings() == {"quorum": 3, "grace": 0.5}
+        SETTINGS_FILE.write_text('{"quorum": 0, "grace": -1}', encoding="utf-8")               # out of range: unset
+        assert wait_settings() == {"quorum": 2, "grace": 60}
     SETTINGS_FILE = real
     assert not reply_errors("merged", "", []) and not reply_errors("all", "m", ["m"])
     assert len(reply_errors("", "m", [])) == 2

@@ -194,8 +194,10 @@ API (which Benchwarmers also finds on this machine).
 - **It is not a hosted service.** It runs on your machine or your server.
 - **It has fewer provider connections** than the big gateways. It connects to any
   OpenAI-compatible API, so put a gateway underneath for breadth.
-- **A panel costs one call per seat.** That is cheap with free tiers, and slow
-  when the slowest seat is slow.
+- **A panel costs one call per seat.** That is cheap with free tiers. The
+  slowest seat no longer sets the wait: a minute after two seats answer, the
+  reply goes, and a seat still answering comes back later, on the dashboard
+  rather than in the reply.
 - **Verdicts take checking.** The record is only as good as the verdicts, and a
   verdict means checking an answer against the real work. The MCP tools and
   the Claude Code plugin ask agents to do this, and to send each verdict.
