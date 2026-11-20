@@ -230,11 +230,13 @@ def main() -> int:
                 ("bench/core:route", "bench/fast:route") if c["id"] not in ("codex", "code") else ("bench/core:route",)
             bad += [f"{c['id']} lacks {w}" for w in want if w not in alltext]
         oc, cx = parsed.get(("opencode", "opencode.jsonc")), parsed.get(("codex", "config.toml"))
+        cxp = parsed.get(("codex", "benchwarmers.config.toml")) or {}     # Codex's profile: the model half
         if oc and cx:
             p = oc["providers"]["benchwarmers"]                 # opencode 2's shape
             if (oc["mcp"]["servers"]["benchwarmers"]["type"] != "remote"
                     or cx["mcp_servers"]["benchwarmers"]["tool_timeout_sec"] != 900
-                    or cx["model_providers"]["benchwarmers"]["wire_api"] != "responses" or cx["web_search"] != "disabled"
+                    or cx["model_providers"]["benchwarmers"]["wire_api"] != "responses" or "model" in cx
+                    or cxp.get("web_search") != "disabled" or cxp.get("model_provider") != "benchwarmers"
                     or p["models"]["fast"]["modelID"] != "bench/fast:route"
                     or p["models"]["fast"]["limit"]["context"] != serve.UNKNOWN_CONTEXT
                     or ("env" in p) != keys or ("env_key" in cx["model_providers"]["benchwarmers"]) != keys):
@@ -302,8 +304,11 @@ def main() -> int:
         if [e["name"] for e in vs] != ["Other", "Benchwarmers"]:
             bad.append(f"VS Code's own models not kept: {vs}")
         cx = tomllib.loads((dirs["codex"] / "config.toml").read_text(encoding="utf-8"))
-        if cx.get("model") != "mine" or "other" not in cx["mcp_servers"] or "benchwarmers" not in cx["model_providers"]:
-            bad.append(f"Codex merge wrong: {cx}")
+        prof = dirs["codex"] / "benchwarmers.config.toml"      # Codex's profile: plain `codex` keeps its own model
+        cxp = tomllib.loads(prof.read_text(encoding="utf-8")) if prof.exists() else {}
+        if (cx.get("model") != "mine" or "model_provider" in cx or "other" not in cx["mcp_servers"]
+                or "benchwarmers" not in cx["model_providers"] or cxp.get("model_provider") != "benchwarmers"):
+            bad.append(f"Codex merge wrong: {cx} {cxp}")
         gy = (dirs["goose"] / "config.yaml").read_text(encoding="utf-8")
         if "  other:" not in gy or gy.count("  benchwarmers:") != 1 or "active_provider: x" not in gy:
             bad.append(f"goose merge wrong: {gy!r}")
@@ -391,6 +396,67 @@ def main() -> int:
     ok = not bad
     print(("ok   " if ok else "FAIL ") + "goose's config.yaml: ours once, two spaces in, theirs kept; comments, tabs,"
           " a list or another indent refused" + (", parsed" if load_yaml else "") + ("" if ok else f" -> {bad}"))
+    failures += 0 if ok else 1
+
+    # Codex's Set up: the model as a profile, never half-switching plain `codex`; the user's
+    # config.toml kept key for key, or left to them. Each file here once broke the merge.
+    bad, home = [], pathlib.Path(tempfile.mkdtemp(prefix="bench-codex-home-"))
+    saved_env = {k: os.environ.get(k) for k in ("USERPROFILE", "HOME", "APPDATA", "XDG_CONFIG_HOME")}
+    os.environ.update(USERPROFILE=str(home), HOME=str(home), APPDATA=str(home / "AppData"),
+                      XDG_CONFIG_HOME=str(home / ".config"))
+    try:
+        ctoml = serve._app_dirs()["codex"] / "config.toml"
+        prof = ctoml.with_name("benchwarmers.config.toml")
+        ctoml.parent.mkdir(parents=True)
+
+        def planned(path: pathlib.Path, theirs: str):
+            path.write_text(theirs, encoding="utf-8")
+            plan = serve.setup_plan("codex", "both", "", "my-app")
+            return plan, next((f["text"] for f in plan["files"] if f["path"] == str(path)), None)
+        for what, theirs, holds in (
+                ("a header with a comment", '[model_providers.benchwarmers]\nname = "old"\n\n'
+                 '[mcp_servers.github] # my github\ncommand = "npx"\n',
+                 lambda c: c["mcp_servers"]["github"] == {"command": "npx"}),
+                ("[[array]] tables", '[mcp_servers.benchwarmers]\nurl = "old"\n\n[[hooks]]\nrun = "a"\n\n'
+                 '[[hooks]]\nrun = "b"\n', lambda c: c["hooks"] == [{"run": "a"}, {"run": "b"}]),
+                ("a quoted key", '"model" = "mine"\nweb_search = "live"\n',
+                 lambda c: c["model"] == "mine" and c["web_search"] == "live"),
+                ("a dotted key", 'model_providers.benchwarmers.name = "x"\n', lambda c: True),
+                ("our header with a comment", '[mcp_servers.benchwarmers] # managed\nurl = "old"\n', lambda c: True),
+                ("a [table] line in a string", 'developer_instructions = """\nBe brief.\n[rules]\nNo emojis.\n"""\n',
+                 lambda c: c["developer_instructions"] == "Be brief.\n[rules]\nNo emojis.\n")):
+            plan, text = planned(ctoml, theirs)
+            try:
+                c = tomllib.loads(text or "")
+                good = (text is not None and "model_provider" not in c and holds(c)
+                        and c["model_providers"]["benchwarmers"]["name"] == "Benchwarmers"
+                        and c["mcp_servers"]["benchwarmers"]["url"].endswith("/mcp"))
+            except (tomllib.TOMLDecodeError, KeyError, TypeError) as exc:
+                good, c = False, exc
+            if not good:
+                bad.append(f"{what}: {c if text is not None else plan['left']}")
+        for what, theirs in (("a dotted key inside a table", '[model_providers]\nbenchwarmers.name = "x"\n'),
+                             ("a file that is not TOML", "model = \n")):
+            plan, text = planned(ctoml, theirs)
+            if text is not None or not any(str(ctoml) in why for why in plan["left"]):
+                bad.append(f"{what}: not left to you ({plan['left']})")
+        ctoml.write_text("", encoding="utf-8")
+        plan, text = planned(prof, '"model" = "mine"\napproval_policy = "never"\n')
+        try:
+            p = tomllib.loads(text or "")
+        except tomllib.TOMLDecodeError as exc:
+            p = {"error": str(exc)}
+        if (not str(p.get("model")).startswith("bench/") or p.get("model_provider") != "benchwarmers"
+                or p.get("web_search") != "disabled" or p.get("approval_policy") != "never"
+                or "codex --profile benchwarmers" not in plan["after"]):
+            bad.append(f"the profile: {p} {plan['after']!r}")
+    finally:
+        for k, v in saved_env.items():
+            os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
+        shutil.rmtree(home, ignore_errors=True)
+    ok = not bad
+    print(("ok   " if ok else "FAIL ") + "Codex Set up: a profile for the model, your config.toml kept key for key"
+          " or left to you" + ("" if ok else f" -> {bad}"))
     failures += 0 if ok else 1
     # restore: same alias back, out of retired.json, role and ad hoc kept, and
     # back into the collections that still exist (one deleted, one changed since)
