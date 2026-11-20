@@ -41,30 +41,34 @@ setx BENCHWARMERS_KEY "<your gateway key>"
 
 An agent with its tools on any collection (route mode), and the panel's ask and verdict as MCP tools.
 
-**Where it goes:** `~/.config/opencode/opencode.json`, or `opencode.json` in a project; merge into what is there. Pick a model with `/models` (`benchwarmers/bench/core:route`). The key comes from `BENCHWARMERS_KEY`.
+**Where it goes:** `~/.config/opencode/opencode.jsonc` (`%USERPROFILE%\.config\opencode\` on Windows), or `opencode.jsonc` in a project; merge into what is there. opencode reads it again by itself. Pick a model with `/models` (`benchwarmers/core`). The key comes from `BENCHWARMERS_KEY`, on the opencode server's environment.
 
-**opencode.json**
+**opencode.jsonc**
 
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
-  "provider": {
+  "providers": {
     "benchwarmers": {
-      "npm": "@ai-sdk/openai-compatible",
       "name": "Benchwarmers",
-      "options": {
-        "baseURL": "http://127.0.0.1:8122/v1",
-        "apiKey": "{env:BENCHWARMERS_KEY}"
+      "package": "@opencode/ai/providers/openai-compatible",
+      "env": [
+        "BENCHWARMERS_KEY"
+      ],
+      "settings": {
+        "baseURL": "http://127.0.0.1:8122/v1"
       },
       "models": {
-        "bench/core:route": {
+        "core": {
+          "modelID": "bench/core:route",
           "name": "core (route)",
           "limit": {
             "context": 128000,
             "output": 16384
           }
         },
-        "bench/fast:route": {
+        "fast": {
+          "modelID": "bench/fast:route",
           "name": "fast (route)",
           "limit": {
             "context": 128000,
@@ -75,23 +79,23 @@ An agent with its tools on any collection (route mode), and the panel's ask and 
     }
   },
   "mcp": {
-    "benchwarmers": {
-      "type": "remote",
-      "url": "http://127.0.0.1:8122/mcp",
-      "enabled": true,
-      "oauth": false,
-      "headers": {
-        "Authorization": "Bearer {env:BENCHWARMERS_KEY}"
-      },
-      "timeout": 900000
+    "servers": {
+      "benchwarmers": {
+        "type": "remote",
+        "url": "http://127.0.0.1:8122/mcp",
+        "oauth": false,
+        "headers": {
+          "Authorization": "Bearer {env:BENCHWARMERS_KEY}"
+        }
+      }
     }
   }
 }
 ```
 
-**Watch for:** `timeout` is in milliseconds and covers each MCP call: without it opencode stops waiting long before a panel answers.
+**Watch for:** This is opencode 2's format (`providers`, `mcp.servers`); opencode 1 read `provider` and `mcp` and ignores it. A model in `models` is offered only while it is listed there: a new collection needs its own entry.
 
-Written from [v1.19.5's providers](https://github.com/anomalyco/opencode/blob/v1.19.5/packages/web/src/content/docs/providers.mdx), [MCP servers](https://github.com/anomalyco/opencode/blob/v1.19.5/packages/web/src/content/docs/mcp-servers.mdx), read 2026-11-08: the current release's own docs. opencode.ai already shows the next config (`providers`, `mcp.servers`), which v1.19.5 does not read.
+Written from [providers](https://opencode.ai/docs/providers/), [MCP servers](https://opencode.ai/docs/mcp-servers/), read 2026-11-20: opencode 2.3.2, run end to end with bench/fast on 2026-11-20.
 
 <a id='vscode'></a>
 

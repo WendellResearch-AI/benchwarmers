@@ -229,13 +229,15 @@ def main() -> int:
             want = ("bench/core:merged", "bench/fast:merged") if c["id"] == "chat" else \
                 ("bench/core:route", "bench/fast:route") if c["id"] not in ("codex", "code") else ("bench/core:route",)
             bad += [f"{c['id']} lacks {w}" for w in want if w not in alltext]
-        oc, cx = parsed.get(("opencode", "opencode.json")), parsed.get(("codex", "config.toml"))
+        oc, cx = parsed.get(("opencode", "opencode.jsonc")), parsed.get(("codex", "config.toml"))
         if oc and cx:
-            p = oc["provider"]["benchwarmers"]
-            if (oc["mcp"]["benchwarmers"]["timeout"] != 900_000 or cx["mcp_servers"]["benchwarmers"]["tool_timeout_sec"] != 900
+            p = oc["providers"]["benchwarmers"]                 # opencode 2's shape
+            if (oc["mcp"]["servers"]["benchwarmers"]["type"] != "remote"
+                    or cx["mcp_servers"]["benchwarmers"]["tool_timeout_sec"] != 900
                     or cx["model_providers"]["benchwarmers"]["wire_api"] != "responses" or cx["web_search"] != "disabled"
-                    or p["models"]["bench/fast:route"]["limit"]["context"] != serve.UNKNOWN_CONTEXT
-                    or ("apiKey" in p["options"]) != keys or ("env_key" in cx["model_providers"]["benchwarmers"]) != keys):
+                    or p["models"]["fast"]["modelID"] != "bench/fast:route"
+                    or p["models"]["fast"]["limit"]["context"] != serve.UNKNOWN_CONTEXT
+                    or ("env" in p) != keys or ("env_key" in cx["model_providers"]["benchwarmers"]) != keys):
                 bad.append(f"opencode or Codex settings wrong (keys={keys})")
         if parsed.get(("cline", "Cline: cline_mcp_settings.json"), {}).get("mcpServers", {}).get("benchwarmers", {}).get("timeout") != 900:
             bad.append("Cline's MCP timeout is not 900 s")
@@ -264,7 +266,7 @@ def main() -> int:
                     bad.append(f"{c['id']} model-only still carries the MCP server")
                 if way == "panel" and ":route" in text:
                     bad.append(f"{c['id']} panel-only still carries a route model")
-                if keys and "opencode" in text.replace("opencode.ai", "").replace("opencode.json", ""):
+                if keys and any(s in text for s in ("Bearer opencode", '"opencode"', "'opencode'", "=opencode")):
                     bad.append(f"{c['id']} sends the label with a key in use")
     ok = not bad
     print(("ok   " if ok else "FAIL ") + "client set-ups: JSON, TOML" + (", YAML" if load_yaml else " (YAML unread: no PyYAML)")

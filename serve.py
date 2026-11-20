@@ -4682,18 +4682,20 @@ def client_setups(root: str, cols: list, keys: bool, way: str = "both", label: s
     def only(flag: bool, *blocks) -> list:
         return list(blocks) if flag else []
 
+    # opencode V2 (2.x): `providers` and `mcp.servers`; each collection a model keyed by its name.
     opencode = {"$schema": "https://opencode.ai/config.json",
-                **({"provider": {"benchwarmers": {
-                    "npm": "@ai-sdk/openai-compatible", "name": "Benchwarmers",
-                    "options": {"baseURL": base, **({"apiKey": f"{{env:{env}}}"} if keys else
-                                                    {"apiKey": lab} if lab else {})},
-                    "models": {m: {"name": f"{n} (route)", "limit": {"context": c, "output": o}}
-                               for m, n, c, o, _ in rows}}}} if use_m else {}),
-                **({"mcp": {"benchwarmers": {
-                    "type": "remote", "url": mcp, "enabled": True, "oauth": False,
+                **({"providers": {"benchwarmers": {
+                    "name": "Benchwarmers", "package": "@opencode/ai/providers/openai-compatible",
+                    **({"env": [env]} if keys else {}),
+                    "settings": {"baseURL": base, **({"apiKey": lab} if lab else {})},
+                    "models": {n: {"modelID": m, "name": f"{n} (route)", "limit": {"context": c, "output": o},
+                                   **({"capabilities": {"tools": True, "input": ["text", "image"], "output": ["text"]}}
+                                      if eyes else {})}
+                               for m, n, c, o, eyes in rows}}}} if use_m else {}),
+                **({"mcp": {"servers": {"benchwarmers": {
+                    "type": "remote", "url": mcp, "oauth": False,
                     **({"headers": {"Authorization": f"Bearer {{env:{env}}}"}} if keys else
-                       {"headers": {"Authorization": f"Bearer {lab}"}} if lab else {}),
-                    "timeout": 900_000}}} if use_p else {})}
+                       {"headers": {"Authorization": f"Bearer {lab}"}} if lab else {})}}}} if use_p else {})}
     vscode = [{"name": "Benchwarmers", "vendor": "customendpoint", "apiKey": "${input:benchwarmersKey}",
                "apiType": "chat-completions",
                "models": [{"id": m, "name": f"{n} (Benchwarmers)", "url": base + "/chat/completions",
@@ -4800,19 +4802,17 @@ def client_setups(root: str, cols: list, keys: bool, way: str = "both", label: s
     apps = [
         {"id": "opencode", "name": "opencode",
          "gets": "An agent with its tools on any collection (route mode), and the panel's ask and verdict as MCP tools.",
-         "where": "<code>~/.config/opencode/opencode.json</code>, or <code>opencode.json</code> in a project; merge"
-                  " into what is there. Pick a model with <code>/models</code>"
-                  f" (<code>benchwarmers/{esc(model)}</code>)."
-                  + (f" The key comes from <code>{env}</code>." if keys else ""),
-         "blocks": [_snip("opencode.json", "json", js(opencode))],
-         "watch": "<code>timeout</code> is in milliseconds and covers each MCP call: without it opencode stops"
-                  " waiting long before a panel answers.",
-         "docs": [("https://github.com/anomalyco/opencode/blob/v1.19.5/packages/web/src/content/docs/providers.mdx",
-                   "v1.19.5's providers"),
-                  ("https://github.com/anomalyco/opencode/blob/v1.19.5/packages/web/src/content/docs/mcp-servers.mdx",
-                   "MCP servers")],
-         "docs_note": "the current release's own docs. opencode.ai already shows the next config"
-                      " (<code>providers</code>, <code>mcp.servers</code>), which v1.19.5 does not read."},
+         "where": "<code>~/.config/opencode/opencode.jsonc</code> (<code>%USERPROFILE%\\.config\\opencode\\</code> on"
+                  " Windows), or <code>opencode.jsonc</code> in a project; merge into what is there. opencode reads"
+                  f" it again by itself. Pick a model with <code>/models</code> (<code>benchwarmers/{esc(rows[0][1])}</code>)."
+                  + (f" The key comes from <code>{env}</code>, on the opencode server's environment." if keys else ""),
+         "blocks": [_snip("opencode.jsonc", "json", js(opencode))],
+         "watch": "This is opencode 2's format (<code>providers</code>, <code>mcp.servers</code>); opencode 1 read"
+                  " <code>provider</code> and <code>mcp</code> and ignores it. A model in <code>models</code> is"
+                  " offered only while it is listed there: a new collection needs its own entry.",
+         "docs": [("https://opencode.ai/docs/providers/", "providers"),
+                  ("https://opencode.ai/docs/mcp-servers/", "MCP servers")],
+         "read": "2026-11-20", "docs_note": "opencode 2.3.2, run end to end with bench/fast on 2026-11-20."},
         {"id": "vscode", "name": "VS Code chat (Custom Endpoint)",
          "gets": "Copilot chat's agent on a collection (route mode), with your own key, and the panel as MCP tools.",
          "where": "<code>chatLanguageModels.json</code>: in the chat's model picker, Manage Models, Add Models,"
@@ -5014,7 +5014,7 @@ def connect_setup(app: str, way: str = "", collection: str = "", where: str = "h
             + "".join(_snip_html(c["id"], i, s) for i, s in enumerate(c["blocks"]))
             + f"<p class='watch'><b>Watch for:</b> {c['watch']}</p>"
             + "<p class='rules'>Written from " + ", ".join(ext_link(u, t) for u, t in c["docs"])
-            + f", read {CLIENTS_READ}" + (f": {c['docs_note']}" if c.get("docs_note") else ".") + "</p>")
+            + f", read {c.get('read', CLIENTS_READ)}" + (f": {c['docs_note']}" if c.get("docs_note") else ".") + "</p>")
     return {"ok": True, "errors": [], "html": html, "way": way}
 
 

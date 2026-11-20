@@ -76,7 +76,7 @@ def render() -> str:
             out += [f"**{s['label']}**", "", fence(s["lang"], s["text"]), ""]
         docs = ", ".join(f"[{t}]({u})" for u, t in c["docs"])
         out += [f"**Watch for:** {md(c['watch'])}", "",
-                f"Written from {docs}, read {serve.CLIENTS_READ}"
+                f"Written from {docs}, read {c.get('read', serve.CLIENTS_READ)}"
                 + (f": {md(c['docs_note'])}" if c.get("docs_note") else "."), ""]
     return "\n".join(out).rstrip() + "\n"
 
