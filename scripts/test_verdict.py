@@ -128,6 +128,13 @@ def ranking() -> None:
     assert gateway.route_order(["liar", "honest"]) == ["honest", "liar"]          # a false claim counts against
     assert next(gateway.merger_candidates({}, ["liar", "honest"], "review", False)) == "honest"
     assert offload.score({}) == 0.5                                               # no verdicts: neutral
+    # A useful verdict is worth the share of its claims that held: one false of ten costs a tenth.
+    for model, useful, real, false in (("mostly", True, 9, 1), ("clean", True, 0, 0), ("nope", False, 0, 0)):
+        offload.add(model, "t (bench/core, review)", None, "member; ok", f"k.{model}")
+        offload.verdict(f"k.{model}", useful, "", [f"real {i}" for i in range(real)] or None, ["untrue"] * false or None)
+    s = offload.summary()
+    assert abs(offload.score(s["mostly"]) - offload.score(s["clean"])) < 0.02, s["mostly"]
+    assert gateway.route_order(["nope", "mostly"]) == ["mostly", "nope"]
 
 
 if __name__ == "__main__":

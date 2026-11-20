@@ -114,11 +114,12 @@ def verdict(call: str, useful: bool | None, note: str,
 
 def summary(keep=None) -> dict[str, dict]:
     """Per model: how often, how often it helped, and the last thing it did.
-    For score(): `sound`, the useful verdicts that list no false claim, and
-    `wrong`, the verdicts that list one. `keep`, a test on an entry, counts
-    only the entries it passes (the merger reads one shape's verdicts)."""
+    For score(): `credit`, what the useful verdicts are worth (each the share
+    of its listed claims that held, 1 with none listed), and `wrong`, the
+    not-useful verdicts that list a false claim. `keep`, a test on an entry,
+    counts only the entries it passes (the merger reads one shape's verdicts)."""
     agg: dict[str, dict] = collections.defaultdict(
-        lambda: {"offloads": 0, "useful": 0, "judged": 0, "sound": 0, "wrong": 0,
+        lambda: {"offloads": 0, "useful": 0, "judged": 0, "credit": 0.0, "wrong": 0,
                  "last_task": "", "last_date": ""})
     for e in entries():
         if keep and not keep(e):
@@ -128,8 +129,9 @@ def summary(keep=None) -> dict[str, dict]:
         if e.get("useful") is not None:
             a["judged"] += 1
             a["useful"] += 1 if e["useful"] else 0
-            a["sound"] += 1 if e["useful"] and not e.get("false") else 0
-            a["wrong"] += 1 if e.get("false") else 0
+            real, false = len(e.get("real") or []), len(e.get("false") or [])
+            a["credit"] += (real / (real + false) if real + false else 1) if e["useful"] else 0
+            a["wrong"] += 1 if false and not e["useful"] else 0
         if e["date"] >= a["last_date"]:
             a["last_date"], a["last_task"] = e["date"], e["task"]
     return dict(agg)
@@ -145,10 +147,12 @@ PRIOR = 5
 def score(r: dict) -> float:
     """How far a model's record says to trust it, 0 to 1, from summary()'s
     counts; 0.5 with no verdicts. The route order and the merger both rank
-    by it. Sound answers (useful, no false claim) over judged ones, pulled
-    toward 0.5 by PRIOR. A verdict listing a false claim counts twice as a
-    miss, so asserting something untrue costs more than being of no use."""
-    return (r.get("sound", 0) + PRIOR / 2) / (r.get("judged", 0) + r.get("wrong", 0) + PRIOR)
+    by it. What the judged answers were worth over how many, pulled toward
+    0.5 by PRIOR. A useful answer is worth the share of its claims that held,
+    so one false claim among nine real ones costs a tenth, and saying little
+    earns nothing extra; a not-useful one is worth 0, and one more miss if it
+    asserted something untrue, so that is worse than being of no use."""
+    return (r.get("credit", 0) + PRIOR / 2) / (r.get("judged", 0) + r.get("wrong", 0) + PRIOR)
 
 
 def main() -> None:

@@ -384,12 +384,14 @@ models.dev, the endpoint's own listing or a capability probe that saw a
 call), that cannot see (when it has images) or whose context window is
 under the request (tools and tool calls counted). No member left: 400
 (413 when size is why). Of those left, the best record goes first. Each
-model's verdicts make a score (`offload.score`): the share of its judged
-answers that were useful and listed no false claim, pulled toward one half
-as if it had five more verdicts, half of them useful. So a few verdicts
-count for little and many let the record speak: 5 useful of 5 goes before
-10 of 30, and one lucky verdict does not go before 9 of 10. A verdict that
-lists a false claim counts twice as a miss. Ties go to verified suite
+model's verdicts make a score (`offload.score`): what its judged answers
+were worth, on average, pulled toward one half as if it had five more
+verdicts, half of them useful. So a few verdicts count for little and many
+let the record speak: 5 useful of 5 goes before 10 of 30, and one lucky
+verdict does not go before 9 of 10. A useful answer is worth the share of
+its listed claims that held (1 with none listed), so one false claim among
+nine real ones costs a tenth. A not-useful answer is worth nothing, and one
+that lists a false claim counts as a second miss. Ties go to verified suite
 findings, then to a connection already paid for. Members cooling down after
 a rate limit go last. One new conversation in four goes instead to the
 member whose record is oldest, so the record does not narrow to one model.
