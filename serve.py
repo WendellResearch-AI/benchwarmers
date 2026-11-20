@@ -1336,7 +1336,8 @@ def endpoint_providers() -> dict:
     at that base, if one is."""
     import sources
     have = {e["base"].rstrip("/"): n for n, e in endpoints.load().items()}
-    rows = [{"id": pid, "name": p.get("name") or pid, "base": p["api"].rstrip("/"), "doc": p.get("doc") or "",
+    rows = [{"id": pid, "name": p.get("name") or pid, "base": p["api"].rstrip("/"),
+             "doc": p["doc"] if str(p.get("doc")).startswith("https://") else "",     # the page links it
              "have": have.get(p["api"].rstrip("/"), "")}
             for pid, p in (sources.cached("modelsdev") or {}).items()
             if isinstance(p, dict) and str(p.get("api") or "").startswith("http")]

@@ -538,8 +538,11 @@ one. With no key, a bearer that is an app's name (`opencode`: up to 24
 lower-case letters and dashes, as Connect's set-ups send) is written as the
 caller instead of `local`, so apps are told apart in the logs and Connect sees
 an app's first call. It is a label, not a credential: one with a digit (as a
-secret has), one that is a key's name, and an SDK's dummy key are all `local`,
-so a label never reaches the logs as a secret or takes a key's scope or rate.
+secret has), one that is a key's name, and an SDK's dummy key (`dummy`,
+`none`, `test`, `fake`, `anything`, `placeholder`, `your-api-key`, `not-needed`,
+`sk-no-key-required`, `ollama`, `lm-studio`, `lmstudio` and the like:
+`PLACEHOLDERS` in `metrics/guard.py`) are all `local`, so a label never
+reaches the logs as a secret or takes a key's scope or rate.
 
 Optional, set when a key is made: the **collections** it may
 call (others are refused with 403, and `GET /v1/models` lists only its own)
