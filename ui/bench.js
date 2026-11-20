@@ -2072,7 +2072,7 @@
       if (appKeys[app]) sec.querySelectorAll('.setup pre[data-key]').forEach(function (p) {
         p.textContent = p.textContent.split('<your gateway key>').join(appKeys[app]);   // serve.KEY_HOLDER
       });
-    });
+    }).catch(function (err) { listErrors(sec.querySelector('.errors'), [String(err)]); });    // a dropped connection
   }
   function seenTick() {
     clearTimeout(seenTimer);
@@ -2258,7 +2258,7 @@
         provs[p.name] = p;
         list.appendChild(el('option', {value: p.name}, p.have ? 'already added as ' + p.have : p.base));
       });
-    });
+    }).catch(function () { provs = null; });         // not listed this time: asked again when Add next opens
   }
   $('e-prov').addEventListener('input', function () {
     var p = provs && provs[this.value], said = $('e-prov-said');
@@ -2333,9 +2333,10 @@
       post('/api/endpoint', {name: x.name, base: x.base, key: key.value, admin: admin ? admin.value : ''}).then(function (r) {
         b.disabled = false; b.textContent = 'Check and save';
         if (!r.ok) { epSaid(x.name, false, r.errors.join(' ')); return; }
-        post('/api/endpoint/check', {name: x.name}).then(function () {
+        function saved() {                           // saved all the same if the check after it is lost
           again(x.name).then(function () { epSaid(x.name, true, 'Saved: ' + plural(r.served, 'model') + ' listed. ' + (r.note || '')); });
-        });
+        }
+        post('/api/endpoint/check', {name: x.name}).then(saved, saved);
       }).catch(function (err) { b.disabled = false; b.textContent = 'Check and save'; epSaid(x.name, false, String(err)); });
     },
     again: function (x) {          // this endpoint, not a new one
@@ -2563,12 +2564,15 @@
     e.errors.textContent = ''; e.done.textContent = ''; e.save.disabled = true; e.save.textContent = 'Checking…';
     function end() { e.save.textContent = 'Check and add'; e.save.disabled = false; }
     post('/api/endpoint', keyBody()).then(function (r) {
-      end();
-      if (!r.ok) { listErrors(e.errors, r.errors); return; }
+      if (!r.ok) { end(); listErrors(e.errors, r.errors); return; }
       var name = e.name.value.trim().toLowerCase();
-      post('/api/endpoint/check', {name: name});      // its first check, for the list's Key and Checked
-      endpointDone('Added. ' + name + ' lists ' + r.served + ' models; they appear in the onboarding picker. '
-               + (r.note || ''), e.adding ? name : '');
+      function done() {
+        end();
+        endpointDone('Added. ' + name + ' lists ' + r.served + ' models; they appear in the onboarding picker. '
+                 + (r.note || ''), e.adding ? name : '');
+      }
+      // Its first check, then the list with its Key and Checked; added all the same if the check is lost.
+      post('/api/endpoint/check', {name: name}).then(done, done);
     }).catch(function (err) { end(); e.errors.textContent = String(err); });
   });
   // Saved or signed in: the forms fold, the message stays, with the next step.
@@ -3162,6 +3166,8 @@
       document.querySelectorAll('#g-requests tr.g-row').forEach(function (tr) { tr.classList.toggle('in-hand', tr.dataset.panel === panel); });
       var c = $('c-form'); if (c && c.open) c.close();
       $('request-dock').setAttribute('open', '');
+    }).catch(function (err) {                        // a dropped connection: said in the pane, opened to show it
+      listErrors($('rq-errors'), [String(err)]); $('request-dock').setAttribute('open', '');
     });
   }
   function rqOwed(tr, change) {             // the row's Owed, and the card's count, after a verdict
