@@ -385,6 +385,8 @@ def main() -> int:
         "a sequence two in": ("extensions:\n  - developer\n", None),
         "a flow mapping": ("extensions: {developer: {enabled: true}}\n", None),
         "a quoted key": ('"extensions":\n' + dev, None),
+        "a flow mapping at the top": ("{}\n", None),             # appending would make it invalid YAML
+        "a document end": ("GOOSE_MODEL: x\n...\n", None),
     }
     bad = []
     for name, (old, want) in cases.items():
@@ -441,7 +443,12 @@ def main() -> int:
             if not good:
                 bad.append(f"{what}: {c if text is not None else plan['left']}")
         for what, theirs in (("a dotted key inside a table", '[model_providers]\nbenchwarmers.name = "x"\n'),
-                             ("a file that is not TOML", "model = \n")):
+                             ("a file that is not TOML", "model = \n"),
+                             # an empty table of theirs that the text split would fold into ours
+                             ("a ''' string, then an empty table", "[model_providers.benchwarmers]\nname = '\"\"\"'\n\n"
+                                                                     "[user_table]\ndata = {}\n"),
+                             ("an empty table with a comma in its name", '[model_providers.benchwarmers]\nname = "old"\n\n'
+                                                                          '["a,b"]\n')):
             plan, text = planned(ctoml, theirs)
             if text is not None or not any(str(ctoml) in why for why in plan["left"]):
                 bad.append(f"{what}: not left to you ({plan['left']})")

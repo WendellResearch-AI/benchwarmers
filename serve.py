@@ -5126,13 +5126,14 @@ def _toml_merge(text: str, ours: str) -> str | None:
             d = d.get(k) if isinstance(d, dict) else None
         return d
 
-    def rest(d: dict, paths: list) -> dict:            # d without ours, and without tables left empty
+    def rest(d: dict, paths: list) -> dict:            # d without ours, and without the tables ours leave empty
         out = {}
         for k, v in d.items():
             if (k,) in paths:
                 continue
-            if isinstance(v, dict) and not (v := rest(v, [p[1:] for p in paths if len(p) > 1 and p[0] == k])):
-                continue
+            under = [p[1:] for p in paths if len(p) > 1 and p[0] == k]
+            if isinstance(v, dict) and not (v := rest(v, under)) and under:
+                continue                                # an empty table of theirs still counts
             out[k] = v
         return out
     kept = rest(old, owned) == rest(new, owned) and all(dig(new, p) == dig(want, p) for p in owned)
@@ -5147,8 +5148,11 @@ def _yaml_block(text: str, ours: str) -> str | None:
     among them, so ours is never written twice or put under another entry."""
     lines, block = text.splitlines(), ours.splitlines()[1:]          # ours: "extensions:" then the block
     at = next((i for i, ln in enumerate(lines) if re.match(r"^extensions:\s*$", ln)), None)
-    if at is None:      # any other spelling of the key (quoted, flow, a BOM before it) is not appended to
-        return None if re.search(r"(?m)^\W*extensions\W*:", text) else text.rstrip("\n") + "\n" + ours.rstrip("\n") + "\n"
+    if at is None:      # any other spelling of the key (quoted, flow, a BOM before it) is not appended to,
+        # nor a file whose top level is not a plain block mapping ({}, a list, a `...` or `---` marker)
+        plain = all(re.match(r"[\w\"'.-]+\s*:(\s|$)", ln) for ln in lines if ln[:1] not in ("", " ", "\t", "#"))
+        return None if re.search(r"(?m)^\W*extensions\W*:", text) or not plain else \
+            text.rstrip("\n") + "\n" + ours.rstrip("\n") + "\n"
     nxt = next((i for i in range(at + 1, len(lines)) if lines[i][:1] not in ("", " ", "\t", "#")), len(lines))
     end = 1 + max((i for i in range(at + 1, nxt) if lines[i][:1] in (" ", "\t") and lines[i].strip()
                    and not lines[i].lstrip().startswith("#")), default=at)  # comments before the next key stay put
@@ -5307,14 +5311,15 @@ def setup_apply(app: str, way: str = "", collection: str = "", name: str = "", k
         return plan
     stamp, done, failed = datetime.datetime.now().strftime("%Y%m%d-%H%M%S"), [], []
     for f in plan["files"]:
-        path = pathlib.Path(f["path"]).resolve()        # a symlink (dotfiles): written through, the link kept
+        path = pathlib.Path(f["path"])
         try:
+            path = path.resolve()                       # a symlink (dotfiles): written through, the link kept
             path.parent.mkdir(parents=True, exist_ok=True)
             if path.exists():
                 shutil.copy2(path, path.with_name(f"{path.name}.bak-{stamp}"))
             _write_atomic(path, f["text"])
-        except OSError as exc:
-            failed.append(f"{path} ({exc.strerror or exc})")
+        except (OSError, RuntimeError) as exc:          # RuntimeError: a symlink loop, before Python 3.13
+            failed.append(f"{path} ({getattr(exc, 'strerror', None) or exc})")
             continue
         done.append(str(path))
     if done:
