@@ -5011,6 +5011,20 @@ def _docker_host() -> str:
     return f"host.docker.internal:{PORT}"
 
 
+def _app_label(name: str, keys: bool) -> tuple[str, str]:
+    """(an app's name as its set-up sends it, why it cannot be sent). With no
+    key the name is the app's label, and one the gateway would not keep
+    (guard.is_label) would have every call logged as local with no word why:
+    said here instead. With a key the name is not what tells the app apart."""
+    if keys or not name or guard.is_label(name):
+        return (name if guard.LABEL.match(name or "") else ""), ""
+    why = ("is what apps send as a dummy key" if name in guard.PLACEHOLDERS else
+           "is a gateway key's name" if name in guard.gateway_keys() else
+           "is not 2 to 24 lower-case letters and dashes")
+    return "", (f"the name {name[:40]!r} {why}, so its calls would be logged as local: give it another, such as"
+                " my-agent, or a key")
+
+
 def connect_setup(app: str, way: str = "", collection: str = "", where: str = "here", name: str = "",
                   keyed: bool = False) -> dict:
     """One app's set-up as the Connect page's choices make it (client_setups
@@ -5021,7 +5035,9 @@ def connect_setup(app: str, way: str = "", collection: str = "", where: str = "h
         return {"ok": False, "errors": ["no collection yet: make one on Collections"]}
     col = next((c for c in cols if c[0] == collection), cols[0])
     keys = guard.keys_required() or bool(keyed)
-    label = name if guard.LABEL.match(name or "") else ""         # as guard.gateway_caller keeps one
+    label, why = _app_label(name, keys)
+    if why:
+        return {"ok": False, "errors": [why]}
     root = gateway_url().removesuffix("/v1")
     if where == "docker" and not guard.public_url():
         root = "http://" + _docker_host()
@@ -5242,7 +5258,9 @@ def setup_plan(app: str, way: str = "", collection: str = "", name: str = "", ke
         return {"ok": False, "errors": ["no collection yet: make one on Collections"]}
     col = next((c for c in cols if c[0] == collection), cols[0])
     keys = guard.keys_required() or bool(keyed)
-    label = name if guard.LABEL.match(name or "") else ""
+    label, why = _app_label(name, keys)
+    if why:
+        return {"ok": False, "errors": [why]}
     root = gateway_url().removesuffix("/v1")
     c = next(a for a in client_setups(root, [col[:3]], keys, "both", label) if a["id"] == app)
     way = way if way in c["ways"] else c["ways"][0]

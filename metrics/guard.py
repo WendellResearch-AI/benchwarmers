@@ -320,9 +320,7 @@ def gateway_caller(headers, query_key: str | None = None) -> str:
             if name := key_name(value):
                 _touch(name)
                 return name
-        label = sent[0] if sent else ""
-        return label if LABEL.match(label) and label not in PLACEHOLDERS and label not in gateway_keys() \
-            else "local"
+        return sent[0] if sent and is_label(sent[0]) else "local"
     if raw is None and other is not None:
         raw = f"Bearer {other}"
     challenge = {"WWW-Authenticate": 'Bearer realm="benchwarmers"'}     # RFC 6750: every 401 says how
@@ -338,6 +336,13 @@ def gateway_caller(headers, query_key: str | None = None) -> str:
                            f" (gateway keys start {PREFIX}; this is some other key)"), challenge)
     _touch(name)
     return name
+
+
+def is_label(text: str) -> bool:
+    """Whether `text`, sent where no key is required, is kept as the caller's
+    name: LABEL-shaped, not a dummy key (PLACEHOLDERS) and not a key's name.
+    Connect asks too, so it never writes a set-up whose calls would be local."""
+    return bool(LABEL.match(text)) and text not in PLACEHOLDERS and text not in gateway_keys()
 
 
 def _authorization(raw: str) -> tuple[str, str]:

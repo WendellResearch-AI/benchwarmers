@@ -2066,7 +2066,8 @@
                                  keyed: appKeys[app] || appChoice(sec, 'key') === '1' ? '1' : ''});
     sec.querySelector('.errors').textContent = '';
     return get('/api/client-setup?' + q).then(function (r) {
-      if (!r.ok) { listErrors(sec.querySelector('.errors'), r.errors); return; }
+      // Refused (a name whose calls would be local): the set-up shown was for the old choices, so it goes.
+      if (!r.ok) { sec.querySelector('.setup').textContent = ''; listErrors(sec.querySelector('.errors'), r.errors); return; }
       sec.querySelector('.setup').innerHTML = r.html;
       if (appKeys[app]) sec.querySelectorAll('.setup pre[data-key]').forEach(function (p) {
         p.textContent = p.textContent.split('<your gateway key>').join(appKeys[app]);   // serve.KEY_HOLDER

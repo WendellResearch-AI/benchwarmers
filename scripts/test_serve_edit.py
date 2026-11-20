@@ -643,6 +643,29 @@ def main() -> int:
                 bad.append(f"{app}: a label was kept where the key goes: {text!r}")
         return bad
 
+    def named():
+        """With no key, a name the gateway would not keep (a dummy key's, a key's own, another shape) is
+        refused with why, on the page and by Set up, as its calls would be logged as local; with a key any name does."""
+        fresh()
+        bad, kept = [], serve.guard.gateway_keys
+        serve.guard.gateway_keys = lambda: {"taken": {"sha256": "x"}}
+        try:
+            for name in ("ollama", "test", "taken", "My App", "x"):
+                for r in (serve.connect_setup("opencode", "both", "", "here", name),
+                          serve.setup_plan("opencode", "both", "", name)):
+                    if r["ok"] or "local" not in " ".join(r["errors"]):
+                        bad.append(f"{name}: {r.get('errors')}")
+                if serve.guard.gateway_caller({"Authorization": f"Bearer {name}"}) != "local":
+                    bad.append(f"{name} would have been kept as the caller")
+            for name, keyed in (("my-agent", False), ("", False), ("ollama", True), ("taken", True)):
+                for r in (serve.connect_setup("opencode", "both", "", "here", name, keyed),
+                          serve.setup_plan("opencode", "both", "", name, keyed)):
+                    if not r["ok"]:
+                        bad.append(f"{name!r} keyed={keyed}: {r['errors']}")
+        finally:
+            serve.guard.gateway_keys = kept
+        return bad
+
     def linked():
         """A symlinked settings.json: written through to its target, the link kept."""
         dirs = fresh()
@@ -665,6 +688,7 @@ def main() -> int:
                           ("Set up: a key, then none, leaves no key behind", unkeyed),
                           ("Set up: the key placeholder in Zed's and goose's files is said by hand", placeholder),
                           ("Set up: a key typed in place of the placeholder is kept by the next Set up", typed),
+                          ("Connect: a name whose calls would be logged as local is refused, with why", named),
                           ("Set up: a symlinked file is written through, the link kept", linked)):
             try:
                 bad = fn()
