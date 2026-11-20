@@ -5073,9 +5073,10 @@ def _app_dirs() -> dict:
 
 def _merge(base: dict, ours: dict) -> dict:
     """`ours` into `base`: dicts merged, except our own entry (the key
-    `benchwarmers`), replaced whole so a field we no longer write goes; lists of
-    entries with an "id" (VS Code's inputs) merged by it; anything else replaced.
-    A ValueError where the file holds another shape than ours on the way to it."""
+    `benchwarmers`), replaced whole so a field we no longer write goes, but for a
+    key typed where ours says KEY_HOLDER (_keep_key); lists of entries with an
+    "id" (VS Code's inputs) merged by it; anything else replaced. A ValueError
+    where the file holds another shape than ours on the way to it."""
     for k, v in ours.items():
         was = base.get(k)
         if was is not None and k != "benchwarmers" and isinstance(v, (dict, list)) and type(was) is not type(v):
@@ -5086,8 +5087,25 @@ def _merge(base: dict, ours: dict) -> dict:
             ids = {e["id"] for e in v}
             base[k] = [e for e in was if not (isinstance(e, dict) and e.get("id") in ids)] + v
         else:
-            base[k] = v
+            base[k] = _keep_key(v, was) if k == "benchwarmers" else v
     return base
+
+
+def _typed(header: str) -> bool:
+    """Whether a header's value is a key someone typed in place of KEY_HOLDER:
+    not the placeholder, and not an app's name, which a set-up with no key puts
+    there (guard.LABEL: letters and dashes, as no gateway key is)."""
+    value = header.strip().removeprefix("Bearer").strip()
+    return bool(value) and KEY_HOLDER not in header and not guard.LABEL.match(value)
+
+
+def _keep_key(ours, was):
+    """Our entry, with their own value kept wherever ours says KEY_HOLDER and
+    theirs is a key they typed there (Zed's MCP header takes no variable), so a
+    second Set up never writes the placeholder back over it."""
+    if isinstance(ours, dict):
+        return {k: _keep_key(v, was.get(k) if isinstance(was, dict) else None) for k, v in ours.items()}
+    return was if isinstance(ours, str) and KEY_HOLDER in ours and isinstance(was, str) and _typed(was) else ours
 
 
 _TOML_HEAD = re.compile(r"\s*\[(\[?)([^\[\]=,]+)\]\]?\s*(?:#.*)?$")      # [table] or [[array]], a comment after
@@ -5177,17 +5195,26 @@ def _yaml_block(text: str, ours: str) -> str | None:
             or not all(ln.startswith("   ") or re.match(key, ln) for ln in entries)
             or (nxt < len(lines) and re.match(r"-(\s|$)", lines[nxt]))):
         return None                                     # a list, another indent, a tab or comment among them
-    out, i = lines[:at + 1] + block, at + 1
+    theirs, was, i = [], [], at + 1
     while i < end:                                      # their entries, ours (if there) dropped
         if re.match(r"  [\"']?benchwarmers[\"']?\s*:(\s|$)", lines[i]):
             j = next((k for k in range(i + 1, end) if re.match(key, lines[k])), end)
             while j > i + 1 and (not lines[j - 1].strip() or lines[j - 1].lstrip().startswith("#")):
                 j -= 1                                  # a comment heading their next entry stays
-            i = j
+            was, i = lines[i:j], j
             continue
-        out.append(lines[i])
+        theirs.append(lines[i])
         i += 1
-    return "\n".join(out + lines[end:]) + "\n"
+    # A key typed where our header says KEY_HOLDER stays (goose's header takes no variable): their
+    # `headers`, with any lines under it, in place of ours.
+    ours_at = next((n for n, ln in enumerate(block) if ln.startswith("    headers:") and KEY_HOLDER in ln), None)
+    was_at = next((n for n, ln in enumerate(was) if ln.startswith("    headers:")), None)
+    if ours_at is not None and was_at is not None:
+        stop = next((n for n in range(was_at + 1, len(was)) if not was[n].startswith("     ")), len(was))
+        held = re.search(r"Authorization[\"']?\s*:\s*[\"']?([^\"'}\n]*)", "\n".join(was[was_at:stop]))
+        if held and _typed(held[1]):
+            block = block[:ours_at] + was[was_at:stop] + block[ours_at + 1:]
+    return "\n".join(lines[:at + 1] + block + theirs + lines[end:]) + "\n"
 
 
 def setup_plan(app: str, way: str = "", collection: str = "", name: str = "", keyed: bool = False) -> dict:

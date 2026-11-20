@@ -582,6 +582,37 @@ def main() -> int:
             bad.append(f"Zed's Done: {after}")
         return bad
 
+    def typed():
+        """A key typed over <your gateway key> in Zed's or goose's header stays through a second keyed Set up;
+        an app's name there (a label, from a set-up with no key) is still replaced."""
+        dirs, bad, secret = fresh(), [], "bwk_typed0123456789"
+        zed, goose = dirs["zed"] / "settings.json", dirs["goose"] / "config.yaml"
+        for app in ("zed", "goose"):
+            serve.setup_apply(app, "both", "", "", True)
+        for p in (zed, goose):
+            put(p, p.read_text(encoding="utf-8").replace(serve.KEY_HOLDER, secret))
+        put(goose, goose.read_text(encoding="utf-8").replace("timeout: 900", "timeout: 300"))   # so there is a change to write
+        put(zed, zed.read_text(encoding="utf-8").replace('"api_url"', '"stale": 1, "api_url"'))
+        for app, p in (("zed", zed), ("goose", goose)):
+            plan = serve.setup_plan(app, "both", "", "", True)
+            if any(serve.KEY_HOLDER in w for w in plan["left"]):
+                bad.append(f"{app}: told to replace a key that is there: {plan['left']}")
+            r = serve.setup_apply(app, "both", "", "", True)
+            text = p.read_text(encoding="utf-8")
+            if not r["written"] or secret not in text or serve.KEY_HOLDER in text or "stale" in text or "timeout: 300" in text:
+                bad.append(f"{app}: the typed key was not kept, or ours not written: {r} {text!r}")
+            if secret in json.dumps(r) or secret in json.dumps(serve._no_text(plan)):
+                bad.append(f"{app}: the key is in what the page is sent")
+        dirs = fresh()
+        zed, goose = dirs["zed"] / "settings.json", dirs["goose"] / "config.yaml"
+        for app, p in (("zed", zed), ("goose", goose)):
+            serve.setup_apply(app, "both", "", "my-app")                     # no key: the header holds the label
+            serve.setup_apply(app, "both", "", "my-app", True)
+            text = p.read_text(encoding="utf-8")
+            if "Bearer my-app" in text or serve.KEY_HOLDER not in text:
+                bad.append(f"{app}: a label was kept where the key goes: {text!r}")
+        return bad
+
     def linked():
         """A symlinked settings.json: written through to its target, the link kept."""
         dirs = fresh()
@@ -603,6 +634,7 @@ def main() -> int:
                           ("Set up: a write that fails says what was written and what was not", half),
                           ("Set up: a key, then none, leaves no key behind", unkeyed),
                           ("Set up: the key placeholder in Zed's and goose's files is said by hand", placeholder),
+                          ("Set up: a key typed in place of the placeholder is kept by the next Set up", typed),
                           ("Set up: a symlinked file is written through, the link kept", linked)):
             try:
                 bad = fn()
