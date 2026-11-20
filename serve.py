@@ -6712,6 +6712,7 @@ def version() -> tuple[str, str, str]:
 
 RELEASE, RELEASE_DATE, COMMIT = version()
 VERSION = f"{RELEASE} {RELEASE_DATE}".strip()           # the X-Benchwarmers-Version header
+FRAME_ANCESTORS = "'self'"     # who may frame the dashboard; a setting can widen it (vscode-webview:)
 
 
 _disk: list = [0.0, ""]                 # (when git was asked, its answer)
@@ -7394,6 +7395,10 @@ class Handler(gateway.Handler):
     def end_headers(self):
         # Every reply says which build answered it (RELEASE-PLAN "The dashboard").
         self.send_header("X-Benchwarmers-Version", VERSION)
+        # No other site may frame the dashboard: a click inside a frame is same-origin,
+        # so it would pass guard's write checks (SECURITY.md "The model").
+        self.send_header("Content-Security-Policy", f"frame-ancestors {FRAME_ANCESTORS}")
+        self.send_header("X-Frame-Options", "SAMEORIGIN")          # browsers without frame-ancestors
         super().end_headers()
 
     def log_request(self, code="-", size="-"):

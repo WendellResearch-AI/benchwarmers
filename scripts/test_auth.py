@@ -102,6 +102,10 @@ def main() -> int:
             # NO TOKEN: everything as before -- no login, no key, any bearer ignored.
             assert call(d, "/api/stamp")[0] == 200
             assert call(d, "/login")[:2][0] == 303
+            # No other site may frame the dashboard (clickjacking past the same-origin checks).
+            status, headers, _ = call(d, "/")
+            assert status == 200 and headers["Content-Security-Policy"] == "frame-ancestors 'self'", headers
+            assert headers["X-Frame-Options"] == "SAMEORIGIN", headers
             for port in (d, g):
                 status, _, text = call(port, "/v1/models", Authorization="Bearer sk-anything")
                 assert status == 200 and "bench/core" in text, (port, status, text)

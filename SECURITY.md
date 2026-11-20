@@ -26,7 +26,9 @@ gateway (on the same port at `/v1`, or alone with `gateway.py` on 8123) listen
 on 127.0.0.1. Every request is checked for the server's own host name (against
 DNS rebinding), and every write must be a same-origin request with a JSON
 body (a zip, for an import), a type no plain form can send, so a web page
-open in your browser cannot drive either server. With no admin token
+open in your browser cannot drive either server. Nor can it frame the
+dashboard to borrow your clicks: every reply says `frame-ancestors 'self'`
+(and `X-Frame-Options: SAMEORIGIN`). With no admin token
 there is no login and the gateway asks for no key.
 
 **Anywhere else, only with a login.** To listen beyond this machine
