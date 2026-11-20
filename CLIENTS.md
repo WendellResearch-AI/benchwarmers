@@ -93,7 +93,7 @@ An agent with its tools on any collection (route mode), and the panel's ask and 
 }
 ```
 
-**Watch for:** This is opencode 2's format (`providers`, `mcp.servers`); opencode 1 read `provider` and `mcp` and ignores it. A model in `models` is offered only while it is listed there: a new collection needs its own entry.
+**Watch for:** This is opencode 2's format (`providers`, `mcp.servers`); opencode 1 read `provider` and `mcp` and ignores it. A model in `models` is offered only while it is listed there: a new collection needs its own entry. Benchwarmers' opencode plugin (`clients/opencode`, in `~/.config/opencode/plugins/benchwarmers/`; the dashboard's Connect page installs it) lists every collection itself and keeps it current.
 
 Written from [providers](https://opencode.ai/docs/providers/), [MCP servers](https://opencode.ai/docs/mcp-servers/), read 2026-11-20: opencode 2.3.2, run end to end with bench/fast on 2026-11-20.
 

@@ -33,6 +33,7 @@
   },
   "files": [
     "bin/",
+    "clients/",
     "launcher.py",
     "serve.py",
     "gateway.py",

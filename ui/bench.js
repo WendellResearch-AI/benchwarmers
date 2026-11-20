@@ -2097,6 +2097,56 @@
     if (e.target.dataset.c === 'key') { sec.querySelector('.key-make').hidden = e.target.value !== 'make'; return; }
     setupAgain(sec).then(e.target.dataset.c === 'name' ? seenTick : null);
   });
+  // Set up (serve.setup_plan, setup_apply): what it would write, then writing it. A choice
+  // changed since puts the list away: it was for the old choices.
+  function setupBody(sec) {
+    var way = sec.querySelector('.ways input:checked');
+    return {app: sec.dataset.app, way: way ? way.value : '', collection: appChoice(sec, 'collection'),
+            name: appChoice(sec, 'name'), keyed: !!appKeys[sec.dataset.app] || appChoice(sec, 'key') === '1'};
+  }
+  function setupReset(sec) {
+    var box = sec.querySelector('.set-up');
+    if (!box) return;
+    box.querySelector('.setup-files').textContent = '';
+    box.querySelector('[data-setup-apply]').parentNode.hidden = true;
+    box.querySelector('.errors').textContent = box.querySelector('.done').textContent = '';
+    box.hidden = appChoice(sec, 'where') === 'docker';          // in Docker it is not this machine's files
+  }
+  document.addEventListener('change', function (e) {
+    var sec = e.target.closest('#tab-clients section.client[data-app]');
+    if (sec && e.target.closest('.connect')) setupReset(sec);
+  });
+  document.addEventListener('click', function (e) {
+    var b = e.target.closest('#tab-clients [data-setup-plan], #tab-clients [data-setup-apply]');
+    if (!b) return;
+    var sec = b.closest('section.client'), box = sec.querySelector('.set-up'), apply = b.hasAttribute('data-setup-apply');
+    var list = box.querySelector('.setup-files');
+    box.querySelector('.errors').textContent = box.querySelector('.done').textContent = '';
+    b.disabled = true;
+    post(apply ? '/api/client-setup/apply' : '/api/client-setup/plan', setupBody(sec)).then(function (r) {
+      b.disabled = false;
+      if (!r.ok) { listErrors(box.querySelector('.errors'), r.errors); return; }
+      list.textContent = '';
+      r.files.forEach(function (f) {
+        var li = el('li');
+        li.appendChild(el('span', {'aria-hidden': 'true'}, apply ? '✓' : f['new'] ? '+' : '~'));
+        li.appendChild(el('span', {class: 'mono'}, f.path + (f.note ? '  · ' + f.note : '')));
+        li.appendChild(el('span', {}, apply ? 'written' : f['new'] ? 'new' : 'changed, a copy kept'));
+        list.appendChild(li);
+      });
+      r.left.forEach(function (why) {
+        var li = el('li', {class: 'warn'});
+        li.appendChild(el('span', {'aria-hidden': 'true'}, '!'));
+        li.appendChild(el('span', {}, why));
+        li.appendChild(el('span', {}, 'by hand'));
+        list.appendChild(li);
+      });
+      box.querySelector('[data-setup-apply]').parentNode.hidden = apply || !r.files.length;
+      box.querySelector('.done').textContent = apply ? 'Done. ' + r.after
+        : r.files.length ? '' : 'Nothing to write: it is set up already.' + (r.left.length ? '' : ' ' + r.after);
+      if (apply) seenTick();
+    }).catch(function (err) { b.disabled = false; listErrors(box.querySelector('.errors'), [String(err)]); });
+  });
   document.addEventListener('click', function (e) {
     var b = e.target.closest('#tab-clients [data-make-key]');
     if (!b) return;

@@ -4809,7 +4809,9 @@ def client_setups(root: str, cols: list, keys: bool, way: str = "both", label: s
          "blocks": [_snip("opencode.jsonc", "json", js(opencode))],
          "watch": "This is opencode 2's format (<code>providers</code>, <code>mcp.servers</code>); opencode 1 read"
                   " <code>provider</code> and <code>mcp</code> and ignores it. A model in <code>models</code> is"
-                  " offered only while it is listed there: a new collection needs its own entry.",
+                  " offered only while it is listed there: a new collection needs its own entry. Benchwarmers'"
+                  " opencode plugin (<code>clients/opencode</code>, in <code>~/.config/opencode/plugins/benchwarmers/</code>;"
+                  " the dashboard's Connect page installs it) lists every collection itself and keeps it current.",
          "docs": [("https://opencode.ai/docs/providers/", "providers"),
                   ("https://opencode.ai/docs/mcp-servers/", "MCP servers")],
          "read": "2026-11-20", "docs_note": "opencode 2.3.2, run end to end with bench/fast on 2026-11-20."},
@@ -5018,6 +5020,224 @@ def connect_setup(app: str, way: str = "", collection: str = "", where: str = "h
     return {"ok": True, "errors": [], "html": html, "way": way}
 
 
+# ---- Connect's Set up: an app's own files written for it, on this machine ----
+# Only where that is safe: a file Benchwarmers owns whole (opencode's plugin, goose's
+# provider), a JSON file without comments (keys merged in), Codex's TOML (its own
+# tables replaced or added, top-level keys only where unset), a YAML file only when
+# absent (goose's extensions: its own block). Anything else is refused with why, and
+# copied by hand. Every file changed is copied to <name>.bak-<time> first. Keys never
+# go into a file: a set-up with a key reads it from KEY_ENV.
+SETUP_APPS = ("opencode", "vscode", "zed", "codex", "continue", "goose")
+PLUGIN_SRC = ROOT / "clients" / "opencode"
+
+
+def _app_dirs() -> dict:
+    """Each app's config folder on this OS, for this account."""
+    home = pathlib.Path.home()
+    win, mac = sys.platform == "win32", sys.platform == "darwin"
+    appdata = pathlib.Path(os.environ.get("APPDATA") or home / "AppData" / "Roaming")
+    xdg = pathlib.Path(os.environ.get("XDG_CONFIG_HOME") or home / ".config")
+    return {"opencode": xdg / "opencode" if not win else home / ".config" / "opencode",
+            "vscode": appdata / "Code" / "User" if win else
+            home / "Library" / "Application Support" / "Code" / "User" if mac else xdg / "Code" / "User",
+            "zed": appdata / "Zed" if win else xdg / "zed",
+            "codex": home / ".codex", "continue": home / ".continue",
+            "goose": appdata / "Block" / "goose" / "config" if win else xdg / "goose"}
+
+
+def _merge(base: dict, ours: dict) -> dict:
+    """`ours` into `base`: dicts merged, lists of entries with an "id" (VS Code's
+    inputs) merged by it, anything else (our own entries) replaced."""
+    for k, v in ours.items():
+        was = base.get(k)
+        if isinstance(v, dict) and isinstance(was, dict):
+            base[k] = _merge(dict(was), v)
+        elif isinstance(v, list) and isinstance(was, list) and all(isinstance(e, dict) and "id" in e for e in v):
+            ids = {e["id"] for e in v}
+            base[k] = [e for e in was if not (isinstance(e, dict) and e.get("id") in ids)] + v
+        else:
+            base[k] = v
+    return base
+
+
+def _toml_merge(text: str, ours: str) -> tuple[str, list[str]]:
+    """Codex's config.toml with our tables replaced or added, and our top-level keys
+    added only where the file has none (a model you set stays). Text-level: a table
+    runs from its header to the next header."""
+    def split(t: str):
+        top, tables, cur = [], {}, None
+        for line in t.splitlines():
+            m = re.match(r"^\s*\[([^\]]+)\]\s*$", line)
+            if m:
+                cur = m[1].strip()
+                tables[cur] = [line]
+            elif cur is None:
+                top.append(line)
+            else:
+                tables[cur].append(line)
+        return top, tables
+    top, tables = split(text)
+    our_top, our_tables = split(ours)
+    have = {re.match(r"^\s*([\w.-]+)\s*=", ln)[1] for ln in top if re.match(r"^\s*([\w.-]+)\s*=", ln)}
+    notes, add = [], []
+    for ln in our_top:
+        m = re.match(r"^\s*([\w.-]+)\s*=", ln)
+        if m and m[1] in have:
+            notes.append(f"kept your own {m[1]}; ours would be {ln.strip()}")
+        elif m:
+            add.append(ln)
+    for name, lines in our_tables.items():
+        tables[name] = [ln for ln in lines]
+    body = "\n".join(add + [ln for ln in top]).strip("\n")
+    parts = [body] if body else []
+    parts += ["\n".join(lines).strip("\n") for lines in tables.values()]
+    return "\n\n".join(parts) + "\n", notes
+
+
+def _yaml_block(text: str, ours: str) -> str | None:
+    """goose's config.yaml with our `extensions: benchwarmers:` block put in: under
+    an existing top-level `extensions:` (replacing ours if there), or the whole
+    snippet appended when there is none. None when the file's shape is not that."""
+    lines, block = text.splitlines(), ours.splitlines()[1:]          # ours: "extensions:" then the block
+    try:
+        at = next(i for i, ln in enumerate(lines) if re.match(r"^extensions:\s*$", ln))
+    except StopIteration:
+        return (text.rstrip("\n") + "\n" + ours.rstrip("\n") + "\n") if not re.search(r"(?m)^extensions:", text) else None
+    end = next((i for i in range(at + 1, len(lines)) if lines[i] and not lines[i].startswith(" ")), len(lines))
+    child = next((ln for ln in lines[at + 1:end] if ln.strip()), "  x")
+    if len(child) - len(child.lstrip(" ")) != 2:
+        return None                                     # not indented as ours is: leave it to you
+    out, i = lines[:at + 1] + block, at + 1
+    while i < end:                                      # their entries, ours (if there) dropped
+        ln = lines[i]
+        if ln.startswith("  benchwarmers:"):
+            i += 1
+            while i < end and (not lines[i].strip() or lines[i].startswith("    ")):
+                i += 1
+            continue
+        out.append(ln)
+        i += 1
+    return "\n".join(out + lines[end:]) + "\n"
+
+
+def setup_plan(app: str, way: str = "", collection: str = "", name: str = "", keyed: bool = False) -> dict:
+    """What Set up would write for `app`, with the choices on its Connect page:
+    each file's path, whether it is new or changed, its new text, and why a file
+    is left to you. Writes nothing (setup_apply does)."""
+    if app not in SETUP_APPS:
+        return {"ok": False, "errors": [f"{app!r} is set up by hand: copy its set-up"]}
+    if "systemprofile" in str(pathlib.Path.home()).lower():
+        return {"ok": False, "errors": ["Benchwarmers runs as a system account here, so it would write to that"
+                                        " account's folders, not yours: copy the set-up by hand"]}
+    cols = _connect_cols()
+    if not cols:
+        return {"ok": False, "errors": ["no collection yet: make one on Collections"]}
+    col = next((c for c in cols if c[0] == collection), cols[0])
+    keys = guard.keys_required() or bool(keyed)
+    label = name if guard.LABEL.match(name or "") else ""
+    root = gateway_url().removesuffix("/v1")
+    c = next(a for a in client_setups(root, [col[:3]], keys, "both", label) if a["id"] == app)
+    way = way if way in c["ways"] else c["ways"][0]
+    blocks = {b["label"]: b["text"] for b in
+              next(a for a in client_setups(root, [col[:3]], keys, way, label) if a["id"] == app)["blocks"]}
+    d, files, left = _app_dirs()[app], [], []
+
+    def add(path: pathlib.Path, text: str, note: str = ""):
+        old = path.read_text(encoding="utf-8") if path.exists() else None
+        if old != text:
+            files.append({"path": str(path), "new": old is None, "text": text, "note": note})
+
+    def read(path: pathlib.Path):
+        return path.read_text(encoding="utf-8") if path.exists() else ""
+
+    if app == "opencode":
+        # What it says beside ours (also, refresh) is kept; what these choices set is ours.
+        try:
+            conf = json.loads(read(d / "plugins" / "benchwarmers" / "benchwarmers.json") or "{}")
+        except ValueError:
+            conf = {}
+        for k in ("keyEnv", "models", "mcp"):
+            conf.pop(k, None)
+        conf.update({"url": root, "name": label or "opencode", **({"keyEnv": KEY_ENV} if keys else {}),
+                     **({"models": False} if way == "panel" else {}), **({"mcp": False} if way == "model" else {})})
+        add(d / "plugins" / "benchwarmers" / "index.ts", (PLUGIN_SRC / "index.ts").read_text(encoding="utf-8"),
+            "the plugin: every collection as a model, kept current, and the MCP server")
+        add(d / "plugins" / "benchwarmers" / "benchwarmers.json", json.dumps(conf, indent=2) + "\n", "its settings")
+        cfg = next((p for p in (d / "opencode.jsonc", d / "opencode.json") if p.exists()), None)
+        if cfg and re.search(r'"benchwarmers"\s*:', read(cfg)):
+            left.append(f"{cfg} names benchwarmers itself: take that out, or the two compete")
+    else:
+        targets = {"vscode": {"chatLanguageModels.json": d / "chatLanguageModels.json", "mcp.json": d / "mcp.json"},
+                   "zed": {"settings.json": d / "settings.json"},
+                   "codex": {"config.toml": d / "config.toml"},
+                   "continue": {"config.yaml": d / "config.yaml"},
+                   "goose": {"custom_providers/benchwarmers.json": d / "custom_providers" / "benchwarmers.json",
+                             "config.yaml": d / "config.yaml"}}[app]
+        for label_, path in targets.items():
+            if label_ not in blocks:
+                continue
+            ours, old = blocks[label_], read(path)
+            if path.suffix == ".json":
+                try:
+                    have = json.loads(old) if old.strip() else ([] if isinstance(json.loads(ours), list) else {})
+                except ValueError:
+                    left.append(f"{path} has comments or is not plain JSON: add the set-up to it by hand")
+                    continue
+                theirs = json.loads(ours)
+                if isinstance(theirs, list):         # VS Code's models: the Benchwarmers entry replaced
+                    new = [e for e in have if not (isinstance(e, dict) and e.get("name") == "Benchwarmers")] + theirs
+                else:
+                    new = _merge(have, theirs)
+                add(path, json.dumps(new, indent=2) + "\n")
+            elif path.suffix == ".toml":
+                text, notes = _toml_merge(old, ours)
+                add(path, text, "; ".join(notes))
+            elif not old.strip():
+                add(path, ours.rstrip("\n") + "\n")
+            elif app == "goose" and label_ == "config.yaml" and (text := _yaml_block(old, ours)) is not None:
+                add(path, text, "the benchwarmers extension, under extensions")
+            else:
+                left.append(f"{path} exists: add the set-up to it by hand")
+    after = {"opencode": "opencode picks it up by itself; models are benchwarmers/<collection>.",
+             "vscode": "Reload VS Code; the models are in the chat's model picker.",
+             "zed": "Zed asks for a key even where none is needed: set BENCHWARMERS_API_KEY to any text.",
+             "codex": "Restart Codex.", "continue": "Reload Continue.", "goose": "Restart goose."}[app]
+    if keys and app != "opencode":
+        after += f" The key comes from {KEY_ENV}: set it where the app starts."
+    return {"ok": True, "errors": [], "files": files, "left": left, "after": after, "way": way}
+
+
+def setup_apply(app: str, way: str = "", collection: str = "", name: str = "", keyed: bool = False) -> dict:
+    """Set up: setup_plan's files written, each existing one copied to
+    <name>.bak-<time> first, and the change log told which."""
+    import shutil
+    plan = setup_plan(app, way, collection, name, keyed)
+    if not plan["ok"]:
+        return plan
+    stamp, done = datetime.datetime.now().strftime("%Y%m%d-%H%M%S"), []
+    for f in plan["files"]:
+        path = pathlib.Path(f["path"])
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.exists():
+            shutil.copy2(path, path.with_name(f"{path.name}.bak-{stamp}"))
+        _write_atomic(path, f["text"])
+        done.append(str(path))
+    if done:
+        _log_change(datetime.datetime.now().astimezone().isoformat(timespec="seconds"), "ui", "",
+                    "app set-up", None, {"app": app, "files": done})
+    return {**plan, "written": done, "files": [{k: v for k, v in f.items() if k != "text"} for f in plan["files"]]}
+
+
+def _setup_args(p: dict) -> tuple:
+    return (str(p.get("app") or ""), str(p.get("way") or ""), str(p.get("collection") or ""),
+            str(p.get("name") or ""), p.get("keyed") is True)
+
+
+def _no_text(plan: dict) -> dict:
+    """A plan as the page shows it: each file's path and note, not its whole text."""
+    return {**plan, "files": [{k: v for k, v in f.items() if k != "text"} for f in plan.get("files", [])]}
+
+
 _CALLERS: dict = {}
 
 
@@ -5149,7 +5369,19 @@ def clients_page() -> str:
                 "<div class='errors' role='alert'></div><div class='done key-done' role='status' hidden></div>"
                 + ("" if keys else "<p class='rules name-says'>With no key, the name goes in its set-up as a label:"
                    " its calls show under that name instead of <i>local</i>.</p>")
-                + f"</div><div class='setup'>{setup.get('html', '')}</div>"
+                + "</div>" + (
+                    # Set up: the app's own files written for it (setup_plan, setup_apply, bench.js).
+                    f"<div class='set-up'><h3>Set it up for you</h3><p class='rules'>Writes {nm}'s own files on"
+                    " the machine Benchwarmers runs on, for the account it runs as, with these choices; any file it"
+                    " changes is copied beside itself first. Shows what it will write before it does."
+                    + (" opencode gets Benchwarmers' plugin: every collection, kept current, with no list to edit."
+                       if app == "opencode" else "")
+                    + "</p><div class='actions'><button class='btn' type='button' data-setup-plan>Set it up</button>"
+                    "</div><ul class='seen setup-files'></ul><div class='actions' hidden><button class='btn primary'"
+                    " type='button' data-setup-apply>Write them</button></div><div class='errors' role='alert'></div>"
+                    "<div class='done' role='status'></div><h3>Or copy it yourself</h3></div>"
+                    if app in SETUP_APPS else "")
+                + f"<div class='setup'>{setup.get('html', '')}</div>"
                 "<h3>Does it work?</h3><ul class='check seen' aria-live='polite'></ul>"
                 "<details class='key'><summary>Nothing after you asked?</summary><p>Most apps read their set-up when"
                 " they start: quit the app and start it again. A panel's call shows once its seats have answered,"
@@ -7002,6 +7234,9 @@ class Handler(gateway.Handler):
                                                              str(p.get("endpoint") or ""), bool(p.get("code"))),
                "/api/endpoint/default": lambda p: set_default(str(p.get("name") or "")),
                "/api/endpoint/check": lambda p: check_endpoint(str(p.get("name") or "")),
+               # Connect's Set up: what it would write (plan), then writing it (apply).
+               "/api/client-setup/plan": lambda p: _no_text(setup_plan(*_setup_args(p))),
+               "/api/client-setup/apply": lambda p: setup_apply(*_setup_args(p)),
                "/api/connect/poll": lambda p: connect_poll(str(p.get("id") or "")),
                "/api/connect/app": lambda p: connect_app(str(p.get("provider") or ""),
                                                          str(p.get("client_id") or "")),

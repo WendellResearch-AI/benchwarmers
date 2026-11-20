@@ -272,6 +272,56 @@ def main() -> int:
     print(("ok   " if ok else "FAIL ") + "client set-ups: JSON, TOML" + (", YAML" if load_yaml else " (YAML unread: no PyYAML)")
           + " parse, collections named, timeouts set, keys only in shell lines and fields" + ("" if ok else f" -> {bad}"))
     failures += 0 if ok else 1
+
+    # Connect's Set up, in a throwaway home: each app's files written, theirs kept beside
+    # them, a file with comments left alone, a second run with nothing to write.
+    bad, home = [], pathlib.Path(tempfile.mkdtemp(prefix="bench-setup-home-"))
+    saved_env = {k: os.environ.get(k) for k in ("USERPROFILE", "HOME", "APPDATA", "XDG_CONFIG_HOME")}
+    os.environ.update(USERPROFILE=str(home), HOME=str(home), APPDATA=str(home / "AppData"),
+                      XDG_CONFIG_HOME=str(home / ".config"))
+    try:
+        dirs = serve._app_dirs()
+        for p, text in ((dirs["vscode"] / "chatLanguageModels.json", '[{"name": "Other", "vendor": "x"}]'),
+                        (dirs["zed"] / "settings.json", '// my settings\n{"theme": "One"}'),
+                        (dirs["codex"] / "config.toml", 'model = "mine"\n\n[mcp_servers.other]\nurl = "x"\n'),
+                        (dirs["goose"] / "config.yaml", "extensions:\n  other:\n    enabled: true\nactive_provider: x\n")):
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(text, encoding="utf-8")
+        for app in serve.SETUP_APPS:
+            r = serve.setup_apply(app, "both", "", "my-app")
+            if not r["ok"]:
+                bad.append(f"{app}: {r['errors']}")
+                continue
+            if app == "zed" and not r["left"]:
+                bad.append("zed's settings with comments were written over")
+            if app != "zed" and not r["written"]:
+                bad.append(f"{app} wrote nothing")
+            if serve.setup_plan(app, "both", "", "my-app")["files"]:
+                bad.append(f"{app}: a second Set up would write again")
+        vs = json.loads((dirs["vscode"] / "chatLanguageModels.json").read_text(encoding="utf-8"))
+        if [e["name"] for e in vs] != ["Other", "Benchwarmers"]:
+            bad.append(f"VS Code's own models not kept: {vs}")
+        cx = tomllib.loads((dirs["codex"] / "config.toml").read_text(encoding="utf-8"))
+        if cx.get("model") != "mine" or "other" not in cx["mcp_servers"] or "benchwarmers" not in cx["model_providers"]:
+            bad.append(f"Codex merge wrong: {cx}")
+        gy = (dirs["goose"] / "config.yaml").read_text(encoding="utf-8")
+        if "  other:" not in gy or "  benchwarmers:" not in gy or "active_provider: x" not in gy:
+            bad.append(f"goose merge wrong: {gy!r}")
+        if load_yaml and "benchwarmers" not in (load_yaml(gy).get("extensions") or {}):
+            bad.append("goose's config.yaml no longer parses with our extension")
+        oc = json.loads((dirs["opencode"] / "plugins" / "benchwarmers" / "benchwarmers.json").read_text(encoding="utf-8"))
+        if oc.get("name") != "my-app" or not (dirs["opencode"] / "plugins" / "benchwarmers" / "index.ts").exists():
+            bad.append(f"opencode plugin not installed: {oc}")
+        if not list(dirs["codex"].glob("config.toml.bak-*")):
+            bad.append("no copy kept of Codex's own config.toml")
+    finally:
+        for k, v in saved_env.items():
+            os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
+        shutil.rmtree(home, ignore_errors=True)
+    ok = not bad
+    print(("ok   " if ok else "FAIL ") + "Set up: each app's files written, theirs kept, comments left alone, a"
+          " second run writes nothing" + ("" if ok else f" -> {bad}"))
+    failures += 0 if ok else 1
     # restore: same alias back, out of retired.json, role and ad hoc kept, and
     # back into the collections that still exist (one deleted, one changed since)
     serve.delete_collection("doomed")
