@@ -5172,13 +5172,24 @@ def _toml_merge(text: str, ours: str) -> str | None:
     return out if kept else None
 
 
+# A line whose value (after `key:` or `- `) opens a quoted string that does not end on it.
+# ponytail: a value's first quote only; a string that runs over lines inside a flow list
+# or mapping ([..], {..}) is not seen. A YAML parser if goose's files ever hold one.
+_YAML_OPEN = re.compile(r"""\s*(?:-\s+)?(?:(?:[\w.-]+|"[^"]*"|'[^']*')\s*:\s+)?"""
+                        r"""(?:"(?:[^"\\]|\\.)*|'(?:[^']|'')*)$""")
+
+
 def _yaml_block(text: str, ours: str) -> str | None:
     """goose's config.yaml with our `extensions: benchwarmers:` block put in: under
     an existing top-level `extensions:` (replacing ours if there), or the whole
     snippet appended when there is none. None (copy it by hand) unless the entries are
     laid out as goose writes them: a mapping, two spaces in, no tab or column-0 comment
-    among them, so ours is never written twice or put under another entry."""
+    among them, so ours is never written twice or put under another entry. None too
+    for a file with a quoted string that runs over lines, which can hold a line that
+    reads as a key (_YAML_OPEN)."""
     lines, block = text.splitlines(), ours.splitlines()[1:]          # ours: "extensions:" then the block
+    if any(_YAML_OPEN.match(ln) for ln in lines):
+        return None
     at = next((i for i, ln in enumerate(lines) if re.match(r"^extensions:\s*$", ln)), None)
     if at is None:      # any other spelling of the key (quoted, flow, a BOM before it) is not appended to,
         # nor a file whose top level is not a plain block mapping ({}, a list, a `...` or `---` marker)
@@ -5321,8 +5332,8 @@ def setup_plan(app: str, way: str = "", collection: str = "", name: str = "", ke
             elif app == "goose" and label_ == "config.yaml":
                 if (text := _yaml_block(old, ours)) is None:
                     left.append(f"{path}: its extensions are not laid out as goose writes them (a list, another"
-                                " indent, a tab or a comment at the start of a line among them): add the"
-                                " benchwarmers extension to it by hand")
+                                " indent, a tab or a comment at the start of a line among them), or it holds a"
+                                " quoted string that runs over lines: add the benchwarmers extension to it by hand")
                 else:
                     add(path, text, "the benchwarmers extension, under extensions")
             else:

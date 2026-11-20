@@ -387,6 +387,15 @@ def main() -> int:
         "a quoted key": ('"extensions":\n' + dev, None),
         "a flow mapping at the top": ("{}\n", None),             # appending would make it invalid YAML
         "a document end": ("GOOSE_MODEL: x\n...\n", None),
+        # A quoted string that runs over lines can hold a line that reads as a key: never edited.
+        "a string over lines holding an entry-like line": (
+            'extensions:\n  developer:\n    description: "see\n  benchwarmers: x\n    more"\n    enabled: true\n', None),
+        "a string over lines holding extensions:": ('note: "first\nextensions:\nlast"\nextensions:\n' + dev, None),
+        "a single-quoted string over lines": ("extensions:\n  developer:\n    description: 'see\n  memory: x\n    more'\n", None),
+        "quoted strings that end on their line": (
+            "extensions:\n  developer:\n    description: \"it's \\\"fine\\\"\"\n    why: 'don''t'\n    args: [\"a\", 'b']\n" + mem,
+            "extensions:\n" + ours + "\n  developer:\n    description: \"it's \\\"fine\\\"\"\n    why: 'don''t'\n"
+            "    args: [\"a\", 'b']\n" + mem),
     }
     bad = []
     for name, (old, want) in cases.items():
