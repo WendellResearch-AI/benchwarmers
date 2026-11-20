@@ -122,9 +122,12 @@ retries are welcome: they keep that model's seat answering. 9router, which
 OmniRoute grew from, is found too, as a plain aggregator: it has none of the
 routes the hub uses.
 
-The same goes for freellmapi (`auto` profiles and `fusion` are its versions of
-combos), LiteLLM (seat a deployment, not a group with fallbacks) and CLI Proxy
-API (which Benchwarmers also finds on this machine).
+The same goes for freellmapi (`auto`, its `auto:<profile>` chains, `fusion`
+and its Claude-named slots are its versions of combos, and the bench leaves
+them out the same way), one-api and new-api (a name whose channels send it
+upstream as different models; the bench leaves those out when it has their
+access token), LiteLLM (seat a deployment, not a group with fallbacks) and
+CLI Proxy API. Benchwarmers finds each of them on this machine.
 
 ## One by one
 
@@ -148,7 +151,10 @@ API (which Benchwarmers also finds on this machine).
 - **Benchwarmers adds:** what the answers were worth, not just whether they
   came back. Benchwarmers also reads FreeLLMAPI's public catalog for its
   Discover page.
-- **Together:** add freellmapi as an endpoint and seat its individual models.
+- **Together:** add freellmapi as a hub (Endpoints finds it on this machine)
+  with its unified API key, and onboard its individual models: the picker
+  leaves out its routers, and its Quota tile reads what each provider pool has
+  left.
 
 ### Benchwarmers vs LiteLLM
 

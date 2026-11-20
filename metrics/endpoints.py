@@ -41,14 +41,15 @@ check records a whole list only where the user chose what is in it. Ask
 `kind()` and `hub()`, never the entry: an entry written before `kind` existed
 is inferred (see `kind`).
 
-A hub adds a model through its adapter (`adapter()`: owui.py, litellm_hub.py,
-cliproxy.py, omniroute.py), which calls the hub's admin API with the endpoint's ADMIN key:
-`admin_key` names it, by default `<key>-admin` (so the environment's
-BENCHWARMERS_KEY_<KEY>_ADMIN), the value kept like any other key. Open WebUI,
-LiteLLM and OmniRoute fall back to the endpoint's own key, which is an admin's
-(Open WebUI), often the master key (LiteLLM), or a key with the manage scope
-(OmniRoute); CLI Proxy API's management key is never one of its API keys, so
-it has no fallback.
+A hub is reached through its adapter (`adapter()`: owui.py, litellm_hub.py,
+cliproxy.py, omniroute.py, freellmapi_hub.py, oneapi_hub.py), which calls the
+hub's admin API with the endpoint's ADMIN key: `admin_key` names it, by
+default `<key>-admin` (so the environment's BENCHWARMERS_KEY_<KEY>_ADMIN), the
+value kept like any other key. Open WebUI, LiteLLM and OmniRoute fall back to
+the endpoint's own key, which is an admin's (Open WebUI), often the master key
+(LiteLLM), or a key with the manage scope (OmniRoute); CLI Proxy API's
+management key and one-api's or new-api's access token are never API keys,
+so they have no fallback. freellmapi needs none.
 """
 
 from __future__ import annotations
@@ -85,14 +86,20 @@ NAME = re.compile(r"^[a-z0-9][a-z0-9-]{1,31}$")
 # kind -> examples, as the Add form shows them
 KINDS = {"provider": "Groq, Mistral, NVIDIA", "aggregator": "OpenRouter, LLM7, NanoGPT",
          "hub": "Open WebUI, LiteLLM, CLI Proxy API, OmniRoute", "local": "Ollama, LM Studio, vLLM"}
-HUBS = {"openwebui": "Open WebUI", "litellm": "LiteLLM", "cliproxy": "CLI Proxy API", "omniroute": "OmniRoute"}
-# hub -> its adapter module in metrics/; each exposes SUPPORTS, CHECKED,
-# endpoint(), plan(connection, model) and add(connection, model). The jobs
-# only some hubs can do, each absent where the hub cannot, and asked for by
-# name: upstreams() (Discover, every hub whose connections only it knows),
-# virtual(entry) (virtual() below), sign_ins() and api_call() (Quota
-# management, quotaview.signin_hub).
-ADAPTERS = {"openwebui": "owui", "litellm": "litellm_hub", "cliproxy": "cliproxy", "omniroute": "omniroute"}
+HUBS = {"openwebui": "Open WebUI", "litellm": "LiteLLM", "cliproxy": "CLI Proxy API", "omniroute": "OmniRoute",
+        "freellmapi": "freellmapi", "oneapi": "one-api", "newapi": "new-api"}
+# hub -> its adapter module in metrics/ (one-api and new-api share one). Those
+# that add a model expose SUPPORTS, CHECKED, endpoint(), plan(connection,
+# model) and add(connection, model). The jobs only some hubs can do, each
+# absent where the hub cannot, and asked for by name: add and upstreams()
+# (Discover, every hub whose connections only it knows), virtual(entry) or
+# virtual_on(endpoint) (virtual() below), served_by(endpoint) ({served id:
+# the connections serving it}: the Onboard picker's groups, provider_tags.py),
+# sign_ins() and api_call() (Quota management, quotaview.signin_hub), and
+# quota(endpoint) (a tile's groups and notes from the hub's own API,
+# quotaview.hub_quota).
+ADAPTERS = {"openwebui": "owui", "litellm": "litellm_hub", "cliproxy": "cliproxy", "omniroute": "omniroute",
+            "freellmapi": "freellmapi_hub", "oneapi": "oneapi_hub", "newapi": "oneapi_hub"}
 # `api`: what an endpoint speaks, chat completions unless it says otherwise.
 # The built-in client builds the others' native requests (metrics/formats.py);
 # `responses` is set by Connect for ChatGPT's plan, the native two on the Add
@@ -118,9 +125,15 @@ def virtual(name: str, data: dict | None = None):
     """The test of endpoint `name`'s /models entries that are not one model (a
     hub's combo or router, which picks a model per request: a verdict on it
     would be about whichever answered), saying why, "" for one model. Its hub
-    adapter's `virtual`; where there is none, every entry is one model."""
+    adapter's `virtual`, or where the answer is in the hub's own state (which
+    upstream ids one-api's channels send a name as), the test its
+    `virtual_on(name)` builds once; where there is neither, every entry is
+    one model."""
     which = hub(name, data)
-    return (getattr(adapter(which), "virtual", None) if which else None) or (lambda _entry: "")
+    mod = adapter(which) if which else None
+    if hasattr(mod, "virtual_on"):
+        return mod.virtual_on(name)
+    return getattr(mod, "virtual", None) or (lambda _entry: "")
 
 
 def version_note(which: str, version: str, checked: tuple[str, ...]) -> str:

@@ -439,9 +439,9 @@ def main() -> None:
     synced = model_client.chosen()[0] == "llm"
     if synced:
         run("scripts/sync_config.py", timeout=300)
-    # Open WebUI's tags name the connection behind the hub; without a hub the
-    # endpoint is the connection, and route.connection_of needs no tags.
-    if endpoints.find_hub("openwebui"):
+    # A hub's tags name the connection behind it (provider_tags.py); without a
+    # hub the endpoint is the connection, and route.connection_of needs no tags.
+    if endpoints.hub(endpoint) or endpoints.find_hub("openwebui"):
         run("scripts/provider_tags.py", timeout=300)
     import route
     connection = route.full_tag_of(alias)

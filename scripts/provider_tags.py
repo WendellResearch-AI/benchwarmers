@@ -17,10 +17,12 @@ alongside the base URLs, in plaintext. This takes `OPENAI_API_BASE_URLS` and
 the host name off each URL, and nothing else, so no secret can reach a file
 that is committed. Worth knowing that endpoint behaves that way.
 
-A REFINEMENT, NOT A PREREQUISITE. Only an Open WebUI hub (endpoints.find_hub)
-has connections to name; without one this writes nothing and exits cleanly,
-and every model's connection is the endpoint it is registered on
-(route.connection_of), which needs no file at all.
+A REFINEMENT, NOT A PREREQUISITE. Only a hub has connections to name: Open
+WebUI's are read here, and a model on any other hub is tagged with that
+hub's endpoint, or `<endpoint>/<connection>` where the hub's adapter says
+which connection serves it (its served_by). Without a hub this
+writes nothing and exits cleanly, and every model's connection is the
+endpoint it is registered on (route.connection_of), which needs no file.
 """
 
 from __future__ import annotations
@@ -105,9 +107,44 @@ def connection_names(hub: str) -> list[str]:
 
 def main() -> None:
     hub = endpoints.find_hub("openwebui")
-    if not hub:
-        print("no Open WebUI hub: nothing to tag; each model's connection is its endpoint")
+    data = endpoints.load()
+    if not hub and not any(endpoints.hub(r["endpoint"], data) for r in endpoints.registry() if r["endpoint"] in data):
+        print("no Open WebUI hub, and no model on another hub: nothing to tag; each model's connection is its endpoint")
         return
+    tags = _owui(hub) if hub else {}
+
+    # Models registered on another endpoint arrive through THAT endpoint,
+    # whatever Open WebUI would have called them; behind a hub whose adapter
+    # says which of its connections serve a model (served_by), through that
+    # one, as <endpoint>/<connection>. A model several serve keeps the endpoint.
+    by: dict[str, dict] = {}
+    for r in endpoints.registry():
+        ep = r["endpoint"]
+        if ep in ("?", hub):
+            continue
+        if ep not in by:
+            which = endpoints.hub(ep, data) if ep in data else ""
+            job = getattr(endpoints.adapter(which), "served_by", None) if which else None
+            try:
+                by[ep] = job(ep) if job else {}
+            except Exception as exc:                   # noqa: BLE001 -- the endpoint's name stands in
+                print(f"  {ep} would not say which connection serves each model: {exc}")
+                by[ep] = {}
+        conns = by[ep].get(r["served"]) or []
+        tags[r["served"]] = f"{ep}/{conns[0]}" if len(conns) == 1 else ep
+
+    OUT.write_text(json.dumps(tags, indent=2, sort_keys=True) + "\n",
+                   encoding="utf-8")
+    print(f"wrote {OUT}  ({len(tags)} models)")
+    seen: dict[str, int] = {}
+    for tag in tags.values():
+        seen[tag] = seen.get(tag, 0) + 1
+    for tag, count in sorted(seen.items(), key=lambda kv: -kv[1]):
+        print(f"  {tag:24} {count}")
+
+
+def _owui(hub: str) -> dict[str, str]:
+    """Every model Open WebUI serves -> its connection's name, and the upstream owner after a /."""
     names = connection_names(hub)
     tags = {}
     for entry in get(hub, "/api/models").get("data", []):
@@ -124,21 +161,7 @@ def main() -> None:
         if owner and owner not in ("openai", tag) and tag != "?":
             tag = f"{tag}/{owner}"
         tags[model_id] = tag
-
-    # Models registered on another endpoint arrive through THAT endpoint,
-    # whatever Open WebUI would have called them.
-    for r in endpoints.registry():
-        if r["endpoint"] not in ("?", hub):
-            tags[r["served"]] = r["endpoint"]
-
-    OUT.write_text(json.dumps(tags, indent=2, sort_keys=True) + "\n",
-                   encoding="utf-8")
-    print(f"wrote {OUT}  ({len(tags)} models)")
-    seen: dict[str, int] = {}
-    for tag in tags.values():
-        seen[tag] = seen.get(tag, 0) + 1
-    for tag, count in sorted(seen.items(), key=lambda kv: -kv[1]):
-        print(f"  {tag:24} {count}")
+    return tags
 
 
 if __name__ == "__main__":

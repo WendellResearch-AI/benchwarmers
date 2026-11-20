@@ -1,11 +1,18 @@
-"""The LiteLLM, CLI Proxy API and OmniRoute hub adapters against fake hubs: nothing is sent anywhere real.
+"""The hub adapters against fake hubs: nothing is sent anywhere real.
 
     python scripts/test_hubs.py
 
 The fakes answer with the shapes each hub's own source produces (recorded
 below from LiteLLM 1.106.1 and CLI Proxy API 8.0.36, 2026-10-21, and
-OmniRoute 3.8.54, 2026-11-20; hosts and keys made up), and refuse a wrong
-key as the real ones do. Checked: a dry run writes nothing; a real add sends
+OmniRoute 3.8.54, freellmapi 0.16.37, one-api v0.6.10 and new-api
+v1.0.0-rc.51, 2026-11-20; hosts and keys made up), and refuse a wrong key as
+the real ones do. freellmapi's routers and a one-api or new-api name sent
+upstream as two models are kept out of onboarding; one-api's and new-api's
+channel lists are read whole across their different pages, their access
+token only on the admin route and the API key only on /v1; their channels
+group the Onboard picker and tag provider_tags.py's record; each hub's own
+quota reaches its tile; a hub that takes no model says so. Also checked: a
+dry run writes nothing; a real add sends
 what it should and no key; LiteLLM without its database mode is refused with
 what to change, before or at /model/new; CLI Proxy API refuses with no
 management key before sending anything, never gets the API key on a
@@ -42,7 +49,9 @@ os.environ["LLM_USER_PATH"] = str(TMP / "llm")
 # OmniRoute's API key is inference-only; its admin key has the manage scope.
 os.environ.update(BENCHWARMERS_KEY_LITE="sk-master-test", BENCHWARMERS_KEY_CPA="cpa-api-test",
                   BENCHWARMERS_KEY_CPA_ADMIN="mgmt-test", BENCHWARMERS_KEY_PLAIN="sk-master-test",
-                  BENCHWARMERS_KEY_OMNI="omni-api-test", BENCHWARMERS_KEY_OMNI_ADMIN="omni-manage-test")
+                  BENCHWARMERS_KEY_OMNI="omni-api-test", BENCHWARMERS_KEY_OMNI_ADMIN="omni-manage-test",
+                  BENCHWARMERS_KEY_FL="fl-unified", BENCHWARMERS_KEY_OA="sk-oa", BENCHWARMERS_KEY_OA_ADMIN="oa-access",
+                  BENCHWARMERS_KEY_NA="sk-na", BENCHWARMERS_KEY_NA_ADMIN="nap_test")
 sys.path[:0] = [str(ROOT), str(ROOT / "metrics"), str(ROOT / "suite"), str(ROOT / "scripts")]
 
 # LiteLLM 1.106.1: GET /model/info (api_key removed, secrets masked), the readiness details,
@@ -95,18 +104,55 @@ OMNI_FILES = [{"id": "c9", "auth_index": "c9", "provider": "codex", "email": "a@
                "id_token": {"chatgpt_account_id": "ws-1", "plan_type": "plus"}},
               {"id": "c8", "auth_index": "c8", "provider": "claude", "disabled": False}]
 OMNI_ALLOWED = {("GET", "https://chatgpt.com/backend-api/wham/usage"), ("GET", "https://api.anthropic.com/api/oauth/usage")}
+# freellmapi 0.16.37: /v1/models (its routers first, without supported_parameters), /v1/providers,
+# /v1/quota-forecast.
+FL_MODELS = [
+    {"id": "auto", "object": "model", "owned_by": "freellmapi", "available": True},
+    {"id": "fusion", "object": "model", "owned_by": "freellmapi", "available": True},
+    {"id": "claude-sonnet-4-5", "object": "model", "owned_by": "freellmapi", "name": "Sonnet slot (auto-routed)"},
+    {"id": "auto:coding", "object": "model", "owned_by": "freellmapi", "available": True},
+    {"id": "llama-3.3-70b", "object": "model", "owned_by": "freellmapi", "available": True,
+     "execution_status": "ready", "supported_parameters": ["tools"]},
+    {"id": "qwen3-coder", "object": "model", "owned_by": "freellmapi", "available": False,
+     "execution_status": "needsKey", "supported_parameters": []}]
+FL_PROVIDERS = {"providers": [
+    {"platform": "groq", "name": "Groq", "status": "healthy", "keys": 1, "requests_remaining_pct": 80},
+    {"platform": "cerebras", "name": "Cerebras", "status": "rate_limited", "keys": 1,
+     "resume_at": "2026-11-20T12:00:00.000Z"},
+    {"platform": "zhipu", "name": "Zhipu", "status": "invalid", "keys": 1, "last_error": "401 bad key"}],
+    "counts": {"healthy": 1, "rate_limited": 1, "invalid": 1, "unknown": 0}}
+FL_POOLS = [
+    {"platform": "groq", "pool": "groq::account", "used": 200, "remaining": 800, "limit": 1000, "remaining_pct": 80,
+     "reset_at": "2026-11-21T00:00:00.000Z", "low_balance": False, "seconds_until_reset": 3600},
+    {"platform": "cerebras", "pool": "cerebras::default", "used": None, "remaining": None, "limit": 900,
+     "remaining_pct": None, "reset_at": None, "low_balance": False}]
+# one-api v0.6.10 and new-api v1.0.0-rc.51: GET /api/channel/ (keys left out). llama-70b goes upstream as two
+# models; mixtral's second channel was switched off by the hub (3); mistral-small is one model on two channels.
+CHANNELS = [
+    {"id": 1, "type": 1, "status": 1, "name": "Groq (free)", "base_url": "https://api.groq.example",
+     "models": "llama-70b,mixtral", "model_mapping": "", "group": "default", "priority": 0, "response_time": 420},
+    {"id": 2, "type": 1, "status": 1, "name": "Cerebras", "base_url": "https://api.cerebras.example",
+     "models": "llama-70b", "model_mapping": '{"llama-70b": "llama-3.3-70b"}', "group": "default"},
+    {"id": 3, "type": 1, "status": 1, "name": "Mistral", "models": "mistral-small", "model_mapping": "{}"},
+    {"id": 4, "type": 1, "status": 3, "name": "Old proxy", "models": "mixtral", "model_mapping": '{"mixtral": "x"}'},
+    {"id": 5, "type": 1, "status": 1, "name": "DeepInfra", "models": "mistral-small", "model_mapping": None}]
+ONE = {"oa": {"key": "sk-oa", "admin": "oa-access", "release": "v0.6.10"},
+       "na": {"key": "sk-na", "admin": "nap_test", "release": "v1.0.0-rc.51"}}
 
 S: dict = {}
 SEEN: list[tuple[str, str, dict | None]] = []
+AUTH: list[tuple[str, str]] = []                  # (path, Authorization) of every request
 
 
 def reset(**over) -> None:
     S.clear()
     S.update(lite=copy.deepcopy(LITE_DEPLOYMENTS), ready=dict(LITE_READY), store=True,
              cpa=copy.deepcopy(CPA_PROVIDERS), version="8.0.36", race=False,
-             omni=copy.deepcopy(OMNI_MODELS), omni_version="3.8.54")
+             omni=copy.deepcopy(OMNI_MODELS), omni_version="3.8.54",
+             oa={"whole": 10.0, "used": 2.5, **ONE["oa"]}, na={"whole": 100000000, "used": 3.0, **ONE["na"]})
     S.update(over)
     SEEN.clear()
+    AUTH.clear()
 
 
 def writes() -> list[str]:
@@ -119,6 +165,20 @@ class Fake(BaseHTTPRequestHandler):
         body = json.loads(self.rfile.read(n)) if n else None
         SEEN.append((method, self.path, body))
         auth = self.headers.get("Authorization", "")
+        AUTH.append((self.path, auth))
+        if self.path.startswith("/fl/"):
+            path = self.path[len("/fl"):]
+            profile = auth == "Bearer sk-cp-profile"                  # a client profile's key: models only
+            if auth != "Bearer fl-unified" and not (profile and path == "/v1/models"):
+                return self._send({"error": {"message": "Invalid API key", "type": "authentication_error"}}, 401)
+            if path == "/v1/models":
+                return self._send({"object": "list", "data": FL_MODELS})
+            if path == "/v1/providers":
+                return self._send(FL_PROVIDERS)
+            if path == "/v1/quota-forecast":
+                return self._send({"generated_at": "2026-11-20T11:00:00Z", "pools": FL_POOLS})
+        if self.path[:4] in ("/oa/", "/na/"):
+            return self._one(self.path[1:3], self.path[3:], auth)
         if self.path.startswith("/lite/"):
             if auth != "Bearer sk-master-test":
                 return self._send({"error": {"message": "Authentication Error, Invalid proxy server token passed.",
@@ -205,6 +265,42 @@ class Fake(BaseHTTPRequestHandler):
         if body["url"].endswith("wham/usage"):
             return {"status_code": 200, "body": json.dumps(WHAM)}
         return {"status_code": 404, "body": ""}
+
+    def _one(self, hub: str, path: str, auth: str):
+        """one-api (oa) or new-api (na), as each answers."""
+        new, me = hub == "na", S[hub]
+        route, _, query = path.partition("?")
+        if route == "/api/status":                       # keyless
+            return self._send({"success": True, "message": "", "data": {
+                "version": me["release"], "quota_per_unit": 500000, **({"enable_drawing": True} if new else {})}})
+        if route == "/api/channel/":
+            if auth != f"Bearer {me['admin']}":
+                # one-api refuses with 200 and success false; new-api with a 401.
+                return (self._send({"success": False, "message": "Unauthorized, invalid access token",
+                                    "code": "AUTH_UNAUTHORIZED"}, 401) if new else
+                        self._send({"success": False, "message": "access token invalid"}))
+            q = dict(kv.split("=") for kv in query.split("&") if "=" in kv)
+            rows = copy.deepcopy(CHANNELS)
+            if new:                                      # pages from 1, page_size up to 100
+                page, size = max(int(q.get("p", 0)), 1), min(int(q.get("page_size", 10)), 100)
+                return self._send({"success": True, "message": "", "data": {
+                    "items": rows[(page - 1) * size:page * size], "total": len(rows), "page": page, "page_size": size}})
+            p = int(q.get("p", 0))                       # pages from 0 of ItemsPerPage, 2 here; page_size ignored
+            return self._send({"success": True, "message": "", "data": rows[p * 2:(p + 1) * 2]})
+        if route.startswith("/v1/"):
+            if auth != f"Bearer {me['key']}":
+                return self._send({"error": {"message": "invalid token", "type": "one_api_error"}}, 401)
+            if route == "/v1/models":
+                names = sorted({m for c in CHANNELS if c["status"] == 1 for m in c["models"].split(",")})
+                return self._send({"object": "list", "data": [{"id": n, "object": "model", "owned_by": "custom"}
+                                                              for n in names]})
+            if route == "/v1/dashboard/billing/subscription":
+                return self._send({"object": "billing_subscription", "has_payment_method": True,
+                                   "soft_limit_usd": me["whole"], "hard_limit_usd": me["whole"],
+                                   "system_hard_limit_usd": me["whole"], "access_until": 0})
+            if route == "/v1/dashboard/billing/usage":
+                return self._send({"object": "list", "total_usage": me["used"] * 100})
+        return self._send({"success": False, "message": "not found"}, 404)
 
     def do_GET(self):                            # noqa: N802
         self._route("GET")
@@ -463,6 +559,109 @@ def discover_add() -> None:
     assert "plain-admin" not in endpoints._stored(), "a provider got an admin key"
 
 
+def freellmapi() -> None:
+    import endpoints
+    import freellmapi_hub as fl
+    reset()
+    test = endpoints.virtual("fl")
+    assert {i for i, e in endpoints.models("fl").items() if test(e)} == {"auto", "fusion", "claude-sonnet-4-5",
+                                                                         "auto:coding"}
+    assert fl.virtual({"id": "claude-3-haiku", "supported_parameters": []}) == ""     # a real catalog row
+    q = fl.quota("fl")
+    assert q["groups"] == [{"label": "groq · account", "windows": [{"label": "requests", "left": 80, "remaining": 800,
+                                                                    "of": 1000, "reset_at": "2026-11-21T00:00:00.000Z"}]}], q
+    assert q["notes"] == ["Cerebras: rate-limited until 2026-11-20T12:00:00.000Z",
+                          "Zhipu: its keys fail freellmapi's check (401 bad key)"], q
+    assert writes() == [] and not hasattr(fl, "add") and not hasattr(fl, "served_by")
+    os.environ["BENCHWARMERS_KEY_FL"] = "sk-cp-profile"                           # lists, but no status routes
+    try:
+        assert "unified" in refused(fl.quota, "fl")
+    finally:
+        os.environ["BENCHWARMERS_KEY_FL"] = "fl-unified"
+
+
+def one_family() -> None:
+    """one-api and new-api through the one adapter, each with its own pages and refusals."""
+    import endpoints
+    import oneapi_hub as one
+    for ep, label in (("oa", "one-api"), ("na", "new-api")):
+        reset()
+        assert len(one.channels(ep)) == 5, (ep, SEEN)                            # every page, none twice
+        pages = [p for m, p, _b in SEEN if "/api/channel/" in p]
+        assert pages[0].startswith(f"/{ep}/api/channel/?p={0 if ep == 'oa' else 1}&"), pages
+        test = endpoints.virtual(ep)
+        v = {i: why for i, e in endpoints.models(ep).items() if (why := test(e))}
+        assert list(v) == ["llama-70b"] and "(llama-3.3-70b, llama-70b)" in v["llama-70b"] and label in v["llama-70b"], v
+        assert one.served_by(ep) == {"llama-70b": ["groq-free", "cerebras"], "mixtral": ["groq-free"],
+                                     "mistral-small": ["mistral", "deepinfra"]}, one.served_by(ep)
+        q = one.quota(ep)
+        assert f"switched off by {label} after failing: old-proxy" in q["notes"], q
+        assert not any("not a release" in n for n in q["notes"]), q                  # a release it was checked against
+        # The access token only on the admin route, the API key only on /v1, nothing on /api/status.
+        for path, auth in AUTH:
+            want = ("" if "/api/status" in path else f"Bearer {ONE[ep]['admin']}" if "/api/channel/" in path
+                    else f"Bearer {ONE[ep]['key']}")
+            assert auth == want, (path, auth)
+        assert writes() == [] and not hasattr(one, "add") and not hasattr(one, "upstreams")
+        # No access token stored: the channels are not asked, every name passes, and the balance is still read.
+        env = f"BENCHWARMERS_KEY_{ep.upper()}_ADMIN"
+        saved = os.environ.pop(env)
+        try:
+            SEEN.clear()
+            assert endpoints.virtual(ep)({"id": "llama-70b"}) == "" and env in refused(one.served_by, ep)
+            assert not any("/api/channel/" in p for _m, p, _b in SEEN), SEEN
+            assert any(n.startswith("channels not read") for n in one.quota(ep)["notes"])
+            os.environ[env] = "wrong"                                                 # refused: 200 or 401
+            assert f"{label} refused /api/channel/" in refused(one.channels, ep)
+        finally:
+            os.environ[env] = saved
+    reset()
+    assert one.quota("oa")["groups"] == [{"label": "", "windows": [
+        {"label": "balance, in one-api's unit", "left": 75, "remaining": 7.5, "of": 10.0, "reset_at": None}]}]
+    q = one.quota("na")
+    assert q["groups"] == [] and "this key has no quota limit in new-api" in q["notes"], q
+    reset(na={**S["na"], "release": "v1.1.2"})
+    assert any("new-api 1.1.2 is not a release" in n for n in one.quota("na")["notes"])
+
+
+def hub_flows() -> None:
+    """The flows that ask for these jobs: the Onboard picker, Discover's Add,
+    provider_tags.py and the Quota tile; none names a hub."""
+    import endpoints
+    import provider_tags
+    import quotaview
+    import serve
+    reset()
+    c = serve.onboard_candidates(fresh=True)
+    rows = {(x["endpoint"], x["served"]): x for x in c["candidates"]}
+    assert not {("fl", m) for m in ("auto", "fusion", "auto:coding", "claude-sonnet-4-5")} & set(rows), rows
+    assert ("fl", "llama-3.3-70b") in rows and ("oa", "llama-70b") not in rows and ("na", "llama-70b") not in rows
+    assert rows[("oa", "mixtral")]["group"] == "oa: groq-free" and rows[("na", "mistral-small")]["group"] == \
+        "na: mistral + deepinfra" and rows[("fl", "llama-3.3-70b")]["group"] == "fl (direct)", rows
+    assert not any(e.startswith(("fl:", "oa:", "na:")) for e in c["errors"]) and writes() == [], c["errors"]
+    assert "freellmapi takes no model through its API" in serve.discover_add("groq", "v/x", endpoint="fl")["errors"][0]
+
+    # Where each model came from, kept: <endpoint>/<connection> where one channel serves it.
+    with endpoints.YAML.open("a", encoding="utf-8") as fh:
+        fh.write(endpoints.yaml_block("oa-mixtral", "mixtral", "oa") + endpoints.yaml_block("oa-mistral", "mistral-small", "oa")
+                 + endpoints.yaml_block("fl-llama", "llama-3.3-70b", "fl"))
+    kept, provider_tags._owui = provider_tags._owui, lambda hub: {}               # Open WebUI's part is test_no_owui's
+    try:
+        provider_tags.main()
+    finally:
+        provider_tags._owui = kept
+    tags = json.loads((TMP / "config" / "provider-tags.json").read_text(encoding="utf-8"))
+    assert (tags["mixtral"], tags["mistral-small"], tags["llama-3.3-70b"]) == ("oa/groq-free", "oa", "fl"), tags
+
+    # Each tile's Refresh asks its hub's quota, and the tile shows its groups and notes.
+    assert quotaview.how_refreshed("oa/groq-free") == quotaview.how_refreshed("fl") == "live"
+    assert quotaview.refresh("oa/groq-free")["how"] == quotaview.refresh("fl")["how"] == "live"
+    tiles = {t["id"]: t for t in quotaview.tiles()}
+    assert tiles["oa/groq-free"]["kind"] == "groups" and tiles["oa/groq-free"]["groups"][0]["windows"][0]["left"] == 75
+    assert tiles["fl"]["groups"][0]["label"] == "groq · account" and "Zhipu" in tiles["fl"]["notes"][1], tiles["fl"]
+    assert writes() == []
+
+
 def main() -> int:
     server = ThreadingHTTPServer(("127.0.0.1", 0), Fake)
     threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -472,7 +671,10 @@ def main() -> int:
         "lite": {"base": fake + "/lite/v1", "key": "lite", "kind": "hub", "hub": "litellm"},
         "cpa": {"base": fake + "/cpa/v1", "key": "cpa", "kind": "hub", "hub": "cliproxy"},
         "omni": {"base": fake + "/omni/v1", "key": "omni", "kind": "hub", "hub": "omniroute"},
-        "plain": {"base": fake + "/lite/v1", "key": "plain", "kind": "provider"}}), encoding="utf-8")
+        "plain": {"base": fake + "/lite/v1", "key": "plain", "kind": "provider"},
+        "fl": {"base": fake + "/fl/v1", "key": "fl", "kind": "hub", "hub": "freellmapi"},
+        "oa": {"base": fake + "/oa/v1", "key": "oa", "kind": "hub", "hub": "oneapi"},
+        "na": {"base": fake + "/na/v1", "key": "na", "kind": "hub", "hub": "newapi"}}), encoding="utf-8")
     import endpoints
     (TMP / "config" / "extra-openai-models.yaml").write_text(endpoints.yaml_block("x-free", "vendor/x:free", "cpa"),
                                                               encoding="utf-8")
@@ -482,6 +684,9 @@ def main() -> int:
         omniroute()
         signins()
         discover_add()
+        freellmapi()
+        one_family()
+        hub_flows()
     finally:
         server.shutdown()
         shutil.rmtree(TMP, ignore_errors=True)

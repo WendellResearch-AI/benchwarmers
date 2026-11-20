@@ -72,9 +72,15 @@ search, so you can gather models from different connections in one go.
 Dismiss hides one you never want offered (an image model, say); the dismissed
 list brings it back. Each endpoint's list is kept an hour, with its age and a
 Refresh, and a model already queued or onboarding is not offered again. A
-hub's combos and routers (OmniRoute's combos, fusion and `auto` ones) are not
-offered either, and onboarding refuses one by name: each picks a model per
-request, and a verdict is about one model.
+hub's combos and routers (OmniRoute's combos, fusion and `auto` ones;
+freellmapi's `auto`, `auto:<profile>`, `fusion` and Claude-named slots; a
+one-api or new-api name whose channels send it upstream as different models)
+are not offered either, and onboarding refuses one by name: each picks a
+model per request, and a verdict is about one model. On one-api and new-api
+the models are grouped by the channels that serve them, which the bench also
+keeps as each model's connection; both need their access token as the
+endpoint's admin key for this (one-api's system access token, new-api's
+with the channel read scope), and without it every name is offered.
 
 Each model is registered, probed with four short calls, and, if it answers,
 run through the suite. **Onboard as**, under the list, chooses how much that
@@ -296,7 +302,8 @@ the model takes and does, its limits and monthly budget, FreeLLMAPI's known
 quirks for it, links to its own pages on freellmapi.co and models.dev, and every route
 this install has to it, each with an **Add via this**. Adding through a hub (Open WebUI, LiteLLM, CLI Proxy
 API, OmniRoute) puts it in that hub too; adding direct registers it on its own endpoint
-only. Either way the onboarding joins the same queue, with the same
+only. freellmapi, one-api and new-api take no model through their API, so
+they offer no route here: add the model there, then onboard it. Either way the onboarding joins the same queue, with the same
 **Onboard as** and **Vision model** choice as the Onboard dialog, asked in the
 confirm before anything is added.
 
@@ -360,7 +367,12 @@ now, and its last 24 hours of calls.
   Claude and Codex ones there, and the bench reads Codex's (it has no reader
   for Claude's yet). A tile is a hub's when its tag names the hub's endpoint,
   its address, or the name `hosts` in `config/connections.json` gives that
-  address.
+  address. Through freellmapi (with its unified API key, not a client
+  profile's): each provider pool's requests left and reset, and which
+  providers are rate-limited or have failing keys. Through one-api or new-api:
+  the key's balance in the hub's own unit (no reset: it is a balance), its
+  expiry, and with the access token the channels the hub switched off after
+  failures.
   xKiro's and Requesty's keys come from their endpoint, else their Open WebUI
   connection.
 - **One 16-token request** where a provider states its limits only in its

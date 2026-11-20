@@ -149,10 +149,20 @@ def local_servers() -> None:
             "core": "http://127.0.0.1:3457", "status": "running", "timestamp": "2026-11-20T10:00:00Z"})},
         "astrlink": {"/v1/models": (401, {"error": {"code": "invalid_access_token"}}),
                      "/astrlink/reachability": (204, "")},
+        # Their sources' answers, read 2026-11-20; one-api's and new-api's /api/config is a 404.
+        "freellmapi": {"/v1/models": refused, "/livez": (200, {"status": "ok", "version": "0.4.1", "uptime_s": 9})},
+        "newapi": {"/v1/models": refused, "/api/models": refused, "/api/config": (404, {"success": False}),
+                   "/api/status": (200, {"success": True, "data": {
+                       "version": "v1.0.0-rc.51", "quota_per_unit": 500000, "enable_drawing": True,
+                       "system_name": "New API"}})},
+        "oneapi": {"/v1/models": refused, "/api/models": refused, "/api/config": (404, {"success": False}),
+                   "/api/status": (200, {"success": True, "data": {
+                       "version": "v0.6.10", "quota_per_unit": 500000, "system_name": "One API"}})},
     }
-    # Servers that share a default port, as 8080, 8317 and 20128 are shared: the first answers there at first.
+    # Servers that share a default port, as 8080, 8317, 20128 and 3000 are shared: the first answers
+    # there at first. Open WebUI's image takes 3000 too, which is cycled below.
     groups = (("llamacpp", "localai", "llamafile", "bifrost", "strata", "maya", "openwebui"), ("cliproxy", "astrlink"),
-              ("omniroute", "9router"))
+              ("omniroute", "9router"), ("newapi", "oneapi"))
     alone = [sid for sid in shapes if not any(sid in g[1:] for g in groups)]
     servers = {sid: serve_on(Server) for sid in alone}
     port = {sid: s.server_port for sid, s in servers.items()}
@@ -169,6 +179,7 @@ def local_servers() -> None:
     try:
         for sid in shapes:
             connect.LOCAL[sid] = {**saved[0][sid], "ports": (port[sid],)}
+        connect.LOCAL["openwebui"]["ports"] = (shared, port["newapi"])  # as `open-webui serve` and its image
         connect.LOCAL["hung"] = {"label": "Hung", "ports": (hung.getsockname()[1],), "kind": "local", "docs": "https://x"}
 
         def found(**kw) -> dict:
@@ -178,12 +189,12 @@ def local_servers() -> None:
         got = found()
         # 0.5 s per probe: a hung port that held it up would take far longer; CI runners are slow.
         assert time.time() - start < 5, "a hung port held detection up"
-        assert set(got) == set(alone), got           # 8080 as llama.cpp, 8317 as CLI Proxy API, 20128 as OmniRoute
+        assert set(got) == set(alone), got   # 8080 as llama.cpp, 8317 as CLI Proxy API, 20128 OmniRoute, 3000 new-api
         assert got["llamacpp"]["port"] == shared and got["lmstudio"]["models"] == 3, got
-        for sid in ("jan", "litellm", "cliproxy", "thinkwatch", "claude-code-router"):
+        for sid in ("jan", "litellm", "cliproxy", "thinkwatch", "claude-code-router", "freellmapi", "newapi"):
             assert got[sid]["key"] and got[sid]["models"] is None, got[sid]
-        assert (got["litellm"]["kind"], got["litellm"]["hub"]) == ("hub", "litellm")
-        assert (got["cliproxy"]["kind"], got["cliproxy"]["hub"]) == ("hub", "cliproxy")
+        for sid in ("litellm", "cliproxy", "freellmapi", "newapi"):
+            assert (got[sid]["kind"], got[sid]["hub"]) == ("hub", sid), got[sid]
         assert (got["omniroute"]["kind"], got["omniroute"]["hub"]) == ("hub", "omniroute")
         assert got["vllm"]["kind"] == "local"
         assert got["vllm"]["base"] == f"http://127.0.0.1:{port['vllm']}/v1"
@@ -200,7 +211,11 @@ def local_servers() -> None:
                 SHAPES[port[sid]] = shapes[sid]
                 on = {f["id"] for f in connect.detect() if f["port"] == port[sid]}
                 assert on == ({"llamacpp"} if sid == "llamafile" else {sid}), (sid, on)
-        hub = found()["openwebui"]                                  # (8317 is AstrLink now, 8080 Open WebUI)
+        for sid in ("openwebui", "oneapi", "newapi"):              # 3000: Open WebUI's image among them
+            SHAPES[port["newapi"]] = shapes[sid]
+            on = {f["id"] for f in connect.detect() if f["port"] == port["newapi"]}
+            assert on == {sid}, (sid, on)
+        hub = found()["openwebui"]                                # (8317 is AstrLink now, 8080 Open WebUI)
         assert (hub["kind"], hub["hub"], hub["key"]) == ("hub", "openwebui", True), hub
         assert hub["base"] == f"http://127.0.0.1:{shared}/api", hub
         # Something else on a server's port: a web page, an API without the server's sign.
