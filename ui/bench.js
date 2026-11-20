@@ -2079,7 +2079,7 @@
     var sec = document.querySelector('#tab-clients.active section.client[data-app]:not([hidden])');
     var asked = sec && !document.hidden ? get('/api/client-seen?app=' + encodeURIComponent(sec.dataset.app) + '&name=' + encodeURIComponent(appChoice(sec, 'name')))
       .then(function (r) {
-        var name = appChoice(sec, 'name'), list = sec.querySelector('ul.seen'), li = el('li', r.seen ? {} : {class: 'warn'});
+        var name = appChoice(sec, 'name'), list = sec.querySelector('ul.check'), li = el('li', r.seen ? {} : {class: 'warn'});
         li.appendChild(el('span', {'aria-hidden': 'true'}, r.seen ? '✓' : '…'));
         li.appendChild(el('span', {}, r.seen
           ? (r.unnamed ? 'A call with no name came in after Set up, probably ' + name + ': ' : name + ' called ') + r.model + (r.by ? ', answered by ' + r.by : '') + (r.tools ? ', ' + plural(r.tools, 'tool call') : '')

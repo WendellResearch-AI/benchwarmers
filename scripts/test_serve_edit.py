@@ -380,6 +380,16 @@ def main() -> int:
     print(("ok   " if ok else "FAIL ") + "Does it work?: found by the app whatever its name, times compared as instants"
           + ("" if ok else f" -> {renamed} {back} {newest}"))
     failures += 0 if ok else 1
+    # The page's script writes that line into Does it work?'s own list (ul.check). The first list in
+    # the section of an app Set up can write is the files it is about to write: a line put there
+    # wiped that list every few seconds and left Does it work? empty.
+    page, script = serve.clients_page(), (ROOT / "ui" / "bench.js").read_text(encoding="utf-8")
+    first = page.split("id='client-codex'")[1].split("<ul class='")[1].split("'")[0]
+    ok = (first == "seen setup-files" and page.count("<ul class='check seen'") == page.count("<section class='client'")
+          and "list = sec.querySelector('ul.check')" in script and "sec.querySelector('ul.seen')" not in script)
+    print(("ok   " if ok else "FAIL ") + "Does it work?: its line goes in its own list, not Set up's list of files"
+          + ("" if ok else f" -> first list {first!r}"))
+    failures += 0 if ok else 1
     # goose's config.yaml, merged as text: ours once, two spaces in, theirs and the rest as they
     # were; a layout it cannot edit safely is refused (None), never written twice or misplaced.
     # Checked on the text, so it runs without PyYAML; parsed too where PyYAML is there.
