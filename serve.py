@@ -5417,7 +5417,7 @@ def gateway_callers() -> dict:
             at = str(r.get("at") or "")
             c = out.setdefault(r.get("key") or "local", {"at": "", "model": "", "by": "", "today": 0})
             c["today"] += at.startswith(today)
-            if at > c["at"]:
+            if _instant(at) > _instant(c["at"]):
                 by = r.get("alias") or ", ".join(s.get("alias", "") for s in r.get("seats") or []
                                                   if s.get("status") == "ok" and s.get("seat") != "merger")
                 c.update(at=at, model=r.get("model", ""), by=by, tools=r.get("tool_calls") or 0)
@@ -5427,7 +5427,7 @@ def gateway_callers() -> dict:
 
 def connected_list() -> str:
     """The apps that have called, newest first, for Connect's side panel."""
-    callers = sorted(gateway_callers().items(), key=lambda kv: kv[1]["at"], reverse=True)
+    callers = sorted(gateway_callers().items(), key=lambda kv: _instant(kv[1]["at"]), reverse=True)
     if not callers:
         return "<p class='muted'>No app has called yet.</p>"
     def why(who, c) -> str:
@@ -5443,31 +5443,41 @@ def _when(iso: str) -> str:
     return iso[11:16] if iso[:10] == datetime.date.today().isoformat() else iso[:10]
 
 
-def client_seen(name: str) -> dict:
-    """An app's newest call, for Connect's "Does it work?" and its list's ✓.
-    An app whose set-up sends no name (Codex, goose, Zed's and VS Code's
-    models) calls as local: with no call under its name yet, the newest local
-    call made after Set up last wrote its files stands in, marked unnamed
-    (probably that app's; it may be another's)."""
+def _instant(iso: str) -> float:
+    """A log's time as seconds, 0 for none: two of them are compared as instants,
+    since as text 02:30+01:00 sorts before 02:45+02:00 in the hour the clocks go back."""
+    try:
+        return datetime.datetime.fromisoformat(iso).timestamp()
+    except (ValueError, OverflowError, OSError):
+        return 0.0
+
+
+def client_seen(name: str, app: str = "") -> dict:
+    """An app's newest call, for Connect's "Does it work?" and its list's ✓:
+    `name` is what its calls are logged under, `app` its id on the page (its
+    name, unless the page gave it another). An app whose set-up sends no name
+    (Codex, goose, Zed's and VS Code's models) calls as local: with no call
+    under its name yet, the newest local call made after Set up last wrote
+    its files stands in, marked unnamed (probably that app's; it may be
+    another's). ponytail: only Set up marks that time, so an unnamed app set
+    up by hand is never told from the other local calls (the page says so)."""
     callers = gateway_callers()
     c, local = callers.get(name), callers.get("local")
-    since = "" if c or not local else _set_up_at(name)
-    # ponytail: times compared as text, as gateway_callers does: off only in the hour the clocks go back
-    unnamed = bool(since) and local["at"] > since
+    since = "" if c or not local else _set_up_at(app or name)
+    unnamed = bool(since) and _instant(local["at"]) > _instant(since)
     c = local if unnamed else c
     return {"ok": True, "errors": [], "seen": bool(c), **(c or {}), "unnamed": unnamed,
             "when": _when(c["at"]) if c else ""}
 
 
-def _set_up_at(name: str) -> str:
-    """When Set up last wrote the files of the app called `name` (setup_apply's
-    line in changes.jsonl), else ""."""
+def _set_up_at(app: str) -> str:
+    """When Set up last wrote the files of `app` (setup_apply's line in
+    changes.jsonl), else ""."""
     for line in _from_end(CHANGES_PATH):
         if '"app set-up"' in line:
             try:
                 c = json.loads(line)
-                app = c["new"]["app"]
-                if c["field"] == "app set-up" and CONNECT_NAMES.get(app, app) == name:
+                if c["field"] == "app set-up" and c["new"]["app"] == app:
                     return str(c["at"])
             except (ValueError, KeyError, TypeError):
                 continue
@@ -5512,7 +5522,7 @@ def clients_page() -> str:
         return CONNECT_NAMES.get(c["id"], c["id"])
 
     def nav_item(i, c) -> str:
-        seen = client_seen(name_of(c))
+        seen = client_seen(name_of(c), c["id"])
         why = " title='a call with no name, after Set up: probably this app'" * seen["unnamed"]
         return (f"<li><button type='button' aria-controls='client-{c['id']}' aria-pressed='{str(not i).lower()}'>"
                 f"{esc(c['name'])}" + (f"<small{why}>✓ called {esc(seen['when'])}</small>" if seen["seen"] else "")
@@ -5565,7 +5575,10 @@ def clients_page() -> str:
                 "<h3>Does it work?</h3><ul class='check seen' aria-live='polite'></ul>"
                 "<details class='key'><summary>Nothing after you asked?</summary><p>Most apps read their set-up when"
                 " they start: quit the app and start it again. A panel's call shows once its seats have answered,"
-                " which can take minutes. Nothing at all means it never arrived: check the address, and for an app"
+                " which can take minutes. A set-up that sends no name or key (Codex, goose's provider, Zed's and"
+                " VS Code's models) calls as <i>local</i>: this line counts such a call only after Set it up"
+                " wrote the app's files, so for one copied by hand look for <i>local</i> under Connected, in"
+                " This install. Nothing at all means it never arrived: check the address, and for an app"
                 " in Docker choose <i>in Docker</i> above.</p></details></section>")
     nav = "".join(nav_item(i, c) for i, c in enumerate(apps))
     views = "".join(view(i, c) for i, c in enumerate(apps))
@@ -7284,7 +7297,7 @@ class Handler(gateway.Handler):
             self._json(200 if res["ok"] else 400, res)
             return
         if self.path.startswith("/api/client-seen?"):
-            self._json(200, client_seen(q.get("name", [""])[0]))
+            self._json(200, client_seen(q.get("name", [""])[0], q.get("app", [""])[0]))
             return
         if self.path == "/api/stamp":
             self._json(200, {"stamp": data_stamp()})

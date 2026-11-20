@@ -359,6 +359,27 @@ def main() -> int:
     print(("ok   " if ok else "FAIL ") + "Does it work?: a call with no name after Set up counts, one before it"
           " does not" + ("" if ok else f" -> {before} {after}"))
     failures += 0 if ok else 1
+    # ...whatever name the app was given on the page: the Set up is found by the app, not by that name.
+    serve._log_change("2030-02-01T12:00:00+01:00", "ui", "", "app set-up", None, {"app": "zed", "files": []})
+    local_call("2030-02-01T12:00:05+01:00")
+    try:
+        renamed = serve.client_seen("my-zed", "zed")
+    except TypeError as exc:
+        renamed = {"error": str(exc)}
+    (gw / "routes.jsonl").unlink()
+    # Times are compared as instants, not as text: in the hour the clocks go back, 02:30+01:00 is
+    # after 02:45+02:00. A call then counts after a Set up, and is the newer of two calls.
+    serve._log_change("2030-10-27T02:45:00+02:00", "ui", "", "app set-up", None, {"app": "goose", "files": []})
+    local_call("2030-10-27T02:30:00+01:00")
+    back = serve.client_seen("goose")
+    local_call("2030-10-27T02:50:00+02:00")                      # written later, made earlier
+    newest = serve.client_seen("goose")
+    (gw / "routes.jsonl").unlink()
+    ok = (renamed.get("unnamed") is True and back.get("unnamed") is True
+          and newest.get("at") == "2030-10-27T02:30:00+01:00")
+    print(("ok   " if ok else "FAIL ") + "Does it work?: found by the app whatever its name, times compared as instants"
+          + ("" if ok else f" -> {renamed} {back} {newest}"))
+    failures += 0 if ok else 1
     # goose's config.yaml, merged as text: ours once, two spaces in, theirs and the rest as they
     # were; a layout it cannot edit safely is refused (None), never written twice or misplaced.
     # Checked on the text, so it runs without PyYAML; parsed too where PyYAML is there.

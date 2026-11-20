@@ -2076,7 +2076,7 @@
   function seenTick() {
     clearTimeout(seenTimer);
     var sec = document.querySelector('#tab-clients.active section.client[data-app]:not([hidden])');
-    var asked = sec && !document.hidden ? get('/api/client-seen?name=' + encodeURIComponent(appChoice(sec, 'name')))
+    var asked = sec && !document.hidden ? get('/api/client-seen?app=' + encodeURIComponent(sec.dataset.app) + '&name=' + encodeURIComponent(appChoice(sec, 'name')))
       .then(function (r) {
         var name = appChoice(sec, 'name'), list = sec.querySelector('ul.seen'), li = el('li', r.seen ? {} : {class: 'warn'});
         li.appendChild(el('span', {'aria-hidden': 'true'}, r.seen ? '✓' : '…'));
