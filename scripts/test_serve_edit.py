@@ -322,6 +322,27 @@ def main() -> int:
     print(("ok   " if ok else "FAIL ") + "Set up: each app's files written, theirs kept, comments left alone, a"
           " second run writes nothing" + ("" if ok else f" -> {bad}"))
     failures += 0 if ok else 1
+    # Does it work? for an app whose set-up sends no name (Codex: every call is local): a call
+    # with no name made after its Set up stands in for it, marked unnamed, and Connect's list
+    # shows its ✓; one made before the Set up does not.
+    gw = serve.DATA / "runs" / "gateway"
+    gw.mkdir(parents=True, exist_ok=True)
+    serve._log_change("2030-01-01T12:00:00+01:00", "ui", "", "app set-up", None, {"app": "codex", "files": []})
+
+    def local_call(at):
+        with (gw / "routes.jsonl").open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"at": at, "model": "bench/x", "key": "local", "alias": "m1"}) + "\n")
+    local_call("2030-01-01T11:59:59+01:00")
+    before, page_before = serve.client_seen("codex"), serve.clients_page()
+    local_call("2030-01-01T12:00:05+01:00")
+    after, page_after = serve.client_seen("codex"), serve.clients_page()
+    (gw / "routes.jsonl").unlink()
+    ok = (not before["seen"] and not before.get("unnamed") and "Codex CLI<small" not in page_before
+          and after["seen"] and after.get("unnamed") is True and after["model"] == "bench/x"
+          and after["at"] == "2030-01-01T12:00:05+01:00" and "Codex CLI<small" in page_after)
+    print(("ok   " if ok else "FAIL ") + "Does it work?: a call with no name after Set up counts, one before it"
+          " does not" + ("" if ok else f" -> {before} {after}"))
+    failures += 0 if ok else 1
     # restore: same alias back, out of retired.json, role and ad hoc kept, and
     # back into the collections that still exist (one deleted, one changed since)
     serve.delete_collection("doomed")

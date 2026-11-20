@@ -5289,9 +5289,34 @@ def _when(iso: str) -> str:
 
 
 def client_seen(name: str) -> dict:
-    """An app's newest call, for Connect's "Does it work?"."""
-    c = gateway_callers().get(name)
-    return {"ok": True, "errors": [], "seen": bool(c), **(c or {}), "when": _when(c["at"]) if c else ""}
+    """An app's newest call, for Connect's "Does it work?" and its list's ✓.
+    An app whose set-up sends no name (Codex, goose, Zed's and VS Code's
+    models) calls as local: with no call under its name yet, the newest local
+    call made after Set up last wrote its files stands in, marked unnamed
+    (probably that app's; it may be another's)."""
+    callers = gateway_callers()
+    c, local = callers.get(name), callers.get("local")
+    since = "" if c or not local else _set_up_at(name)
+    # ponytail: times compared as text, as gateway_callers does: off only in the hour the clocks go back
+    unnamed = bool(since) and local["at"] > since
+    c = local if unnamed else c
+    return {"ok": True, "errors": [], "seen": bool(c), **(c or {}), "unnamed": unnamed,
+            "when": _when(c["at"]) if c else ""}
+
+
+def _set_up_at(name: str) -> str:
+    """When Set up last wrote the files of the app called `name` (setup_apply's
+    line in changes.jsonl), else ""."""
+    for line in _from_end(CHANGES_PATH):
+        if '"app set-up"' in line:
+            try:
+                c = json.loads(line)
+                app = c["new"]["app"]
+                if c["field"] == "app set-up" and CONNECT_NAMES.get(app, app) == name:
+                    return str(c["at"])
+            except (ValueError, KeyError, TypeError):
+                continue
+    return ""
 
 
 def clients_page() -> str:
@@ -5326,16 +5351,16 @@ def clients_page() -> str:
         return ("<div class='panel'><p>No collection yet: make one on <button class='btn' type='button'"
                 " data-go='collections'>Collections</button>, and the set-ups appear here.</p></div>" + aside)
     apps = client_setups(root, [c[:3] for c in cols], keys)
-    callers = gateway_callers()
     options = "".join(f"<option value='{esc(n)}'>{esc(n)}: {m} member{'s' * (m != 1)}</option>" for n, *_, m in cols)
 
     def name_of(c) -> str:
         return CONNECT_NAMES.get(c["id"], c["id"])
 
     def nav_item(i, c) -> str:
-        seen = callers.get(name_of(c))
+        seen = client_seen(name_of(c))
+        why = " title='a call with no name, after Set up: probably this app'" * seen["unnamed"]
         return (f"<li><button type='button' aria-controls='client-{c['id']}' aria-pressed='{str(not i).lower()}'>"
-                f"{esc(c['name'])}" + (f"<small>✓ called {esc(_when(seen['at']))}</small>" if seen else "")
+                f"{esc(c['name'])}" + (f"<small{why}>✓ called {esc(seen['when'])}</small>" if seen["seen"] else "")
                 + "</button></li>")
 
     def view(i, c) -> str:
