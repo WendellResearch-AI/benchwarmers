@@ -2081,7 +2081,7 @@
         var name = appChoice(sec, 'name'), list = sec.querySelector('ul.seen'), li = el('li', r.seen ? {} : {class: 'warn'});
         li.appendChild(el('span', {'aria-hidden': 'true'}, r.seen ? '✓' : '…'));
         li.appendChild(el('span', {}, r.seen
-          ? name + ' called ' + r.model + (r.by ? ', answered by ' + r.by : '') + (r.tools ? ', ' + plural(r.tools, 'tool call') : '')
+          ? (r.unnamed ? 'A call with no name came in after Set up, probably ' + name + ': ' : name + ' called ') + r.model + (r.by ? ', answered by ' + r.by : '') + (r.tools ? ', ' + plural(r.tools, 'tool call') : '')
           : 'No call from ' + name + ' yet. Start it with its new set-up and ask it anything: this updates by itself.'));
         li.appendChild(el('span', {}, r.when || ''));
         list.textContent = ''; list.appendChild(li);
