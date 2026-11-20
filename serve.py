@@ -5307,13 +5307,14 @@ def setup_plan(app: str, way: str = "", collection: str = "", name: str = "", ke
             conf = json.loads(read(d / "plugins" / "benchwarmers" / "benchwarmers.json") or "{}")
         except ValueError:
             conf = {}
+        conf = conf if isinstance(conf, dict) else {}   # our own file: another shape is written afresh
         for k in ("keyEnv", "models", "mcp"):
             conf.pop(k, None)
         conf.update({"url": root, "name": label or "opencode", **({"keyEnv": KEY_ENV} if keys else {}),
                      **({"models": False} if way == "panel" else {}), **({"mcp": False} if way == "model" else {})})
         add(d / "plugins" / "benchwarmers" / "index.ts", (PLUGIN_SRC / "index.ts").read_text(encoding="utf-8"),
             "the plugin: every collection as a model, kept current, and the MCP server")
-        add(d / "plugins" / "benchwarmers" / "benchwarmers.json", json.dumps(conf, indent=2) + "\n", "its settings")
+        add(d / "plugins" / "benchwarmers" / "benchwarmers.json", _dump(conf), "its settings")
         cfg = next((p for p in (d / "opencode.jsonc", d / "opencode.json") if p.exists()), None)
         if cfg and re.search(r'"benchwarmers"\s*:', read(cfg)):
             left.append(f"{cfg} names benchwarmers itself: take that out, or the two compete")
@@ -5349,7 +5350,7 @@ def setup_plan(app: str, way: str = "", collection: str = "", name: str = "", ke
                 if label_ == "mcp.json" and "inputs" not in theirs and isinstance(new.get("inputs"), list):
                     # VS Code with no key now: our own input goes too, or it keeps asking for one.
                     new["inputs"] = [e for e in new["inputs"] if not (isinstance(e, dict) and e.get("id") == "benchwarmers-key")]
-                add(path, json.dumps(new, indent=2) + "\n")
+                add(path, _dump(new))                    # their own characters as they wrote them, not \u escapes
             elif path.suffix == ".toml":                # Codex: plain codex keeps your own model
                 if (text := _toml_merge(old, ours)) is None:
                     left.append(f"{path} would not keep everything in it with the set-up merged in, or is not"

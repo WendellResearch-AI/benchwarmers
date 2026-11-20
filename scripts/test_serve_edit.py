@@ -666,6 +666,22 @@ def main() -> int:
             serve.guard.gateway_keys = kept
         return bad
 
+    def theirs():
+        """Their own settings come back as they wrote them: a name with an accent is not turned into \\u escapes.
+        Our own opencode settings file holding another shape (a list) is written afresh, not crashed on."""
+        dirs, bad = fresh(), []
+        put(dirs["zed"] / "settings.json", '{"theme": "Café ☕", "buffer_font_family": "Fira Code"}')
+        serve.setup_apply("zed", "both", "", "")
+        text = (dirs["zed"] / "settings.json").read_text(encoding="utf-8")
+        if '"Café ☕"' not in text or "context_servers" not in text:
+            bad.append(f"Zed: {text[:120]!r}")
+        conf = dirs["opencode"] / "plugins" / "benchwarmers" / "benchwarmers.json"
+        put(conf, "[]")
+        r = serve.setup_apply("opencode", "both", "", "")
+        if not r["ok"] or not json.loads(conf.read_text(encoding="utf-8")).get("url"):
+            bad.append(f"opencode: {r}")
+        return bad
+
     def linked():
         """A symlinked settings.json: written through to its target, the link kept."""
         dirs = fresh()
@@ -689,6 +705,7 @@ def main() -> int:
                           ("Set up: the key placeholder in Zed's and goose's files is said by hand", placeholder),
                           ("Set up: a key typed in place of the placeholder is kept by the next Set up", typed),
                           ("Connect: a name whose calls would be logged as local is refused, with why", named),
+                          ("Set up: their own characters are kept as written; our settings file of another shape is rewritten", theirs),
                           ("Set up: a symlinked file is written through, the link kept", linked)):
             try:
                 bad = fn()
