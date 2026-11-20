@@ -106,7 +106,7 @@ with [AGENTS.md](AGENTS.md).
 
 ## Try it
 
-**Version 1.0.** It runs with Python 3.11 or later on Windows, macOS and
+**Version 1.1.** It runs with Python 3.11 or later on Windows, macOS and
 Linux, from PyPI, npm, a checkout or Docker. Report rough edges as issues, and
 read the code where these pages are thin.
 
