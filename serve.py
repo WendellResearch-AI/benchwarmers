@@ -4078,9 +4078,16 @@ def route_table(judged: dict, limit: int = 30) -> str:
             c["models"].setdefault(t["alias"], t.get("call", ""))
     if not convs:
         return ""
+    shadows: dict[str, int] = {}                       # gateway.shadow's lines; none unless shadow_rate is set
+    for line in read(DATA / "runs" / "gateway" / "shadows.jsonl").splitlines():
+        try:
+            conv = str(json.loads(line).get("conversation", ""))
+        except ValueError:
+            continue
+        shadows[conv] = shadows.get(conv, 0) + 1
     rows = ["<h3>Route conversations</h3><table><thead><tr>", th("When"), th("Collection"), th("Asked by"),
             th("First message"), th("Answered by"), th("Turns", True), th("Tool calls", True),
-            th("Failovers", True), th("Last turn"), "</tr></thead><tbody>"]
+            th("Failovers", True), th("Shadows", True) if shadows else "", th("Last turn"), "</tr></thead><tbody>"]
     for conv, c in sorted(convs.items(), key=lambda kv: kv[1]["last"], reverse=True)[:limit]:
         chips = " ".join(f"<span class='chip' title='{esc(call + ' · ' + {True: 'useful', False: 'not useful', None: 'no verdict (optional)'}[judged.get(call)])}'>"
                          f"{esc(alias)}{ {True: ' ✓', False: ' ✗', None: ''}[judged.get(call)]}</span>"
@@ -4091,10 +4098,13 @@ def route_table(judged: dict, limit: int = 30) -> str:
             f"<td class='mono'>{esc(c['model'])}</td><td class='mono'>{esc(c['key'] or '—')}</td>"
             f"<td>{esc(c['task'][:60])}</td><td>{chips or '—'}</td><td class='num'>{c['turns']}</td>"
             f"<td class='num'>{c['tools']}</td><td class='num{' muted' if not c['failovers'] else ''}'>{c['failovers']}</td>"
+            + (f"<td class='num'>{shadows.get(conv, 0)}</td>" if shadows else "") +
             f"<td><span class='chip {css}' title='{esc(c['error'])}'>{esc(c['status'])}</span></td></tr>")
     rows.append("</tbody></table><p class='muted'>Each conversation is one unjudged offload per model that"
                 " answered it, under the call id on its chip; a verdict is optional:"
-                " <code>python metrics/offload.py verdict &lt;call id&gt; --useful</code>.</p>")
+                " <code>python metrics/offload.py verdict &lt;call id&gt; --useful</code>."
+                + (" Shadows: turns another member answered again afterwards, for evaluation only"
+                   " (<code>runs/gateway/shadows.jsonl</code>)." if shadows else "") + "</p>")
     return "".join(rows)
 
 

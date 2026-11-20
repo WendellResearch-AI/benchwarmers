@@ -454,11 +454,31 @@ toward rotation. The Gateway card lists route conversations in their own
 table (when, who asked, the first message, who answered with ✓/✗, turns,
 tool calls, failovers) and none of them counts as a verdict owed.
 
-**Shadows (later, opt-in).** A shadow seat would answer the same turn in the
-background for evaluation only, after the caller has its answer. The place
-is marked in `route_turn` ("SHADOWS GO HERE"): each would be its own client
-call with purpose `shadow`, recorded on the conversation's call id; nothing
-the caller sees would wait for or change because of them. Not built.
+**Shadows (opt-in).** Route mode gives an agent one model a turn, so agent
+traffic alone never compares models. A shadow is another member answering
+the same turn, for evaluation only. Set `"shadow_rate"` in
+`config/gateway.json` to the share of route turns that get one: 0, the
+default, is off, and 0.1 is one turn in ten. The dashboard's Gateway
+settings do not show it. Once the turn's last byte has gone to the caller,
+the gateway picks one other member of that turn's plan at random: not the
+one that answered, not one cooling down, and only one with room under
+pacing for its own call and a real turn after it. A member without that
+room is skipped, never waited for. The shadow gets the request as the
+member did, in a background thread, and its answer is read whole; the call
+is in the usage ledger with purpose `shadow`. A line in
+`runs/gateway/shadows.jsonl`, on the conversation's call id, says how it
+did: the primary and shadow models, status, seconds, tokens, whether the
+request had tools, whether the shadow answered with text or tool calls, for
+each call whether it names a tool the request offered and whether its
+arguments parse as a JSON object, and whether it chose the same tools as the
+primary. Never the prompt, and never a call's arguments. A shadow's valid
+tool call counts as tool calling seen working, as a capability probe's does.
+A shadow writes no offload, so it owes no verdict and moves neither the
+rotation nor the ranking. The Gateway card's route conversations count each
+conversation's shadows. Its limits: one shadow a turn at most; none when the
+caller hung up part way; only the shape of the answers is compared, not
+whether either was right; and pacing could still make a shadow wait if the
+window fills between its check and the call.
 
 **Limits, honestly.**
 

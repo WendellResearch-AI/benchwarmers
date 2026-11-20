@@ -523,8 +523,10 @@ backs up the ones it replaces, in the data folder's `backups/`.
   members on chat-completions endpoints, keeps its sticky conversations in
   memory (a restart starts each on a fresh pick), and has been run end to end
   with Claude Code; the other set-ups on the Connect page are written from
-  each app's docs, not run. Shadow seats (other members answering an agent's turn for
-  evaluation) are planned, not built.
+  each app's docs, not run. Shadow seats (another member answering an agent's turn
+  afterwards, for evaluation) are opt-in (`shadow_rate` in `config/gateway.json`) and
+  compare the shape of the answers (text or tool calls, which tools, arguments that
+  parse), not whether either was right.
 - **Some parts are checked against fakes only.** The native Anthropic and
   Gemini endpoints, and the LiteLLM and CLI Proxy API hub adapters, are built
   from those APIs' documentation and source and tested against fake servers,

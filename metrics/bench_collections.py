@@ -5,7 +5,7 @@
                                          "reply": "all", "merger": ""}}
     config/gateway.json       {"max_calls": 5, "max_explorers": 2,
                                "pick_collection": true, "pick_confidence": 0.6,
-                               "quorum": 2, "grace": 60}
+                               "quorum": 2, "grace": 60, "shadow_rate": 0}
 
 A request for `bench/core` runs every member, plus explorer seats that
 `route.py` fills by staleness so the roster keeps getting evidence even when
@@ -101,6 +101,14 @@ def wait_settings() -> dict:
     q, g = raw.get("quorum"), raw.get("grace")
     return {"quorum": q if isinstance(q, int) and not isinstance(q, bool) and q >= 1 else 2,
             "grace": g if isinstance(g, (int, float)) and not isinstance(g, bool) and g >= 0 else 60}
+
+
+def shadow_rate() -> float:
+    """gateway.json's `shadow_rate`: the share of route turns that another
+    member answers too, in the background, for evaluation only
+    (gateway.shadow). Off (0) unless a number from 0 to 1."""
+    r = _read(SETTINGS_FILE).get("shadow_rate")
+    return float(r) if isinstance(r, (int, float)) and not isinstance(r, bool) and 0 <= r <= 1 else 0.0
 
 
 def limit_ok(key: str, value) -> bool:

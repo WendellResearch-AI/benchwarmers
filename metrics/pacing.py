@@ -114,9 +114,9 @@ def _inflight(now: float) -> dict:
 
 
 def _blocked(rs: list[dict], records: list[dict], alias: str, connection: str, est: int,
-             now: float, rows: list[dict], flying: dict) -> tuple[float, str] | None:
+             now: float, rows: list[dict], flying: dict, calls: int = 1) -> tuple[float, str] | None:
     """(when a slot frees, why) for the window that frees last, or None when
-    every window has room for this call."""
+    every window has room for `calls` calls of this size."""
     worst = None
 
     def mine(e: dict, scope: str) -> bool:
@@ -133,7 +133,7 @@ def _blocked(rs: list[dict], records: list[dict], alias: str, connection: str, e
         used = sum(w for _, w in events)
         # A prompt larger than the whole window waits for an empty one, then goes:
         # the estimate is rough, and the provider has the last word.
-        need = 1 if what == "requests" else min(max(est, 1), r["limit"])
+        need = calls if what == "requests" else min(max(est, 1) * calls, r["limit"])
         if used + need <= r["limit"]:
             continue
         if span == "month":
@@ -165,7 +165,7 @@ def _blocked(rs: list[dict], records: list[dict], alias: str, connection: str, e
                    for e in rows if e["t"] >= seen and e.get("alias") == alias)
         used += sum(1 if what == "requests" else f.get("tokens") or 0
                     for f in flying.values() if f.get("alias") == alias)
-        if q["remaining"] - used > 0:
+        if q["remaining"] - used >= calls:
             continue
         limit = f" of {q['limit']:,}" if isinstance(q.get("limit"), int) else ""
         window = "" if q.get("window") in ("unknown", "retry-after") else f" a {q['window']}"
@@ -191,18 +191,20 @@ def _since(rs: list[dict], records: list[dict]) -> float:
                + [_ts(q["observed_at"]) for q in records if q.get("observed_at")])
 
 
-def held(alias: str, connection: str, est_tokens: int = 1) -> tuple[float, str] | None:
+def held(alias: str, connection: str, est_tokens: int = 1, calls: int = 1) -> tuple[float, str] | None:
     """(seconds until there is room, why) when a call to `alias` would have to
     wait or be refused now, else None. Read only: no slot is taken. For
     picking seats, so a model the bench knows will be refused is not seated
-    (gateway.refused_now); `admit` still decides each call."""
+    (gateway.refused_now); `admit` still decides each call. `calls`: how
+    many such calls must fit (a route shadow asks room for two, its own and
+    a real turn's after it)."""
     import quota
     rs, records = rules(alias, connection), quota.live(connection, alias)
     if not rs and not records:
         return None
     now = time.time()
     block = _blocked(rs, records, alias, connection, est_tokens, now,
-                     list(ledger.rows(_since(rs, records))), _inflight(now))
+                     list(ledger.rows(_since(rs, records))), _inflight(now), calls)
     return None if block is None else (max(block[0] - now, 0.0), block[1])
 
 
