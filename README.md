@@ -63,11 +63,18 @@ verdicts decide who sits on the next panel.
   from what providers say and enforced, and one endpoint for every app, over
   any OpenAI-compatible provider or hub, or Anthropic's and Gemini's own APIs.
 
+**Not another gateway.** Gateways such as OmniRoute, freellmapi, LiteLLM and
+OpenRouter choose where a request goes by availability, quota, cost and speed.
+Benchwarmers finds out which of your models is *right*, and ranks them by that.
+It sits happily on top of one: the gateway keeps the accounts and quotas,
+Benchwarmers keeps the evidence. [COMPARISON.md](COMPARISON.md) has the
+side-by-side tables and the set-up.
+
 | Related tools | Examples | What they do | What Benchwarmers does differently |
 |---|---|---|---|
-| Gateways and routers | LiteLLM, OpenRouter, Portkey | One request to one model, with fallback | Fans one prompt out to a panel and returns every answer; for agents, routes to one member by its record |
-| Councils and ensembles | LLM Council, Mixture-of-Agents | Several models merged into one answer | Keeps every answer, because who said what is the evidence; one merged summary only if you ask |
-| Side-by-side chat | Open WebUI, LMArena | Several answers shown together | Records a verdict per answer and uses them to pick the next panel |
+| Gateways and routers | OmniRoute, freellmapi, LiteLLM, OpenRouter, Portkey | One request to one model, picked by quota, cost, speed and health, with fallback | Fans one prompt out to a panel and returns every answer; for agents, routes to one member by its verdicts. Runs on top of them |
+| Councils and ensembles | OpenRouter Fusion, OmniRoute's fusion, LLM Council, Mixture-of-Agents | Several models, then a judge or chairman writes one answer | Keeps every answer, because who said what is the evidence; one merged summary only if you ask |
+| Side-by-side chat | Open WebUI, LMArena | Several answers shown together, thumbs up or down for a leaderboard | Records a verdict per answer, with its false claims, from you or the calling agent, and routes by them |
 | Evaluation harnesses | promptfoo, Inspect, SWE-bench | Score models offline on fixed test sets | Scores them on your real work and your own code, and keeps rotating new models in |
 
 <p align="center">
