@@ -46,6 +46,11 @@ def main() -> int:
     serve.OPTIONS_PATH = cfg / "model-options.json"
     serve.CHANGES_PATH = cfg / "changes.jsonl"
     serve.RETIRED_PATH = cfg / "retired.json"
+    # every other path serve fixes at import, so nothing here touches the real data
+    serve.DISMISSED_PATH = cfg / "dismissed.json"
+    serve.ENDPOINT_CHECKS = cfg / "endpoint-checks.json"
+    serve.UI_CONFIG = cfg / "ui.json"
+    serve.ONBOARD_ISSUES_PATH = tmp / "metrics" / "onboard-issues.json"
     import aliases
     aliases.HISTORY = cfg / "alias-history.json"
     import alerts
@@ -458,6 +463,155 @@ def main() -> int:
     print(("ok   " if ok else "FAIL ") + "Codex Set up: a profile for the model, your config.toml kept key for key"
           " or left to you" + ("" if ok else f" -> {bad}"))
     failures += 0 if ok else 1
+
+    # Set up's edges, each in a fresh throwaway home (review 2026-11-20, findings 4, 5, 7, 8, 9).
+    homes, kept_keys, kept_write = [], serve.guard.keys_required, serve._write_atomic
+    serve.guard.keys_required = lambda: False            # a key only where a set-up asks for one
+
+    def fresh() -> dict:
+        h = pathlib.Path(tempfile.mkdtemp(prefix="bench-setup-home-"))
+        homes.append(h)
+        os.environ.update(USERPROFILE=str(h), HOME=str(h), APPDATA=str(h / "AppData"),
+                          XDG_CONFIG_HOME=str(h / ".config"))
+        return serve._app_dirs()
+
+    def put(p: pathlib.Path, text: str) -> None:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(text, encoding="utf-8")
+
+    def shapes():
+        """A JSON root that is not what our snippet is: left by hand, never merged or crashed on."""
+        bad = []
+        for root in ("[]", "null", "3", '"x"'):
+            dirs = fresh()
+            for app, p in (("zed", dirs["zed"] / "settings.json"), ("vscode", dirs["vscode"] / "mcp.json"),
+                           ("goose", dirs["goose"] / "custom_providers" / "benchwarmers.json")):
+                put(p, root)
+                r = serve.setup_apply(app, "both", "", "")
+                if not r["ok"] or p.read_text(encoding="utf-8") != root \
+                        or not any(str(p) in w and "not the shape expected" in w for w in r["left"]):
+                    bad.append(f"{app} {root}: {r}")
+        dirs = fresh()
+        p = dirs["vscode"] / "chatLanguageModels.json"
+        put(p, '{"a": {"keep": 1}}')
+        r = serve.setup_apply("vscode", "both", "", "")
+        if p.read_text(encoding="utf-8") != '{"a": {"keep": 1}}' or not any(str(p) in w for w in r["left"]):
+            bad.append(f"VS Code's models file holding an object: {p.read_text(encoding='utf-8')} {r}")
+        return bad
+
+    def folder():
+        """A folder where a file goes: left by hand, the app's other file still written."""
+        dirs, bad = fresh(), []
+        for app, p in (("vscode", dirs["vscode"] / "mcp.json"), ("zed", dirs["zed"] / "settings.json")):
+            p.mkdir(parents=True)
+            r = serve.setup_apply(app, "both", "", "")
+            if not r["ok"] or not p.is_dir() or not any(str(p) in w for w in r["left"]):
+                bad.append(f"{app}: {r}")
+        if not (dirs["vscode"] / "chatLanguageModels.json").exists():
+            bad.append("VS Code's models not written beside it")
+        return bad
+
+    def half():
+        """A write that fails half-way: ok false, which files were written and which not, and logged."""
+        dirs, seen = fresh(), len(serve.CHANGES_PATH.read_text(encoding="utf-8").splitlines())
+
+        def refuse(path, text):
+            if pathlib.Path(path).name == "mcp.json":
+                raise PermissionError(13, "Permission denied", str(path))
+            kept_write(path, text)
+        serve._write_atomic = refuse
+        try:
+            r = serve.setup_apply("vscode", "both", "", "")
+        finally:
+            serve._write_atomic = kept_write
+        log = [json.loads(x) for x in serve.CHANGES_PATH.read_text(encoding="utf-8").splitlines()[seen:]]
+        said = " ".join(r["errors"])
+        bad = [] if (not r["ok"] and "mcp.json" in said and "chatLanguageModels.json" in said
+                     and [pathlib.Path(f).name for f in r["written"]] == ["chatLanguageModels.json"]
+                     and not (dirs["vscode"] / "mcp.json").exists()) else [r]
+        if [[pathlib.Path(f).name for f in e["new"]["files"]] for e in log] != [["chatLanguageModels.json"]]:
+            bad.append(f"change log: {log}")
+        return bad
+
+    def unkeyed():
+        """A key, then none: our own entries replaced whole (no stale header, no input left), yours kept."""
+        dirs, bad = fresh(), []
+        mine = {"inputs": [{"type": "promptString", "id": "other-key"}],
+                "servers": {"other": {"type": "http", "url": "x", "headers": {"Authorization": "Bearer ${input:other-key}"}}}}
+        put(dirs["vscode"] / "mcp.json", json.dumps(mine))
+        put(dirs["zed"] / "settings.json", json.dumps({
+            "context_servers": {"other": {"url": "y"}},
+            "language_models": {"openai_compatible": {"benchwarmers": {"api_url": "old", "stale": 1},
+                                                      "other": {"api_url": "z"}}}}))
+        for app in ("vscode", "zed"):
+            serve.setup_apply(app, "both", "", "", True)
+        vs = json.loads((dirs["vscode"] / "mcp.json").read_text(encoding="utf-8"))
+        if [i["id"] for i in vs["inputs"]] != ["other-key", "benchwarmers-key"] or "headers" not in vs["servers"]["benchwarmers"]:
+            bad.append(f"the keyed set-up itself: {vs}")
+        for app in ("vscode", "zed"):
+            serve.setup_apply(app, "both", "", "")
+        vs = json.loads((dirs["vscode"] / "mcp.json").read_text(encoding="utf-8"))
+        zd = json.loads((dirs["zed"] / "settings.json").read_text(encoding="utf-8"))
+        if vs["inputs"] != mine["inputs"] or vs["servers"]["other"] != mine["servers"]["other"] \
+                or "headers" in vs["servers"]["benchwarmers"]:
+            bad.append(f"VS Code: {vs}")
+        oc = zd["language_models"]["openai_compatible"]
+        if "headers" in zd["context_servers"]["benchwarmers"] or zd["context_servers"]["other"] != {"url": "y"} \
+                or "stale" in oc["benchwarmers"] or oc["other"] != {"api_url": "z"}:
+            bad.append(f"Zed: {zd}")
+        return bad
+
+    def placeholder():
+        """Keyed Zed and goose keep <your gateway key> in a header: said by hand, and Zed's Done names its variable."""
+        dirs, bad = fresh(), []
+        for app, p in (("zed", dirs["zed"] / "settings.json"), ("goose", dirs["goose"] / "config.yaml")):
+            for r in (serve.setup_apply(app, "both", "", "", True), serve.setup_plan(app, "both", "", "", True)):
+                if not any(serve.KEY_HOLDER in w and str(p) in w for w in r["left"]):
+                    bad.append(f"{app}: {r['left']}")
+            if any(serve.KEY_HOLDER in w for w in serve.setup_plan(app, "both", "", "")["left"]):
+                bad.append(f"{app} without a key still says to replace it")
+        after = serve.setup_plan("zed", "both", "", "", True)["after"]
+        if "BENCHWARMERS_API_KEY" not in after or "any text" in after or serve.KEY_ENV in after.replace("BENCHWARMERS_API_KEY", ""):
+            bad.append(f"Zed's Done: {after}")
+        return bad
+
+    def linked():
+        """A symlinked settings.json: written through to its target, the link kept."""
+        dirs = fresh()
+        real, link = homes[-1] / "dotfiles" / "zed-settings.json", dirs["zed"] / "settings.json"
+        put(real, '{"theme": "One"}')
+        link.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            link.symlink_to(real)
+        except OSError:
+            return None                                  # Windows without admin or Developer Mode
+        r = serve.setup_apply("zed", "both", "", "")
+        got = json.loads(real.read_text(encoding="utf-8"))
+        return [] if r["ok"] and link.is_symlink() and got.get("theme") == "One" and "context_servers" in got \
+            else [f"{r} link={link.is_symlink()} target={got}"]
+
+    try:
+        for label, fn in (("Set up: a JSON root of another shape is left by hand", shapes),
+                          ("Set up: a folder where a file goes is left by hand", folder),
+                          ("Set up: a write that fails says what was written and what was not", half),
+                          ("Set up: a key, then none, leaves no key behind", unkeyed),
+                          ("Set up: the key placeholder in Zed's and goose's files is said by hand", placeholder),
+                          ("Set up: a symlinked file is written through, the link kept", linked)):
+            try:
+                bad = fn()
+            except Exception as exc:                     # noqa: BLE001  a crash is this check failing
+                bad = [f"{type(exc).__name__}: {exc}"]
+            if bad is None:
+                print("skip " + label + ": this OS refused to make a symlink (admin or Developer Mode needed)")
+                continue
+            print(("ok   " if not bad else "FAIL ") + label + ("" if not bad else f" -> {bad}"))
+            failures += 0 if not bad else 1
+    finally:
+        serve.guard.keys_required, serve._write_atomic = kept_keys, kept_write
+        for k, v in saved_env.items():
+            os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
+        for h in homes:
+            shutil.rmtree(h, ignore_errors=True)
     # restore: same alias back, out of retired.json, role and ad hoc kept, and
     # back into the collections that still exist (one deleted, one changed since)
     serve.delete_collection("doomed")
