@@ -4706,9 +4706,11 @@ def client_setups(root: str, cols: list, keys: bool, way: str = "both", label: s
                   "servers": {"benchwarmers": {"type": "http", "url": mcp, **(
                       {"headers": {"Authorization": "Bearer ${input:benchwarmers-key}"}} if keys else
                       {"headers": {"Authorization": f"Bearer {lab}"}} if lab else {})}}}
-    codex = lines(*(f"model = {q(model)}", 'model_provider = "benchwarmers"', f"model_context_window = {ctx}",
-                    'web_search = "disabled"', "",
-                    "[model_providers.benchwarmers]", 'name = "Benchwarmers"', f"base_url = {q(base)}",
+    # Codex: the model as a profile (its own file, `codex --profile benchwarmers`), so plain
+    # `codex` keeps your own model; the provider and the MCP server as tables in config.toml.
+    codex_profile = lines(f"model = {q(model)}", 'model_provider = "benchwarmers"', f"model_context_window = {ctx}",
+                          'web_search = "disabled"')
+    codex = lines(*("[model_providers.benchwarmers]", 'name = "Benchwarmers"', f"base_url = {q(base)}",
                     when(f'env_key = "{env}"'), 'wire_api = "responses"')[:None if use_m else 0],
                   "" if use_m and use_p else None,
                   *("[mcp_servers.benchwarmers]", f"url = {q(mcp)}", when(f'bearer_token_env_var = "{env}"'),
@@ -4828,13 +4830,19 @@ def client_setups(root: str, cols: list, keys: bool, way: str = "both", label: s
                   ("https://code.visualstudio.com/docs/agents/reference/mcp-configuration", "MCP configuration")]},
         {"id": "codex", "name": "Codex CLI",
          "gets": "Codex on a collection over the Responses API (route mode), and the panel as MCP tools.",
-         "where": "<code>~/.codex/config.toml</code> (<code>%USERPROFILE%\\.codex\\config.toml</code> on Windows)."
-                  " The first four lines go above the file's first <code>[table]</code>."
+         "where": "<code>~/.codex/config.toml</code> (<code>%USERPROFILE%\\.codex\\config.toml</code> on Windows):"
+                  " add the tables to it."
+                  + (" <code>benchwarmers.config.toml</code> is a profile, a new file beside it: start Codex with"
+                     " <code>codex --profile benchwarmers</code> (Codex 0.134 or later) to use the collection;"
+                     " plain <code>codex</code> stays on your own model." if use_m else "")
                   + (f" The key comes from <code>{env}</code>." if keys else ""),
-         "blocks": [_snip("config.toml", "toml", codex)],
+         "blocks": [_snip("config.toml", "toml", codex),
+                    *only(use_m, _snip("benchwarmers.config.toml", "toml", codex_profile))],
          "watch": "<code>web_search = \"disabled\"</code>: left on, Codex sends OpenAI's hosted search, which the"
                   " gateway refuses (no other model can run it), and every turn fails.",
-         "docs": [("https://learn.chatgpt.com/docs/config-file/config-reference", "configuration reference")]},
+         "docs": [("https://learn.chatgpt.com/docs/config-file/config-reference", "configuration reference"),
+                  ("https://learn.chatgpt.com/docs/config-file/config-advanced#profiles", "profiles")],
+         "read": "2026-11-20"},
         {"id": "zed", "name": "Zed",
          "gets": "Zed's agent on a collection (route mode), and the panel as MCP tools.",
          "where": "<code>settings.json</code>: the command <b>zed: open settings file</b>. Zed reads the key from"
@@ -5023,7 +5031,7 @@ def connect_setup(app: str, way: str = "", collection: str = "", where: str = "h
 # ---- Connect's Set up: an app's own files written for it, on this machine ----
 # Only where that is safe: a file Benchwarmers owns whole (opencode's plugin, goose's
 # provider), a JSON file without comments (keys merged in), Codex's TOML (its own
-# tables replaced or added, top-level keys only where unset), a YAML file only when
+# profile and tables put in, every other key kept: _toml_merge), a YAML file only when
 # absent (goose's extensions: its own block). Anything else is refused with why, and
 # copied by hand. Every file changed is copied to <name>.bak-<time> first. Keys never
 # go into a file: a set-up with a key reads it from KEY_ENV.
@@ -5060,38 +5068,67 @@ def _merge(base: dict, ours: dict) -> dict:
     return base
 
 
-def _toml_merge(text: str, ours: str) -> tuple[str, list[str]]:
-    """Codex's config.toml with our tables replaced or added, and our top-level keys
-    added only where the file has none (a model you set stays). Text-level: a table
-    runs from its header to the next header."""
+_TOML_HEAD = re.compile(r"\s*\[(\[?)([^\[\]=,]+)\]\]?\s*(?:#.*)?$")      # [table] or [[array]], a comment after
+_TOML_KEY = re.compile(r"""\s*(["']?)([\w.-]+)\1\s*=""")
+
+
+def _toml_merge(text: str, ours: str) -> str | None:
+    """A Codex TOML file with ours put in: our top-level keys and our tables (with any
+    sub-tables) in place of the file's, everything else as it was. Text-level: a table
+    runs from its header to the next, outside multi-line strings. Then checked: None
+    (leave it to you) unless the result parses, holds ours, and keeps every other key
+    of the file with its value."""
+    import tomllib
+
     def split(t: str):
-        top, tables, cur = [], {}, None
+        top, tables, ml = [], [], None
+        cur = top
         for line in t.splitlines():
-            m = re.match(r"^\s*\[([^\]]+)\]\s*$", line)
-            if m:
-                cur = m[1].strip()
-                tables[cur] = [line]
-            elif cur is None:
-                top.append(line)
+            m = None if ml else _TOML_HEAD.match(line)
+            if m:                                       # an [[array]] entry is never ours: its name stays ""
+                cur = [line]
+                tables.append(("" if m[1] else re.sub(r"\s*\.\s*", ".", m[2].strip()), cur))
             else:
-                tables[cur].append(line)
+                cur.append(line)
+            for q in ('"""', "'''"):                    # in or out of a multi-line string
+                if ml in (None, q) and line.count(q) % 2:
+                    ml = None if ml else q
         return top, tables
+
+    def key(line: str) -> str:
+        return (m := _TOML_KEY.match(line)) and m[2] or ""
     top, tables = split(text)
     our_top, our_tables = split(ours)
-    have = {re.match(r"^\s*([\w.-]+)\s*=", ln)[1] for ln in top if re.match(r"^\s*([\w.-]+)\s*=", ln)}
-    notes, add = [], []
-    for ln in our_top:
-        m = re.match(r"^\s*([\w.-]+)\s*=", ln)
-        if m and m[1] in have:
-            notes.append(f"kept your own {m[1]}; ours would be {ln.strip()}")
-        elif m:
-            add.append(ln)
-    for name, lines in our_tables.items():
-        tables[name] = [ln for ln in lines]
-    body = "\n".join(add + [ln for ln in top]).strip("\n")
-    parts = [body] if body else []
-    parts += ["\n".join(lines).strip("\n") for lines in tables.values()]
-    return "\n\n".join(parts) + "\n", notes
+    keys, names = {key(ln) for ln in our_top} - {""}, [n for n, _ in our_tables]
+
+    def mine(name: str) -> bool:                       # ours, or under ours (a dotted key, a sub-table)
+        return name in keys or any(name == n or name.startswith(n + ".") for n in names)
+    body = "\n".join(our_top + [ln for ln in top if not mine(key(ln))]).strip("\n")
+    parts = ([body] if body else []) + ["\n".join(ls).strip("\n") for n, ls in tables if not mine(n)] \
+        + ["\n".join(ls).strip("\n") for _, ls in our_tables]
+    out = "\n\n".join(parts) + "\n"
+    try:
+        old, new, want = (tomllib.loads(t) for t in (text, out, ours))
+    except tomllib.TOMLDecodeError:
+        return None
+    owned = [(k,) for k in keys] + [tuple(n.split(".")) for n in names]
+
+    def dig(d, path):
+        for k in path:
+            d = d.get(k) if isinstance(d, dict) else None
+        return d
+
+    def rest(d: dict, paths: list) -> dict:            # d without ours, and without tables left empty
+        out = {}
+        for k, v in d.items():
+            if (k,) in paths:
+                continue
+            if isinstance(v, dict) and not (v := rest(v, [p[1:] for p in paths if len(p) > 1 and p[0] == k])):
+                continue
+            out[k] = v
+        return out
+    kept = rest(old, owned) == rest(new, owned) and all(dig(new, p) == dig(want, p) for p in owned)
+    return out if kept else None
 
 
 def _yaml_block(text: str, ours: str) -> str | None:
@@ -5169,7 +5206,8 @@ def setup_plan(app: str, way: str = "", collection: str = "", name: str = "", ke
     else:
         targets = {"vscode": {"chatLanguageModels.json": d / "chatLanguageModels.json", "mcp.json": d / "mcp.json"},
                    "zed": {"settings.json": d / "settings.json"},
-                   "codex": {"config.toml": d / "config.toml"},
+                   "codex": {"config.toml": d / "config.toml",
+                             "benchwarmers.config.toml": d / "benchwarmers.config.toml"},
                    "continue": {"config.yaml": d / "config.yaml"},
                    "goose": {"custom_providers/benchwarmers.json": d / "custom_providers" / "benchwarmers.json",
                              "config.yaml": d / "config.yaml"}}[app]
@@ -5189,9 +5227,13 @@ def setup_plan(app: str, way: str = "", collection: str = "", name: str = "", ke
                 else:
                     new = _merge(have, theirs)
                 add(path, json.dumps(new, indent=2) + "\n")
-            elif path.suffix == ".toml":
-                text, notes = _toml_merge(old, ours)
-                add(path, text, "; ".join(notes))
+            elif path.suffix == ".toml":                # Codex: plain codex keeps your own model
+                if (text := _toml_merge(old, ours)) is None:
+                    left.append(f"{path} would not keep everything in it with the set-up merged in, or is not"
+                                " valid TOML: add the set-up to it by hand")
+                else:
+                    add(path, text, "for codex --profile benchwarmers; plain codex keeps your own model"
+                        if "benchwarmers.config.toml" in blocks else "")
             elif not old.strip():
                 add(path, ours.rstrip("\n") + "\n")
             elif app == "goose" and label_ == "config.yaml" and (text := _yaml_block(old, ours)) is not None:
@@ -5201,7 +5243,9 @@ def setup_plan(app: str, way: str = "", collection: str = "", name: str = "", ke
     after = {"opencode": "opencode picks it up by itself; models are benchwarmers/<collection>.",
              "vscode": "Reload VS Code; the models are in the chat's model picker.",
              "zed": "Zed asks for a key even where none is needed: set BENCHWARMERS_API_KEY to any text.",
-             "codex": "Restart Codex.", "continue": "Reload Continue.", "goose": "Restart goose."}[app]
+             "codex": "Start Codex with codex --profile benchwarmers (Codex 0.134 or later); plain codex stays"
+                      " on your own model." if "benchwarmers.config.toml" in blocks else "Restart Codex.",
+             "continue": "Reload Continue.", "goose": "Restart goose."}[app]
     if keys and app != "opencode":
         after += f" The key comes from {KEY_ENV}: set it where the app starts."
     return {"ok": True, "errors": [], "files": files, "left": left, "after": after, "way": way}

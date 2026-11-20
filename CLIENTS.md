@@ -172,16 +172,11 @@ Written from [language models](https://code.visualstudio.com/docs/copilot/custom
 
 Codex on a collection over the Responses API (route mode), and the panel as MCP tools.
 
-**Where it goes:** `~/.codex/config.toml` (`%USERPROFILE%\.codex\config.toml` on Windows). The first four lines go above the file's first `[table]`. The key comes from `BENCHWARMERS_KEY`.
+**Where it goes:** `~/.codex/config.toml` (`%USERPROFILE%\.codex\config.toml` on Windows): add the tables to it. `benchwarmers.config.toml` is a profile, a new file beside it: start Codex with `codex --profile benchwarmers` (Codex 0.134 or later) to use the collection; plain `codex` stays on your own model. The key comes from `BENCHWARMERS_KEY`.
 
 **config.toml**
 
 ```toml
-model = "bench/core:route"
-model_provider = "benchwarmers"
-model_context_window = 128000
-web_search = "disabled"
-
 [model_providers.benchwarmers]
 name = "Benchwarmers"
 base_url = "http://127.0.0.1:8122/v1"
@@ -194,9 +189,18 @@ bearer_token_env_var = "BENCHWARMERS_KEY"
 tool_timeout_sec = 900
 ```
 
+**benchwarmers.config.toml**
+
+```toml
+model = "bench/core:route"
+model_provider = "benchwarmers"
+model_context_window = 128000
+web_search = "disabled"
+```
+
 **Watch for:** `web_search = "disabled"`: left on, Codex sends OpenAI's hosted search, which the gateway refuses (no other model can run it), and every turn fails.
 
-Written from [configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference), read 2026-11-08.
+Written from [configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference), [profiles](https://learn.chatgpt.com/docs/config-file/config-advanced#profiles), read 2026-11-20.
 
 <a id='zed'></a>
 
