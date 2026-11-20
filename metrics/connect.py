@@ -64,16 +64,18 @@ ADDING A PROVIDER
 FOUND ON THIS MACHINE
 ---------------------
 `detect()` looks for model servers running here (LOCAL: Ollama, LM Studio,
-Jan, llama.cpp, LocalAI, vLLM, LiteLLM, CLI Proxy API, OmniRoute), so the
-Endpoints page can offer each one with its address and kind filled in. It
-asks their usual ports, and any port whose listening process is one of them
-by name or command line (`listeners()`), since a port can be changed.
-Loopback only, GET only, no key sent, every port at once. A port alone is not
-proof: each answers /v1/models (or refuses it without a key), and where
-something else could sit on its port, a `sign` from its docs or source says
-which it is (llama.cpp and LocalAI share 8080); without one, the process
-does. Adding one is the ordinary Add form, test before save and all; Ollama
-at its usual port keeps its own flow.
+Jan, GPT4All, llama.cpp, llamafile, LocalAI, vLLM, Strata, Project Maya,
+Open WebUI, LiteLLM, CLI Proxy API, AstrLink, opencodex, ThinkWatch Lite,
+Claude Code Router, Bifrost, OmniRoute, 9router), so the Endpoints page can
+offer each one with its address and kind filled in. It asks their usual ports,
+and any port whose listening process is one of them by name or command line
+(`listeners()`), since a port can be changed. Loopback only, GET only, no key
+sent, every port at once. A port alone is not proof: each answers /v1/models
+(Open WebUI /api/models), or refuses it without a key, and where something
+else could sit on its port, a `sign` from its docs or source says which it is
+(seven are asked on 8080); without one, the process does. Adding one is
+the ordinary Add form, test before save and all; Ollama at its usual port
+keeps its own flow.
 """
 
 from __future__ import annotations
@@ -191,6 +193,11 @@ def _version(status: int, data) -> bool:
     return status == 200 and isinstance(data, dict) and "version" in data
 
 
+def _llamacpp(status: int, data) -> bool:
+    """llama.cpp's server, and llamafile's copy of it: each model owned_by "llamacpp"."""
+    return any(r.get("owned_by") == "llamacpp" for r in _rows(data))
+
+
 # Model servers detect() looks for: their usual ports; `sign`, a key-free GET
 # and a test of its (status, answer) where the port alone could be another
 # server, none where the port is its own; the endpoint each becomes; where that
@@ -199,6 +206,9 @@ def _version(status: int, data) -> bool:
 # first whose sign holds. `procs`, how its process's name starts (".exe" and
 # case aside), and `cmd`, a word in its command line for one run by Python or
 # Node: from release binaries, installers and launch code, read 2026-11-09.
+# `prefix`, where its OpenAI-compatible API is when not /v1. GPT4All, Strata,
+# Project Maya, Bifrost, Open WebUI, llamafile, opencodex, ThinkWatch Lite,
+# Claude Code Router and AstrLink were read 2026-11-20, from the source named.
 LOCAL: dict[str, dict] = {
     "ollama": {"label": "Ollama", "ports": (11434,), "kind": "local", "provider": "ollama",
                "sign": ("/api/version", _version), "procs": ("ollama",),
@@ -212,10 +222,38 @@ LOCAL: dict[str, dict] = {
     # The server runs in the app itself: Jan, now Jan-Desktop (src-tauri/tauri.conf.json).
     "jan": {"label": "Jan", "ports": (1337,), "kind": "local", "procs": ("jan",),
             "docs": "https://docs.jan.ai/desktop/api-server"},
+    # The desktop app's local API server (MySettings networkPort). The app is "chat" on Windows and
+    # Linux, too common a name to go by; its install folder is gpt4all.
+    "gpt4all": {"label": "GPT4All", "ports": (4891,), "kind": "local", "cmd": ("gpt4all",),
+                "sign": ("/v1/models", lambda s, d: any(r.get("owned_by") == "humanity" for r in _rows(d))),
+                "docs": "https://github.com/nomic-ai/gpt4all/blob/main/gpt4all-chat/src/server.cpp"},
+    # Seven are asked on 8080: the most specific signs first, LocalAI's bare {"version"} last.
+    # Strata and Project Maya: Python, `-m serve.server --engine strata|maya`; /health is open with a key set.
+    "strata": {"label": "Strata", "ports": (8080,), "kind": "local", "cmd": ("strata",),
+               "sign": ("/health", lambda s, d: isinstance(d, dict) and d.get("service") == "strata"),
+               "docs": "https://github.com/Niko1221/Strata/blob/main/terminal/serve/server.py"},
+    "maya": {"label": "Project Maya", "ports": (8080,), "kind": "local", "cmd": ("maya",),
+             "sign": ("/health", lambda s, d: isinstance(d, dict) and "max_text_file" in d),
+             "docs": "https://github.com/mw00/project-maya/blob/main/serve/server.py"},
+    # bifrost-http, from npx or its image; /health is open whatever its auth.
+    "bifrost": {"label": "Bifrost", "ports": (8080,), "kind": "aggregator", "procs": ("bifrost",),
+                "sign": ("/health", lambda s, d: isinstance(d, dict) and "db_pings" in (d.get("components") or {})),
+                "docs": "https://github.com/maximhq/bifrost/blob/dev/transports/bifrost-http/handlers/health.go"},
+    # `open-webui serve` on 8080, its Docker image on 3000. Its API is under /api (/v1 is the web app),
+    # and /api/config names it, a renamed one "... (Open WebUI)" (env.py WEBUI_NAME).
+    "openwebui": {"label": "Open WebUI", "ports": (8080, 3000), "kind": "hub", "hub": "openwebui", "prefix": "/api",
+                  "sign": ("/api/config", lambda s, d: isinstance(d, dict) and "Open WebUI" in str(d.get("name"))),
+                  "cmd": ("open-webui", "open_webui"),
+                  "docs": "https://github.com/open-webui/open-webui/blob/main/backend/open_webui/main.py"},
     "llamacpp": {"label": "llama.cpp server", "ports": (9931, 8080), "kind": "local", "procs": ("llama-server",),
-                 # Its /v1/models is public even with --api-key, each model owned_by "llamacpp".
-                 "sign": ("/v1/models", lambda s, d: any(r.get("owned_by") == "llamacpp" for r in _rows(d))),
+                 # Its /v1/models is public even with --api-key.
+                 "sign": ("/v1/models", _llamacpp),
                  "docs": "https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md"},
+    # llama.cpp's server in one file, named after its model, so known by its command line. On a port
+    # whose process is unknown it answers exactly as llama.cpp does, and is offered as that.
+    "llamafile": {"label": "llamafile", "ports": (8080,), "kind": "local", "cmd": ("llamafile",),
+                  "sign": ("/v1/models", _llamacpp),
+                  "docs": "https://github.com/mozilla-ai/llamafile/blob/main/docs/api.md"},
     "localai": {"label": "LocalAI", "ports": (8080,), "kind": "local",
                 # No owned_by in its /v1/models (endpoints/openai/list.go); /version has no middleware.
                 "sign": ("/version", _version), "procs": ("local-ai",),   # also local-ai-v4.12.1-linux-amd64
@@ -226,6 +264,29 @@ LOCAL: dict[str, dict] = {
     "litellm": {"label": "LiteLLM", "ports": (4000,), "kind": "hub", "hub": "litellm", "cmd": ("litellm",),
                 "sign": ("/health/liveliness", lambda s, d: s == 200 and "alive" in str(d)),
                 "docs": "https://docs.litellm.ai/docs/proxy/health"},
+    # Bun under `ocx`'s Node shim (node_modules/@bitkyc08/opencodex), or the desktop app's ocx sidecar.
+    "opencodex": {"label": "opencodex", "ports": (10100,), "kind": "aggregator", "procs": ("ocx",),
+                  "cmd": ("opencodex",),
+                  "sign": ("/healthz", lambda s, d: isinstance(d, dict) and d.get("service") == "opencodex"),
+                  "docs": "https://github.com/lidge-jun/opencodex/blob/dev/src/server/proxy-liveness.ts"},
+    # twcore, the engine ThinkWatch Lite runs (ThinkWatch-Core): every refusal of its own starts "[ThinkWatch]".
+    "thinkwatch": {"label": "ThinkWatch Lite", "ports": (8788,), "kind": "aggregator", "procs": ("twcore",),
+                   "sign": ("/v1/models", lambda s, d: s == 401 and "[ThinkWatch]" in str(d)),
+                   "docs": "https://github.com/ThinkWatchProject/ThinkWatch-Core/blob/main/"
+                           "crates/tw-gateway/src/error.rs"},
+    # The gateway on 3456, or 3458 from Docker; the desktop app on Windows and macOS, else Node (npm)
+    # or Linux's claude-code-router. The sign is its own test of a running gateway.
+    "claude-code-router": {"label": "Claude Code Router", "ports": (3456, 3458), "kind": "aggregator",
+                           "procs": ("claude code router",), "cmd": ("claude-code-router",),
+                           "sign": ("/health", lambda s, d: isinstance(d, dict) and isinstance(d.get("status"), str)
+                                    and isinstance(d.get("core"), str)),
+                           "docs": "https://github.com/musistudio/claude-code-router/blob/main/"
+                                   "packages/core/src/gateway/existing-gateway-probe.ts"},
+    # AstrLink takes CLI Proxy API's 8317 (astrlink-core, AstrLink.exe): a 204 on its own reachability
+    # probe, where CLI Proxy API has none, as AstrLink has no CLI Proxy API greeting at /.
+    "astrlink": {"label": "AstrLink", "ports": (8317,), "kind": "aggregator", "procs": ("astrlink",),
+                 "sign": ("/astrlink/reachability", lambda s, d: s == 204),
+                 "docs": "https://github.com/Calcium-Ion/AstrLink/blob/main/core/internal/ingress/handler.go"},
     # Its releases, Homebrew's formula, and its Docker image (CLIProxyAPI).
     "cliproxy": {"label": "CLI Proxy API", "ports": (8317,), "kind": "hub", "hub": "cliproxy",
                  "sign": ("/", lambda s, d: isinstance(d, dict) and d.get("message") == "CLI Proxy API Server"),
@@ -334,21 +395,25 @@ def detect(skip=(), timeout: float = 0.5) -> list[dict]:
             by_port[port].append(sid)
 
     def identify(port: int, ids: list[str]) -> dict | None:
-        got = {"/v1/models": look(f"http://127.0.0.1:{port}/v1/models", timeout)}
-        status, data = got["/v1/models"]
-        keyed = status in (401, 403)
-        if not keyed and not (status == 200 and isinstance(data, dict) and isinstance(data.get("data"), list)):
-            return None                          # not an OpenAI-compatible API, or nothing there
-        for sid in ids:
-            s = LOCAL[sid]
-            path, test = s.get("sign") or ("/v1/models", None)
+        got: dict[str, tuple[int, object]] = {}  # path -> its answer, each asked once
+
+        def ask(path: str) -> tuple[int, object]:
             if path not in got:
                 got[path] = look(f"http://127.0.0.1:{port}{path}", timeout)
-            if test is None or test(*got[path]):
+            return got[path]
+        for sid in ids:
+            s = LOCAL[sid]
+            api = s.get("prefix", "/v1")
+            status, data = ask(api + "/models")
+            keyed = status in (401, 403)
+            if not keyed and not (status == 200 and isinstance(data, dict) and isinstance(data.get("data"), list)):
+                continue                         # not an OpenAI-compatible API there, or nothing at all
+            path, test = s.get("sign") or (api + "/models", None)
+            if test is None or test(*ask(path)):
                 own = s.get("provider", "") if port in s["ports"] else ""   # Ollama's flow knows only its usual port
                 return {"id": sid, "label": s["label"], "port": port, "kind": s["kind"], "hub": s.get("hub", ""),
                         "provider": own, "docs": s["docs"],
-                        "base": PROVIDERS[own]["base"] if own else f"http://127.0.0.1:{port}/v1",
+                        "base": PROVIDERS[own]["base"] if own else f"http://127.0.0.1:{port}{api}",
                         "models": None if keyed else len(_rows(data)), "key": keyed}
         return None
 

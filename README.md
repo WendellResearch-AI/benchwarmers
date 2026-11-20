@@ -165,12 +165,13 @@ dependencies either way: the app is the Python standard library.
    those providers' own APIs (the API choice in the same dialog). Only providers that publish a sign-in for other apps are
    offered; adding one is an entry in `metrics/connect.py` (its docstring says
    how). A model server already running on this machine, at its usual port or
-   any other its process is listening on (Ollama, LM Studio, Jan, llama.cpp,
-   LocalAI, vLLM, LiteLLM, CLI Proxy API, OmniRoute, 9router), is offered under
-   "Found on this machine", its address and kind filled in. LiteLLM, CLI Proxy
-   API and OmniRoute come as hubs: the bench can add a model to them, and
-   OmniRoute's combos and `auto` routers are kept out of onboarding, since a
-   verdict is about one model.
+   any other its process is listening on, is offered under "Found on this
+   machine", its address and kind filled in: Ollama, LM Studio, Jan, GPT4All,
+   llama.cpp, llamafile, LocalAI, vLLM, Strata and Project Maya; AstrLink,
+   opencodex, ThinkWatch Lite, Claude Code Router, Bifrost and 9router as
+   gateways; Open WebUI, LiteLLM, CLI Proxy API and OmniRoute as hubs, which
+   the bench can add a model to. OmniRoute's combos and `auto` routers are kept
+   out of onboarding, since a verdict is about one model.
 
        python serve.py                  # http://localhost:8122
 

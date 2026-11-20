@@ -96,7 +96,7 @@ class Server(BaseHTTPRequestHandler):
 
 def local_servers() -> None:
     """Found on this machine (connect.detect): each server told by its answers,
-    llama.cpp and LocalAI apart on one port, impostors and a hung port ignored,
+    the seven on 8080 and the two on 8317 apart, impostors and a hung port ignored,
     this install's ports and servers already added skipped; then on any port,
     by the process listening there. Fake servers on free ports stand in for the
     real ones, a table of their own for this machine's processes (none at
@@ -128,14 +128,39 @@ def local_servers() -> None:
         "cliproxy": {"/v1/models": refused, "/": (200, {"message": "CLI Proxy API Server", "endpoints": []})},
         "omniroute": {"/v1/models": listing("a", "combo"), "/api/health": (200, {"status": "ok", "timestamp": "t"})},
         "9router": {"/v1/models": listing("a", "b"), "/api/health": (200, {"ok": True})},
+        # As their sources answer, read 2026-11-20 (metrics/connect.py LOCAL names each).
+        "gpt4all": {"/v1/models": listing("humanity")},
+        "llamafile": {"/v1/models": listing("llamacpp")},
+        "strata": {"/v1/models": listing(None), "/health": (200, {
+            "status": "ok", "max_context": 32768, "model": "qwen", "api_key": False, "service": "strata"})},
+        "maya": {"/v1/models": listing(None), "/health": (200, {
+            "status": "ok", "max_context": 65536, "model": "glm", "max_text_file": 262144, "version": "1.1.28"})},
+        "bifrost": {"/v1/models": listing("openai", "anthropic"),
+                    "/health": (200, {"status": "ok", "components": {"db_pings": "ok"}})},
+        "openwebui": {"/v1/models": (200, "<!doctype html><title>Open WebUI</title>"),
+                      "/api/models": (401, {"detail": "Not authenticated"}), "/health": (200, {"status": True}),
+                      "/api/config": (200, {"status": True, "name": "Home (Open WebUI)", "version": "0.9.1"})},
+        "opencodex": {"/v1/models": listing("openai"), "/healthz": (200, {
+            "status": "ok", "service": "opencodex", "version": "2.100.0", "uptime": 5})},
+        "thinkwatch": {"/v1/models": (401, {"type": "error", "error": {
+            "type": "authentication_error", "message": "[ThinkWatch] The request carried no gateway key."}}),
+            "/healthz": (200, "ok")},
+        "claude-code-router": {"/v1/models": (401, {"error": {"message": "Unauthorized"}}), "/health": (200, {
+            "core": "http://127.0.0.1:3457", "status": "running", "timestamp": "2026-11-20T10:00:00Z"})},
+        "astrlink": {"/v1/models": (401, {"error": {"code": "invalid_access_token"}}),
+                     "/astrlink/reachability": (204, "")},
     }
-    servers = {sid: serve_on(Server) for sid in shapes if sid not in ("localai", "9router")}
+    # Servers that share a default port, as 8080, 8317 and 20128 are shared: the first answers there at first.
+    groups = (("llamacpp", "localai", "llamafile", "bifrost", "strata", "maya", "openwebui"), ("cliproxy", "astrlink"),
+              ("omniroute", "9router"))
+    alone = [sid for sid in shapes if not any(sid in g[1:] for g in groups)]
+    servers = {sid: serve_on(Server) for sid in alone}
     port = {sid: s.server_port for sid, s in servers.items()}
-    port["localai"] = shared = port["llamacpp"]  # as 8080 is both
-    port["9router"] = port["omniroute"]          # as 20128 is both
-    for sid, shape in shapes.items():
-        if sid not in ("localai", "9router"):
-            SHAPES[port[sid]] = shape
+    for g in groups:
+        port.update(dict.fromkeys(g[1:], port[g[0]]))
+    shared = port["llamacpp"]
+    for sid in alone:
+        SHAPES[port[sid]] = shapes[sid]
     hung = socket.socket()                       # takes the connection, never answers
     hung.bind(("127.0.0.1", 0))
     hung.listen()
@@ -153,9 +178,9 @@ def local_servers() -> None:
         got = found()
         # 0.5 s per probe: a hung port that held it up would take far longer; CI runners are slow.
         assert time.time() - start < 5, "a hung port held detection up"
-        assert set(got) == set(shapes) - {"localai", "9router"}, got   # 8080 answering as llama.cpp, 20128 as OmniRoute
+        assert set(got) == set(alone), got           # 8080 as llama.cpp, 8317 as CLI Proxy API, 20128 as OmniRoute
         assert got["llamacpp"]["port"] == shared and got["lmstudio"]["models"] == 3, got
-        for sid in ("jan", "litellm", "cliproxy"):
+        for sid in ("jan", "litellm", "cliproxy", "thinkwatch", "claude-code-router"):
             assert got[sid]["key"] and got[sid]["models"] is None, got[sid]
         assert (got["litellm"]["kind"], got["litellm"]["hub"]) == ("hub", "litellm")
         assert (got["cliproxy"]["kind"], got["cliproxy"]["hub"]) == ("hub", "cliproxy")
@@ -167,12 +192,24 @@ def local_servers() -> None:
         assert "omniroute" not in nine and (nine["9router"]["kind"], nine["9router"]["hub"]) == ("aggregator", ""), nine
         SHAPES[port["omniroute"]] = shapes["omniroute"]
         assert got["ollama"]["provider"] == "ollama" and got["ollama"]["base"] == connect.PROVIDERS["ollama"]["base"]
-        SHAPES[shared] = shapes["localai"]                          # the same port, answering as LocalAI
-        assert "localai" in found() and "llamacpp" not in found()
+        assert got["gpt4all"]["models"] == 1 and got["opencodex"]["kind"] == "aggregator", got
+        # Each neighbour on a shared port, answering there in turn: told by its own sign, none by
+        # another's. llamafile answers as llama.cpp does, so a port alone offers it as llama.cpp.
+        for g in groups:
+            for sid in g:
+                SHAPES[port[sid]] = shapes[sid]
+                on = {f["id"] for f in connect.detect() if f["port"] == port[sid]}
+                assert on == ({"llamacpp"} if sid == "llamafile" else {sid}), (sid, on)
+        hub = found()["openwebui"]                                  # (8317 is AstrLink now, 8080 Open WebUI)
+        assert (hub["kind"], hub["hub"], hub["key"]) == ("hub", "openwebui", True), hub
+        assert hub["base"] == f"http://127.0.0.1:{shared}/api", hub
         # Something else on a server's port: a web page, an API without the server's sign.
         SHAPES[shared] = {"/v1/models": (200, "<html>a web app</html>")}
         SHAPES[port["vllm"]] = {"/v1/models": listing(None)}
-        assert not {"localai", "llamacpp", "vllm"} & set(found())
+        assert not (set(groups[0]) | {"vllm"}) & set(found())
+        SHAPES[shared] = {"/v1/models": listing(None, "llama"), "/health": (200, {"status": "ok"}),
+                          "/version": (404, {"error": "not found"})}
+        assert not set(groups[0]) & set(found())                   # llama.cpp's /health, but nothing's sign
         # This install's own port, and servers already endpoints (by localhost, or by this machine's name).
         assert "omniroute" not in found(skip={port["omniroute"]})
         connect.locked.update(connect.endpoints.FILE, lambda d: d.update(
@@ -197,18 +234,22 @@ def local_servers() -> None:
         assert catalog._native("vl", ["m0"]) == ("", {})
         # On any port, by the process listening there: LM Studio by its name, vLLM by its command
         # line under Python, Ollama by OLLAMA_HOST (added at its real port, so not by its own
-        # flow, which knows only 11434); a port whose process is none of them is never asked.
-        extra = {sid: serve_on(Server) for sid in ("lmstudio", "vllm", "ollama", "other")}
+        # flow, which knows only 11434), a llamafile named after its model and GPT4All's "chat"
+        # by their command lines; a port whose process is none of them is never asked.
+        extra = {sid: serve_on(Server) for sid in ("lmstudio", "vllm", "ollama", "llamafile", "gpt4all", "other")}
         servers.update({sid + "-moved": s for sid, s in extra.items()})
         at = {sid: s.server_port for sid, s in extra.items()}
         for sid in at:
             SHAPES[at[sid]] = shapes["vllm" if sid == "other" else sid]     # "other" answers as vLLM too
         connect.listeners = lambda: [(1, at["lmstudio"], "LM Studio.exe", ""),
                                      (2, at["vllm"], "python3", "/opt/venv/bin/python3 /opt/venv/bin/vllm serve m"),
-                                     (3, at["other"], "notepad.exe", "notepad.exe a.txt")]
+                                     (3, at["other"], "notepad.exe", "notepad.exe a.txt"),
+                                     (4, at["llamafile"], "Qwen3.5-9B.llam", "./Qwen3.5-9B.llamafile --server"),
+                                     (5, at["gpt4all"], "chat", "/home/u/gpt4all/bin/chat")]
         os.environ["OLLAMA_HOST"] = f"0.0.0.0:{at['ollama']}"
         moved = {(f["id"], f["port"]): f for f in connect.detect()}
-        assert {("lmstudio", at["lmstudio"]), ("vllm", at["vllm"]), ("ollama", at["ollama"])} <= set(moved), moved
+        assert {("lmstudio", at["lmstudio"]), ("vllm", at["vllm"]), ("ollama", at["ollama"]),
+                ("llamafile", at["llamafile"]), ("gpt4all", at["gpt4all"])} <= set(moved), moved
         assert at["other"] not in {p for _, p in moved}, moved
         ollama = moved[("ollama", at["ollama"])]
         assert not ollama["provider"] and ollama["base"] == f"http://127.0.0.1:{at['ollama']}/v1", ollama
