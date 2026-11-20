@@ -475,6 +475,22 @@ def main() -> int:
           + ("" if ok else f" -> {refused} {r} {back}"))
     failures += 0 if ok else 1
 
+    # Add's Provider box links models.dev's doc, so only an https:// one reaches the page.
+    import sources
+    real_cached = sources.cached
+    sources.cached = lambda feed: {"good": {"api": "https://a.example/v1", "doc": "https://a.example/docs"},
+                                   "js": {"api": "https://b.example/v1", "doc": "javascript:alert(1)"},
+                                   "plain": {"api": "https://c.example/v1", "doc": "http://c.example/docs"},
+                                   "odd": {"api": "https://d.example/v1", "doc": ["https://d.example"]}} \
+        if feed == "modelsdev" else real_cached(feed)
+    try:
+        docs = {p["id"]: p["doc"] for p in serve.endpoint_providers()["providers"]}
+    finally:
+        sources.cached = real_cached
+    ok = docs == {"good": "https://a.example/docs", "js": "", "plain": "", "odd": ""}
+    print(("ok   " if ok else "FAIL ") + "provider docs: https:// links only" + ("" if ok else f" -> {docs}"))
+    failures += 0 if ok else 1
+
     # Call options: max_tokens set, refused above the model's max output or as
     # a fraction or for no model, then cleared; the llm CLI's copy is stubbed.
     told, real_info, llm_option = [], serve.catalog.info, serve._llm_option

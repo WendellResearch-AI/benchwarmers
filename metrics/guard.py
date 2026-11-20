@@ -96,7 +96,8 @@ KEY_HEADERS = ("x-api-key", "x-goog-api-key")
 LABEL = re.compile(r"^[a-z][a-z-]{1,23}$")
 # Bearers that SDKs and set-up guides fill in when no key is needed: no app's name.
 PLACEHOLDERS = {"none", "dummy", "not-needed", "no-key", "nokey", "null", "empty", "key", "api-key", "apikey",
-                "sk", "sk-no-key-required", "sk-dummy", "test", "x", "xx", "xxx"}
+                "sk", "sk-no-key-required", "sk-dummy", "test", "x", "xx", "xxx", "ollama", "lm-studio",
+                "lmstudio", "fake", "anything", "placeholder", "your-api-key"}
 
 
 class Refused(Exception):
@@ -282,9 +283,9 @@ def admin_caller(headers) -> str:
     opens a dashboard route."""
     if not auth_on():
         return "local"
-    scheme, _, given = (headers.get("Authorization") or "").strip().partition(" ")
-    if scheme.lower() == "bearer" and given.strip():
-        if login(given.strip()):
+    scheme, given = _authorization(headers.get("Authorization") or "")
+    if scheme.lower() == "bearer" and given:
+        if login(given):
             return "admin"
         raise Refused(401, "that bearer is not the admin token (a gateway key opens /v1 only)")
     if not _session_ok(headers):
@@ -312,7 +313,8 @@ def gateway_caller(headers, query_key: str | None = None) -> str:
     raw = headers.get("Authorization")
     other = next((headers.get(h) for h in KEY_HEADERS if headers.get(h) is not None), query_key)
     if not keys_required():
-        sent = [v.strip() for v in ((raw or "").strip().removeprefix("Bearer ").removeprefix("bearer "),
+        scheme, bearer = _authorization(raw or "")
+        sent = [v.strip() for v in (bearer if scheme.lower() == "bearer" else (raw or "").strip(),
                                     *(headers.get(h) or "" for h in KEY_HEADERS), query_key or "") if v and v.strip()]
         for value in sent:
             if name := key_name(value):
@@ -327,8 +329,7 @@ def gateway_caller(headers, query_key: str | None = None) -> str:
     if raw is None:
         raise Refused(401, "this route needs a gateway key (Authorization: Bearer <key>, or x-api-key);"
                            " make one on the dashboard's Settings page", challenge)
-    scheme, _, value = raw.strip().partition(" ")
-    value = value.strip()
+    scheme, value = _authorization(raw)
     if scheme.lower() != "bearer" or not value:
         raise Refused(401, "send the gateway key as 'Authorization: Bearer <key>'", challenge)
     name = key_name(value)
@@ -337,6 +338,14 @@ def gateway_caller(headers, query_key: str | None = None) -> str:
                            f" (gateway keys start {PREFIX}; this is some other key)"), challenge)
     _touch(name)
     return name
+
+
+def _authorization(raw: str) -> tuple[str, str]:
+    """An Authorization header's scheme and credential, split at the first run
+    of whitespace, a tab included: one reading for every caller check, so a
+    scheme's case or spacing never makes a key count in one mode and not another."""
+    scheme, value = (raw.split(None, 1) + ["", ""])[:2]
+    return scheme, value.strip()
 
 
 def scope(name: str) -> list[str] | None:
@@ -552,6 +561,7 @@ def _selftest() -> None:
         # The admin token as a bearer (the bench CLI): it, and only it.
         assert admin_caller({"Authorization": f"Bearer {token}"}) == "admin"
         assert admin_caller({"Authorization": f"bearer  {token} "}) == "admin"
+        assert admin_caller({"Authorization": f"BEARER\t{token}"}) == "admin"
         for bad in (f"Bearer {token}x", "Bearer " + "t" * 23, f"Basic {token}"):
             try:
                 admin_caller({"Authorization": bad})
@@ -654,15 +664,22 @@ def _selftest() -> None:
                 # wherever the key is sent, and whatever is sent beside it
                 assert gateway_caller({"Authorization": "Bearer dummy", "x-api-key": other}) == "agent"
                 assert gateway_caller({"Authorization": other}) == "agent"
+                for sent in (f"BEARER {other}", f"Bearer\t{other}", f"bearer \t {other} "):   # read as when required
+                    assert gateway_caller({"Authorization": sent}) == "agent", sent
                 for dummy in ("Bearer sk-dummy", "Bearer EMPTY", "Bearer dummy", "Bearer bwk_nope", "Basic opencode",
                               "Bearer " + "a" * 40, "Bearer two words", "Bearer 4a8b2c6d8e0f1a3b",
-                              "Bearer hunter2", "Bearer agent"):            # a secret's digits; a key's name
+                              "Bearer hunter2", "Bearer agent",             # a secret's digits; a key's name
+                              "bearer", "bearer ", "Bearer", "Bearer\t",    # a scheme alone is no label
+                              "Bearer ollama", "Bearer lm-studio", "Bearer lmstudio", "Bearer fake", "Bearer anything",
+                              "Bearer placeholder", "Bearer your-api-key"):  # SDKs' and guides' dummy keys
                     assert gateway_caller({"Authorization": dummy}) == "local", dummy
+                assert gateway_caller({"x-api-key": "ollama"}) == "local"
                 assert admin_caller({}) == "local"
                 # ...unless keys are required on this machine too; a misspelt value still asks.
                 for v in ("1", "required", "TRUE"):
                     os.environ["BENCHWARMERS_REQUIRE_KEYS"] = v
                     assert gateway_caller({"Authorization": f"Bearer {other}"}) == "agent"
+                    assert gateway_caller({"Authorization": f"BEARER\t{other}"}) == "agent"
                     try:
                         gateway_caller({"Authorization": "Bearer x"})
                         raise AssertionError(f"BENCHWARMERS_REQUIRE_KEYS={v} let a dummy bearer in")
