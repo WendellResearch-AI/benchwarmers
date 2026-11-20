@@ -205,9 +205,9 @@ only pick a name (`bench/reviewers:merged`), and `GET /v1/models` lists each
 collection in its other mode too. Merged adds one call after the panel: a
 merger writes a single answer saying where the seats agreed, where they
 disagreed and who said what, and that becomes `content`. The merger is the
-collection's `merger`, or when empty the member with the most useful verdicts
-on the request's shape, else the router's primary, else the first member that
-fits. It reads the answers as "Source 1", "Source 2"... with no model,
+collection's `merger`, or when empty the member whose verdicts on the
+request's shape score best (as route mode ranks members, "Who answers"),
+else the router's primary, else the first member that fits. It reads the answers as "Source 1", "Source 2"... with no model,
 provider or seat name, so a brand does not weigh an answer; its "Source 2"
 (or "source 2", "Sources 1 and 3") becomes "model (seat)" before the reply
 goes, and a number with no source, or a range, is left as written. It works
@@ -383,11 +383,16 @@ OCR*; the catalog's `tools` comes from OpenRouter's listed parameters,
 models.dev, the endpoint's own listing or a capability probe that saw a
 call), that cannot see (when it has images) or whose context window is
 under the request (tools and tool calls counted). No member left: 400
-(413 when size is why). Of those left, the best record goes first: useful
-verdicts counted, then verified suite findings, then a connection already
-paid for; members cooling down after a rate limit go last. One new
-conversation in four goes instead to the member whose record is oldest, so
-the record does not narrow to one model.
+(413 when size is why). Of those left, the best record goes first. Each
+model's verdicts make a score (`offload.score`): the share of its judged
+answers that were useful and listed no false claim, pulled toward one half
+as if it had five more verdicts, half of them useful. So a few verdicts
+count for little and many let the record speak: 5 useful of 5 goes before
+10 of 30, and one lucky verdict does not go before 9 of 10. A verdict that
+lists a false claim counts twice as a miss. Ties go to verified suite
+findings, then to a connection already paid for. Members cooling down after
+a rate limit go last. One new conversation in four goes instead to the
+member whose record is oldest, so the record does not narrow to one model.
 
 **Sticky.** A conversation stays on its model across turns: switching
 mid-task breaks the agent's coherence and the provider's prompt cache. The

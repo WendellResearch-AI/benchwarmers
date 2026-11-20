@@ -501,22 +501,16 @@ def record(collection: str, task: str = "") -> dict[str, dict]:
 
 def merger_candidates(collection: dict, members: list[str], shape: str, large: bool):
     """Who may merge, best first. The collection's `merger` alone when set;
-    else the members with verdicts on this shape, most useful first, then the
-    router's primary, then the other members (a fresh install has neither
-    verdicts nor suite scores). A generator, so the router is asked only if
-    no member with a record fits."""
+    else the members with verdicts on this shape, best record first (as the
+    route order ranks, offload.score), then the router's primary, then the
+    other members (a fresh install has neither verdicts nor suite scores). A
+    generator, so the router is asked only if no member with a record fits."""
     if collection.get("merger"):
         yield collection["merger"]
         return
-    record: dict[str, list[int]] = {}
-    for e in offload.entries():
-        # The shape ends each seat's task as run_collection writes it: "(bench/<name>, <shape>)".
-        if e["model"] in members and e.get("useful") is not None and e.get("task", "").endswith(f", {shape})"):
-            r = record.setdefault(e["model"], [0, 0])
-            r[0], r[1] = r[0] + bool(e["useful"]), r[1] + 1
-    # Useful verdicts counted, not a ratio, as route.py counts findings: one
-    # lucky verdict must not outrank a long good record.
-    yield from sorted(record, key=lambda a: (-record[a][0], -record[a][0] / record[a][1]))
+    # The shape ends each seat's task as run_collection writes it: "(bench/<name>, <shape>)".
+    used = offload.summary(lambda e: e.get("task", "").endswith(f", {shape})"))
+    yield from sorted((a for a in members if used.get(a, {}).get("judged")), key=lambda a: -offload.score(used[a]))
     try:
         primary = route.panel(shape, large=large)["primary"]
     except Exception:                                  # noqa: BLE001 -- the members can still merge
@@ -906,8 +900,9 @@ def fingerprint(name: str, who: str, messages: list[dict]) -> str:
 
 
 def route_order(aliases: list[str]) -> list[str]:
-    """Best record first: useful verdicts counted, as the merger is chosen
-    (one lucky verdict must not outrank a long good record), then verified
+    """Best record first: offload.score, the verdicts' rate weighted by how
+    many there are, false claims against (one lucky verdict must not outrank
+    a long good record; the merger is chosen the same way), then verified
     suite findings, then a connection already paid for. Members cooling down
     after a rate limit or failing their probes go last. Now and then
     (ROTATE) the member whose record is oldest goes first instead, so one
@@ -925,7 +920,7 @@ def route_order(aliases: list[str]) -> list[str]:
         tags = {a: route.full_tag_of(a) for a in aliases}
     except Exception:                                  # noqa: BLE001
         paid, tags = set(), {}
-    ranked = sorted(aliases, reverse=True, key=lambda a: (used.get(a, {}).get("useful", 0),
+    ranked = sorted(aliases, reverse=True, key=lambda a: (offload.score(used.get(a, {})),
                                                           found.get(a, (0, 0, 0))[0], tags.get(a) in paid))
     cooling = retiring()
     fresh = [a for a in ranked if a not in cooling]
