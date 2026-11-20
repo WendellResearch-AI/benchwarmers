@@ -5097,25 +5097,32 @@ def _toml_merge(text: str, ours: str) -> tuple[str, list[str]]:
 def _yaml_block(text: str, ours: str) -> str | None:
     """goose's config.yaml with our `extensions: benchwarmers:` block put in: under
     an existing top-level `extensions:` (replacing ours if there), or the whole
-    snippet appended when there is none. None when the file's shape is not that."""
+    snippet appended when there is none. None (copy it by hand) unless the entries are
+    laid out as goose writes them: a mapping, two spaces in, no tab or column-0 comment
+    among them, so ours is never written twice or put under another entry."""
     lines, block = text.splitlines(), ours.splitlines()[1:]          # ours: "extensions:" then the block
-    try:
-        at = next(i for i, ln in enumerate(lines) if re.match(r"^extensions:\s*$", ln))
-    except StopIteration:
-        return (text.rstrip("\n") + "\n" + ours.rstrip("\n") + "\n") if not re.search(r"(?m)^extensions:", text) else None
-    end = next((i for i in range(at + 1, len(lines)) if lines[i] and not lines[i].startswith(" ")), len(lines))
-    child = next((ln for ln in lines[at + 1:end] if ln.strip()), "  x")
-    if len(child) - len(child.lstrip(" ")) != 2:
-        return None                                     # not indented as ours is: leave it to you
+    at = next((i for i, ln in enumerate(lines) if re.match(r"^extensions:\s*$", ln)), None)
+    if at is None:      # any other spelling of the key (quoted, flow, a BOM before it) is not appended to
+        return None if re.search(r"(?m)^\W*extensions\W*:", text) else text.rstrip("\n") + "\n" + ours.rstrip("\n") + "\n"
+    nxt = next((i for i in range(at + 1, len(lines)) if lines[i][:1] not in ("", " ", "\t", "#")), len(lines))
+    end = 1 + max((i for i in range(at + 1, nxt) if lines[i][:1] in (" ", "\t") and lines[i].strip()
+                   and not lines[i].lstrip().startswith("#")), default=at)  # comments before the next key stay put
+    body = lines[at + 1:end]
+    entries = [ln for ln in body if ln.strip() and not ln.lstrip().startswith("#")]
+    key = r"  [\w\"'.-]+\s*:(\s|$)"                     # an entry two spaces in; deeper lines are its own
+    if (any(ln.startswith("#") or "\t" in ln for ln in body) or (entries and not re.match(key, entries[0]))
+            or not all(ln.startswith("   ") or re.match(key, ln) for ln in entries)
+            or (nxt < len(lines) and re.match(r"-(\s|$)", lines[nxt]))):
+        return None                                     # a list, another indent, a tab or comment among them
     out, i = lines[:at + 1] + block, at + 1
     while i < end:                                      # their entries, ours (if there) dropped
-        ln = lines[i]
-        if ln.startswith("  benchwarmers:"):
-            i += 1
-            while i < end and (not lines[i].strip() or lines[i].startswith("    ")):
-                i += 1
+        if re.match(r"  [\"']?benchwarmers[\"']?\s*:(\s|$)", lines[i]):
+            j = next((k for k in range(i + 1, end) if re.match(key, lines[k])), end)
+            while j > i + 1 and (not lines[j - 1].strip() or lines[j - 1].lstrip().startswith("#")):
+                j -= 1                                  # a comment heading their next entry stays
+            i = j
             continue
-        out.append(ln)
+        out.append(lines[i])
         i += 1
     return "\n".join(out + lines[end:]) + "\n"
 
@@ -5194,8 +5201,13 @@ def setup_plan(app: str, way: str = "", collection: str = "", name: str = "", ke
                 add(path, text, "; ".join(notes))
             elif not old.strip():
                 add(path, ours.rstrip("\n") + "\n")
-            elif app == "goose" and label_ == "config.yaml" and (text := _yaml_block(old, ours)) is not None:
-                add(path, text, "the benchwarmers extension, under extensions")
+            elif app == "goose" and label_ == "config.yaml":
+                if (text := _yaml_block(old, ours)) is None:
+                    left.append(f"{path}: its extensions are not laid out as goose writes them (a list, another"
+                                " indent, a tab or a comment at the start of a line among them): add the"
+                                " benchwarmers extension to it by hand")
+                else:
+                    add(path, text, "the benchwarmers extension, under extensions")
             else:
                 left.append(f"{path} exists: add the set-up to it by hand")
     after = {"opencode": "opencode picks it up by itself; models are benchwarmers/<collection>.",
