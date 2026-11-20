@@ -305,10 +305,16 @@ def main() -> int:
         if cx.get("model") != "mine" or "other" not in cx["mcp_servers"] or "benchwarmers" not in cx["model_providers"]:
             bad.append(f"Codex merge wrong: {cx}")
         gy = (dirs["goose"] / "config.yaml").read_text(encoding="utf-8")
-        if "  other:" not in gy or "  benchwarmers:" not in gy or "active_provider: x" not in gy:
+        if "  other:" not in gy or gy.count("  benchwarmers:") != 1 or "active_provider: x" not in gy:
             bad.append(f"goose merge wrong: {gy!r}")
         if load_yaml and "benchwarmers" not in (load_yaml(gy).get("extensions") or {}):
             bad.append("goose's config.yaml no longer parses with our extension")
+        (dirs["goose"] / "config.yaml").write_text("extensions:\n# mine\n    developer:\n      enabled: true\n",
+                                                   encoding="utf-8")
+        r = serve.setup_plan("goose", "both", "", "my-app")
+        if any(f["path"].endswith("config.yaml") for f in r["files"]) or \
+                not any("config.yaml" in w and "by hand" in w for w in r["left"]):
+            bad.append(f"goose's config.yaml in a shape Set up cannot edit was not left to you: {r['left']}")
         oc = json.loads((dirs["opencode"] / "plugins" / "benchwarmers" / "benchwarmers.json").read_text(encoding="utf-8"))
         if oc.get("name") != "my-app" or not (dirs["opencode"] / "plugins" / "benchwarmers" / "index.ts").exists():
             bad.append(f"opencode plugin not installed: {oc}")
@@ -342,6 +348,49 @@ def main() -> int:
           and after["at"] == "2030-01-01T12:00:05+01:00" and "Codex CLI<small" in page_after)
     print(("ok   " if ok else "FAIL ") + "Does it work?: a call with no name after Set up counts, one before it"
           " does not" + ("" if ok else f" -> {before} {after}"))
+    failures += 0 if ok else 1
+    # goose's config.yaml, merged as text: ours once, two spaces in, theirs and the rest as they
+    # were; a layout it cannot edit safely is refused (None), never written twice or misplaced.
+    # Checked on the text, so it runs without PyYAML; parsed too where PyYAML is there.
+    gx = next(b["text"] for c in serve.client_setups("http://127.0.0.1:8122", [("core", 200_000, False)], False)
+              if c["id"] == "goose" for b in c["blocks"] if b["label"] == "config.yaml")
+    ours = gx.split("\n", 1)[1].rstrip("\n")                    # our entry, without "extensions:"
+    dev, mem = "  developer:\n    enabled: true\n", "  memory:\n    enabled: true\n"
+    old_ours = "  benchwarmers:\n    enabled: false\n"
+    cases = {
+        "plain, ours replaced": ("extensions:\n" + dev + old_ours + "    timeout: 300\n" + mem + "GOOSE_MODEL: x\n",
+                                 "extensions:\n" + ours + "\n" + dev + mem + "GOOSE_MODEL: x\n"),
+        "none yet, appended": ("GOOSE_MODEL: x\n", "GOOSE_MODEL: x\n" + gx.rstrip("\n") + "\n"),
+        "a comment two in, inside our old entry": ("extensions:\n" + dev + old_ours + "  # old\n    timeout: 300\n" + mem,
+                                                   "extensions:\n" + ours + "\n" + dev + mem),
+        "their comments before the next entry and the next key": (
+            "extensions:\n" + dev + old_ours + "\n  # memory\n" + mem + "# model\nGOOSE_MODEL: x\n",
+            "extensions:\n" + ours + "\n" + dev + "\n  # memory\n" + mem + "# model\nGOOSE_MODEL: x\n"),
+        "a column-0 comment before our old entry": ("extensions:\n" + dev + "# kept for later\n" + old_ours, None),
+        "a column-0 comment, then entries four in": ("extensions:\n# mine\n    developer:\n      enabled: true\n"
+                                                     "GOOSE_MODEL: x\n", None),
+        "a two-space comment, then entries four in": ("extensions:\n  # mine\n    developer:\n      enabled: true\n", None),
+        "a tab": ("extensions:\n" + dev + "  memory:\n\tenabled: true\n", None),
+        "a sequence": ("extensions:\n- developer\n- memory\nGOOSE_MODEL: x\n", None),
+        "a sequence two in": ("extensions:\n  - developer\n", None),
+        "a flow mapping": ("extensions: {developer: {enabled: true}}\n", None),
+        "a quoted key": ('"extensions":\n' + dev, None),
+    }
+    bad = []
+    for name, (old, want) in cases.items():
+        got = serve._yaml_block(old, gx)
+        if got != want:
+            bad.append(f"{name}: {got!r}")
+        elif got and load_yaml:
+            a, b = load_yaml(old) or {}, load_yaml(got)
+            theirs = {k: v for k, v in (a.get("extensions") or {}).items() if k != "benchwarmers"}
+            if (b["extensions"].get("benchwarmers") != load_yaml(gx)["extensions"]["benchwarmers"]
+                    or {k: v for k, v in b["extensions"].items() if k != "benchwarmers"} != theirs
+                    or {k: v for k, v in a.items() if k != "extensions"} != {k: v for k, v in b.items() if k != "extensions"}):
+                bad.append(f"{name}: parses to something else: {b}")
+    ok = not bad
+    print(("ok   " if ok else "FAIL ") + "goose's config.yaml: ours once, two spaces in, theirs kept; comments, tabs,"
+          " a list or another indent refused" + (", parsed" if load_yaml else "") + ("" if ok else f" -> {bad}"))
     failures += 0 if ok else 1
     # restore: same alias back, out of retired.json, role and ad hoc kept, and
     # back into the collections that still exist (one deleted, one changed since)
