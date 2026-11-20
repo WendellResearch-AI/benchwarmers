@@ -501,10 +501,11 @@ window fills between its check and the call.
 
 ### Pointing agents at a collection
 
-The dashboard's **Clients** page has each app's set-up filled in from the
+The dashboard's **Connect** page has each app's set-up filled in from the
 install (opencode, VS Code chat, Codex, Zed, Continue, Cline and Kilo Code,
 Claude Code, LangChain and agent SDKs, goose, chat apps), each written from that app's docs on the date
-it shows. By hand:
+it shows, and writes the files itself for six of them (USAGE.md, "Connecting
+an app"). By hand:
 
 The base URL is the server: `http://127.0.0.1:8122` (the dashboard's port)
 or `:8123` (`gateway.py`). On this machine any key text works; elsewhere,
@@ -624,7 +625,7 @@ key limited to its collection and a rate, or keep the key on the app's server.
 | Decision models | `metrics/decide.py`: the shape picker and the collection pick (above), each asking the model best on the decision benchmark; every call in `metrics/decisions.jsonl`. Benchmarks › Decision models shows the benchmark and who each use asks (BENCHMARKS.md). |
 | Call log | `runs/gateway/calls.jsonl`, gitignored: every seat's answer, status, timing and call id; a panel with a late seat is written once that seat is in. |
 | Evidence | Each seat is recorded in `metrics/offloads.jsonl` as an unjudged offload when it answers; `offload.py verdict <call id>` or `POST /bench/verdict` replaces it. |
-| Collections tab | The collections, each drawn as its panel sits, and their form (one row per model, a chip per provider). Then the gateway's recent requests: every seat's status and verdict, how long the caller waited (Time), and how many verdicts are owed. Clicking a seat opens its answer and the verdict form. |
+| Collections tab | The collections, each drawn as its panel sits, and their form (one row per model, a chip per provider). Then the gateway's recent requests: who asked, how many seats answered, how many verdicts are owed and how long the caller waited (Time). A request opens beside the list: every seat's answer to judge there, and the same request as curl or Python to send again. |
 | Catalog | `metrics/catalog.py`: context window, output limit, rate limits and capabilities per model, refreshed daily by the built-in scheduler; a free model whose price goes above zero raises a "went paid" alert. |
 | Discover tab | `metrics/discover.py`: FreeLLMAPI (leading), models.dev and each Open WebUI connection's own model list merged into one list of models worth adding, free first, FreeLLMAPI's smartest first, marked by whether you can already reach the provider (matched to a connection by API host or name) and whether the model is on the bench (on another provider counts as "also on bench"). Fetched daily with the catalog; Refresh lists fetches them now. |
 | Merged replies | Opt-in: one merger answer as `content`, every seat still in `bench` (The reply). |

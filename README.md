@@ -431,13 +431,18 @@ points at it with `ANTHROPIC_BASE_URL=http://127.0.0.1:8122` and
 OpenAI-, Responses- or Ollama-speaking agents with the same base URL.
 [GATEWAY.md](GATEWAY.md), "Route mode", has the set-up and the limits.
 
-**Ready set-ups.** The dashboard's **Clients** page (Gateway) gives each
+**Ready set-ups.** The dashboard's **Connect** page (Gateway) gives each
 popular app's configuration, filled in from your install's address,
 collections and MCP server, with a Copy button: opencode, VS Code chat, Codex
 CLI, Zed, Continue, Cline and Kilo Code, Claude Code, your own Python with
 LangChain or the OpenAI Agents SDK, goose, and chat apps
-(LobeHub, AnythingLLM, Cherry Studio, Chatbox, LibreChat). Where keys are
-asked for, it makes one and fills it in, never into a file that may sync.
+(LobeHub, AnythingLLM, Cherry Studio, Chatbox, LibreChat). You choose how the
+app uses Benchwarmers (a collection as its model, the panel as tools, or
+both), which collection, and its name; **Set it up** writes the files for
+opencode, VS Code, Zed, Codex, Continue and goose itself, after showing them,
+with a copy of each file it changes; and **Does it work?** shows the app's
+first call. An app may have its own key, made there for its collection; it
+goes into the lines you copy, never into a file that may sync.
 The same set-ups are in [CLIENTS.md](CLIENTS.md), with a fresh install's
 address and collections, for reading here or handing to an agent.
 
@@ -532,8 +537,8 @@ backs up the ones it replaces, in the data folder's `backups/`.
   with tools is refused there, not trimmed. Route mode passes turns only to
   members on chat-completions endpoints, keeps its sticky conversations in
   memory (a restart starts each on a fresh pick), and has been run end to end
-  with Claude Code; the other set-ups on the Connect page are written from
-  each app's docs, not run. Shadow seats (another member answering an agent's turn
+  with Claude Code and opencode 2; the other set-ups on the Connect page are
+  written from each app's docs, not run (Codex's profile among them). Shadow seats (another member answering an agent's turn
   afterwards, for evaluation) are opt-in (`shadow_rate` in `config/gateway.json`) and
   compare the shape of the answers (text or tool calls, which tools, arguments that
   parse), not whether either was right.

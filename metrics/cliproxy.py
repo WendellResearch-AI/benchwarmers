@@ -77,7 +77,7 @@ def _secret(name: str) -> str:
     if not secret:
         env = endpoints.ENV_KEY + endpoints.admin_name(endpoints.load()[name]).upper().replace("-", "_")
         raise ValueError(f"CLI Proxy API's management key is not stored: give it as the admin key on the"
-                         f" Endpoints page (Change key on {name}), or set {env}")
+                         f" Endpoints page (open {name}: A new key), or set {env}")
     return secret
 
 

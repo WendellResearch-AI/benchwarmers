@@ -84,7 +84,13 @@ open itself to anyone.
 - **Files.** It writes inside its data folder (`BENCHWARMERS_HOME`, or the
   folder `.benchwarmers-home` names) and, in llm's user folder, the key file
   (when you paste a key or sign in) and the model list (when it registers a
-  model). Images sent to the gateway are never written to a log.
+  model). One thing writes outside those, and only when you press it: Connect's
+  **Set it up** writes an app's own configuration (opencode, VS Code, Zed,
+  Codex, Continue, goose) in that app's folder, for the account Benchwarmers
+  runs as. It shows the files first, copies each one it changes to
+  `<name>.bak-<time>` beside it, leaves a file it cannot merge safely to you,
+  and never writes a key: a set-up with a key names the environment variable
+  that holds it. Images sent to the gateway are never written to a log.
 - **Processes.** Onboarding, the probes and the suite run this repository's
   own scripts with the same Python. Model ids that reach a command line are
   checked against a strict pattern first.

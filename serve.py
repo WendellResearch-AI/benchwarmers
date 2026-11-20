@@ -1251,7 +1251,7 @@ def save_endpoint(name: str, base: str, secret: str, who: str = "ui", extra: dic
     URL typed here, which is the point: that is the endpoint being added.
     `extra` is fields from Connect (metrics/connect.py): its `connect` record,
     its `kind`, `api`, `models_url`, and headers, which only a new endpoint
-    takes. `new` (the Add form) refuses a name in use: Change key is how one
+    takes. `new` (the Add form) refuses a name in use: its record's A new key is how one
     is edited. `kind` (endpoints.KINDS), and `hub` (endpoints.HUBS) for a hub,
     say what it is; a new endpoint is written with a kind (a provider unless
     told), so nothing added here is left to endpoints.kind's inference. Left
@@ -5077,10 +5077,13 @@ def connect_setup(app: str, way: str = "", collection: str = "", where: str = "h
 # ---- Connect's Set up: an app's own files written for it, on this machine ----
 # Only where that is safe: a file Benchwarmers owns whole (opencode's plugin, goose's
 # provider), a JSON file without comments (keys merged in), Codex's TOML (its own
-# profile and tables put in, every other key kept: _toml_merge), a YAML file only when
-# absent (goose's extensions: its own block). Anything else is refused with why, and
-# copied by hand. Every file changed is copied to <name>.bak-<time> first. Keys never
-# go into a file: a set-up with a key reads it from KEY_ENV.
+# profile and tables put in, every other key kept: _toml_merge), goose's config.yaml
+# (its own extension put under `extensions`, where they are laid out as goose writes
+# them: _yaml_block), any other YAML file only when absent (Continue's). Anything else
+# is refused with why, and copied by hand. Every file changed is copied to
+# <name>.bak-<time> first. Keys never go into a file: a set-up with a key reads it from
+# KEY_ENV, or says KEY_HOLDER where a header takes no variable (Zed's, goose's), and a
+# key typed there is kept (_keep_key).
 SETUP_APPS = ("opencode", "vscode", "zed", "codex", "continue", "goose")
 PLUGIN_SRC = ROOT / "clients" / "opencode"
 

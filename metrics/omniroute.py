@@ -109,10 +109,10 @@ def _call(path: str, body: dict | None = None):
             said = ""
         if exc.code == 403 and "manage" in said:
             raise ValueError(f"OmniRoute's key has no manage scope ({said}): give it that scope in OmniRoute's"
-                             f" API Keys, or store a key that has it as the admin key (Change key on {name})") from None
+                             f" API Keys, or store a key that has it as the admin key (open {name} on Endpoints: A new key)") from None
         if exc.code == 401:
             raise ValueError(f"OmniRoute refused the key ({said}); store one with the manage scope as the admin"
-                             f" key (Change key on {name})") from None
+                             f" key (open {name} on Endpoints: A new key)") from None
         raise ValueError(f"OmniRoute answered {exc.code} on {path.split('?')[0]}: {said}") from None
 
 

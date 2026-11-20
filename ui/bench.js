@@ -2524,7 +2524,7 @@
   function keyBody() {
     var body = {name: e.name.value, base: e.base.value, key: e.key.value, new: e.adding,
                 admin: $('e-admin-row').hidden ? '' : e.admin.value};
-    if (e.adding) {                     // Change key keeps its kind and API
+    if (e.adding) {                     // a new key in its record keeps its kind and API
       body.kind = e.kind.value; body.hub = e.kind.value === 'hub' ? e.hub.value : ''; body.api = $('e-api').value;
     }
     return body;
@@ -2716,7 +2716,7 @@
   function firstStep(step) {
     if (step === 'onboard') { $('onboard-open').click(); return; }
     // The first collection comes filled in as bench/core, the name the docs, CLIENTS.md and
-    // the Clients page use: up to four of the models just onboarded ticked (two to four is
+    // the Connect page use: up to four of the models just onboarded ticked (two to four is
     // what a panel wants), never an image generator. Nothing is made until it is saved.
     if (step === 'collection') {
       go('collections').then(function () {

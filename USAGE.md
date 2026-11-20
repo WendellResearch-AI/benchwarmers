@@ -32,7 +32,7 @@ coding agent doing it with you); the gateway's whole contract is in
 | Gateway | **Endpoints** | Where models are served from. Add an endpoint (a provider's sign-in, or any OpenAI-compatible API key), change a key, and see what each one serves. A model server running on this machine, at its usual port or any other its process is listening on (LM Studio, Jan, llama.cpp, vLLM, Open WebUI, gateways such as Bifrost, and the like), is offered under Found on this machine: Add opens the dialog with it filled in, to test and save. Also your own app registrations and rate limits per connection. |
 | | **Models** | Every model on the bench, by the connection it comes from: what it holds, its reply time and its limits. One search above every table, each table folds, and Collapse all / Expand all. Click a name for its popup: role, alias, facts, options, retire. |
 | | **Collections** | The named panels your apps ask for, and the gateway's settings. |
-| | **Clients** | Each popular app's set-up (opencode, VS Code, Codex, Zed, Continue, Cline, Kilo Code, Claude Code, LangChain and the OpenAI Agents SDK, goose, chat apps), filled in from this install, with Copy and a gateway key made on the spot. [CLIENTS.md](CLIENTS.md) has the same, for a fresh install. |
+| | **Connect** | Each popular app's set-up (opencode, VS Code, Codex, Zed, Continue, Cline, Kilo Code, Claude Code, LangChain and the OpenAI Agents SDK, goose, chat apps), made from your choices (how the app uses Benchwarmers, which collection, its name, a key of its own), with Copy, Set it up for the apps whose files it can write, and Does it work? for the app's first call. [CLIENTS.md](CLIENTS.md) has the set-ups for a fresh install. |
 | | **Discover** | Models worth adding, from public catalogs, with the ways this install can reach each one. |
 | Control | **Settings** | Theme, gateway keys, the scheduler, the model client, providers whose free models work only in their own app, export and import, how the install is reached (shown only), and Restart. |
 | | **Info** | The source repository, the version (linking its release), Python, data folder and counts. |
@@ -158,11 +158,42 @@ default collection").
 
 ## Connecting an app
 
-The dashboard's **Clients** page has a ready set-up for each popular app,
-filled in from this install (its address, collections and MCP server): copy it
-into the file or screen it names. When keys are asked for, it makes one on the
-spot and fills it in where a key goes, never into a file that may sync. What
-follows is the same by hand.
+The dashboard's **Connect** page has a ready set-up for each popular app,
+filled in from this install (its address, collections and MCP server). For
+each app you choose:
+
+- **How it uses Benchwarmers**: a collection as its model (route mode), the
+  panel as two tools beside its own model (MCP), or both; a chat app gets one
+  merged reply or every seat's.
+- **Collection**, and **where it runs** (in Docker, the address changes and
+  the page says what to allow).
+- **Its name.** With no key, the set-up sends the name as its key, and the
+  app's calls are logged under it instead of `local`. It is a label, not a
+  credential: lower-case letters and dashes, and not a name apps send as a
+  dummy key (`ollama`, `test`), which the page refuses.
+- **Key**: none, or one made there for that app, limited to its collection
+  and, if you like, a rate. A key works the moment it is made, also where keys
+  are not required. It is shown once and goes into the lines you copy (a shell
+  line, a settings field), never into a file that may sync.
+
+**Set it up** (opencode, VS Code, Zed, Codex, Continue, goose) writes the
+app's own files on the machine Benchwarmers runs on. It lists them first, and
+copies each file it changes to `<name>.bak-<time>` beside it. It merges into
+plain JSON, into Codex's `config.toml` (only its own tables; the model goes in
+a profile, `codex --profile benchwarmers`, so plain `codex` keeps yours) and
+into goose's `config.yaml`; Continue's `config.yaml` is written only when
+there is none. A file with comments in its JSON, or laid out in a way it
+cannot edit safely, is left to you with the reason. Zed's and goose's
+MCP header takes no variable, so with a key it holds `<your gateway key>` for
+you to replace, and a key you typed there is kept by the next Set up. Or copy
+each block into the file or screen it names.
+
+**Does it work?** waits for the app's first call and says which model
+answered. A set-up that sends neither name nor key (Codex, goose's provider,
+Zed's and VS Code's models) calls as `local`: after Set it up, the next
+`local` call is counted as probably that app's; set up by hand, look for
+`local` under Connected in the page's side panel. What follows is the same by
+hand.
 
 Any OpenAI-compatible client works. Point it at the dashboard's port and ask
 for the model `bench/<collection>`:
