@@ -112,8 +112,34 @@ def records() -> None:
     assert gateway.record("bench/core")["m1"]["notUseful"] == 1 and gateway.record("bench/none") == {}
 
 
+def ranking() -> None:
+    """offload.score, as the route order and the merger rank by it: few verdicts
+    count for little, many let the rate speak, and a false claim counts against."""
+    def judge(model: str, judged: int, useful: int, false: int = 0) -> None:
+        for i in range(judged):                   # the false claims go on not-useful verdicts: worse than no use
+            offload.add(model, "t (bench/core, review)", None, "member; ok", f"k.{model}.{i}")
+            offload.verdict(f"k.{model}.{i}", i < useful, "", false=["untrue"] if judged - i <= false else None)
+    for model, judged, useful, false in (("five", 5, 5, 0), ("thirty", 30, 10, 0), ("lucky", 1, 1, 0),
+                                         ("steady", 10, 9, 0), ("honest", 5, 3, 0), ("liar", 5, 3, 1)):
+        judge(model, judged, useful, false)
+    gateway.ROTATE = 0
+    assert gateway.route_order(["thirty", "five"]) == ["five", "thirty"]          # 5 of 5 over 10 of 30
+    assert gateway.route_order(["lucky", "steady"]) == ["steady", "lucky"]        # one lucky verdict is not a record
+    assert gateway.route_order(["liar", "honest"]) == ["honest", "liar"]          # a false claim counts against
+    assert next(gateway.merger_candidates({}, ["liar", "honest"], "review", False)) == "honest"
+    assert offload.score({}) == 0.5                                               # no verdicts: neutral
+    # A useful verdict is worth the share of its claims that held: one false of ten costs a tenth.
+    for model, useful, real, false in (("mostly", True, 9, 1), ("clean", True, 0, 0), ("nope", False, 0, 0)):
+        offload.add(model, "t (bench/core, review)", None, "member; ok", f"k.{model}")
+        offload.verdict(f"k.{model}", useful, "", [f"real {i}" for i in range(real)] or None, ["untrue"] * false or None)
+    s = offload.summary()
+    assert abs(offload.score(s["mostly"]) - offload.score(s["clean"])) < 0.02, s["mostly"]
+    assert gateway.route_order(["nope", "mostly"]) == ["mostly", "nope"]
+
+
 if __name__ == "__main__":
     verdicts()
     bench_field()
     records()
-    print("verdict, bench-field and record checks pass")
+    ranking()
+    print("verdict, bench-field, record and ranking checks pass")

@@ -205,9 +205,9 @@ only pick a name (`bench/reviewers:merged`), and `GET /v1/models` lists each
 collection in its other mode too. Merged adds one call after the panel: a
 merger writes a single answer saying where the seats agreed, where they
 disagreed and who said what, and that becomes `content`. The merger is the
-collection's `merger`, or when empty the member with the most useful verdicts
-on the request's shape, else the router's primary, else the first member that
-fits. It reads the answers as "Source 1", "Source 2"... with no model,
+collection's `merger`, or when empty the member whose verdicts on the
+request's shape score best (as route mode ranks members, "Who answers"),
+else the router's primary, else the first member that fits. It reads the answers as "Source 1", "Source 2"... with no model,
 provider or seat name, so a brand does not weigh an answer; its "Source 2"
 (or "source 2", "Sources 1 and 3") becomes "model (seat)" before the reply
 goes, and a number with no source, or a range, is left as written. It works
@@ -383,11 +383,18 @@ OCR*; the catalog's `tools` comes from OpenRouter's listed parameters,
 models.dev, the endpoint's own listing or a capability probe that saw a
 call), that cannot see (when it has images) or whose context window is
 under the request (tools and tool calls counted). No member left: 400
-(413 when size is why). Of those left, the best record goes first: useful
-verdicts counted, then verified suite findings, then a connection already
-paid for; members cooling down after a rate limit go last. One new
-conversation in four goes instead to the member whose record is oldest, so
-the record does not narrow to one model.
+(413 when size is why). Of those left, the best record goes first. Each
+model's verdicts make a score (`offload.score`): what its judged answers
+were worth, on average, pulled toward one half as if it had five more
+verdicts, half of them useful. So a few verdicts count for little and many
+let the record speak: 5 useful of 5 goes before 10 of 30, and one lucky
+verdict does not go before 9 of 10. A useful answer is worth the share of
+its listed claims that held (1 with none listed), so one false claim among
+nine real ones costs a tenth. A not-useful answer is worth nothing, and one
+that lists a false claim counts as a second miss. Ties go to verified suite
+findings, then to a connection already paid for. Members cooling down after
+a rate limit go last. One new conversation in four goes instead to the
+member whose record is oldest, so the record does not narrow to one model.
 
 **Sticky.** A conversation stays on its model across turns: switching
 mid-task breaks the agent's coherence and the provider's prompt cache. The
@@ -449,11 +456,31 @@ toward rotation. The Gateway card lists route conversations in their own
 table (when, who asked, the first message, who answered with ✓/✗, turns,
 tool calls, failovers) and none of them counts as a verdict owed.
 
-**Shadows (later, opt-in).** A shadow seat would answer the same turn in the
-background for evaluation only, after the caller has its answer. The place
-is marked in `route_turn` ("SHADOWS GO HERE"): each would be its own client
-call with purpose `shadow`, recorded on the conversation's call id; nothing
-the caller sees would wait for or change because of them. Not built.
+**Shadows (opt-in).** Route mode gives an agent one model a turn, so agent
+traffic alone never compares models. A shadow is another member answering
+the same turn, for evaluation only. Set `"shadow_rate"` in
+`config/gateway.json` to the share of route turns that get one: 0, the
+default, is off, and 0.1 is one turn in ten. The dashboard's Gateway
+settings do not show it. Once the turn's last byte has gone to the caller,
+the gateway picks one other member of that turn's plan at random: not the
+one that answered, not one cooling down, and only one with room under
+pacing for its own call and a real turn after it. A member without that
+room is skipped, never waited for. The shadow gets the request as the
+member did, in a background thread, and its answer is read whole; the call
+is in the usage ledger with purpose `shadow`. A line in
+`runs/gateway/shadows.jsonl`, on the conversation's call id, says how it
+did: the primary and shadow models, status, seconds, tokens, whether the
+request had tools, whether the shadow answered with text or tool calls, for
+each call whether it names a tool the request offered and whether its
+arguments parse as a JSON object, and whether it chose the same tools as the
+primary. Never the prompt, and never a call's arguments. A shadow's valid
+tool call counts as tool calling seen working, as a capability probe's does.
+A shadow writes no offload, so it owes no verdict and moves neither the
+rotation nor the ranking. The Gateway card's route conversations count each
+conversation's shadows. Its limits: one shadow a turn at most; none when the
+caller hung up part way; only the shape of the answers is compared, not
+whether either was right; and pacing could still make a shadow wait if the
+window fills between its check and the call.
 
 **Limits, honestly.**
 

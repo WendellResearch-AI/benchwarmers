@@ -14,8 +14,9 @@ stream shape; every member failing keeps a status; stickiness across turns
 and a fresh pick for another conversation; who may be routed to (tools,
 images, ad hoc, retired, another API); a panel still refusing tools; and
 what is recorded: the ledger (purpose route), routes.jsonl, one unjudged
-offload per conversation, and the Gateway card with nothing added to Owed.
-Temp data folder; BENCHWARMERS_HOME is set before anything is imported.
+offload per conversation, and the Gateway card with nothing added to Owed;
+and shadows: off by default, after the caller's whole answer, another
+member, no prompt kept. Temp data folder; BENCHWARMERS_HOME is set before anything is imported.
 """
 
 from __future__ import annotations
@@ -156,6 +157,7 @@ def main() -> int:
         "broken": {"members": ["down", "down2"], "description": "x"},
         "picky": {"members": ["gone", "pricey", "prose", "claude-native", "blind", "tooler"], "description": "x"},
         "proseonly": {"members": ["prose"], "description": "x"},
+        "shadowed": {"members": ["tooler", "plain"], "description": "x"},
         "panel": {"members": ["tooler"], "description": "x"}})
     import gateway
     import serve
@@ -418,6 +420,59 @@ def main() -> int:
         assert "0 verdicts owed" in card and "Route conversations" in card and conv in card, card[-2000:]
         offload.verdict(f"{conv}.1", True, "fixed the bug")
         assert "tooler ✓" in serve.gateway_card()
+
+        # 15. SHADOWS: off by default; never before the caller has the whole answer, never
+        # the member that answered, recorded without the prompt, owing nothing.
+        shadows = TMP / "runs" / "gateway" / "shadows.jsonl"
+        assert gateway.shadow({}, {}, {}) is None                      # no shadow_rate: off
+        real_shadow, gate, triggered = gateway.shadow, threading.Event(), []
+        gateway.shadow = lambda plan, ask, bench: (triggered.append(bench["alias"]), gate.wait(10))
+        try:
+            began = time.monotonic()                                   # held shadows: the replies still arrive
+            ok("/v1/chat/completions", {"model": "bench/shadowed:route", "tools": [WEATHER],
+                                        "messages": [{"role": "user", "content": "whole"}]})
+            conn = http.client.HTTPConnection("127.0.0.1", gw.server_port, timeout=30)
+            conn.request("POST", "/v1/chat/completions", json.dumps({
+                "model": "bench/shadowed:route", "stream": True, "tools": [WEATHER],
+                "messages": [{"role": "user", "content": "streamed"}]}).encode(),
+                {"Host": f"127.0.0.1:{gw.server_port}", "Content-Type": "application/json"})
+            r = conn.getresponse()
+            while (piece := r.readline()) and b"[DONE]" not in piece:
+                pass
+            assert time.monotonic() - began < 5, "a reply waited for its shadow"
+            for _ in range(50):                                        # the stream's comes just after [DONE]
+                if len(triggered) == 2:
+                    break
+                time.sleep(0.1)
+        finally:
+            gate.set()
+            gateway.shadow = real_shadow
+        conn.close()
+        assert triggered == ["tooler", "tooler"], triggered
+        write("gateway.json", {"shadow_rate": 1})
+        Upstream.seen.clear()
+        _, raw = ok("/v1/chat/completions", {"model": "bench/shadowed:route", "tools": [WEATHER],
+                                             "messages": [{"role": "user", "content": "Shadow me, please"}]})
+        bench = json.loads(raw)["bench"]
+        for _ in range(100):
+            if shadows.exists() and shadows.read_text(encoding="utf-8").endswith("\n"):
+                break
+            time.sleep(0.1)
+        text = shadows.read_text(encoding="utf-8")
+        line = json.loads(text)
+        assert (line["primary"], line["shadow"], line["call"], line["turn"]) == ("tooler", "plain", bench["call"], 1), line
+        assert line["tools"] and line["answered"] == "tool_calls" and line["same_tools"] and line["status"] == "ok", line
+        assert line["calls"] == [{"name": "get_weather", "offered": True, "json": True}], line
+        assert "Shadow me" not in text and "Oslo" not in text, text            # no prompt, no arguments
+        assert [b["model"] for b in Upstream.seen] == ["tooler", "plain"]
+        assert Upstream.seen[1]["messages"] == Upstream.seen[0]["messages"] and Upstream.seen[1]["tools"] == [WEATHER]
+        assert any(r["alias"] == "plain" and r["purpose"] == "shadow" for r in ledger.rows(0))
+        assert not any(e["model"] == "plain" and e.get("call", "").startswith(bench["conversation"])
+                       for e in offload.entries())                    # no offload: no verdict owed, no rotation
+        assert "Shadows" in serve.gateway_card()
+        gateway._shadow({"order": ["plain"], "images": False}, {"messages": q, "upstream": {}},
+                        {"alias": "plain"})                             # only the member that answered: none
+        assert shadows.read_text(encoding="utf-8") == text
     finally:
         sys.stderr = saved_err
         gw.shutdown()

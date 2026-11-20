@@ -38,8 +38,9 @@ Wendell Research.
     quota figures are kept.
   - Requesty's usage for the key and its public model list, asked the same
     way; only the count of free-model requests is kept.
-  - For CLI Proxy API's sign-ins, through the proxy, the quota endpoint of the
-    provider each sign-in belongs to (Google's, ChatGPT's).
+  - For the sign-ins in CLI Proxy API or OmniRoute, through that hub, the
+    quota endpoint of the provider each sign-in belongs to (Google's,
+    ChatGPT's).
 - **Charts**: the dashboard's page loads Observable Plot from jsDelivr, at a
   pinned version, in your browser.
 - **Posts**, only when you click Post on X, Bluesky, LinkedIn or Reddit in a

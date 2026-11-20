@@ -126,13 +126,15 @@ def local_servers() -> None:
         "vllm": {"/v1/models": listing("vllm"), "/version": version},
         "litellm": {"/v1/models": refused, "/health/liveliness": (200, "I'm alive!")},
         "cliproxy": {"/v1/models": refused, "/": (200, {"message": "CLI Proxy API Server", "endpoints": []})},
-        "omniroute": {"/v1/models": listing("a", "b")},
+        "omniroute": {"/v1/models": listing("a", "combo"), "/api/health": (200, {"status": "ok", "timestamp": "t"})},
+        "9router": {"/v1/models": listing("a", "b"), "/api/health": (200, {"ok": True})},
     }
-    servers = {sid: serve_on(Server) for sid in shapes if sid != "localai"}
+    servers = {sid: serve_on(Server) for sid in shapes if sid not in ("localai", "9router")}
     port = {sid: s.server_port for sid, s in servers.items()}
     port["localai"] = shared = port["llamacpp"]  # as 8080 is both
+    port["9router"] = port["omniroute"]          # as 20128 is both
     for sid, shape in shapes.items():
-        if sid != "localai":
+        if sid not in ("localai", "9router"):
             SHAPES[port[sid]] = shape
     hung = socket.socket()                       # takes the connection, never answers
     hung.bind(("127.0.0.1", 0))
@@ -151,14 +153,19 @@ def local_servers() -> None:
         got = found()
         # 0.5 s per probe: a hung port that held it up would take far longer; CI runners are slow.
         assert time.time() - start < 5, "a hung port held detection up"
-        assert set(got) == set(shapes) - {"localai"}, got           # 8080 answering as llama.cpp
+        assert set(got) == set(shapes) - {"localai", "9router"}, got   # 8080 answering as llama.cpp, 20128 as OmniRoute
         assert got["llamacpp"]["port"] == shared and got["lmstudio"]["models"] == 3, got
         for sid in ("jan", "litellm", "cliproxy"):
             assert got[sid]["key"] and got[sid]["models"] is None, got[sid]
         assert (got["litellm"]["kind"], got["litellm"]["hub"]) == ("hub", "litellm")
         assert (got["cliproxy"]["kind"], got["cliproxy"]["hub"]) == ("hub", "cliproxy")
-        assert got["omniroute"]["kind"] == "aggregator" and got["vllm"]["kind"] == "local"
+        assert (got["omniroute"]["kind"], got["omniroute"]["hub"]) == ("hub", "omniroute")
+        assert got["vllm"]["kind"] == "local"
         assert got["vllm"]["base"] == f"http://127.0.0.1:{port['vllm']}/v1"
+        SHAPES[port["omniroute"]] = shapes["9router"]                # its fork's port: a plain aggregator
+        nine = found()
+        assert "omniroute" not in nine and (nine["9router"]["kind"], nine["9router"]["hub"]) == ("aggregator", ""), nine
+        SHAPES[port["omniroute"]] = shapes["omniroute"]
         assert got["ollama"]["provider"] == "ollama" and got["ollama"]["base"] == connect.PROVIDERS["ollama"]["base"]
         SHAPES[shared] = shapes["localai"]                          # the same port, answering as LocalAI
         assert "localai" in found() and "llamacpp" not in found()

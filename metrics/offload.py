@@ -112,20 +112,47 @@ def verdict(call: str, useful: bool | None, note: str,
     return add(found["model"], found["task"], useful, note, call, real, false)
 
 
-def summary() -> dict[str, dict]:
-    """Per model: how often, how often it helped, and the last thing it did."""
+def summary(keep=None) -> dict[str, dict]:
+    """Per model: how often, how often it helped, and the last thing it did.
+    For score(): `credit`, what the useful verdicts are worth (each the share
+    of its listed claims that held, 1 with none listed), and `wrong`, the
+    not-useful verdicts that list a false claim. `keep`, a test on an entry,
+    counts only the entries it passes (the merger reads one shape's verdicts)."""
     agg: dict[str, dict] = collections.defaultdict(
-        lambda: {"offloads": 0, "useful": 0, "judged": 0,
+        lambda: {"offloads": 0, "useful": 0, "judged": 0, "credit": 0.0, "wrong": 0,
                  "last_task": "", "last_date": ""})
     for e in entries():
+        if keep and not keep(e):
+            continue
         a = agg[e["model"]]
         a["offloads"] += 1
         if e.get("useful") is not None:
             a["judged"] += 1
             a["useful"] += 1 if e["useful"] else 0
+            real, false = len(e.get("real") or []), len(e.get("false") or [])
+            a["credit"] += (real / (real + false) if real + false else 1) if e["useful"] else 0
+            a["wrong"] += 1 if false and not e["useful"] else 0
         if e["date"] >= a["last_date"]:
             a["last_date"], a["last_task"] = e["date"], e["task"]
     return dict(agg)
+
+
+# Pseudo-verdicts every model starts with, half of them useful (a Bayesian
+# average): with few verdicts a score stays near 0.5, and from about this many
+# its own record outweighs the guess. Five puts 5 of 5 (0.75) above 10 of 30
+# (0.36), and one lucky verdict (0.58) below 9 of 10 (0.77).
+PRIOR = 5
+
+
+def score(r: dict) -> float:
+    """How far a model's record says to trust it, 0 to 1, from summary()'s
+    counts; 0.5 with no verdicts. The route order and the merger both rank
+    by it. What the judged answers were worth over how many, pulled toward
+    0.5 by PRIOR. A useful answer is worth the share of its claims that held,
+    so one false claim among nine real ones costs a tenth, and saying little
+    earns nothing extra; a not-useful one is worth 0, and one more miss if it
+    asserted something untrue, so that is worse than being of no use."""
+    return (r.get("credit", 0) + PRIOR / 2) / (r.get("judged", 0) + r.get("wrong", 0) + PRIOR)
 
 
 def main() -> None:

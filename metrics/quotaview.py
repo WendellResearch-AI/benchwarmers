@@ -7,8 +7,8 @@ One tile per connection tag a bench model arrives through
 (route.full_tag_of: `cli-proxy-api/codex`, `openrouter`, `nvidia-api`).
 A tile takes the shape of what its provider says:
 
-    groups  windows per model group, several each (CLI Proxy API's OAuth
-            credentials: Gemini 5 hours and week), or per model from the
+    groups  windows per model group, several each (a hub's OAuth sign-ins:
+            Gemini 5 hours and week), or per model from the
             rate-limit headers the built-in client saw (metrics/quota.py)
     pool    one allowance the models share: OpenRouter's free requests a
             day, a bar per key, counted from the usage ledger
@@ -28,13 +28,14 @@ left for free, and are:
     xKiro           GET /v1/usage: free-model tokens left today (to midnight
                     UTC) and a plan's spend windows; the key is a direct
                     endpoint's, else its Open WebUI connection's (_key_for)
-    CLI Proxy API   its management route `requests/api-call`, which calls the
-                    credential's own quota endpoint with the credential's
-                    token, as its console does (Google's retrieveUserQuotaSummary,
-                    ChatGPT's wham/usage). Needs CLI Proxy API on the
-                    Endpoints page as a hub with its management key
-                    (endpoints.admin_key, as metrics/cliproxy.py); the proxy is
-                    on the LAN and calls only providers the credential uses.
+    a hub's sign-ins  CLI Proxy API's or OmniRoute's (signin_hub: an adapter
+                    with `sign_ins`), through the hub's management route
+                    that calls the sign-in's own quota endpoint with its
+                    token, as CLI Proxy API's console does (Google's
+                    retrieveUserQuotaSummary, ChatGPT's wham/usage). Needs the
+                    hub on the Endpoints page with its management key
+                    (endpoints.admin_key, as its adapter says); the hub is on
+                    the LAN and calls only providers the sign-in uses.
 
 Where a provider has sent limit headers before (Groq; Routeway, through Open
 WebUI too, since the bench streams), Refresh is `check`: a 16-token call to
@@ -62,9 +63,9 @@ from paths import DATA  # noqa: E402
 
 LIVE = DATA / "runs" / "quota-live.json"
 UTC = dt.timezone.utc
-CPA_PREFIXES = ("/v8/management", "/v0/management")   # the console's, then the older one
 # The headers CLI Proxy API's own console sends to each quota endpoint
-# ($TOKEN$ is replaced by the proxy with the credential's token).
+# ($TOKEN$ is replaced by the hub with the sign-in's token; OmniRoute injects
+# its own and keeps only the headers it allows).
 AG_URLS = ("https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary",
            "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary")
 # Google answers 403 without the Antigravity client's User-Agent.
@@ -291,75 +292,71 @@ def watch_nvidia() -> dict:
     return got
 
 
-def _cpa_hub() -> tuple[str, str]:
-    """(management base, key) of the CLI Proxy API hub; ValueError when there is none."""
+def signin_hub(tag: str):
+    """(hub, its adapter) whose sign-ins `tag` names, None when none does.
+    A hub that reads its sign-ins' quota has `sign_ins` in its adapter (CLI
+    Proxy API, OmniRoute), and a tag (`<host>` or `<host>/<vendor>`) is its
+    when the host is the hub's endpoint name, its address, or the name
+    config/connections.json `hosts` gives that address (a hub reached through
+    Open WebUI, tagged by provider_tags.py). ponytail: one hub of a kind
+    (endpoints.find_hub); two such hubs at one address share a tag, and the
+    first in endpoints.HUBS reads it."""
     import endpoints
-    name = endpoints.find_hub("cliproxy")
-    if not name:
-        raise ValueError("add CLI Proxy API on the Endpoints page (kind hub, CLI Proxy API) with its"
-                         " management key to read these quotas live")
-    secret = endpoints.admin_key(name, fallback=False)
-    if not secret:
-        raise ValueError(f"CLI Proxy API's management key is not stored: Change key on {name}")
-    return endpoints.base(name).removesuffix("/v1"), secret
+    host, named = tag.split("/")[0], endpoints.connections().get("hosts") or {}
+    for which in endpoints.HUBS:
+        ep = endpoints.find_hub(which)
+        mod = endpoints.adapter(which) if ep else None
+        if mod and hasattr(mod, "sign_ins"):
+            addr = urllib.parse.urlsplit(endpoints.base(ep)).hostname or ""
+            if host in (ep, addr, named.get(addr)):
+                return which, mod
+    return None
 
 
-def _cpa(base: str, secret: str, path: str, body: dict | None = None) -> dict:
-    """One management call; the console's prefix first, the older on a 404.
-    A 401 is never retried: the proxy bans an address after 5 refusals."""
-    head = {"Authorization": f"Bearer {secret}", "Content-Type": "application/json"}
-    for prefix in CPA_PREFIXES:
-        try:
-            return _get_json(base + prefix + path, head, None if body is None else json.dumps(body).encode())
-        except urllib.error.HTTPError as exc:
-            if exc.code == 404 and prefix != CPA_PREFIXES[-1]:
-                continue
-            if exc.code == 401:
-                raise ValueError("CLI Proxy API refused the management key; check it before trying again"
-                                 " (5 refusals ban this address for 30 minutes)") from None
-            raise ValueError(f"CLI Proxy API answered {exc.code} on {path}") from None
-    raise ValueError("CLI Proxy API's management API is off (every route 404s without a secret key)")
-
-
-def _api_call(base, secret, auth_index, method, url, header, data=None) -> dict:
-    """The credential's own request, made by the proxy; the reply's JSON body."""
-    reply = _cpa(base, secret, "/requests/api-call",
-                 {"auth_index": auth_index, "method": method, "url": url, "header": header,
-                  **({"data": data} if data is not None else {})})
+def _api_call(mod, auth_index, method, url, header, data=None) -> dict:
+    """The sign-in's own request, made by its hub; the reply's JSON body."""
+    reply = mod.api_call(auth_index, method, url, header, data)
     if not 200 <= int(reply.get("status_code") or 0) < 300:
         raise ValueError(f"{urllib.parse.urlsplit(url).hostname} answered {reply.get('status_code')}")
     body = reply.get("body")
     return json.loads(body) if isinstance(body, str) and body.strip() else (body or {})
 
 
-def read_cliproxy(tag: str, sibling_vendors: set[str]) -> dict:
-    """Every enabled credential behind `tag`: `cli-proxy-api/codex` is
-    the codex ones, bare `cli-proxy-api` those no sibling tag names."""
-    base, secret = _cpa_hub()
-    vendor = tag.split("/", 1)[1] if "/" in tag else ""
-    creds = [c for c in _cpa(base, secret, "/credentials").get("files") or []
-             if not c.get("disabled") and (c.get("provider") == vendor if vendor
-                                           else c.get("provider") not in sibling_vendors)]
+def read_signins(tag: str) -> dict:
+    """Every enabled sign-in behind `tag`, through its hub (signin_hub):
+    `<host>/codex` the codex ones, a bare `<host>` those no sibling tag
+    names. The readers are the providers' (Google's, ChatGPT's); which
+    sign-ins a hub lists, and whose quota it will ask, is its adapter's."""
+    import endpoints
+    found = signin_hub(tag)
+    if not found:
+        raise ValueError("add the hub these sign-ins are in on the Endpoints page (kind hub) with its"
+                         " management key to read their quotas live")
+    which, mod = found
+    host, _, vendor = tag.partition("/")
+    siblings = {t.split("/", 1)[1] for t in _tags() if t.startswith(host + "/")}
+    creds = [c for c in mod.sign_ins()
+             if not c["disabled"] and (c["provider"] == vendor if vendor else c["provider"] not in siblings)]
+    if not creds:
+        raise ValueError(f"{endpoints.HUBS[which]} lists no {vendor + ' ' if vendor else ''}sign-in to read")
     groups, names, plan, notes = [], [], "", []
     for c in creds:
-        prov, idx = c.get("provider", ""), c.get("auth_index")
+        prov, idx = c["provider"], c["auth_index"]
         try:
             if prov == "antigravity":
                 body = None
                 for url in AG_URLS:
                     try:
-                        body = _api_call(base, secret, idx, "POST", url, AG_HEAD,
-                                         json.dumps({"project": c.get("project_id") or ""}))
+                        body = _api_call(mod, idx, "POST", url, AG_HEAD, json.dumps({"project": c["project"]}))
                         break
                     except ValueError:
                         continue
                 got = antigravity_groups(body or {})
             elif prov == "codex":
                 head = dict(CODEX_HEAD)
-                acct = (c.get("id_token") or {}).get("chatgpt_account_id")
-                if acct:
-                    head["Chatgpt-Account-Id"] = acct
-                body = _api_call(base, secret, idx, "GET", CODEX_URL, head)
+                if c["account"]:
+                    head["Chatgpt-Account-Id"] = c["account"]
+                body = _api_call(mod, idx, "GET", CODEX_URL, head)
                 got = codex_groups(body)
                 plan = str(body.get("plan_type") or "")
             else:
@@ -403,8 +400,7 @@ def refresh(tag: str) -> dict:
     elif _host(tag) == REQUESTY_HOST:
         got = read_requesty()
     else:
-        vendors = {t.split("/", 1)[1] for t in _tags() if t.startswith("cli-proxy-api/")}
-        got = read_cliproxy(tag, vendors)
+        got = read_signins(tag)
     got["at"] = _iso(time.time())
     locked.update(LIVE, lambda d: d.update({tag: got}), ensure_ascii=False)
     return {"ok": True, "how": "live", "note": "; ".join(got.get("notes") or [])}
@@ -439,7 +435,7 @@ def _host(tag: str) -> str:
 def how_refreshed(tag: str) -> str:
     """"live" (a free read), "check" (one short call whose headers say what is
     left) or "records" (nothing to ask: the bench's own records)."""
-    if (tag.split("/")[0] == "cli-proxy-api" or tag == "openrouter" and _openrouter_endpoint()
+    if (signin_hub(tag) or tag == "openrouter" and _openrouter_endpoint()
             or _host(tag) in (XKIRO_HOST, REQUESTY_HOST) or "nvidia" in (tag + " " + _host(tag)).lower()):
         return "live"
     return "check" if _headers_seen(tag) else "records"
@@ -606,7 +602,7 @@ def tiles(now: float | None = None) -> list[dict]:
              "models": _model_rows(aliases, rows, resting, limits),
              "refresh": how_refreshed(tag), "plan": "", "name": ""}
         got = live.get(tag) or {}
-        if tag.split("/")[0] == "cli-proxy-api" or host == XKIRO_HOST:
+        if host == XKIRO_HOST or signin_hub(tag):
             if got.get("groups"):
                 t.update(kind="groups", groups=got["groups"], name=got.get("name", ""), plan=got.get("plan", ""))
         elif tag == "openrouter":

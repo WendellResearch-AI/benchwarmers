@@ -42,12 +42,13 @@ check records a whole list only where the user chose what is in it. Ask
 is inferred (see `kind`).
 
 A hub adds a model through its adapter (`adapter()`: owui.py, litellm_hub.py,
-cliproxy.py), which calls the hub's admin API with the endpoint's ADMIN key:
+cliproxy.py, omniroute.py), which calls the hub's admin API with the endpoint's ADMIN key:
 `admin_key` names it, by default `<key>-admin` (so the environment's
-BENCHWARMERS_KEY_<KEY>_ADMIN), the value kept like any other key. Open WebUI
-and LiteLLM fall back to the endpoint's own key, which is an admin's (Open
-WebUI) or often the master key (LiteLLM); CLI Proxy API's management key is
-never one of its API keys, so it has no fallback.
+BENCHWARMERS_KEY_<KEY>_ADMIN), the value kept like any other key. Open WebUI,
+LiteLLM and OmniRoute fall back to the endpoint's own key, which is an admin's
+(Open WebUI), often the master key (LiteLLM), or a key with the manage scope
+(OmniRoute); CLI Proxy API's management key is never one of its API keys, so
+it has no fallback.
 """
 
 from __future__ import annotations
@@ -83,12 +84,15 @@ LLM_DIR = llm_dir()
 NAME = re.compile(r"^[a-z0-9][a-z0-9-]{1,31}$")
 # kind -> examples, as the Add form shows them
 KINDS = {"provider": "Groq, Mistral, NVIDIA", "aggregator": "OpenRouter, LLM7, NanoGPT",
-         "hub": "Open WebUI, LiteLLM, CLI Proxy API", "local": "Ollama, LM Studio, vLLM"}
-HUBS = {"openwebui": "Open WebUI", "litellm": "LiteLLM", "cliproxy": "CLI Proxy API"}
+         "hub": "Open WebUI, LiteLLM, CLI Proxy API, OmniRoute", "local": "Ollama, LM Studio, vLLM"}
+HUBS = {"openwebui": "Open WebUI", "litellm": "LiteLLM", "cliproxy": "CLI Proxy API", "omniroute": "OmniRoute"}
 # hub -> its adapter module in metrics/; each exposes SUPPORTS, CHECKED,
-# endpoint(), plan(connection, model) and add(connection, model), and the two
-# whose connections only the hub knows also upstreams(), for Discover.
-ADAPTERS = {"openwebui": "owui", "litellm": "litellm_hub", "cliproxy": "cliproxy"}
+# endpoint(), plan(connection, model) and add(connection, model). The jobs
+# only some hubs can do, each absent where the hub cannot, and asked for by
+# name: upstreams() (Discover, every hub whose connections only it knows),
+# virtual(entry) (virtual() below), sign_ins() and api_call() (Quota
+# management, quotaview.signin_hub).
+ADAPTERS = {"openwebui": "owui", "litellm": "litellm_hub", "cliproxy": "cliproxy", "omniroute": "omniroute"}
 # `api`: what an endpoint speaks, chat completions unless it says otherwise.
 # The built-in client builds the others' native requests (metrics/formats.py);
 # `responses` is set by Connect for ChatGPT's plan, the native two on the Add
@@ -108,6 +112,15 @@ def adapter(which: str):
     every adapter imports this module."""
     import importlib
     return importlib.import_module(ADAPTERS[which])
+
+
+def virtual(name: str, data: dict | None = None):
+    """The test of endpoint `name`'s /models entries that are not one model (a
+    hub's combo or router, which picks a model per request: a verdict on it
+    would be about whichever answered), saying why, "" for one model. Its hub
+    adapter's `virtual`; where there is none, every entry is one model."""
+    which = hub(name, data)
+    return (getattr(adapter(which), "virtual", None) if which else None) or (lambda _entry: "")
 
 
 def version_note(which: str, version: str, checked: tuple[str, ...]) -> str:

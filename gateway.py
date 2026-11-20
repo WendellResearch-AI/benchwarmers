@@ -102,8 +102,10 @@ or not (route_plan, route_turn, Handler._route). The member is picked by its
 record with some rotation, kept for the whole conversation (fingerprint),
 and replaced by the next if it fails before its first piece. Each turn is
 in the ledger and runs/gateway/routes.jsonl; each conversation is one
-unjudged offload per model that answered it, a verdict optional. GATEWAY.md
-"Route mode" has the decisions and the limits.
+unjudged offload per model that answered it, a verdict optional. With
+gateway.json's `shadow_rate`, another member answers some turns again in
+the background once the caller has the answer, for evaluation only
+(shadow). GATEWAY.md "Route mode" has the decisions and the limits.
 
 Asked to stream, the reply's 200 goes as soon as the panel is seated (a
 refusal before that keeps its status), keep-alives go while the seats
@@ -501,22 +503,16 @@ def record(collection: str, task: str = "") -> dict[str, dict]:
 
 def merger_candidates(collection: dict, members: list[str], shape: str, large: bool):
     """Who may merge, best first. The collection's `merger` alone when set;
-    else the members with verdicts on this shape, most useful first, then the
-    router's primary, then the other members (a fresh install has neither
-    verdicts nor suite scores). A generator, so the router is asked only if
-    no member with a record fits."""
+    else the members with verdicts on this shape, best record first (as the
+    route order ranks, offload.score), then the router's primary, then the
+    other members (a fresh install has neither verdicts nor suite scores). A
+    generator, so the router is asked only if no member with a record fits."""
     if collection.get("merger"):
         yield collection["merger"]
         return
-    record: dict[str, list[int]] = {}
-    for e in offload.entries():
-        # The shape ends each seat's task as run_collection writes it: "(bench/<name>, <shape>)".
-        if e["model"] in members and e.get("useful") is not None and e.get("task", "").endswith(f", {shape})"):
-            r = record.setdefault(e["model"], [0, 0])
-            r[0], r[1] = r[0] + bool(e["useful"]), r[1] + 1
-    # Useful verdicts counted, not a ratio, as route.py counts findings: one
-    # lucky verdict must not outrank a long good record.
-    yield from sorted(record, key=lambda a: (-record[a][0], -record[a][0] / record[a][1]))
+    # The shape ends each seat's task as run_collection writes it: "(bench/<name>, <shape>)".
+    used = offload.summary(lambda e: e.get("task", "").endswith(f", {shape})"))
+    yield from sorted((a for a in members if used.get(a, {}).get("judged")), key=lambda a: -offload.score(used[a]))
     try:
         primary = route.panel(shape, large=large)["primary"]
     except Exception:                                  # noqa: BLE001 -- the members can still merge
@@ -906,8 +902,9 @@ def fingerprint(name: str, who: str, messages: list[dict]) -> str:
 
 
 def route_order(aliases: list[str]) -> list[str]:
-    """Best record first: useful verdicts counted, as the merger is chosen
-    (one lucky verdict must not outrank a long good record), then verified
+    """Best record first: offload.score, the verdicts' rate weighted by how
+    many there are, false claims against (one lucky verdict must not outrank
+    a long good record; the merger is chosen the same way), then verified
     suite findings, then a connection already paid for. Members cooling down
     after a rate limit or failing their probes go last. Now and then
     (ROTATE) the member whose record is oldest goes first instead, so one
@@ -925,7 +922,7 @@ def route_order(aliases: list[str]) -> list[str]:
         tags = {a: route.full_tag_of(a) for a in aliases}
     except Exception:                                  # noqa: BLE001
         paid, tags = set(), {}
-    ranked = sorted(aliases, reverse=True, key=lambda a: (used.get(a, {}).get("useful", 0),
+    ranked = sorted(aliases, reverse=True, key=lambda a: (offload.score(used.get(a, {})),
                                                           found.get(a, (0, 0, 0))[0], tags.get(a) in paid))
     cooling = retiring()
     fresh = [a for a in ranked if a not in cooling]
@@ -1025,10 +1022,10 @@ def route_turn(name: str, plan: dict, ask: dict, who: str, emit) -> None:
     offload per model that answered it, not one per turn (GATEWAY.md says why)."""
     conv, order, tried = plan["conv"], plan["order"][:ROUTE_TRIES], []
     for n, alias in enumerate(order):
-        held, live = [], [False]
+        held, live, turn = [], [False], formats.Turn()
         last = n == len(order) - 1
 
-        def on_chunk(chunk, held=held, live=live, turn=formats.Turn(), alias=alias):
+        def on_chunk(chunk, held=held, live=live, turn=turn, alias=alias):
             _, anything = turn.feed(chunk)
             if live[0]:
                 return emit("chunk", chunk)
@@ -1074,12 +1071,7 @@ def route_turn(name: str, plan: dict, ask: dict, who: str, emit) -> None:
         if error:
             return emit("error", (res["status"] if res["status"] >= 400 else 502,
                                   f"{alias} failed part way through the turn: {error[:300]}"))
-        # SHADOWS GO HERE, when they come: an opt-in that sends this same turn
-        # (ask, minus the caller's stream) to other members in the background,
-        # for evaluation only, after the caller has its answer. Each would be
-        # its own client.chat (purpose "shadow"), recorded as an unjudged
-        # offload on this conversation's call id with a suffix; nothing the
-        # caller sees waits for them or changes.
+        plan["called"] = sorted(c["name"] for c in turn.calls)   # for a shadow to compare (shadow)
         return emit("done", {"collection": model, "reply": "route", "conversation": conv["conv"], "call": call,
                              "alias": alias, "turn": turn_no, **({"failed_over": tried} if tried else {}),
                              **({"skipped": plan["skipped"]} if plan["skipped"] else {}),
@@ -1108,6 +1100,70 @@ def _log_route(conv: dict, turn: int, call: str, model: str, who: str, alias: st
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     with (LOG_DIR / "routes.jsonl").open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(line, ensure_ascii=False) + "\n")
+
+
+def shadow(plan: dict, ask: dict, bench: dict) -> threading.Thread | None:
+    """For gateway.json's `shadow_rate` of route turns, a shadow: another
+    member answers the same turn in the background, for evaluation only
+    (GATEWAY.md "Shadows"). Handler._route calls this once the turn's last
+    byte is written, and everything past the coin toss runs in the thread,
+    so the caller never waits for it and nothing it sees changes. The
+    thread, or None when there is no shadow."""
+    rate = bench_collections.shadow_rate()
+    if not rate or random.random() >= rate:
+        return None
+    t = threading.Thread(target=_shadow, args=(plan, ask, bench), daemon=True)
+    t.start()
+    return t
+
+
+def _shadow(plan: dict, ask: dict, bench: dict) -> None:
+    """One shadow: a member of the turn's plan other than the one that
+    answered, not cooling down, with room under pacing for its call and a
+    real turn's after it (one without is skipped, never waited for: a shadow
+    must not spend what the agent's next turn needs). It gets the request
+    as the member did, its answer read whole, and a line in
+    runs/gateway/shadows.jsonl on the conversation's call id: how it did,
+    never the prompt. No offload, so it owes no verdict and moves neither
+    rotation nor ranking."""
+    import ledger
+    import pacing
+    est, cooling = route_tokens(ask), retiring()
+    room = [a for a in plan["order"] if a != bench["alias"] and a not in cooling
+            and not pacing.held(a, route.connection_of(a), est, calls=2)]
+    if not room:
+        return
+    alias, turn = random.choice(room), formats.Turn()
+    # ponytail: pacing.admit can still wait if the window fills between held()
+    # and the call; a no-wait flag on client.chat if that race ever matters.
+    res = client.chat(alias, "", timeout=ROUTE_TIMEOUT, messages=ask["messages"], body=_fit(ask["upstream"], alias),
+                      on_chunk=turn.feed, first_token=FIRST_TOKEN, retries=0, purpose="shadow")
+    error = res["error"] or (f"nothing in {FIRST_TOKEN}s" if res["timed_out"] else "")
+    offered = {(d.get("function") or {}).get("name") for d in ask["upstream"].get("tools") or []}
+    calls = [{"name": c["name"], "offered": c["name"] in offered, "json": _json_object(c["arguments"])}
+             for c in turn.calls]
+    line = {"conversation": bench["conversation"], "call": bench["call"], "turn": bench["turn"],
+            "at": dt.datetime.now().astimezone().isoformat(timespec="seconds"), "primary": bench["alias"],
+            "shadow": alias, "status": "error" if error else "ok" if res["text"] or calls else "empty",
+            "seconds": res["seconds"], **ledger.tokens(res.get("usage") or {}), "tools": bool(offered),
+            "answered": "tool_calls" if calls else "text" if res["text"] else "", "calls": calls,
+            "same_tools": sorted(c["name"] for c in calls) == plan.get("called"),
+            **({"error": (redact(error) if plan["images"] else error)[-300:]} if error else {})}
+    if calls and all(c["offered"] and c["json"] for c in calls):
+        import learn
+        # Seen calling, as a capability probe notes it; the names only, as the arguments may quote the prompt.
+        learn.note_capability(alias, "tools", "route shadow called " + ", ".join(c["name"] for c in calls))
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    with (LOG_DIR / "shadows.jsonl").open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(line, ensure_ascii=False) + "\n")
+
+
+def _json_object(text: str) -> bool:
+    """Whether a tool call's arguments parse as a JSON object ("" is none, as formats reads it)."""
+    try:
+        return isinstance(json.loads(text or "{}"), dict)
+    except ValueError:
+        return False
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -1452,7 +1508,8 @@ class Handler(BaseHTTPRequestHandler):
         turn runs in its own thread (route_turn) and this one writes: a
         whole reply once it is done, or a stream whose 200 waits for the
         member's first piece, or ROUTE_GRACE, whichever is first, then
-        relays it, with a keep-alive whenever nothing went for KEEPALIVE."""
+        relays it, with a keep-alive whenever nothing went for KEEPALIVE.
+        Once the turn's last byte is written, maybe a shadow (shadow)."""
         try:
             plan = route_plan(name, ask, self.who)
         except (ValueError, LookupError) as exc:       # TooLarge is a ValueError
@@ -1475,8 +1532,10 @@ class Handler(BaseHTTPRequestHandler):
                 if kind == "chunk":
                     turn.feed(data)
                 elif kind == "done":
-                    return self._json(200, formats.route_reply(fmt, turn, shown, data, tokens, time.monotonic() - began,
-                                                               ask.get("custom")), {**headers, "X-Bench-Model": data["alias"]})
+                    self._json(200, formats.route_reply(fmt, turn, shown, data, tokens, time.monotonic() - began,
+                                                        ask.get("custom")), {**headers, "X-Bench-Model": data["alias"]})
+                    shadow(plan, ask, data)            # only now the caller has it all
+                    return
                 elif kind == "error":
                     return self._error(*data, fmt=fmt)
         out = formats.ROUTE[fmt](shown, tokens, sse=sse, custom=ask.get("custom"))
@@ -1506,6 +1565,8 @@ class Handler(BaseHTTPRequestHandler):
                 if piece:
                     self.wfile.write(piece)
                     wrote = time.monotonic()
+                if kind == "done":
+                    shadow(plan, ask, data)            # after the stream's last piece, never before
                 if kind in ("done", "error"):
                     return
             except OSError:

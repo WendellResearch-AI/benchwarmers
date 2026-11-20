@@ -105,16 +105,22 @@ flowchart LR
 **Setting it up:**
 
 1. Run OmniRoute as usual (`http://localhost:20128`).
-2. In Benchwarmers, **Endpoints** lists it under "Found on this machine" (as
-   OmniRoute / 9router). Add it with an OmniRoute API key.
-3. **Onboard the individual models** OmniRoute serves (a provider's model id,
-   not a combo or `auto`), and put them in collections.
+2. In Benchwarmers, **Endpoints** lists it under "Found on this machine" as a
+   hub. Add it with an OmniRoute API key, and, as its admin key, one with the
+   `manage` scope (or give the API key that scope). The admin key lets the
+   bench add a model to one of OmniRoute's providers from Discover, and read
+   its Codex sign-ins' quota on Quota management.
+3. **Onboard the individual models** OmniRoute serves, and put them in
+   collections. The picker offers a provider's models only: OmniRoute's
+   combos and `auto` routers are left out.
 
 Seat individual models, not OmniRoute's combos or `auto`. A verdict is about
 one model. If a seat is a combo, OmniRoute may answer with a different model
-each time, and the record would be about nothing in particular. Within a
-single model, OmniRoute's account failover and retries are welcome: they keep
-that model's seat answering.
+each time, and the record would be about nothing in particular, so the bench
+does not offer them. Within a single model, OmniRoute's account failover and
+retries are welcome: they keep that model's seat answering. 9router, which
+OmniRoute grew from, is found too, as a plain aggregator: it has none of the
+routes the hub uses.
 
 The same goes for freellmapi (`auto` profiles and `fusion` are its versions of
 combos), LiteLLM (seat a deployment, not a group with fallbacks) and CLI Proxy

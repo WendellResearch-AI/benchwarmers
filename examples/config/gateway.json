@@ -1,5 +1,6 @@
 {
-  "_why": "Bench gateway settings, also set on the Collections page. A request runs a collection's members plus explorer seats picked by staleness: explorers = min(max_explorers, max_calls - members), so a 2- or 3-model collection gets 2 explorers, a 4-model one 1, a 5-model one none. There is no default collection: a request that names none is told what each one is for and asked to choose.",
+  "_why": "Bench gateway settings, also set on the Collections page. A request runs a collection's members plus explorer seats picked by staleness: explorers = min(max_explorers, max_calls - members), so a 2- or 3-model collection gets 2 explorers, a 4-model one 1, a 5-model one none. There is no default collection: a request that names none is told what each one is for and asked to choose. shadow_rate (0 to 1, 0 is off; set here only): the share of route-mode turns that another member answers again once the caller has the answer, for evaluation only (GATEWAY.md, Shadows).",
   "max_calls": 5,
-  "max_explorers": 2
+  "max_explorers": 2,
+  "shadow_rate": 0
 }

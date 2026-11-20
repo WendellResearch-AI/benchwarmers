@@ -353,6 +353,9 @@ def main() -> None:
                  f"  Add it to {endpoint} first — registering a name the "
                  f"endpoint does not serve is how a model scores 0/11 for a "
                  f"fortnight before anyone looks.")
+    if (why := endpoints.virtual(endpoint)(live[name])):
+        sys.exit(f"{name} is not one model: {why}. A verdict on it would be about whichever model"
+                 f" answered; onboard the models it routes to instead.")
     print("  [1/5] served by the endpoint")
     if args.rerun:
         # Its own alias, not one derived again: steps 2 and 3 were done when it was onboarded.

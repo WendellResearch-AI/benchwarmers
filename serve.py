@@ -1047,6 +1047,7 @@ def onboard_candidates(fresh: bool = False) -> dict:
     """What every endpoint serves that the bench could onboard, for the picker.
 
     Served, minus registered, minus retired, minus queued or onboarding now,
+    minus a hub's combos and routers (endpoints.virtual: not one model),
     minus dismissed (those come back separately so a dismissal can be undone),
     each endpoint asked separately
     so one being down only empties its own group. The live calls this page
@@ -1110,9 +1111,10 @@ def onboard_candidates(fresh: bool = False) -> dict:
             errors.append(f"cannot reach {name}: {live}")
             continue
         owui, whole = endpoints.hub(name) == "openwebui", endpoints.recorded_whole(name)
+        several = endpoints.virtual(name)              # a hub's combos and routers: a verdict needs one model
         for served, entry in sorted(live.items()):
             key = endpoints.snapshot_key(served, name)
-            if key in taken:
+            if key in taken or several(entry):
                 continue
             # On Open WebUI the group is the connection behind it; any other
             # endpoint is its own group.
@@ -1246,7 +1248,8 @@ def save_endpoint(name: str, base: str, secret: str, who: str = "ui", extra: dic
     told), so nothing added here is left to endpoints.kind's inference. Left
     out, an existing endpoint's kind stays as it was. `admin`, a hub's admin
     key where it is not the API key (LiteLLM's master key, CLI Proxy API's
-    management key), is kept beside it under endpoints.admin_name; nothing
+    management key, an OmniRoute key with the manage scope), is kept beside it
+    under endpoints.admin_name; nothing
     tests it here, since a refused CLI Proxy API key counts toward a ban.
     `api` (endpoints.APIS), on a new endpoint: what it speaks, when not chat
     completions; Anthropic's and Gemini's native APIs take their own key
@@ -4079,9 +4082,16 @@ def route_table(judged: dict, limit: int = 30) -> str:
             c["models"].setdefault(t["alias"], t.get("call", ""))
     if not convs:
         return ""
+    shadows: dict[str, int] = {}                       # gateway.shadow's lines; none unless shadow_rate is set
+    for line in read(DATA / "runs" / "gateway" / "shadows.jsonl").splitlines():
+        try:
+            conv = str(json.loads(line).get("conversation", ""))
+        except ValueError:
+            continue
+        shadows[conv] = shadows.get(conv, 0) + 1
     rows = ["<h3>Route conversations</h3><table><thead><tr>", th("When"), th("Collection"), th("Asked by"),
             th("First message"), th("Answered by"), th("Turns", True), th("Tool calls", True),
-            th("Failovers", True), th("Last turn"), "</tr></thead><tbody>"]
+            th("Failovers", True), th("Shadows", True) if shadows else "", th("Last turn"), "</tr></thead><tbody>"]
     for conv, c in sorted(convs.items(), key=lambda kv: kv[1]["last"], reverse=True)[:limit]:
         chips = " ".join(f"<span class='chip' title='{esc(call + ' · ' + {True: 'useful', False: 'not useful', None: 'no verdict (optional)'}[judged.get(call)])}'>"
                          f"{esc(alias)}{ {True: ' ✓', False: ' ✗', None: ''}[judged.get(call)]}</span>"
@@ -4092,10 +4102,13 @@ def route_table(judged: dict, limit: int = 30) -> str:
             f"<td class='mono'>{esc(c['model'])}</td><td class='mono'>{esc(c['key'] or '—')}</td>"
             f"<td>{esc(c['task'][:60])}</td><td>{chips or '—'}</td><td class='num'>{c['turns']}</td>"
             f"<td class='num'>{c['tools']}</td><td class='num{' muted' if not c['failovers'] else ''}'>{c['failovers']}</td>"
+            + (f"<td class='num'>{shadows.get(conv, 0)}</td>" if shadows else "") +
             f"<td><span class='chip {css}' title='{esc(c['error'])}'>{esc(c['status'])}</span></td></tr>")
     rows.append("</tbody></table><p class='muted'>Each conversation is one unjudged offload per model that"
                 " answered it, under the call id on its chip; a verdict is optional:"
-                " <code>python metrics/offload.py verdict &lt;call id&gt; --useful</code>.</p>")
+                " <code>python metrics/offload.py verdict &lt;call id&gt; --useful</code>."
+                + (" Shadows: turns another member answered again afterwards, for evaluation only"
+                   " (<code>runs/gateway/shadows.jsonl</code>)." if shadows else "") + "</p>")
     return "".join(rows)
 
 
@@ -4172,7 +4185,7 @@ def discover_model(provider: str, model: str) -> dict:
     """One Discover row for its popup, with every route this install has to
     the same model: through each provider that offers it (`norm`, as
     discover.py matches them), via Open WebUI and via an endpoint of its own,
-    and through any LiteLLM or CLI Proxy API hub, which is asked here."""
+    and through any other hub (discover.hub_routes), which is asked here."""
     rows = _discover_rows()
     row = next((r for r in rows if r["provider"] == provider and r["model"] == model), None)
     if row is None:
@@ -4319,8 +4332,9 @@ def discover_card() -> str:
         record public, tagged like the connection's other models and with their logo, then runs
         the bench's onboarding as the confirm chooses (Onboard as, Vision model), so it is in
         the chats too.
-        <em>Via LiteLLM</em> or <em>CLI Proxy API</em> adds it to that hub's connection (one more
-        deployment, or the provider's models list); those hubs are asked when the panel opens.
+        <em>Via LiteLLM</em>, <em>CLI Proxy API</em> or <em>OmniRoute</em> adds it to that hub's
+        connection (one more deployment, the provider's models list, or a custom model); those
+        hubs are asked when the panel opens.
         <em>Direct</em> onboards it on the provider's own endpoint: bench only. A new provider
         needs a connection or an endpoint first; hover its <em>easy to add</em> chip for the
         base URL.</dd>
@@ -6286,7 +6300,7 @@ def endpoints_page() -> str:
             f"<input type='password' data-k='key' autocomplete='off' aria-label='New key for {name}'"
             " placeholder='paste it here'>"
             + ("<input type='password' data-k='admin' autocomplete='off' aria-label='Admin key'"
-               " placeholder='admin key, only where it is not the API key'>" if e["hub"] in ("litellm", "cliproxy") else "")
+               " placeholder='admin key, only where it is not the API key'>" if e["hub"] else "")
             + "<div class='actions'><button class='btn' type='button' data-ep-act='key'>Check and save</button></div>"
             "<p class='rules'>Asked of its <code>/models</code> first; kept only if it answers, where"
             " <code>llm keys set</code> keeps keys, and never shown again."
@@ -6699,8 +6713,8 @@ def quotas_page() -> str:
         "<dl class='rows'>" + "".join(f"<dt>{k}</dt><dd>{v}</dd>" for k, v in facts) + "</dl>"
         "<p>A tile per connection: what is left of each limit it states and when that resets, who is resting"
         " after a rate limit, and its models, which its Models button opens here.</p>"
-        "<h3>Refresh</h3><p>A tile's Refresh asks the provider for free where it can (CLI Proxy API's credentials,"
-        " OpenRouter); where a provider states its limits only in its replies, it sends one 16-token request to"
+        "<h3>Refresh</h3><p>A tile's Refresh asks the provider for free where it can (the sign-ins in CLI Proxy"
+        " API or OmniRoute, OpenRouter); where a provider states its limits only in its replies, it sends one 16-token request to"
         " read them; elsewhere it reads the bench's own records again. Its title says which. Refresh all live, in"
         " the bar, asks every one that tells for free.</p>"
         "<h3>The meters</h3><p>Ten segments filled like a bar, what is left leading the line and its reset at the"
@@ -7072,9 +7086,9 @@ def editor() -> str:
         + "</select><div id='e-hub-row' hidden><label class='field' for='e-hub'>Which hub</label><select id='e-hub'>"
         + "".join(f"<option value='{k}'>{esc(label)}</option>" for k, label in endpoints.HUBS.items())
         + "</select><p class='rules'>Open WebUI's base is its <code>/api</code>, e.g."
-        " <code>http://localhost:3000/api</code>, with an admin's API key. LiteLLM's and CLI Proxy"
-        " API's are their <code>/v1</code>, e.g. <code>http://localhost:4000/v1</code> and"
-        " <code>http://localhost:8317/v1</code>.</p></div>"
+        " <code>http://localhost:3000/api</code>, with an admin's API key. LiteLLM's, CLI Proxy"
+        " API's and OmniRoute's are their <code>/v1</code>, e.g. <code>http://localhost:4000/v1</code>,"
+        " <code>http://localhost:8317/v1</code> and <code>http://localhost:20128/v1</code>.</p></div>"
         # What it speaks (endpoints.APIS): the built-in client builds the native requests.
         "<label class='field' for='e-api'>API</label><select id='e-api'>"
         + "".join(f"<option value='{k}'>{esc(label)}</option>" for k, label in endpoints.APIS.items() if k != "responses")
@@ -7091,7 +7105,8 @@ def editor() -> str:
         "<div id='e-admin-row' hidden><label class='field' for='e-admin'>Admin key</label>"
         "<input id='e-admin' type='password' autocomplete='off' placeholder='only where it is not the API key'>"
         "<p class='rules'>What adds a model to the hub: LiteLLM's master key (blank if the API key is it),"
-        " CLI Proxy API's management key (always its own). Open WebUI needs none beyond an admin's"
+        " CLI Proxy API's management key (always its own), an OmniRoute key with the manage scope (blank"
+        " if the API key has it). Open WebUI needs none beyond an admin's"
         " API key. Kept like the API key; blank keeps the current one.</p></div>"
         "<div class='actions'><button class='btn' data-close>Cancel</button>"
         "<button class='btn primary' id='e-save'>Check and add</button></div>"
