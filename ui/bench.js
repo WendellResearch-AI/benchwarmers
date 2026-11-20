@@ -2094,7 +2094,7 @@
     var sec = e.target.closest('#tab-clients section.client[data-app]');
     if (!sec || !e.target.closest('.connect')) return;
     if (e.target.dataset.c === 'rpm') return;
-    if (e.target.dataset.c === 'key') { sec.querySelector('.key-make').hidden = e.target.value !== 'make'; return; }
+    if (e.target.dataset.c === 'key') sec.querySelector('.key-make').hidden = e.target.value !== 'make';
     setupAgain(sec).then(e.target.dataset.c === 'name' ? seenTick : null);
   });
   // Set up (serve.setup_plan, setup_apply): what it would write, then writing it. A choice
@@ -2317,11 +2317,12 @@
     // Check now (serve.check_endpoint): its list with its key, then without; kept for the page.
     check: function (x, b) {
       b.disabled = true; b.textContent = 'Checking…';
+      function back(text) { epSaid(x.name, false, text); b.disabled = false; b.textContent = 'Check now'; }
       post('/api/endpoint/check', {name: x.name}).then(function (r) {
-        if (!r.ok) { epSaid(x.name, false, r.errors.join(' ')); b.disabled = false; b.textContent = 'Check now'; return; }
+        if (!r.ok) { back(r.errors.join(' ')); return; }
         var ok = r.state !== 'refused' && r.state !== 'down';
         again(x.name).then(function () { epSaid(x.name, ok, 'Checked: ' + checkSays(r)); });
-      });
+      }).catch(function (err) { back(String(err)); });          // a dropped connection: the button back, the error said
     },
     // A new key in the record: checked against its list before it is kept (serve.save_endpoint).
     key: function (x, b) {
@@ -2539,18 +2540,21 @@
     e.key.focus();
   }, true);
   // Check all: each endpoint in turn (one at a time: a hub fronts many), then the page again.
+  // A check that got no answer counts as a problem, is named, and the next one goes on.
   on('click', 'e-check-all', function () {
     var b = this, names = Array.prototype.map.call(document.querySelectorAll('#tab-endpoints tr.ep-row'),
-                                                   function (r) { return r.dataset.name; }), bad = 0;
+                                                   function (r) { return r.dataset.name; }), bad = 0, lost = [], why = '';
     b.disabled = true; $('el-errors').textContent = '';
     names.reduce(function (p, name, i) {
       return p.then(function () {
         $('el-done').textContent = 'Checking ' + (i + 1) + ' of ' + names.length + ': ' + name + '…';
-        return post('/api/endpoint/check', {name: name}).then(function (r) { if (!r.ok || r.state === 'refused' || r.state === 'down') bad++; });
+        return post('/api/endpoint/check', {name: name}).then(function (r) { if (!r.ok || r.state === 'refused' || r.state === 'down') bad++; },
+                                                              function (err) { bad++; lost.push(name); why = String(err); });
       });
     }, Promise.resolve()).then(function () {
       b.disabled = false;
-      refreshSaying('Checked ' + plural(names.length, 'endpoint') + (bad ? ': ' + bad + ' with a problem, first in the list.' : ': all answer.'));
+      refreshSaying('Checked ' + plural(names.length, 'endpoint') + (bad ? ': ' + bad + ' with a problem, first in the list.' : ': all answer.')
+                    + (lost.length ? ' No answer from the check of ' + lost.join(', ') + ' (' + why + '): check again.' : ''));
     });
   });
   // Check and add: the server asks its list first and keeps nothing unless it answers.
@@ -3109,13 +3113,16 @@
   // to send again from your own app.
   var rq = null;                        // the request shown
   function rqLines(box) { return box.value.split('\n').map(function (s) { return s.trim(); }).filter(Boolean); }
+  // Where every call needs a key, the key comes from BENCHWARMERS_KEY (serve.KEY_ENV), as on Connect: never the key itself.
   function rqSnip(lang) {
     var body = {model: rq.model, messages: [{role: 'user', content: rq.prompt}]}, url = rq.gateway + '/chat/completions';
     $('rq-snip').textContent = lang === 'python'
-      ? '# pip install openai\nfrom openai import OpenAI\n\nbench = OpenAI(base_url=' + JSON.stringify(rq.gateway)
-        + ', api_key="local", timeout=900)\nreply = bench.chat.completions.create(model=' + JSON.stringify(rq.model)
+      ? '# pip install openai\n' + (rq.keyed ? 'import os\n' : '') + 'from openai import OpenAI\n\nbench = OpenAI(base_url='
+        + JSON.stringify(rq.gateway) + ', api_key=' + (rq.keyed ? 'os.environ["BENCHWARMERS_KEY"]' : '"local"')
+        + ', timeout=900)\nreply = bench.chat.completions.create(model=' + JSON.stringify(rq.model)
         + ',\n    messages=[{"role": "user", "content": ' + JSON.stringify(rq.prompt) + '}])\nprint(reply.choices[0].message.content)'
-      : "curl " + url + " \\\n  -H 'Content-Type: application/json' \\\n  -d '"
+      : "curl " + url + " \\\n  -H 'Content-Type: application/json' \\\n"
+        + (rq.keyed ? '  -H "Authorization: Bearer $BENCHWARMERS_KEY" \\\n' : '') + "  -d '"
         + JSON.stringify(body).split("'").join("'\\''") + "'";
     $('rq-langs').querySelectorAll('[data-lang]').forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.lang === lang)); });
   }
@@ -3140,9 +3147,10 @@
   }
   function rqShow(panel) {
     $('rq-errors').textContent = '';
-    return get('/api/gateway-request?panel=' + encodeURIComponent(panel)).then(function (r) {
+    return Promise.all([get('/api/gateway-request?panel=' + encodeURIComponent(panel)), get('/api/gateway-keys')]).then(function (both) {
+      var r = both[0];
       if (!r.ok) { listErrors($('rq-errors'), r.errors); return; }
-      rq = r;
+      rq = r; rq.keyed = !!both[1].required;           // serve.gateway_keys_view: guard.keys_required()
       $('rq-title').textContent = r.key + ' asked ' + r.model;
       $('rq-meta').textContent = [r.at.slice(0, 16).replace('T', ' '), plural(r.seats.length, 'seat'), r.shape, r.panel]
         .filter(Boolean).join(' · ') + (r.skipped.length ? ' · not asked: ' + r.skipped.join(', ') : '');
