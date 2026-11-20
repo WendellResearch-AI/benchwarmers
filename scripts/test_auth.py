@@ -109,6 +109,25 @@ def main() -> int:
             for port in (d, g):
                 status, _, text = call(port, "/v1/models", Authorization="Bearer sk-anything")
                 assert status == 200 and "bench/core" in text, (port, status, text)
+            # ...but a key made for one app counts at once, keys required or not: its collections only,
+            # under its name, in whichever header; other apps still call without one, and an app's name
+            # sent as its key is the caller in the log, never a credential.
+            status, _, text = call(d, "/api/gateway-key", {"name": "early", "collections": ["vision"]})
+            assert status == 200, text
+            early, ask = json.loads(text)["key"], {"messages": [{"role": "user", "content": "hi"}]}
+            for port in (d, g):
+                status, _, text = call(port, "/v1/chat/completions", {"model": "bench/core", **ask},
+                                       Authorization=f"Bearer {early}")
+                assert status == 403 and "may call bench/vision" in text, (port, status, text)
+                assert call(port, "/v1/chat/completions", {"model": "bench/core", **ask}, **{"x-api-key": early})[0] == 403
+                assert "bench/core" not in call(port, "/v1/models", Authorization=f"Bearer {early}")[2]
+            assert call(g, "/v1/chat/completions", {"model": "bench/vision", **ask}, Authorization=f"Bearer {early}")[0] == 200
+            assert call(g, "/v1/chat/completions", {"model": "bench/core", **ask}, Authorization="Bearer my-agent")[0] == 200
+            assert call(g, "/v1/chat/completions", {"model": "bench/core", **ask}, Authorization="Bearer early")[0] == 200
+            assert call(g, "/v1/chat/completions", {"model": "bench/core", **ask})[0] == 200
+            assert ran == [("vision", "early"), ("core", "my-agent"), ("core", "local"), ("core", "local")], ran
+            assert call(d, "/api/gateway-key/remove", {"name": "early"})[0] == 200
+            ran.clear()
 
             # TOKEN SET: the dashboard asks for the login cookie...
             os.environ["BENCHWARMERS_ADMIN_TOKEN"] = TOKEN
