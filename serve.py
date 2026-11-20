@@ -5046,11 +5046,15 @@ def _app_dirs() -> dict:
 
 
 def _merge(base: dict, ours: dict) -> dict:
-    """`ours` into `base`: dicts merged, lists of entries with an "id" (VS Code's
-    inputs) merged by it, anything else (our own entries) replaced."""
+    """`ours` into `base`: dicts merged, except our own entry (the key
+    `benchwarmers`), replaced whole so a field we no longer write goes; lists of
+    entries with an "id" (VS Code's inputs) merged by it; anything else replaced.
+    A ValueError where the file holds another shape than ours on the way to it."""
     for k, v in ours.items():
         was = base.get(k)
-        if isinstance(v, dict) and isinstance(was, dict):
+        if was is not None and k != "benchwarmers" and isinstance(v, (dict, list)) and type(was) is not type(v):
+            raise ValueError(f"its {k} is not {'an object' if isinstance(v, dict) else 'a list'}")
+        if isinstance(v, dict) and isinstance(was, dict) and k != "benchwarmers":
             base[k] = _merge(dict(was), v)
         elif isinstance(v, list) and isinstance(was, list) and all(isinstance(e, dict) and "id" in e for e in v):
             ids = {e["id"] for e in v}
@@ -5140,15 +5144,28 @@ def setup_plan(app: str, way: str = "", collection: str = "", name: str = "", ke
     way = way if way in c["ways"] else c["ways"][0]
     blocks = {b["label"]: b["text"] for b in
               next(a for a in client_setups(root, [col[:3]], keys, way, label) if a["id"] == app)["blocks"]}
-    d, files, left = _app_dirs()[app], [], []
+    d, files, left, unread = _app_dirs()[app], [], [], set()
 
     def add(path: pathlib.Path, text: str, note: str = ""):
-        old = path.read_text(encoding="utf-8") if path.exists() else None
+        old = read(path)
+        if path in unread:
+            return
+        if KEY_HOLDER in text:              # Zed's and goose's MCP header: the file takes no variable
+            left.append(f"replace {KEY_HOLDER} in {path} yourself: that header takes no variable")
         if old != text:
-            files.append({"path": str(path), "new": old is None, "text": text, "note": note})
+            files.append({"path": str(path), "new": not path.exists(), "text": text, "note": note})
 
     def read(path: pathlib.Path):
-        return path.read_text(encoding="utf-8") if path.exists() else ""
+        """Its text, "" when absent; one that cannot be read (a folder, a locked file,
+        not UTF-8) is left to you, and add never writes it."""
+        try:
+            return path.read_text(encoding="utf-8") if path.exists() else ""
+        except (OSError, UnicodeDecodeError) as exc:
+            if path not in unread:
+                unread.add(path)
+                why = "not UTF-8" if isinstance(exc, UnicodeDecodeError) else exc.strerror or exc
+                left.append(f"{path} could not be read ({why}): add the set-up to it by hand")
+            return ""
 
     if app == "opencode":
         # What it says beside ours (also, refresh) is kept; what these choices set is ours.
@@ -5184,10 +5201,19 @@ def setup_plan(app: str, way: str = "", collection: str = "", name: str = "", ke
                     left.append(f"{path} has comments or is not plain JSON: add the set-up to it by hand")
                     continue
                 theirs = json.loads(ours)
-                if isinstance(theirs, list):         # VS Code's models: the Benchwarmers entry replaced
-                    new = [e for e in have if not (isinstance(e, dict) and e.get("name") == "Benchwarmers")] + theirs
-                else:
-                    new = _merge(have, theirs)
+                try:
+                    if type(have) is not type(theirs):       # [], null, 3 or "x" where ours is an object, or the reverse
+                        raise ValueError(f"not {'a list' if isinstance(theirs, list) else 'an object'}")
+                    if isinstance(theirs, list):         # VS Code's models: the Benchwarmers entry replaced
+                        new = [e for e in have if not (isinstance(e, dict) and e.get("name") == "Benchwarmers")] + theirs
+                    else:
+                        new = _merge(have, theirs)
+                except ValueError as exc:
+                    left.append(f"{path} is not the shape expected ({exc}): add the set-up to it by hand")
+                    continue
+                if label_ == "mcp.json" and "inputs" not in theirs and isinstance(new.get("inputs"), list):
+                    # VS Code with no key now: our own input goes too, or it keeps asking for one.
+                    new["inputs"] = [e for e in new["inputs"] if not (isinstance(e, dict) and e.get("id") == "benchwarmers-key")]
                 add(path, json.dumps(new, indent=2) + "\n")
             elif path.suffix == ".toml":
                 text, notes = _toml_merge(old, ours)
@@ -5200,32 +5226,44 @@ def setup_plan(app: str, way: str = "", collection: str = "", name: str = "", ke
                 left.append(f"{path} exists: add the set-up to it by hand")
     after = {"opencode": "opencode picks it up by itself; models are benchwarmers/<collection>.",
              "vscode": "Reload VS Code; the models are in the chat's model picker.",
-             "zed": "Zed asks for a key even where none is needed: set BENCHWARMERS_API_KEY to any text.",
+             "zed": "" if way == "panel" else
+                    "Zed reads its model's key from BENCHWARMERS_API_KEY or the provider's settings screen, never"
+                    " settings.json: set it to your gateway key." if keys else
+                    "Zed asks for a key even where none is needed: set BENCHWARMERS_API_KEY to any text.",
              "codex": "Restart Codex.", "continue": "Reload Continue.", "goose": "Restart goose."}[app]
-    if keys and app != "opencode":
+    if keys and (app in ("codex", "continue") or app == "goose" and way != "panel"):   # the files that name KEY_ENV
         after += f" The key comes from {KEY_ENV}: set it where the app starts."
     return {"ok": True, "errors": [], "files": files, "left": left, "after": after, "way": way}
 
 
 def setup_apply(app: str, way: str = "", collection: str = "", name: str = "", keyed: bool = False) -> dict:
     """Set up: setup_plan's files written, each existing one copied to
-    <name>.bak-<time> first, and the change log told which."""
+    <name>.bak-<time> first, and the change log told which. A file that cannot be
+    written (read-only, locked) does not stop the others: ok is false, and the
+    errors say which were written and which were not."""
     import shutil
     plan = setup_plan(app, way, collection, name, keyed)
     if not plan["ok"]:
         return plan
-    stamp, done = datetime.datetime.now().strftime("%Y%m%d-%H%M%S"), []
+    stamp, done, failed = datetime.datetime.now().strftime("%Y%m%d-%H%M%S"), [], []
     for f in plan["files"]:
-        path = pathlib.Path(f["path"])
-        path.parent.mkdir(parents=True, exist_ok=True)
-        if path.exists():
-            shutil.copy2(path, path.with_name(f"{path.name}.bak-{stamp}"))
-        _write_atomic(path, f["text"])
+        path = pathlib.Path(f["path"]).resolve()        # a symlink (dotfiles): written through, the link kept
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if path.exists():
+                shutil.copy2(path, path.with_name(f"{path.name}.bak-{stamp}"))
+            _write_atomic(path, f["text"])
+        except OSError as exc:
+            failed.append(f"{path} ({exc.strerror or exc})")
+            continue
         done.append(str(path))
     if done:
         _log_change(datetime.datetime.now().astimezone().isoformat(timespec="seconds"), "ui", "",
                     "app set-up", None, {"app": app, "files": done})
-    return {**plan, "written": done, "files": [{k: v for k, v in f.items() if k != "text"} for f in plan["files"]]}
+    out = {**_no_text(plan), "written": done}
+    if failed:
+        out.update(ok=False, errors=[*(f"not written: {x}" for x in failed), *(f"written: {x}" for x in done)])
+    return out
 
 
 def _setup_args(p: dict) -> tuple:
