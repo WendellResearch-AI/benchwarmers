@@ -615,6 +615,19 @@ def one_family() -> None:
             assert f"{label} refused /api/channel/" in refused(one.channels, ep)
         finally:
             os.environ[env] = saved
+        # The hub not answering (down, or too slow): a refusal like any other, so every name passes
+        # the picker's test and the Onboard picker is still drawn, with why its groups are missing.
+        kept = one.urllib.request.urlopen
+
+        def down(*_a, **_kw):
+            raise one.urllib.error.URLError("connection refused")
+        one.urllib.request.urlopen = down
+        try:
+            assert endpoints.virtual(ep)({"id": "llama-70b"}) == ""
+            assert f"could not reach {label}" in refused(one.served_by, ep)
+            assert f"could not reach {label}" in refused(one.quota, ep)
+        finally:
+            one.urllib.request.urlopen = kept
     reset()
     assert one.quota("oa")["groups"] == [{"label": "", "windows": [
         {"label": "balance, in one-api's unit", "left": 75, "remaining": 7.5, "of": 10.0, "reset_at": None}]}]

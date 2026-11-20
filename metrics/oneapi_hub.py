@@ -95,6 +95,9 @@ def _call(endpoint: str, path: str, secret: str = "") -> dict:
         err = body.get("error")
         data = {"success": False, "message": (err.get("message") if isinstance(err, dict) else err)
                 or body.get("message") or f"HTTP {exc.code}"}
+    except OSError as exc:                             # down, or too slow: a refusal too, never a crash
+        raise ValueError(f"could not reach {_label(endpoint)} on {path.split('?')[0]}:"
+                         f" {getattr(exc, 'reason', None) or exc}") from None
     err = data.get("error") if isinstance(data, dict) else None
     if isinstance(data, dict) and (data.get("success") is False or err):
         said = err.get("message") if isinstance(err, dict) else err or data.get("message")
