@@ -36,6 +36,9 @@ left for free, and are:
                     hub on the Endpoints page with its management key
                     (endpoints.admin_key, as its adapter says); the hub is on
                     the LAN and calls only providers the sign-in uses.
+    a hub's own     any hub whose adapter has `quota` (hub_quota), for a tile
+                    tagged with the hub's endpoint (provider_tags.py): what
+                    its own API says is left, as groups, and notes
 
 Where a provider has sent limit headers before (Groq; Routeway, through Open
 WebUI too, since the bench streams), Refresh is `check`: a 16-token call to
@@ -292,6 +295,15 @@ def watch_nvidia() -> dict:
     return got
 
 
+def hub_quota(tag: str):
+    """The `quota` of the hub whose endpoint `tag` names (provider_tags.py:
+    `<endpoint>` or `<endpoint>/<connection>`), None where none has one."""
+    import endpoints
+    ep = tag.split("/")[0]
+    which = endpoints.hub(ep) if ep in endpoints.load() else ""
+    return getattr(endpoints.adapter(which), "quota", None) if which else None
+
+
 def signin_hub(tag: str):
     """(hub, its adapter) whose sign-ins `tag` names, None when none does.
     A hub that reads its sign-ins' quota has `sign_ins` in its adapter (CLI
@@ -399,6 +411,8 @@ def refresh(tag: str) -> dict:
         got = read_xkiro()
     elif _host(tag) == REQUESTY_HOST:
         got = read_requesty()
+    elif quota := hub_quota(tag):
+        got = quota(tag.split("/")[0])
     else:
         got = read_signins(tag)
     got["at"] = _iso(time.time())
@@ -435,7 +449,7 @@ def _host(tag: str) -> str:
 def how_refreshed(tag: str) -> str:
     """"live" (a free read), "check" (one short call whose headers say what is
     left) or "records" (nothing to ask: the bench's own records)."""
-    if (signin_hub(tag) or tag == "openrouter" and _openrouter_endpoint()
+    if (signin_hub(tag) or hub_quota(tag) or tag == "openrouter" and _openrouter_endpoint()
             or _host(tag) in (XKIRO_HOST, REQUESTY_HOST) or "nvidia" in (tag + " " + _host(tag)).lower()):
         return "live"
     return "check" if _headers_seen(tag) else "records"
@@ -602,7 +616,7 @@ def tiles(now: float | None = None) -> list[dict]:
              "models": _model_rows(aliases, rows, resting, limits),
              "refresh": how_refreshed(tag), "plan": "", "name": ""}
         got = live.get(tag) or {}
-        if host == XKIRO_HOST or signin_hub(tag):
+        if host == XKIRO_HOST or signin_hub(tag) or hub_quota(tag):
             if got.get("groups"):
                 t.update(kind="groups", groups=got["groups"], name=got.get("name", ""), plan=got.get("plan", ""))
         elif tag == "openrouter":

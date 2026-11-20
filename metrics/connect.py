@@ -65,17 +65,17 @@ FOUND ON THIS MACHINE
 ---------------------
 `detect()` looks for model servers running here (LOCAL: Ollama, LM Studio,
 Jan, GPT4All, llama.cpp, llamafile, LocalAI, vLLM, Strata, Project Maya,
-Open WebUI, LiteLLM, CLI Proxy API, AstrLink, opencodex, ThinkWatch Lite,
-Claude Code Router, Bifrost, OmniRoute, 9router), so the Endpoints page can
-offer each one with its address and kind filled in. It asks their usual ports,
-and any port whose listening process is one of them by name or command line
-(`listeners()`), since a port can be changed. Loopback only, GET only, no key
-sent, every port at once. A port alone is not proof: each answers /v1/models
-(Open WebUI /api/models), or refuses it without a key, and where something
-else could sit on its port, a `sign` from its docs or source says which it is
-(seven are asked on 8080); without one, the process does. Adding one is
-the ordinary Add form, test before save and all; Ollama at its usual port
-keeps its own flow.
+Open WebUI, LiteLLM, freellmapi, new-api, one-api, CLI Proxy API, AstrLink,
+opencodex, ThinkWatch Lite, Claude Code Router, Bifrost, OmniRoute, 9router),
+so the Endpoints page can offer each one with its address and kind filled in.
+It asks their usual ports, and any port whose listening process is one of them
+by name or command line (`listeners()`), since a port can be changed. Loopback
+only, GET only, no key sent, every port at once. A port alone is not proof:
+each answers /v1/models (Open WebUI /api/models), or refuses it without a key,
+and where something else could sit on its port, a `sign` from its docs or
+source says which it is (seven are asked on 8080, three on 3000); without
+one, the process does. Adding one is the ordinary Add form, test before save
+and all; Ollama at its usual port keeps its own flow.
 """
 
 from __future__ import annotations
@@ -198,6 +198,13 @@ def _llamacpp(status: int, data) -> bool:
     return any(r.get("owned_by") == "llamacpp" for r in _rows(data))
 
 
+def _oneapi(status: int, data) -> bool:
+    """{"success": true, "data": {"version", "quota_per_unit", ...}}: one-api's
+    /api/status (controller/misc.go), kept by new-api and the other forks."""
+    return (status == 200 and isinstance(data, dict) and isinstance(data.get("data"), dict)
+            and "quota_per_unit" in data["data"])
+
+
 # Model servers detect() looks for: their usual ports; `sign`, a key-free GET
 # and a test of its (status, answer) where the port alone could be another
 # server, none where the port is its own; the endpoint each becomes; where that
@@ -239,6 +246,16 @@ LOCAL: dict[str, dict] = {
     "bifrost": {"label": "Bifrost", "ports": (8080,), "kind": "aggregator", "procs": ("bifrost",),
                 "sign": ("/health", lambda s, d: isinstance(d, dict) and "db_pings" in (d.get("components") or {})),
                 "docs": "https://github.com/maximhq/bifrost/blob/dev/transports/bifrost-http/handlers/health.go"},
+    # Three are asked on 3000: new-api, one-api, Open WebUI, the narrowest sign first. one-api and
+    # new-api answer a keyless /api/status, new-api's also with enable_drawing, which one-api's never
+    # has; Open WebUI says no quota_per_unit and its /v1/models is its web app, and one-api and
+    # new-api answer /api/config with a 404. Their release binaries are new-api and one-api.
+    "newapi": {"label": "new-api", "ports": (3000,), "kind": "hub", "hub": "newapi", "procs": ("new-api",),
+               "sign": ("/api/status", lambda s, d: _oneapi(s, d) and "enable_drawing" in d["data"]),
+               "docs": "https://github.com/QuantumNous/new-api/blob/main/router/api-router.go"},
+    "oneapi": {"label": "one-api", "ports": (3000,), "kind": "hub", "hub": "oneapi", "procs": ("one-api",),
+               "sign": ("/api/status", _oneapi),
+               "docs": "https://github.com/songquanpeng/one-api/blob/main/router/api.go"},
     # `open-webui serve` on 8080, its Docker image on 3000. Its API is under /api (/v1 is the web app),
     # and /api/config names it, a renamed one "... (Open WebUI)" (env.py WEBUI_NAME).
     "openwebui": {"label": "Open WebUI", "ports": (8080, 3000), "kind": "hub", "hub": "openwebui", "prefix": "/api",
@@ -287,6 +304,12 @@ LOCAL: dict[str, dict] = {
     "astrlink": {"label": "AstrLink", "ports": (8317,), "kind": "aggregator", "procs": ("astrlink",),
                  "sign": ("/astrlink/reachability", lambda s, d: s == 204),
                  "docs": "https://github.com/Calcium-Ion/AstrLink/blob/main/core/internal/ingress/handler.go"},
+    # Node in a checkout (server/dist/index.js) on 3001, or the desktop app (FreeLLMAPI) on 31415
+    # (.env.example, desktop/README.md); its keyless /livez says uptime_s (server/src/routes/status.ts).
+    "freellmapi": {"label": "freellmapi", "ports": (3001, 31415), "kind": "hub", "hub": "freellmapi",
+                   "procs": ("freellmapi",), "cmd": ("freellmapi",),
+                   "sign": ("/livez", lambda s, d: isinstance(d, dict) and "uptime_s" in d),
+                   "docs": "https://github.com/tashfeenahmed/freellmapi/blob/main/server/src/routes/status.ts"},
     # Its releases, Homebrew's formula, and its Docker image (CLIProxyAPI).
     "cliproxy": {"label": "CLI Proxy API", "ports": (8317,), "kind": "hub", "hub": "cliproxy",
                  "sign": ("/", lambda s, d: isinstance(d, dict) and d.get("message") == "CLI Proxy API Server"),

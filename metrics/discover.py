@@ -45,9 +45,10 @@ The ways this install can reach a provider, each a row's `routes`:
   direct       an endpoint of its own in config/endpoints.json whose name or
                base URL is the provider's (models.dev gives the base). Adding
                is plain onboarding on that endpoint: bench only.
-  hub          a connection in any other hub (LiteLLM, CLI Proxy API,
-               OmniRoute: hub_routes, by each adapter's upstreams()),
-               whose name is the provider's or whose base URL is its API.
+  hub          a connection in any other hub that adds models through its
+               API (LiteLLM, CLI Proxy API, OmniRoute: hub_routes, by each
+               adapter's upstreams()), whose name is the provider's or whose
+               base URL is its API.
                Only the hub knows its connections, so it is asked when a
                model's popup opens, not here: build() never waits on the
                network. Adding goes through that hub's adapter.
@@ -231,15 +232,17 @@ def _routes(r: dict, bench: list, owui_conns: set[str], direct: dict, owui: str 
 
 def hub_routes(rows: list[dict]) -> tuple[list[list[dict]], list[str]]:
     """The hub routes (see ROUTES) for each of `rows`, and the hubs that could
-    not be asked. Each hub but Open WebUI is asked once, by its adapter's
-    upstreams(); an install with none asks nothing."""
+    not be asked. Each hub whose adapter lists its connections and adds to
+    them (upstreams, add) is asked once, by its upstreams(); an install with
+    none asks nothing. Open WebUI's are in build(), and a hub that takes no
+    model through its API offers no route."""
     import endpoints
     hubs, errors = [], []
     for which, label in endpoints.HUBS.items():
-        ep = endpoints.find_hub(which) if which != "openwebui" else None      # Open WebUI's are in build()
+        mod = endpoints.adapter(which)
+        ep = endpoints.find_hub(which) if hasattr(mod, "upstreams") and hasattr(mod, "add") else None
         if not ep:
             continue
-        mod = endpoints.adapter(which)
         try:
             hubs.append((which, label, ep, mod.SUPPORTS, mod.upstreams()))
         except Exception as exc:                        # noqa: BLE001

@@ -41,6 +41,10 @@ Wendell Research.
   - For the sign-ins in CLI Proxy API or OmniRoute, through that hub, the
     quota endpoint of the provider each sign-in belongs to (Google's,
     ChatGPT's).
+  - freellmapi, one-api or new-api itself, with its own keys: what it says is
+    left, and (one-api, new-api) its channels' names and state. Its channel
+    list is also read when the Onboard dialog opens; the hubs leave the
+    channels' keys out of it.
 - **Charts**: the dashboard's page loads Observable Plot from jsDelivr, at a
   pinned version, in your browser.
 - **Posts**, only when you click Post on X, Bluesky, LinkedIn or Reddit in a

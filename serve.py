@@ -1037,8 +1037,8 @@ def _modalities(entry: dict, served: str, index: dict) -> dict:
 
 
 # What each endpoint answered, for LISTED_FOR seconds: name -> (when, its
-# config, live, conns). Only the asking is kept; what is on the bench, retired
-# or dismissed is taken off fresh on every opening.
+# config, live, conns, what to say of it). Only the asking is kept; what is on
+# the bench, retired or dismissed is taken off fresh on every opening.
 LISTED_FOR = 3600                  # an hour: lists rarely change sooner, and Refresh is one click
 _listed: dict[str, tuple] = {}
 
@@ -1058,7 +1058,9 @@ def onboard_candidates(fresh: bool = False) -> dict:
     `urlIdx` the way provider_tags.py names them (base URLs only, never the
     keys): provider-tags.json is written by that script on its schedule, so a
     model added to Open WebUI since was "unknown connection" until it ran.
-    The file is the fallback when the hub's connections cannot be read.
+    The file is the fallback when the hub's connections cannot be read. On
+    another hub whose adapter says which connections serve each model
+    (served_by), they are its group.
 
     An endpoint's answer is reused for LISTED_FOR seconds, unless `fresh` (the
     picker's Refresh) or its entry in endpoints.json changed since; a failure
@@ -1087,26 +1089,32 @@ def onboard_candidates(fresh: bool = False) -> dict:
     def ask(name: str):
         kept = _listed.get(name)
         if not fresh and kept and kept[1] == config[name] and time.time() - kept[0] < LISTED_FOR:
-            return kept[2], kept[3], kept[0]
+            return kept[2], kept[3], kept[0], kept[4]
         try:
             live = endpoints.models(name)
         except Exception as exc:                       # noqa: BLE001
-            return exc, [], 0
-        conns = []
-        if endpoints.hub(name) == "openwebui":
+            return exc, [], 0, []
+        conns, said, which = [], [], endpoints.hub(name)
+        if which == "openwebui":
             import provider_tags
             try:
                 conns = provider_tags.connection_names(name)
             except Exception:                          # noqa: BLE001 -- the tags file answers instead
                 pass
-        _listed[name] = (time.time(), config[name], live, conns)
-        return live, conns, _listed[name][0]
+        elif which and hasattr(endpoints.adapter(which), "served_by"):
+            try:                                       # {served: the connections serving it}, where the hub says
+                conns = endpoints.adapter(which).served_by(name)
+            except ValueError as exc:
+                said = [f"{name}: {exc}"]
+        _listed[name] = (time.time(), config[name], live, conns, said)
+        return live, conns, _listed[name][0], said
     with ThreadPoolExecutor(max_workers=len(names)) as pool:   # all at once, not in turn
         answers = dict(zip(names, pool.map(ask, names)))
     # The oldest answer shown, so the picker can say how old its list is.
-    listed = min((at for _, _, at in answers.values() if at), default=time.time())
+    listed = min((a[2] for a in answers.values() if a[2]), default=time.time())
     mods = _modelsdev_modalities()
-    for name, (live, conns, _) in answers.items():
+    for name, (live, conns, _, said) in answers.items():
+        errors += said
         if isinstance(live, Exception):
             errors.append(f"cannot reach {name}: {live}")
             continue
@@ -1116,11 +1124,12 @@ def onboard_candidates(fresh: bool = False) -> dict:
             key = endpoints.snapshot_key(served, name)
             if key in taken or several(entry):
                 continue
-            # On Open WebUI the group is the connection behind it; any other
-            # endpoint is its own group.
+            # On Open WebUI the group is the connection behind it, on a hub that
+            # says which serve it those; any other endpoint is its own group.
             at = entry.get("urlIdx")
             if not owui:
-                group = f"{name} (direct)"
+                group = (f"{name}: {' + '.join(conns[served])}" if isinstance(conns, dict) and conns.get(served)
+                         else f"{name} (direct)")
             elif entry.get("connection_type") == "local":
                 group = "local"
             elif isinstance(at, int) and 0 <= at < len(conns):
@@ -2166,6 +2175,9 @@ def discover_add(connection: str, model: str, who: str = "ui", endpoint: str = "
     if not which:
         return {"ok": False, "errors": [f"{endpoint} is not a hub; add the model on it from the Onboard dialog"]}
     hub, label = endpoints.adapter(which), endpoints.HUBS[which]
+    if not hasattr(hub, "add"):
+        return {"ok": False, "errors": [f"{label} takes no model through its API: add it there, then onboard it"
+                                        " from the Onboard dialog"]}
     try:
         served, steps = hub.add(connection, model)
     except ValueError as exc:
@@ -7087,8 +7099,10 @@ def editor() -> str:
         + "".join(f"<option value='{k}'>{esc(label)}</option>" for k, label in endpoints.HUBS.items())
         + "</select><p class='rules'>Open WebUI's base is its <code>/api</code>, e.g."
         " <code>http://localhost:3000/api</code>, with an admin's API key. LiteLLM's, CLI Proxy"
-        " API's and OmniRoute's are their <code>/v1</code>, e.g. <code>http://localhost:4000/v1</code>,"
-        " <code>http://localhost:8317/v1</code> and <code>http://localhost:20128/v1</code>.</p></div>"
+        " API's, OmniRoute's, freellmapi's, one-api's and new-api's are their <code>/v1</code>, e.g."
+        " <code>http://localhost:4000/v1</code>, <code>http://localhost:8317/v1</code>,"
+        " <code>http://localhost:20128/v1</code>, <code>http://localhost:3001/v1</code> and"
+        " <code>http://localhost:3000/v1</code>.</p></div>"
         # What it speaks (endpoints.APIS): the built-in client builds the native requests.
         "<label class='field' for='e-api'>API</label><select id='e-api'>"
         + "".join(f"<option value='{k}'>{esc(label)}</option>" for k, label in endpoints.APIS.items() if k != "responses")
@@ -7104,10 +7118,11 @@ def editor() -> str:
         # A hub's admin key, where it is not the API key (endpoints.admin_key).
         "<div id='e-admin-row' hidden><label class='field' for='e-admin'>Admin key</label>"
         "<input id='e-admin' type='password' autocomplete='off' placeholder='only where it is not the API key'>"
-        "<p class='rules'>What adds a model to the hub: LiteLLM's master key (blank if the API key is it),"
-        " CLI Proxy API's management key (always its own), an OmniRoute key with the manage scope (blank"
-        " if the API key has it). Open WebUI needs none beyond an admin's"
-        " API key. Kept like the API key; blank keeps the current one.</p></div>"
+        "<p class='rules'>What adds a model to the hub, or reads its channels: LiteLLM's master key (blank if"
+        " the API key is it), CLI Proxy API's management key (always its own), an OmniRoute key with the"
+        " manage scope (blank if the API key has it), one-api's system access token or new-api's access"
+        " token with the channel read scope. Open WebUI needs none beyond an admin's API key, freellmapi"
+        " none at all. Kept like the API key; blank keeps the current one.</p></div>"
         "<div class='actions'><button class='btn' data-close>Cancel</button>"
         "<button class='btn primary' id='e-save'>Check and add</button></div>"
         "</div>"
