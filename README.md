@@ -166,8 +166,11 @@ dependencies either way: the app is the Python standard library.
    offered; adding one is an entry in `metrics/connect.py` (its docstring says
    how). A model server already running on this machine, at its usual port or
    any other its process is listening on (Ollama, LM Studio, Jan, llama.cpp,
-   LocalAI, vLLM, LiteLLM, CLI Proxy API, OmniRoute), is offered under "Found
-   on this machine", its address and kind filled in.
+   LocalAI, vLLM, LiteLLM, CLI Proxy API, OmniRoute, 9router), is offered under
+   "Found on this machine", its address and kind filled in. LiteLLM, CLI Proxy
+   API and OmniRoute come as hubs: the bench can add a model to them, and
+   OmniRoute's combos and `auto` routers are kept out of onboarding, since a
+   verdict is about one model.
 
        python serve.py                  # http://localhost:8122
 
@@ -228,8 +231,8 @@ dependencies either way: the app is the Python standard library.
   waits when the wait fits, or is refused before it goes out. Every call lands
   in a monthly usage ledger with its tokens. Quota management has a tile per
   provider showing what is left, when it resets and who is resting. OpenRouter,
-  xKiro, Requesty and CLI Proxy API's sign-ins are read live, at no cost to
-  quota. Nothing is taken from a provider's docs; NVIDIA's own stated figures
+  xKiro, Requesty and the sign-ins in CLI Proxy API or OmniRoute are read live,
+  at no cost to quota. Nothing is taken from a provider's docs; NVIDIA's own stated figures
   are read from its site and watched for changes.
 - **Discover.** FreeLLMAPI's free catalog, with models.dev for the details
   and paid models it lacks, merged into one list of models worth adding,
@@ -500,7 +503,7 @@ reaches Wendell Research. What it sends, and where:
 - **Quota reads**, only when you press Refresh on Quota management, with no
   prompt: OpenRouter's key status, and xKiro's and Requesty's usage, each with
   your key for it (from its Open WebUI connection when no endpoint has one). CLI Proxy
-  API asks each sign-in's own provider for its quota.
+  API or OmniRoute asks each sign-in's own provider for its quota.
 - **Charts**: the dashboard's browser page loads Observable Plot from jsDelivr
   at a pinned version.
 - **Posts**, only when you click Post on X, Bluesky, LinkedIn or Reddit in a
@@ -528,7 +531,7 @@ backs up the ones it replaces, in the data folder's `backups/`.
   compare the shape of the answers (text or tool calls, which tools, arguments that
   parse), not whether either was right.
 - **Some parts are checked against fakes only.** The native Anthropic and
-  Gemini endpoints, and the LiteLLM and CLI Proxy API hub adapters, are built
+  Gemini endpoints, and the LiteLLM, CLI Proxy API and OmniRoute hub adapters, are built
   from those APIs' documentation and source and tested against fake servers,
   not yet against the real services.
 - **A merged reply arrives in one piece** once the merger has finished; the

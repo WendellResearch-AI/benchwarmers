@@ -24,6 +24,12 @@ The management key is not one of its API keys: it is the endpoint's admin key
 address for 30 minutes after 5 refused keys, so nothing here retries a
 refusal, and without a stored key nothing is sent at all.
 
+Its sign-ins (OAuth credentials: Antigravity, Codex) are read for Quota
+management the way its own console reads them: `credentials` lists them and
+`requests/api-call` makes one sign-in's request to its provider's quota
+endpoint with the sign-in's token (sign_ins, api_call; quotaview.read_signins
+is the flow). Same management key.
+
 Checked against CLI Proxy API 8.0.36's source (2026-10-21):
 internal/api/server_management.go (GET and PATCH
 /v0/management/openai-compatibility), internal/api/handlers/management/
@@ -53,6 +59,7 @@ SUPPORTS = {"allow_list": "models list", "tags": "", "logo": "", "access": "",
             "link": "/management.html#/ai-providers"}
 CHECKED = ("8.0",)
 PATH = "/v0/management/openai-compatibility"
+CONSOLE = ("/v8/management", "/v0/management")   # the sign-ins' routes: the console's prefix, then the older one
 
 
 def endpoint() -> str:
@@ -64,14 +71,20 @@ def endpoint() -> str:
     return name
 
 
-def _call(method: str = "GET", body: dict | None = None) -> tuple[dict, str]:
-    """(reply, X-CPA-VERSION) from the openai-compatibility route."""
-    name = endpoint()
+def _secret(name: str) -> str:
+    """The management key; ValueError, before anything is sent, when it is not stored."""
     secret = endpoints.admin_key(name, fallback=False)
     if not secret:
         env = endpoints.ENV_KEY + endpoints.admin_name(endpoints.load()[name]).upper().replace("-", "_")
         raise ValueError(f"CLI Proxy API's management key is not stored: give it as the admin key on the"
                          f" Endpoints page (Change key on {name}), or set {env}")
+    return secret
+
+
+def _call(method: str = "GET", body: dict | None = None) -> tuple[dict, str]:
+    """(reply, X-CPA-VERSION) from the openai-compatibility route."""
+    name = endpoint()
+    secret = _secret(name)
     req = urllib.request.Request(endpoints.base(name).removesuffix("/v1") + PATH, method=method,
                                  data=None if body is None else json.dumps(body).encode(),
                                  headers={"Authorization": f"Bearer {secret}", "Content-Type": "application/json",
@@ -122,6 +135,46 @@ def upstreams() -> dict[str, tuple[str, str]]:
     What Discover matches a provider against (discover.hub_routes)."""
     return {e["name"]: (str(e.get("base-url") or "").rstrip("/"), str(e.get("prefix") or ""))
             for e in _providers()[0] if e.get("name") and not e.get("disabled")}
+
+
+def _console(path: str, body: dict | None = None) -> dict:
+    """One sign-ins' management call (moved from quotaview, 2026-11-20): the
+    console's prefix first, the older on a 404. A 401 is never retried."""
+    name = endpoint()
+    head = {"Authorization": f"Bearer {_secret(name)}", "Content-Type": "application/json",
+            "Accept": "application/json"}
+    for prefix in CONSOLE:
+        req = urllib.request.Request(endpoints.base(name).removesuffix("/v1") + prefix + path, headers=head,
+                                     data=None if body is None else json.dumps(body).encode())
+        try:
+            with urllib.request.urlopen(req, timeout=20) as r:
+                return json.loads(r.read() or b"null") or {}
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404 and prefix != CONSOLE[-1]:
+                continue
+            if exc.code == 401:
+                raise ValueError("CLI Proxy API refused the management key; check it before trying again"
+                                 " (5 refusals ban this address for 30 minutes)") from None
+            if exc.code == 404:
+                raise ValueError("CLI Proxy API's management API is off (every route 404s without a secret"
+                                 " key)") from None
+            raise ValueError(f"CLI Proxy API answered {exc.code} on {path}") from None
+
+
+def sign_ins() -> list[dict]:
+    """Its sign-ins, in the bench's shape: {provider, auth_index, disabled,
+    account (a Codex sign-in's ChatGPT account id), project (Antigravity's)}."""
+    return [{"provider": str(c.get("provider") or ""), "auth_index": c.get("auth_index"),
+             "disabled": bool(c.get("disabled")), "account": (c.get("id_token") or {}).get("chatgpt_account_id"),
+             "project": c.get("project_id") or ""}
+            for c in _console("/credentials").get("files") or [] if isinstance(c, dict)]
+
+
+def api_call(auth_index, method: str, url: str, header: dict, data: str | None = None) -> dict:
+    """One sign-in's own request, made by the proxy with the sign-in's token
+    (`$TOKEN$` in `header`): {status_code, body}."""
+    return _console("/requests/api-call", {"auth_index": auth_index, "method": method, "url": url,
+                                           "header": header, **({"data": data} if data is not None else {})})
 
 
 def plan(connection: str, model_id: str) -> dict:

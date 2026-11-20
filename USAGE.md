@@ -71,7 +71,10 @@ not on the bench yet. Search, and tick one or several: the ticks survive a new
 search, so you can gather models from different connections in one go.
 Dismiss hides one you never want offered (an image model, say); the dismissed
 list brings it back. Each endpoint's list is kept an hour, with its age and a
-Refresh, and a model already queued or onboarding is not offered again.
+Refresh, and a model already queued or onboarding is not offered again. A
+hub's combos and routers (OmniRoute's combos, fusion and `auto` ones) are not
+offered either, and onboarding refuses one by name: each picks a model per
+request, and a verdict is about one model.
 
 Each model is registered, probed with four short calls, and, if it answers,
 run through the suite. **Onboard as**, under the list, chooses how much that
@@ -292,7 +295,7 @@ this week first and badged. A row opens its popup: what
 the model takes and does, its limits and monthly budget, FreeLLMAPI's known
 quirks for it, links to its own pages on freellmapi.co and models.dev, and every route
 this install has to it, each with an **Add via this**. Adding through a hub (Open WebUI, LiteLLM, CLI Proxy
-API) puts it in that hub too; adding direct registers it on its own endpoint
+API, OmniRoute) puts it in that hub too; adding direct registers it on its own endpoint
 only. Either way the onboarding joins the same queue, with the same
 **Onboard as** and **Vision model** choice as the Onboard dialog, asked in the
 confirm before anything is added.
@@ -306,7 +309,7 @@ app**, switches a provider either way or adds one.
 One tile per provider a bench model arrives through. Each draws the
 provider's limits at the level they apply, and names a model only where a
 limit is that model's own:
-- **Windows**: CLI Proxy API's sign-ins have a 5-hour and a weekly limit per
+- **Windows**: the sign-ins in CLI Proxy API or OmniRoute have a 5-hour and a weekly limit per
   model group, a Codex sign-in one for the account. Other providers have the
   windows their replies' headers state; a window past its reset is shown full.
 - **Pool**: OpenRouter's free requests a day, shared by its models, with a bar
@@ -349,9 +352,15 @@ now, and its last 24 hours of calls.
 - **A free read** on OpenRouter (it asks the key what is left), on xKiro (its
   usage endpoint: free-model tokens left today), on Requesty (its usage
   endpoint: the key's free-model requests today, by Requesty's count; its limit
-  only once a rate-limit reply has stated it) and on CLI Proxy API's sign-ins
-  (it asks the proxy for each one's quota, as its own console does; this needs
-  CLI Proxy API on the Endpoints page as a hub, with its management key).
+  only once a rate-limit reply has stated it) and on the sign-ins in CLI Proxy
+  API or OmniRoute (it asks the hub for each one's quota, as CLI Proxy API's
+  own console does; this needs the hub on the Endpoints page, with its
+  management key, or for OmniRoute a key with the manage scope). CLI Proxy
+  API reads its Antigravity and Codex sign-ins; OmniRoute lists only its
+  Claude and Codex ones there, and the bench reads Codex's (it has no reader
+  for Claude's yet). A tile is a hub's when its tag names the hub's endpoint,
+  its address, or the name `hosts` in `config/connections.json` gives that
+  address.
   xKiro's and Requesty's keys come from their endpoint, else their Open WebUI
   connection.
 - **One 16-token request** where a provider states its limits only in its

@@ -47,7 +47,7 @@ Check: `python metrics/paths.py` prints the folder and why it was chosen.
 
 An endpoint is any OpenAI-compatible API: a provider (Groq, Mistral), an
 aggregator (OpenRouter), a hub the person runs (Open WebUI, LiteLLM, CLI Proxy
-API) or a local runtime (Ollama). Three ways, best first:
+API, OmniRoute) or a local runtime (Ollama). Three ways, best first:
 
 - **Sign in from the dashboard** (step 4 opens it on this): OpenRouter,
   NanoGPT, Hugging Face, Pollinations, a ChatGPT plan, GitHub Models, or a

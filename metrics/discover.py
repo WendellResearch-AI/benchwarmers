@@ -45,7 +45,8 @@ The ways this install can reach a provider, each a row's `routes`:
   direct       an endpoint of its own in config/endpoints.json whose name or
                base URL is the provider's (models.dev gives the base). Adding
                is plain onboarding on that endpoint: bench only.
-  hub          a connection in a LiteLLM or CLI Proxy API hub (hub_routes),
+  hub          a connection in any other hub (LiteLLM, CLI Proxy API,
+               OmniRoute: hub_routes, by each adapter's upstreams()),
                whose name is the provider's or whose base URL is its API.
                Only the hub knows its connections, so it is asked when a
                model's popup opens, not here: build() never waits on the
@@ -230,8 +231,8 @@ def _routes(r: dict, bench: list, owui_conns: set[str], direct: dict, owui: str 
 
 def hub_routes(rows: list[dict]) -> tuple[list[list[dict]], list[str]]:
     """The hub routes (see ROUTES) for each of `rows`, and the hubs that could
-    not be asked. Each LiteLLM or CLI Proxy API hub is asked once, by its
-    adapter's upstreams(); an install with neither asks nothing."""
+    not be asked. Each hub but Open WebUI is asked once, by its adapter's
+    upstreams(); an install with none asks nothing."""
     import endpoints
     hubs, errors = [], []
     for which, label in endpoints.HUBS.items():

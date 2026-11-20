@@ -231,9 +231,15 @@ LOCAL: dict[str, dict] = {
                  "sign": ("/", lambda s, d: isinstance(d, dict) and d.get("message") == "CLI Proxy API Server"),
                  "procs": ("cli-proxy-api", "cliproxyapi"),
                  "docs": "https://github.com/router-for-me/CLIProxyAPI/blob/main/internal/api/server_routes.go"},
-    # Node running node_modules/omniroute/dist/server.js, or 9router/app/custom-server.js.
-    "omniroute": {"label": "OmniRoute / 9router", "ports": (20128,), "kind": "aggregator",
-                  "cmd": ("omniroute", "9router"), "docs": "https://github.com/decolua/9router"},
+    # Node running node_modules/omniroute/dist/server.js, or 9router/app/custom-server.js. One port:
+    # OmniRoute, a fork of 9router, is a hub (omniroute.py) whose public /api/health says
+    # {"status": "ok", "timestamp"}; 9router's says {"ok": true} and it has none of the routes the
+    # adapter uses (src/app/api/ of both, read 2026-11-20), so it stays a plain aggregator.
+    "omniroute": {"label": "OmniRoute", "ports": (20128,), "kind": "hub", "hub": "omniroute", "cmd": ("omniroute",),
+                  "sign": ("/api/health", lambda s, d: s == 200 and isinstance(d, dict) and "timestamp" in d),
+                  "docs": "https://github.com/cheaper-inference/OmniRoute/blob/main/src/app/api/health/route.ts"},
+    "9router": {"label": "9router", "ports": (20128,), "kind": "aggregator", "cmd": ("9router",),
+                "docs": "https://github.com/decolua/9router"},
 }
 
 
