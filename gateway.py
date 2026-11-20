@@ -21,13 +21,17 @@ every collection's description and tags, so the caller can choose — `GET
 
 The reply is every answer, each labelled by seat and model with a call id,
 including seats that failed or came back empty: who answered is evidence about
-the roster, and a summary naming only the good answer hides it.
+the roster, and a summary naming only the good answer hides it. It does not
+wait for the slowest seat: once `quorum` seats have answered the rest get
+`grace` seconds (gateway.json), and one still answering is named `late` and
+recorded under its call id when it is in (finish_late).
 
 Unless the reply is `merged` (a collection's `reply`, or per request a
 `:merged` suffix on the model or `"bench": {"reply": "merged"}`; `:all` the
 other way): then, after the panel, one more model writes a single answer
 saying where the seats agreed, where they disagreed and who said what, for a
-client that can show only one. It has its own call id, so a verdict can judge
+client that can show only one. It reads "Source 1", "Source 2"... rather than
+model names, which unsource() puts back. It has its own call id, so a verdict can judge
 the merge, and the `bench` field still carries every seat. If no merger has
 the context for the merge, or it fails, the reply is every answer with a
 one-line note: the panel the caller waited for is never lost.
@@ -137,7 +141,7 @@ import sys
 import threading
 import time
 import urllib.parse
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, as_completed, wait
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 ROOT = pathlib.Path(__file__).resolve().parent
@@ -186,10 +190,18 @@ QUERY_KEY = re.compile(r"([?&](?:key|api_key|access_token)=)[^&\s'\"]*", re.I)
 STREAM_GRACE = 1.0
 KEEPALIVE = 10.0
 # A merge that reads as consensus hides the dissent the bench runs on, so the
-# merger is told to keep who said what.
+# merger is told to keep who said what. It sees "Source 1", "Source 2"... and
+# never a model's name, so a brand does not weigh its answer (merge, unsource).
 MERGE_SYSTEM = ("Several models answered the same request. Write one answer to it from theirs: say where"
-                " they agreed, where they disagreed, and who said what, naming each model as labelled."
-                " Keep every dissent, and do not present a claim as settled because several made it.")
+                " they agreed, where they disagreed, and who said what, naming each answer by its label"
+                " (Source 1, Source 2...). Keep every dissent, and do not present a claim as settled because"
+                " several made it.")
+# "Source 2", "source 2", "Sources 1 and 3", "Sources 1, 2, and 3"; never the 1 of
+# "Source 10", nor a range ("Sources 1-3"), which is left as written.
+SOURCES = re.compile(r"\bsources?\s+(\d+(?:(?:\s*,\s*(?:and\s+|or\s+)?|\s+(?:and|or|&)\s+)\d+)*+)\b"
+                     r"(?!\s*(?:[-–]|to\s)\s*\d)", re.I)
+LATE = ("_still answering when the panel stopped waiting: its answer is recorded under this call id when it"
+        " comes, to read and judge on the dashboard_")
 
 
 def flatten(messages: list[dict]) -> tuple[str, str]:
@@ -523,7 +535,7 @@ def merge(collection: dict, members: list[str], shape: str, whole: str, seats: l
     if not answered:
         return None, "no seat answered"
     text = f"THE REQUEST\n\n{whole}\n\nTHE ANSWERS\n\n" + "\n\n".join(
-        f"## {s['seat']} — {s['alias']}\n\n{s['answer']}" for s in answered)
+        f"## Source {n}\n\n{s['answer']}" for n, s in enumerate(answered, 1))
     needed = estimate_tokens(f"{MERGE_SYSTEM}\n\n{text}")
     alias = next((a for a in merger_candidates(collection, members, shape, len(text) > LARGE)
                   if not too_small(needed, [a])), None)
@@ -532,12 +544,24 @@ def merge(collection: dict, members: list[str], shape: str, whole: str, seats: l
     seat = record_seat(task, f"{panel_id}.merger", "merger", alias, ask_seat(alias, MERGE_SYSTEM, text))
     if seat["status"] != "ok":
         return seat, f"the merger {alias} came back {seat['status']}" + (f": {seat['error'][:120]}" if seat["error"] else "")
+    seat["answer"] = unsource(seat["answer"], [f"{s['alias']} ({s['seat']})" for s in answered])
     return seat, ""
+
+
+def unsource(text: str, names: list[str]) -> str:
+    """The merger's "Source N" back to the seat it stands for, `names[N - 1]`.
+    A reference to a number with no source is left as written, whole."""
+    def named(m: re.Match) -> str:
+        if not all(1 <= int(n) <= len(names) for n in re.findall(r"\d+", m[1])):
+            return m[0]
+        return re.sub(r"\d+", lambda d: names[int(d[0]) - 1], m[1])
+    return SOURCES.sub(named, text)
 
 
 def section(seat: dict) -> str:
     """One seat's part of an every-answer reply: its heading, call id, status and answer."""
     body = seat["answer"] or (f"_error: {seat['error'][:300]}_" if seat["error"] else
+                              LATE if seat["status"] == "late" else
                               "_empty reply — usually a token budget, not incapacity_")
     return f"## {seat['seat']} — {seat['alias']}\n`{seat['call']}` · {seat['status']} · {seat['seconds']}s\n\n{body}\n"
 
@@ -668,22 +692,44 @@ def run_collection(name: str, messages: list[dict], nominated: list[str] | None 
     if emit:
         emit("\n".join(out))
     done: dict[int, dict] = {}
-    with ThreadPoolExecutor(max_workers=len(seats)) as pool:
-        asked = {pool.submit(ask_seat, alias, system, prompt, messages if pictures else None): i
-                 for i, (_key, _label, alias) in enumerate(seats)}
+    pool = ThreadPoolExecutor(max_workers=len(seats))
+    asked = {pool.submit(ask_seat, alias, system, prompt, messages if pictures else None): i
+             for i, (_key, _label, alias) in enumerate(seats)}
+    pool.shutdown(wait=False)                          # a late seat answers on after the reply
+    # QUORUM, THEN GRACE: once `quorum` seats have answered, the rest get `grace`
+    # seconds more, so the slowest free model no longer sets the caller's wait.
+    # Short of a quorum (seats failing), every seat is waited for, as always.
+    wait_for = bench_collections.wait_settings()
+    began, until, left = time.monotonic(), None, set(asked)
+    while left:
+        ready, left = wait(left, None if until is None else max(0.0, until - time.monotonic()), FIRST_COMPLETED)
+        if not ready:
+            break                                      # the grace is over
         # Each seat is logged the moment it answers, so explorer rotation
         # counts it even if a slower seat (or the caller) never finishes.
-        for future in as_completed(asked):
+        for future in ready:
             i = asked[future]
             key, label, alias = seats[i]
             done[i] = record_seat(task, f"{panel_id}.{key}", label, alias, future.result())
             if emit:
                 emit("\n" + section(done[i]))
+        if until is None and sum(s["status"] == "ok" for s in done.values()) >= wait_for["quorum"]:
+            until = time.monotonic() + wait_for["grace"]
+    # A SEAT STILL ANSWERING IS NAMED, `late`, with the call id finish_late
+    # records it under once it is in: who sat is evidence, answered or not.
+    late = {f: asked[f] for f in left}
+    waited = round(time.monotonic() - began, 1)
+    for i in sorted(late.values()):
+        key, label, alias = seats[i]
+        done[i] = {"call": f"{panel_id}.{key}", "seat": label, "alias": alias, "status": "late",
+                   "answer": "", "error": "", "seconds": waited}
+        if emit:
+            emit("\n" + section(done[i]))
 
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
     record = {"panel": panel_id, "at": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
               "model": model, "shape": shape, "shape_by": how, "key": who, "system": system,
               "prompt": prompt, "seats": [done[i] for i in range(len(seats))],
+              **({"waited": waited} if late else {}),
               **({"skipped": skipped} if skipped else {}), **({"picked": picked} if picked else {})}
     out += [section(s) for s in record["seats"]]
     footer = ("---\nRecord a verdict per seat once checked against the code:\n"
@@ -716,10 +762,44 @@ def run_collection(name: str, messages: list[dict], nominated: list[str] | None 
             who = ", ".join(f"{s['alias']} {s['status']}" for s in bench["seats"])
             bench["reply"] = "merged"
             content = (f"{merger['answer']}\n\n---\nMerged by {merger['alias']} (`{merger['call']}`) from:"
-                       f" {who}. Every seat's answer and call id is in the response's `bench` field.")
+                       f" {who}." + (" A late seat was still answering, so it is not in the merge; its answer"
+                                     " is recorded under its call id when it comes." if late else "")
+                       + " Every seat's answer and call id is in the response's `bench` field.")
+    if late:
+        # The reply goes now. Started here, not at the grace's end, so the
+        # merger is in the record before the call log line is written.
+        threading.Thread(target=finish_late, args=(record, late, seats, task, panel_id)).start()
+    else:
+        log_panel(record)
+    return content, bench
+
+
+def finish_late(record: dict, late: dict, seats: list, task: str, panel_id: str) -> None:
+    """The seats still answering when the reply went: each recorded as it comes
+    in, as an on-time seat is and under the call id the reply named, then the
+    panel's call-log line, so the dashboard shows every answer to judge. Not a
+    daemon thread, as the seats' own are not. ponytail: a restart before the
+    last is in loses that line (the seats already in stay in the offload log);
+    write it twice and read the newest per panel if that bites."""
+    try:
+        for future in as_completed(late):
+            i = late[future]
+            key, label, alias = seats[i]
+            try:
+                r = future.result()
+            except Exception as exc:                   # noqa: BLE001 -- the caller has its reply; the seat stays named
+                r = {"status": "error", "answer": "", "error": f"{type(exc).__name__}: {exc}",
+                     "seconds": record["seats"][i]["seconds"]}
+            record["seats"][i] = {**record_seat(task, f"{panel_id}.{key}", label, alias, r), "late": True}
+    finally:
+        log_panel(record)
+
+
+def log_panel(record: dict) -> None:
+    """A panel's line in runs/gateway/calls.jsonl: every seat's answer, what the dashboard reads."""
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
     with (LOG_DIR / "calls.jsonl").open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(record, ensure_ascii=False) + "\n")
-    return content, bench
 
 
 def models() -> list[str]:

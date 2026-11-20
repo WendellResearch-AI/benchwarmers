@@ -43,7 +43,7 @@ RULES = (
     " what each is for. (2) Verify before acting on anything a seat says: seats fail together, so"
     " agreement is not evidence. (3) Send a verdict per seat you judged, with the claims it got right"
     " in `real` and the untrue ones in `false`. (4) Name every seat that answered, by model and seat,"
-    " including errors and empty replies. An empty reply from a reasoning model is usually its token"
+    " including errors, empty replies and late seats. An empty reply from a reasoning model is usually its token"
     " budget, not incapacity. Good uses: exhaustive enumeration over real files, adversarial review."
     " Keep the design and the decisions yourself.")
 
@@ -215,8 +215,11 @@ def ask(args: dict, conn: Conn) -> list[str]:
             s["error"] = s["error"][-300:]             # a traceback's last lines say what went wrong
     data = {"panel": bench.get("panel"), "collection": bench.get("collection"), "shape": bench.get("shape"),
             "seats": seats, **{k: bench[k] for k in ("merger", "skipped", "note") if bench.get(k)}}
+    late = [s["call"] for s in seats if s.get("status") == "late"]
     return [content, "Seats (name each one; send a verdict per seat you judged, by call id):\n"
-            + json.dumps(data, indent=1, ensure_ascii=False)]
+            + json.dumps(data, indent=1, ensure_ascii=False)] + (
+        [f"Late, still answering when the panel stopped waiting: {', '.join(late)}. Each answer will be on the"
+         " dashboard (Collections, Gateway) and its call id in pending_verdicts once it is in."] if late else [])
 
 
 def pending_verdicts(args: dict, conn: Conn) -> list[str]:

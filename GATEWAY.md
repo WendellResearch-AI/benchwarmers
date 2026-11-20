@@ -176,9 +176,27 @@ a streaming client gets it on the last chunk, the one with the finish_reason):
 "bench": {"panel": "p20261017-...", "collection": "bench/core", "shape": "review",
           "shape_by": "set on the collection",
           "seats": [{"call": "p20261017-....member1", "seat": "member", "alias": "…",
-                     "status": "ok|empty|error", "seconds": 12.3, "answer": "…", "error": ""}],
+                     "status": "ok|empty|error|late", "seconds": 12.3, "answer": "…", "error": ""}],
           "verdict": "POST http://127.0.0.1:8123/bench/verdict {…}"}
 ```
+
+**Not waiting for the slowest seat.** Once two seats have answered (`quorum`
+in `config/gateway.json`; an error or an empty reply does not count), the
+others get 60 more seconds (`grace`), and then the reply goes with what is in.
+A seat still answering is named in its own section and in `bench.seats` with
+status `late`, its seconds the panel's wait, and the call id it will be
+recorded under. It keeps running, and when it finishes it is recorded as any
+seat is: an unjudged offload under that call id, owed a verdict on the
+dashboard and in `pending_verdicts`, and in the panel's line in
+`runs/gateway/calls.jsonl`, which is written once it is in (the seat marked
+`"late": true`, the panel's wait as `waited`). A panel whose seats all answer
+in time, or that never reaches its quorum because seats fail, waits for every
+seat as before; `"quorum": 10` always does. The defaults: two answers are the
+least a panel is for, and on 5,233 real panels a 60-second grace cut the
+median wait from 91 to 69 seconds and the slowest tenth from 250 to 84, with
+seven usable answers in eight still in the reply (30 seconds: 41 and 58, four
+in five). Neither is on the dashboard's Gateway settings form: set them in the
+file, where a save from the form keeps them.
 
 **Merged replies (opt-in).** A collection's `reply` is `all` (the default) or
 `merged`; a request overrides it with `"bench": {"reply": "merged"}` in the
@@ -189,7 +207,12 @@ merger writes a single answer saying where the seats agreed, where they
 disagreed and who said what, and that becomes `content`. The merger is the
 collection's `merger`, or when empty the member with the most useful verdicts
 on the request's shape, else the router's primary, else the first member that
-fits. It gets its own call id (`<panel>.merger`, in `bench.merger`, the
+fits. It reads the answers as "Source 1", "Source 2"... with no model,
+provider or seat name, so a brand does not weigh an answer; its "Source 2"
+(or "source 2", "Sources 1 and 3") becomes "model (seat)" before the reply
+goes, and a number with no source, or a range, is left as written. It works
+from the answers in when the grace ends, and the merged reply's seat list
+names a late seat as `late`. It gets its own call id (`<panel>.merger`, in `bench.merger`, the
 offload log and the Gateway card) so a verdict can judge the merge; `bench`
 still carries every seat. If no merger has the context window for the
 request plus every answer, or it fails, the reply is every answer with a
@@ -222,7 +245,8 @@ With `"stream": true` (or the format's own way of asking, below):
   chunk with no text for Ollama and Gemini (their readers have no comments).
   A client or proxy with an idle timeout keeps the connection.
 - **Every answer** (`reply` all): the heading, then each seat's section the
-  moment that seat finishes, then the verdict lines. The pieces are the same
+  moment that seat finishes, then once the grace is over a section naming
+  each seat still answering (`late`), then the verdict lines. The pieces are the same
   as the non-streamed reply's, with the seats in the order they finished
   rather than seat order.
 - **Merged**: the merged answer in one piece when the merge is done (or
@@ -571,7 +595,7 @@ key limited to its collection and a rate, or keep the key on the app's server.
 | Collections | `metrics/bench_collections.py` reads the two config files and computes explorer seats. |
 | Seat router | `route.panel(members=…, explorers=n)` fills explorer seats by staleness for the shape. |
 | Decision models | `metrics/decide.py`: the shape picker and the collection pick (above), each asking the model best on the decision benchmark; every call in `metrics/decisions.jsonl`. Benchmarks › Decision models shows the benchmark and who each use asks (BENCHMARKS.md). |
-| Call log | `runs/gateway/calls.jsonl`, gitignored: every seat's answer, status, timing and call id. |
+| Call log | `runs/gateway/calls.jsonl`, gitignored: every seat's answer, status, timing and call id; a panel with a late seat is written once that seat is in. |
 | Evidence | Each seat is recorded in `metrics/offloads.jsonl` as an unjudged offload when it answers; `offload.py verdict <call id>` or `POST /bench/verdict` replaces it. |
 | Collections tab | The collections, each drawn as its panel sits, and their form (one row per model, a chip per provider). Then the gateway's recent requests: every seat's status and verdict, how long the caller waited (Time), and how many verdicts are owed. Clicking a seat opens its answer and the verdict form. |
 | Catalog | `metrics/catalog.py`: context window, output limit, rate limits and capabilities per model, refreshed daily by the built-in scheduler; a free model whose price goes above zero raises a "went paid" alert. |
@@ -584,8 +608,9 @@ key limited to its collection and a rate, or keep the key on the app's server.
 - **The bench method only.** No single-model routing.
 - **The caller judges.** Only the caller can check an answer against the real
   code. Models fail together, so agreement between seats is not a verdict.
-- **Every seat is named** in the response, including ones that failed or came
-  back empty, because who answered is itself evidence about the roster.
+- **Every seat is named** in the response, including ones that failed, came
+  back empty or were still answering (`late`), because who answered is itself
+  evidence about the roster.
 - **Free models only**, so rate limits are the constraint; a failed seat is
   reported and logged, not retried into the limit. A model the bench already
   knows has no room (a limit or quota it has counted, `metrics/pacing.py`) is

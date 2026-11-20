@@ -57,6 +57,9 @@ you missed.
 An **empty reply from a reasoning model** is almost always its token budget
 (reasoning counts against `max_tokens`), not incapacity: say so, and judge it
 as not useful without a `false` claim. A seat that errored needs no verdict.
+A seat marked `late` was still answering when the panel stopped waiting:
+name it too. Its answer goes to the dashboard, not to you, so it needs no
+verdict from you; if the Stop hook lists it later, say so in one line.
 
 `merged: true` returns one reconciled answer instead of every answer; every
 seat is still called and listed with its call id, and the merge has its own.

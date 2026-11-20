@@ -23,6 +23,7 @@ import shutil
 import sys
 import tempfile
 import threading
+import time
 import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -36,18 +37,24 @@ os.environ.update(BENCHWARMERS_HOME=str(TMP), LLM_USER_PATH=str(TMP / "llm"), BE
 sys.path[:0] = [str(ROOT), str(ROOT / "metrics"), str(ROOT / "suite")]
 
 ASKED: list[dict] = []          # every chat request the fake upstream received
+RELEASE = threading.Event()     # "slow" answers once this is set
+# The merger names its sources as told; the gateway puts the seats back.
+MERGED = "answer from merger: Source 1 and source 2 agree; Sources 1 and 2 differ from Source 7 and Sources 1-2"
 
 
 class Upstream(BaseHTTPRequestHandler):
     def do_GET(self):                            # noqa: N802
-        self._send({"data": [{"id": i} for i in ("m1", "m2", "merger", "broken", "tiny")]})
+        self._send({"data": [{"id": i} for i in ("m1", "m2", "merger", "broken", "tiny", "slow")]})
 
     def do_POST(self):                           # noqa: N802
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         ASKED.append(body)
         if body["model"] == "broken":            # a 400 is not retried
             return self._send({"error": {"message": "model is broken"}}, 400)
-        self._send({"model": body["model"], "choices": [{"message": {"content": f"answer from {body['model']}"}}]})
+        if body["model"] == "slow":
+            RELEASE.wait(20)
+        said = MERGED if body["model"] == "merger" else f"answer from {body['model']}"
+        self._send({"model": body["model"], "choices": [{"message": {"content": said}}]})
 
     def _send(self, data, status=200):
         raw = json.dumps(data).encode()
@@ -78,7 +85,7 @@ def main() -> int:
     import endpoints
     write("extra-openai-models.yaml", "".join(endpoints.yaml_block(a, s) for a, s in
                                               (("m1", "m1"), ("m2", "m2"), ("mg", "merger"),
-                                               ("broken", "broken"), ("tiny", "tiny"))))
+                                               ("broken", "broken"), ("tiny", "tiny"), ("slow", "slow"))))
     write("model-overrides.json", {"tiny": {"context_window": 50}})
     write("gateway.json", {"max_calls": 2, "max_explorers": 0})       # no explorers: no router, no shape picker
 
@@ -109,12 +116,19 @@ def main() -> int:
     def logged() -> set[str]:
         return {e["call"] for e in offload.entries() if e.get("call")}
 
+    def last_line(panel: str) -> dict | None:
+        """The panel's line in the call log, None until it is written."""
+        calls = TMP / "runs" / "gateway" / "calls.jsonl"
+        lines = calls.read_text(encoding="utf-8").splitlines() if calls.exists() else []
+        return next((r for r in map(json.loads, reversed(lines)) if r["panel"] == panel), None)
+
     try:
         # 1. The default is every answer, with the bench keys clients get today.
         collection()
         r, b, content = ask("bench/core")
         assert set(b) == {"panel", "collection", "shape", "shape_by", "seats", "verdict"}, b
         assert [s["alias"] for s in b["seats"]] == ["m1", "m2"] and all(s["call"] in content for s in b["seats"])
+        assert all(s["status"] == "ok" for s in b["seats"]), b                 # every seat fast: none late
         assert all(s["call"] in logged() for s in b["seats"])
         assert not any(q["messages"][0]["content"] == gateway.MERGE_SYSTEM for q in ASKED), "merged by default"
 
@@ -131,6 +145,16 @@ def main() -> int:
         said = merge_ask["messages"][1]["content"]
         assert merge_ask["messages"][0]["content"] == gateway.MERGE_SYSTEM
         assert "say hi" in said and "answer from m1" in said and "answer from m2" in said, said
+        # The merger sees sources, not seats or models; the reply names them again,
+        # and a source number it made up, or a range, is left as written.
+        assert "## Source 1\n" in said and "## Source 2\n" in said and "## member" not in said, said
+        assert content.startswith("answer from merger: m1 (member) and m2 (member) agree; m1 (member) and"
+                                  " m2 (member) differ from Source 7 and Sources 1-2"), content
+        names = [f"n{i}" for i in range(1, 11)]
+        assert gateway.unsource("Source 10, then Source 1", names) == "n10, then n1"
+        assert gateway.unsource("source 2; Sources 1 and 3; Sources 1, 2, and 3", names[:3]) == "n2; n1 and n3; n1, n2, and n3"
+        kept = "Source 4; Sources 1 and 4; Sources 1-3; Sources 1 to 3; Source 1a"
+        assert gateway.unsource(kept, names[:3]) == kept
         # The dashboard finds the merger in the call log, so it is judged in the request's side pane.
         shown = serve.gateway_request(merger["call"].rsplit(".", 1)[0])
         assert [s["seat"] for s in shown["seats"]][-1] == "merger", shown
@@ -204,7 +228,49 @@ def main() -> int:
         r, b, content = ask("bench/core")
         assert [s["alias"] for s in b["seats"]] == ["m1", "m2"] and [k["alias"] for k in b["skipped"]] == ["gone"], b
         (TMP / "config" / "retired.json").unlink()
+
+        # 10. QUORUM, THEN GRACE. Every seat fast: nothing waits, nothing late.
+        write("gateway.json", {"max_calls": 3, "max_explorers": 0, "quorum": 2, "grace": 0.3})
+        collection()
+        r, b, content = ask("bench/core")
+        assert [s["status"] for s in b["seats"]] == ["ok", "ok"] and "waited" not in last_line(b["panel"]), b
+        # Two fast seats and a slow one: the reply goes after quorum and grace, the slow seat named late.
+        collection(members=["m1", "m2", "slow"])
+        r, b, content = ask("bench/core")
+        late = b["seats"][2]
+        assert [s["status"] for s in b["seats"]] == ["ok", "ok", "late"] and late["alias"] == "slow", b
+        assert late["call"] == b["panel"] + ".member3" and late["call"] in content and gateway.LATE in content, content
+        assert late["call"] not in logged() and last_line(b["panel"]) is None      # not in yet
+        # Streamed: the late seat's section before the close; late on the last chunk.
+        chunks = [json.loads(line[6:]) for line in post({"model": "bench/core", "stream": True, "messages":
+                  [{"role": "user", "content": "x"}]})[1].splitlines() if line.startswith("data: {")]
+        streamed = "".join(c["choices"][0]["delta"].get("content") or "" for c in chunks if c.get("choices"))
+        assert gateway.LATE in streamed and [s["status"] for s in chunks[-1]["bench"]["seats"]][2] == "late"
+        # Merged: from the answers in at the grace's end, saying which seat was late.
+        collection(members=["m1", "m2", "slow"], merger="mg")
+        ASKED.clear()
+        r, b, content = ask("bench/core:merged")
+        said = next(q for q in ASKED if q["model"] == "merger")["messages"][1]["content"]
+        assert "## Source 2\n" in said and "## Source 3" not in said and "slow late. A late seat" in content, content
+        # When it is in, the late seat is recorded like any seat, under the call id the reply named,
+        # owed a verdict, and the panel's call-log line has every answer (all three panels', before cleanup).
+        RELEASE.set()
+        panels = (late["call"].rsplit(".", 1)[0], chunks[-1]["bench"]["panel"], b["panel"])
+        for _ in range(100):
+            if all(last_line(p) for p in panels):
+                break
+            time.sleep(0.1)
+        assert late["call"] in logged() and last_line(b["panel"])["seats"][-1]["seat"] == "merger"
+        line = last_line(panels[0])
+        assert line and line["seats"][2] == {**line["seats"][2], "call": late["call"], "status": "ok",
+                                             "answer": "answer from slow", "late": True}, line
+        assert line["waited"] < 10, line
+        req = urllib.request.Request(url + "/bench/pending", json.dumps({"calls": [late["call"]]}).encode(),
+                                     {"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            assert json.load(resp)["pending"] == [late["call"]]
     finally:
+        RELEASE.set()
         upstream.shutdown()
         gw.shutdown()
         shutil.rmtree(TMP, ignore_errors=True)
