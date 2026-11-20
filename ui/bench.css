@@ -159,7 +159,7 @@ dialog.dock:not([open]) { display: none; }
 .app:has(dialog.dock[open]) aside.facts { display: none; }
 :is(aside.facts, dialog.dock) .bar { position: static; padding: 0 var(--gap-3) 0 20px; background: none; }
 :is(aside.facts, dialog.dock) .bar :is(h2, p) { font-size: var(--t-body); }
-.facts-body > :is(.form-panel, details, p) { margin-left: 20px; margin-right: 20px; }
+.facts-body > :is(.form-panel, details, p, ul.items) { margin-left: 20px; margin-right: 20px; }
 .facts-close { display: none; margin-left: auto; }
 .facts-body, .dock-body { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin; }
 .facts-body { padding-bottom: var(--gap-5); }
@@ -404,7 +404,7 @@ a.dmodel:hover .alias { box-shadow: inset 0 -.3em 0 var(--signal); }
    in its title and the panel; on a phone the table scrolls in its box. Under
    them, rate limits per connection: a box per limit (bench.js loadLimits). */
 .ep-table .c-open { white-space: nowrap; overflow-wrap: normal; }
-.ep-table td.base { max-width: 24rem; }
+.ep-table td.base { max-width: 16rem; }
 .ep-table td.base .mono { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--t-small); }
 .ep-table td .chip + .chip, .ep-table .c-open + .chip { margin-left: var(--gap-1); }
 /* On a wide screen the table, as wide as what it holds, and the rate limits beside it. */

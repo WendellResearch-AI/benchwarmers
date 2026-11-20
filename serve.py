@@ -4993,7 +4993,7 @@ def connect_setup(app: str, way: str = "", collection: str = "", where: str = "h
         return {"ok": False, "errors": ["no collection yet: make one on Collections"]}
     col = next((c for c in cols if c[0] == collection), cols[0])
     keys = guard.keys_required() or bool(keyed)
-    label = name if guard.KEY_NAME.match(name or "") else ""
+    label = name if guard.LABEL.match(name or "") else ""         # as guard.gateway_caller keeps one
     root = gateway_url().removesuffix("/v1")
     if where == "docker" and not guard.public_url():
         root = "http://" + _docker_host()
@@ -5124,10 +5124,13 @@ def clients_page() -> str:
             f"<label class='pick'><input type='radio' name='way-{app}' value='{w}'{' checked' * (not j)}>"
             f"<span><b>{WAYS[w]}</b><small>{WAY_SAYS[w].format(app=nm)}</small></span></label>"
             for j, w in enumerate(c["ways"]))
+        # A key already made under its name: its set-up reads it from KEY_ENV (a label of a key's name is not kept).
+        made = guard.gateway_keys().get(name_of(c))
         key = ("<select data-c='key' disabled><option value='1'>a key: every call needs one</option></select>"
-               if keys else "<select data-c='key'><option value=''>none</option>"
-               "<option value='make'>make a key for it</option></select>")
-        setup = connect_setup(app, c["ways"][0], cols[0][0], "here", name_of(c))
+               if keys else f"<select data-c='key'><option value='1'>its key, …{esc(made.get('hint', ''))}</option>"
+               "<option value=''>none</option></select>" if isinstance(made, dict) else
+               "<select data-c='key'><option value=''>none</option><option value='make'>make a key for it</option></select>")
+        setup = connect_setup(app, c["ways"][0], cols[0][0], "here", name_of(c), bool(made))
         return (f"<section class='client' id='client-{app}' aria-labelledby='client-{app}-h'{' hidden' * bool(i)}"
                 f" data-app='{app}'><h2 id='client-{app}-h'>{nm}</h2><div class='connect form-panel'>"
                 f"<label class='field'>How {nm} uses Benchwarmers</label><div class='ways'>{ways}</div>"
@@ -5136,7 +5139,8 @@ def clients_page() -> str:
                 "<div><label class='field'>Where it runs</label><select data-c='where'>"
                 "<option value='here'>this machine</option><option value='docker'>in Docker</option></select></div>"
                 f"<div><label class='field'>Its name</label><input data-c='name' class='mono' value='{esc(name_of(c))}'"
-                " pattern='[a-z0-9][a-z0-9-]{1,31}' maxlength='32' autocomplete='off' spellcheck='false'></div>"
+                f" pattern='{guard.LABEL.pattern[1:-1]}' maxlength='24' autocomplete='off' spellcheck='false'"
+                " title='letters and dashes, as opencode or my-agent'></div>"
                 f"<div><label class='field'>Key</label>{key}</div></div>"
                 "<div class='key-make' hidden><label class='field'>Requests a minute"
                 " <span class='muted'>(empty for no cap)</span></label><input data-c='rpm' inputmode='numeric'"
@@ -5860,11 +5864,10 @@ def endpoints_page() -> str:
                             + (chip(f"last seen {day}", "warn") if gone else chip("served", "")) + "</td></tr>")
         now = sum(1 for d in listed.values() if d == checked)
         seen = max(listed.values(), default="")
-        # When the daily served check last had its list: on its last run, or an older day (it did not answer since).
-        when = (f"<td class='when' data-sort='{esc(seen)}'>{esc(seen)}</td>" if seen and seen == checked else
-                f"<td data-sort='{esc(seen)}'>" + chip(f"not listed since {seen}", "warn",
-                                                       f"the daily served check on {checked} got no list from it")
-                + "</td>" if seen else "<td class='muted' data-sort=''>—</td>")
+        # Listed: what the daily served check last found, on the day it says on hover; a list it has not
+        # had since an older day is a problem, said under the endpoint's name.
+        when = (f"<td class='num' title='on {esc(seen)}, by the daily served check'>{now if seen == checked else '—'}</td>"
+                if seen else "<td class='num muted'>—</td>")
         # Its actions (bench.js reads the endpoint from data-ep): a sign-in again
         # where it came from one; Make default and Remove on all but the default.
         signed = e["connect"]
@@ -5900,7 +5903,7 @@ def endpoints_page() -> str:
             + (f"<span class='conn why'>{esc(problem)}</span>" if problem else "")
             + f"</td><td class='base' title='{esc(e['base'])}'>"
             f"<span class='mono'>{esc(e['base'])}</span></td><td>{key}</td><td class='num'>{len(mine)}</td>"
-            f"<td class='num'>{now if seen else '—'}</td>{when}"
+            f"{when}"
             f"<td class='when' data-sort='{esc(at)}'>{esc(_when(at)) if at else '<span class=muted>never</span>'}</td></tr>"))
         facts = (("Base URL", f"<span class='mono'>{esc(e['base'])}</span>"),
                  ("Kind", esc(e["kind"]) + (f", {esc(hub)}" if hub else "")),
@@ -5948,7 +5951,7 @@ def endpoints_page() -> str:
         "<div class='found' id='e-found' hidden><h2>Found on this machine</h2><div id='e-found-list'></div></div>"
         + ("<div class='scroll'><table class='ep-table'><thead><tr>" + th("Endpoint") + th("Base URL") + th("Key")
            + th("On the bench", True) + "<th data-sortable tabindex='0' class='num' title='models its list held when"
-           " the daily served check last asked'>Listed</th>" + th("Last listed") + th("Checked")
+           " the daily served check last asked'>Listed</th>" + th("Checked")
            + f"</tr></thead><tbody>{''.join(table)}</tbody></table></div>" if eps else
            empty_state("No endpoint yet: every model is served from one.", step_button(),
                        "Add an endpoint pastes a key for any OpenAI-compatible API, or signs in to a provider on its"

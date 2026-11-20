@@ -532,12 +532,16 @@ each decision model on sets built from the bench's own data.
 `Authorization: Bearer <key>`, shown once and kept as a SHA-256. Each has a
 name, written on every call it makes (`key` in `calls.jsonl`, "Asked by" on
 the Gateway card), and a "last used" on Settings. A key counts even where none
-is required, so a key made for one app keeps it to its collections and rate at
-once, while other apps still call without one. With no key, a bearer that is a
-short name (`opencode`: lower-case letters, digits and dashes, as Connect's
-set-ups send) is written as the caller instead of `local`, so apps are told
-apart in the logs and Connect sees an app's first call; it is a label, not a
-credential. Anything else (an SDK's dummy key) is `local`. Optional, set when it is made: the **collections** it may
+is required, in whichever header it is sent, so a key made for one app keeps
+it to its collections and rate at once, while other apps still call without
+one. With no key, a bearer that is an app's name (`opencode`: up to 24
+lower-case letters and dashes, as Connect's set-ups send) is written as the
+caller instead of `local`, so apps are told apart in the logs and Connect sees
+an app's first call. It is a label, not a credential: one with a digit (as a
+secret has), one that is a key's name, and an SDK's dummy key are all `local`,
+so a label never reaches the logs as a secret or takes a key's scope or rate.
+
+Optional, set when a key is made: the **collections** it may
 call (others are refused with 403, and `GET /v1/models` lists only its own)
 and **requests a minute** (429 with `Retry-After` past it; counted per
 process). Keys start `bwk_`, so a leaked one is recognisable, and Settings

@@ -92,6 +92,8 @@ OLLAMA_ROUTES = ("/api/chat", "/api/generate", "/api/tags", "/api/version", "/ap
 # Anthropic SDK's header, and Google's (its SDKs send the header; REST
 # examples put the key in ?key=, which is taken on Gemini routes only).
 KEY_HEADERS = ("x-api-key", "x-goog-api-key")
+# An app's name sent as its bearer where no key is needed (gateway_caller): letters and dashes.
+LABEL = re.compile(r"^[a-z][a-z-]{1,23}$")
 # Bearers that SDKs and set-up guides fill in when no key is needed: no app's name.
 PLACEHOLDERS = {"none", "dummy", "not-needed", "no-key", "nokey", "null", "empty", "key", "api-key", "apikey",
                 "sk", "sk-no-key-required", "sk-dummy", "test", "x", "xx", "xxx"}
@@ -296,25 +298,31 @@ def gateway_caller(headers, query_key: str | None = None) -> str:
     or unknown it was. The cookie is never looked at.
 
     When keys are not required nothing is refused: a known key still counts
-    (its name, collections and rate), so a key works the moment it is made;
-    a short name as the bearer (`opencode`, as the Connect page's set-ups send)
-    is kept as a label; anything else, SDKs' dummy keys among them, is "local".
-    A label is not a credential: it only tells apps apart in the logs.
+    (its name, collections and rate), wherever it is sent, so a key works the
+    moment it is made; a label (`opencode`, as the Connect page's set-ups send)
+    is kept as the caller; anything else, SDKs' dummy keys among them, is
+    "local". A label is not a credential: it only tells apps apart in the logs.
+    It is LABEL-shaped (letters and dashes, no digits: a secret has them) and
+    never a key's name, so it cannot take a key's scope or spend its rate.
 
-    The key is the first of `Authorization: Bearer`, `x-api-key`,
-    `x-goog-api-key` and `query_key` (a Gemini route's ?key=) that is sent:
-    one credential is judged, never a second tried after a bad first."""
+    When keys are required, the key is the first of `Authorization: Bearer`,
+    `x-api-key`, `x-goog-api-key` and `query_key` (a Gemini route's ?key=)
+    that is sent: one credential is judged, never a second tried after a bad
+    first."""
     raw = headers.get("Authorization")
     other = next((headers.get(h) for h in KEY_HEADERS if headers.get(h) is not None), query_key)
+    if not keys_required():
+        sent = [v.strip() for v in ((raw or "").strip().removeprefix("Bearer ").removeprefix("bearer "),
+                                    *(headers.get(h) or "" for h in KEY_HEADERS), query_key or "") if v and v.strip()]
+        for value in sent:
+            if name := key_name(value):
+                _touch(name)
+                return name
+        label = sent[0] if sent else ""
+        return label if LABEL.match(label) and label not in PLACEHOLDERS and label not in gateway_keys() \
+            else "local"
     if raw is None and other is not None:
         raw = f"Bearer {other}"
-    if not keys_required():
-        scheme, _, value = (raw or "").strip().partition(" ")
-        value = value.strip() if scheme.lower() == "bearer" else ""
-        if name := key_name(value):
-            _touch(name)
-            return name
-        return value if KEY_NAME.match(value) and value not in PLACEHOLDERS else "local"
     challenge = {"WWW-Authenticate": 'Bearer realm="benchwarmers"'}     # RFC 6750: every 401 says how
     if raw is None:
         raise Refused(401, "this route needs a gateway key (Authorization: Bearer <key>, or x-api-key);"
@@ -643,8 +651,12 @@ def _selftest() -> None:
                 assert gateway_caller({"Authorization": f"Bearer {other}"}) == "agent"
                 assert gateway_caller({"x-api-key": other}) == "agent"
                 assert gateway_caller({"Authorization": "Bearer opencode"}) == "opencode"
+                # wherever the key is sent, and whatever is sent beside it
+                assert gateway_caller({"Authorization": "Bearer dummy", "x-api-key": other}) == "agent"
+                assert gateway_caller({"Authorization": other}) == "agent"
                 for dummy in ("Bearer sk-dummy", "Bearer EMPTY", "Bearer dummy", "Bearer bwk_nope", "Basic opencode",
-                              "Bearer " + "a" * 40, "Bearer two words"):
+                              "Bearer " + "a" * 40, "Bearer two words", "Bearer 4a8b2c6d8e0f1a3b",
+                              "Bearer hunter2", "Bearer agent"):            # a secret's digits; a key's name
                     assert gateway_caller({"Authorization": dummy}) == "local", dummy
                 assert admin_caller({}) == "local"
                 # ...unless keys are required on this machine too; a misspelt value still asks.
