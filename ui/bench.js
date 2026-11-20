@@ -797,7 +797,11 @@
         + '<span class="conn">' + escH(r.model + (r.on ? ' · ' + r.on : '')) + '</span>',
       r.rank ? '<span title="' + escH(r.rank_title) + '">' + r.rank + '</span>' : dash,
       '<span title="' + escH(r.provider) + '">' + escH(dData.providers[r.provider]) + '</span>',
-      '<span class="chip ' + REACH[r.reach] + '" title="' + escH(dData.apis[r.provider] || '') + '">' + r.reach + '</span>',
+      // Easy to add: a button to Add, filled in with the provider's base URL (addProvider).
+      r.reach === 'easy to add' && dData.apis[r.provider]
+        ? '<button type="button" class="chip warn d-addep" data-provider="' + escH(r.provider) + '" title="Add '
+          + escH(dData.apis[r.provider]) + ' as an endpoint">easy to add</button>'
+        : '<span class="chip ' + REACH[r.reach] + '" title="' + escH(dData.apis[r.provider] || '') + '">' + r.reach + '</span>',
       escH(r.price), r.context ? NUM.format(Math.floor(r.context / 1000)) + 'k' : dash, escH(r.io),
       r.caps ? r.caps.split(' ').map(function (c) { return '<span class="chip">' + c + '</span>'; }).join(' ') : dash,
       or(r.released), or(r.limits), r.output ? NUM.format(r.output) : dash, or(r.knowledge), or(r.weights),
@@ -2047,26 +2051,70 @@
     });
   });
 
-  // ---- Clients (serve.clients_page): a key made there fills the blocks marked
-  // data-key (shell lines, fields typed into an app; never a file that may sync).
-  // Held in memory only, so a page swapped in fresh is filled again, and a reload
-  // forgets it, as Settings' does.
-  var clientKey = null;
-  function fillKey() {
-    if (!clientKey) return;
-    document.querySelectorAll('#tab-clients pre[data-key]').forEach(function (p) {
-      p.textContent = p.textContent.split('<your gateway key>').join(clientKey);      // serve.KEY_HOLDER
+  // ---- Connect (serve.clients_page): an app's choices remake its set-up
+  // (/api/client-setup); "Does it work?" asks for its newest call
+  // (/api/client-seen) every few seconds while its set-up is shown. A key made
+  // here fills the blocks marked data-key (shell lines, fields typed into an
+  // app; never a file that may sync). Held in memory only: a reload forgets it,
+  // as Settings' does.
+  var appKeys = {}, seenTimer = null;
+  function appChoice(sec, c) { var x = sec.querySelector('[data-c="' + c + '"]'); return x ? x.value : ''; }
+  function setupAgain(sec) {
+    var app = sec.dataset.app, way = sec.querySelector('.ways input:checked');
+    var q = new URLSearchParams({app: app, way: way ? way.value : '', collection: appChoice(sec, 'collection'),
+                                 where: appChoice(sec, 'where'), name: appChoice(sec, 'name'),
+                                 keyed: appKeys[app] || appChoice(sec, 'key') === '1' ? '1' : ''});
+    sec.querySelector('.errors').textContent = '';
+    return get('/api/client-setup?' + q).then(function (r) {
+      if (!r.ok) { listErrors(sec.querySelector('.errors'), r.errors); return; }
+      sec.querySelector('.setup').innerHTML = r.html;
+      if (appKeys[app]) sec.querySelectorAll('.setup pre[data-key]').forEach(function (p) {
+        p.textContent = p.textContent.split('<your gateway key>').join(appKeys[app]);   // serve.KEY_HOLDER
+      });
     });
   }
-  onLoad.clients = function () { pickAgain('clients'); fillKey(); };
-  on('click', 'cl-make', function () {
-    $('cl-errors').textContent = '';
-    post('/api/gateway-key', {name: $('cl-name').value}).then(function (r) {
-      if (!r.ok) { listErrors($('cl-errors'), r.errors); return; }
-      clientKey = r.key; fillKey();
-      $('cl-done').hidden = false; $('cl-make').disabled = true;
-      refreshPanes(['settings']);                // its list of keys, when next opened
-    }).catch(function (e) { listErrors($('cl-errors'), [String(e)]); });
+  function seenTick() {
+    clearTimeout(seenTimer);
+    var sec = document.querySelector('#tab-clients.active section.client[data-app]:not([hidden])');
+    var asked = sec && !document.hidden ? get('/api/client-seen?name=' + encodeURIComponent(appChoice(sec, 'name')))
+      .then(function (r) {
+        var name = appChoice(sec, 'name'), list = sec.querySelector('ul.seen'), li = el('li', r.seen ? {} : {class: 'warn'});
+        li.appendChild(el('span', {'aria-hidden': 'true'}, r.seen ? '✓' : '…'));
+        li.appendChild(el('span', {}, r.seen
+          ? name + ' called ' + r.model + (r.by ? ', answered by ' + r.by : '') + (r.tools ? ', ' + plural(r.tools, 'tool call') : '')
+          : 'No call from ' + name + ' yet. Start it with its new set-up and ask it anything: this updates by itself.'));
+        li.appendChild(el('span', {}, r.when || ''));
+        list.textContent = ''; list.appendChild(li);
+      }) : Promise.resolve();
+    asked.catch(function () {}).then(function () { seenTimer = setTimeout(seenTick, 5000); });
+  }
+  onLoad.clients = function () { pickAgain('clients'); seenTick(); };
+  document.addEventListener('click', function (e) { if (e.target.closest('#tab-clients .split > nav')) seenTick(); });
+  document.addEventListener('change', function (e) {
+    var sec = e.target.closest('#tab-clients section.client[data-app]');
+    if (!sec || !e.target.closest('.connect')) return;
+    if (e.target.dataset.c === 'rpm') return;
+    if (e.target.dataset.c === 'key') { sec.querySelector('.key-make').hidden = e.target.value !== 'make'; return; }
+    setupAgain(sec).then(e.target.dataset.c === 'name' ? seenTick : null);
+  });
+  document.addEventListener('click', function (e) {
+    var b = e.target.closest('#tab-clients [data-make-key]');
+    if (!b) return;
+    var sec = b.closest('section.client'), app = sec.dataset.app, name = appChoice(sec, 'name'), col = appChoice(sec, 'collection');
+    sec.querySelector('.errors').textContent = '';
+    b.disabled = true;
+    post('/api/gateway-key', {name: name, collections: [col], rpm: appChoice(sec, 'rpm')}).then(function (r) {
+      if (!r.ok) { listErrors(sec.querySelector('.errors'), r.errors); b.disabled = false; return; }
+      appKeys[app] = r.key;
+      var sel = sec.querySelector('[data-c="key"]');
+      sel.textContent = ''; sel.appendChild(el('option', {value: '1'}, name + "'s key")); sel.disabled = true;
+      sec.querySelector('.key-make').hidden = true;
+      var done = sec.querySelector('.key-done');
+      done.textContent = 'Key made for ' + name + ', for ' + col + ' only' + (appChoice(sec, 'rpm') ? ', ' + appChoice(sec, 'rpm') + ' a minute' : '')
+        + '. It is in the lines below that take it: copy them now, as it is shown this once. Settings lists it and can revoke it.';
+      done.hidden = false;
+      setupAgain(sec); refreshPanes(['settings']);
+    }).catch(function (err) { listErrors(sec.querySelector('.errors'), [String(err)]); b.disabled = false; });
   });
   // Copy: the clipboard where the page may write it (https, localhost), else the
   // old way, else the text left selected for the reader's own Ctrl+C.
@@ -2131,18 +2179,44 @@
 
   // ---- endpoints: keys go in, never come back out -------------------------
   // The Endpoints page lists them (serve.endpoints_page, each row's data in
-  // data-ep); Add an endpoint and Change key are one dialog. The pages are
+  // data-ep); one opens docked beside the list, its key changed there; Add an
+  // endpoint is a blank one, docked the same way. The pages are
   // drawn by the server, so a change fetches them again (refreshPanes): an
   // endpoint's models are on most of them.
   var ed = $('endpoint-dialog');
   var e = {name: $('e-name'), base: $('e-base'), key: $('e-key'),
            kind: $('e-kind'), hub: $('e-hub'), admin: $('e-admin'),
-           errors: $('e-errors'), done: $('e-done'), test: $('e-test'), save: $('e-save'), changed: false};
+           errors: $('e-errors'), done: $('e-done'), save: $('e-save'), changed: false};
   e.kind.addEventListener('change', function () {
     $('e-hub-row').hidden = $('e-admin-row').hidden = e.kind.value !== 'hub';
   });
   ed.querySelectorAll('[data-close]').forEach(function (b) { b.addEventListener('click', function () { ed.close(); }); });
   ed.addEventListener('close', function () { if (e.changed) { e.changed = false; again(epOpen); } });
+  document.addEventListener('keydown', function (ev) {      // Add is docked beside any page: Escape puts it away
+    if (ev.key === 'Escape' && ed.open && !document.querySelector('dialog:modal')) ed.close();
+  });
+  // Add's Provider box: models.dev's providers (serve.endpoint_providers), once a page load.
+  // One picked fills the name and base URL; the key is what is left to paste.
+  var provs = null;
+  function loadProviderList() {
+    if (provs) return;
+    provs = {};
+    get('/api/endpoint/providers').then(function (r) {
+      var list = $('e-provs');
+      r.providers.forEach(function (p) {
+        provs[p.name] = p;
+        list.appendChild(el('option', {value: p.name}, p.have ? 'already added as ' + p.have : p.base));
+      });
+    });
+  }
+  $('e-prov').addEventListener('input', function () {
+    var p = provs && provs[this.value], said = $('e-prov-said');
+    if (!p) return;
+    e.name.value = p.id; e.base.value = p.base; e.kind.value = 'provider';
+    said.textContent = p.have ? 'Already added as ' + p.have + '; another account needs its own name.' : 'Its base URL is filled in: paste its key.';
+    if (p.doc) { said.appendChild(document.createTextNode(' ')); said.appendChild(el('a', {href: p.doc, target: '_blank', rel: 'noopener'}, 'Its docs')); }
+    e.key.focus();
+  });
   // An endpoint opens docked beside the list, as a collection does: its row marked,
   // Escape or Close puts it away and the focus goes back to its row.
   var epOpen = '';
@@ -2151,6 +2225,7 @@
     var d = document.querySelector('#tab-endpoints dialog.dock[data-name="' + CSS.escape(name) + '"]');
     if (!d) return;
     document.querySelectorAll('#tab-endpoints dialog.dock[open]').forEach(function (o) { if (o !== d) o.close(); });
+    if (ed.open) ed.close();
     epOpen = name;
     d.setAttribute('open', '');                       // docked, not a popup: the list stays live
     if (epRow(name)) epRow(name).classList.add('in-hand');
@@ -2177,8 +2252,40 @@
     $('el-errors').textContent = ''; $('el-done').textContent = message;
     again(keep ? epOpen : '').then(function () { $('el-done').textContent = message; });     // on the new page too
   }
+  // A record's own messages, in its foot.
+  function epSaid(name, ok, text) {
+    var d = document.querySelector('#tab-endpoints dialog.dock[data-name="' + CSS.escape(name) + '"]');
+    if (!d) return;
+    d.querySelector('.dock-foot .errors').textContent = ok ? '' : text;
+    d.querySelector('.dock-foot .done').textContent = ok ? text : '';
+  }
+  function checkSays(r) {
+    return r.state === 'refused' || r.state === 'down' ? r.said
+      : plural(r.models, 'model') + ' listed. ' + (r.said || (r.state === 'none' ? 'No key is kept for it.' : ''));
+  }
   var rowActs = {
-    change: function (x) { openEndpoint('change', x); },
+    // Check now (serve.check_endpoint): its list with its key, then without; kept for the page.
+    check: function (x, b) {
+      b.disabled = true; b.textContent = 'Checking…';
+      post('/api/endpoint/check', {name: x.name}).then(function (r) {
+        if (!r.ok) { epSaid(x.name, false, r.errors.join(' ')); b.disabled = false; b.textContent = 'Check now'; return; }
+        var ok = r.state !== 'refused' && r.state !== 'down';
+        again(x.name).then(function () { epSaid(x.name, ok, 'Checked: ' + checkSays(r)); });
+      });
+    },
+    // A new key in the record: checked against its list before it is kept (serve.save_endpoint).
+    key: function (x, b) {
+      var d = b.closest('dialog'), key = d.querySelector('[data-k=key]'), admin = d.querySelector('[data-k=admin]');
+      if (!key.value.trim() && !(admin && admin.value.trim())) { epSaid(x.name, false, 'Paste the new key first.'); return; }
+      b.disabled = true; b.textContent = 'Checking…';
+      post('/api/endpoint', {name: x.name, base: x.base, key: key.value, admin: admin ? admin.value : ''}).then(function (r) {
+        b.disabled = false; b.textContent = 'Check and save';
+        if (!r.ok) { epSaid(x.name, false, r.errors.join(' ')); return; }
+        post('/api/endpoint/check', {name: x.name}).then(function () {
+          again(x.name).then(function () { epSaid(x.name, true, 'Saved: ' + plural(r.served, 'model') + ' listed. ' + (r.note || '')); });
+        });
+      }).catch(function (err) { b.disabled = false; b.textContent = 'Check and save'; epSaid(x.name, false, String(err)); });
+    },
     again: function (x) {          // this endpoint, not a new one
       openEndpoint('again', x);
       connectStart({id: x.connect.provider, flow: x.connect.flow, label: x.connect.label}, x.name);
@@ -2211,7 +2318,7 @@
   };
   $('tab-endpoints').addEventListener('click', function (ev) {
     var b = ev.target.closest('[data-ep] button[data-ep-act]'), row = ev.target.closest('tr.ep-row');
-    if (b) rowActs[b.dataset.epAct](JSON.parse(b.closest('[data-ep]').dataset.ep));
+    if (b) rowActs[b.dataset.epAct](JSON.parse(b.closest('[data-ep]').dataset.ep), b);
     else if (ev.target.closest('[data-dock-close]')) ev.target.closest('dialog').close();
     else if (row && !ev.target.closest('a')) openEp(row.dataset.name, !ev.detail);   // from a keyboard: the focus to it
   });
@@ -2316,29 +2423,27 @@
     e.name.value = f.name; e.base.value = f.base; e.kind.value = f.kind;
     if (f.hub) e.hub.value = f.hub;
     $('e-hub-row').hidden = $('e-admin-row').hidden = f.kind !== 'hub';
-    e.done.textContent = f.label + ' answers here' + (f.key ? '; it wants a key: paste one, then Test.' : ': Test it, then Save.');
-    (f.key ? e.key : e.test).focus();
+    e.done.textContent = f.label + ' answers here' + (f.key ? '; it wants a key: paste one, then Check and add.' : ': Check and add.');
+    (f.key ? e.key : e.save).focus();
   }
-  // The dialog, in one of three modes. add: the choices, API key first, then
-  // each provider's sign-in; change: one endpoint's key form; again: a
-  // sign-in under way for an endpoint that has one.
+  // The docked Add, in one of two modes. add: the choices, API key first (a
+  // provider from models.dev fills it), then each provider's sign-in; again: a
+  // sign-in under way for an endpoint that has one. A key changes in its record.
   function openEndpoint(mode, x) {
     cn.run++;
-    e.adding = mode === 'add';     // Add refuses a name in use; Change key edits that one
-    $('e-title').textContent = mode === 'change' ? 'Change the key for ' + x.name
-      : mode === 'again' ? 'Sign in to ' + x.connect.label + ' again' : 'Add an endpoint';
-    $('e-blurb').hidden = cn.list.hidden = $('e-kinds').hidden = !e.adding;
-    e.key.placeholder = e.adding ? 'blank if it needs none, as a local runtime' : 'leave blank to keep the current one';
+    e.adding = mode === 'add';     // Add refuses a name in use
+    $('e-title').textContent = mode === 'again' ? 'Sign in to ' + x.connect.label + ' again' : 'Add an endpoint';
+    $('e-blurb').hidden = cn.list.hidden = $('e-kinds').hidden = $('e-prov-row').hidden = !e.adding;
+    e.key.placeholder = 'blank if it needs none, as a local runtime';
     cn.wait.hidden = true; $('e-after').hidden = true;
     resetKeyForm();
     choose(mode === 'again' ? null : 'key');
-    if (mode === 'change') {
-      e.name.value = x.name; e.base.value = x.base; e.name.readOnly = true;
-      $('e-admin-row').hidden = !x.hub;                     // a hub's admin key changes here too
-    }
     var loaded = e.adding ? loadProviders() : Promise.resolve();
-    if (!ed.open) ed.showModal();
-    (mode === 'change' ? e.key : e.name).focus();
+    if (e.adding) loadProviderList();
+    // Docked, as an endpoint's own record: that one is put away, the page stays live.
+    document.querySelectorAll('.tab.active dialog.dock[open]').forEach(function (o) { o.close(); });
+    ed.setAttribute('open', '');
+    (e.adding ? $('e-prov') : $('e-title')).focus();
     return loaded;                   // the choices, once listed
   }
   // Which form shows: 'key' (paste an API key), a provider (sign in), or none.
@@ -2358,15 +2463,11 @@
     cn.list.querySelectorAll('button').forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.choice === on)); });
   }
   function resetKeyForm() {
-    e.name.value = e.base.value = e.key.value = e.admin.value = ''; e.name.readOnly = false;
+    e.name.value = e.base.value = e.key.value = e.admin.value = $('e-prov').value = ''; e.name.readOnly = false;
     e.kind.value = 'provider'; e.hub.selectedIndex = 0; $('e-hub-row').hidden = $('e-admin-row').hidden = true;
-    untested();
+    $('e-prov-said').textContent = "From models.dev's list of providers with an OpenAI-compatible API.";
   }
-  // Save opens only after Test passes, and closes again when anything in the
-  // form changes. The server tests again on Save: this is the form's manners,
-  // not the guarantee.
-  function untested() { e.save.disabled = true; e.save.title = 'Test it first'; }
-  $('e-form').addEventListener('input', function () { untested(); e.done.textContent = ''; });
+  $('e-form').addEventListener('input', function () { e.done.textContent = ''; });
   function keyBody() {
     var body = {name: e.name.value, base: e.base.value, key: e.key.value, new: e.adding,
                 admin: $('e-admin-row').hidden ? '' : e.admin.value};
@@ -2376,27 +2477,42 @@
     return body;
   }
   on('click', 'e-add', function () { openEndpoint('add'); });
-  e.test.addEventListener('click', function () {
-    e.errors.textContent = ''; e.done.textContent = ''; untested();
-    e.test.disabled = true; e.test.textContent = 'Testing…';
-    var body = keyBody(), sent = JSON.stringify(body), run = cn.run; body.test = true;
-    function end() { e.test.disabled = false; e.test.textContent = 'Test'; }
-    post('/api/endpoint', body).then(function (r) {
-      end();
-      if (run !== cn.run || JSON.stringify(keyBody()) !== sent) return;   // opened afresh, or edited, meanwhile
-      if (!r.ok) { listErrors(e.errors, r.errors); return; }
-      e.done.textContent = 'It answers: ' + r.served + ' models listed. ' + (r.note || '');
-      e.save.disabled = false; e.save.title = '';
-    }).catch(function (err) { end(); e.errors.textContent = String(err); });
+  // Discover's "easy to add": Add, docked beside the catalog, its provider's name and base URL filled in.
+  document.addEventListener('click', function (ev) {
+    var b = ev.target.closest('button.d-addep');
+    if (!b) return;
+    ev.stopPropagation(); ev.preventDefault();
+    var id = b.dataset.provider, name = dData.providers[id] || id;
+    openEndpoint('add');
+    e.name.value = id; e.base.value = dData.apis[id]; $('e-prov').value = name;
+    $('e-prov-said').textContent = name + "'s base URL is filled in from models.dev: paste its key.";
+    e.key.focus();
+  }, true);
+  // Check all: each endpoint in turn (one at a time: a hub fronts many), then the page again.
+  on('click', 'e-check-all', function () {
+    var b = this, names = Array.prototype.map.call(document.querySelectorAll('#tab-endpoints tr.ep-row'),
+                                                   function (r) { return r.dataset.name; }), bad = 0;
+    b.disabled = true; $('el-errors').textContent = '';
+    names.reduce(function (p, name, i) {
+      return p.then(function () {
+        $('el-done').textContent = 'Checking ' + (i + 1) + ' of ' + names.length + ': ' + name + '…';
+        return post('/api/endpoint/check', {name: name}).then(function (r) { if (!r.ok || r.state === 'refused' || r.state === 'down') bad++; });
+      });
+    }, Promise.resolve()).then(function () {
+      b.disabled = false;
+      refreshSaying('Checked ' + plural(names.length, 'endpoint') + (bad ? ': ' + bad + ' with a problem, first in the list.' : ': all answer.'));
+    });
   });
+  // Check and add: the server asks its list first and keeps nothing unless it answers.
   e.save.addEventListener('click', function () {
-    e.errors.textContent = ''; e.save.disabled = e.test.disabled = true; e.save.textContent = 'Saving…';
-    function end() { e.save.textContent = 'Save'; e.test.disabled = false; }
+    e.errors.textContent = ''; e.done.textContent = ''; e.save.disabled = true; e.save.textContent = 'Checking…';
+    function end() { e.save.textContent = 'Check and add'; e.save.disabled = false; }
     post('/api/endpoint', keyBody()).then(function (r) {
       end();
-      if (!r.ok) { listErrors(e.errors, r.errors); return; }          // Save stays shut: test again
+      if (!r.ok) { listErrors(e.errors, r.errors); return; }
       var name = e.name.value.trim().toLowerCase();
-      endpointDone('Saved. ' + name + ' lists ' + r.served + ' models; they appear in the onboarding picker. '
+      post('/api/endpoint/check', {name: name});      // its first check, for the list's Key and Checked
+      endpointDone('Added. ' + name + ' lists ' + r.served + ' models; they appear in the onboarding picker. '
                + (r.note || ''), e.adding ? name : '');
     }).catch(function (err) { end(); e.errors.textContent = String(err); });
   });
@@ -2768,6 +2884,11 @@
     if (rowOf(open)) rowOf(open).classList.add('in-hand');
     c.head.textContent = row ? 'bench/' + row.name : 'New collection';
     c.form.setAttribute('open', '');                  // docked, not a popup: no backdrop, the list stays live
+    if ($('request-dock')) $('request-dock').removeAttribute('open');
+    // A saved collection: the call to test it from your own app (serve.collections_tab #c-try).
+    $('c-try').hidden = !row;
+    if (row) $('c-try-snip').textContent = 'curl ' + $('c-try').dataset.gateway + "/chat/completions \\\n  -H 'Content-Type: application/json' \\\n"
+      + "  -d '{\"model\": \"bench/" + row.name + "\", \"messages\": [{\"role\": \"user\", \"content\": \"Say hello in one line.\"}]}'";
     var src = row || draft;
     c.name.value = src ? src.name : ''; c.name.readOnly = !!row;
     c.desc.value = src ? src.description : ''; c.tags.value = src ? src.tags.join(', ') : '';
@@ -2932,49 +3053,119 @@
   document.addEventListener('pointerdown', function (e) { downOutside = outside(e); });
   document.addEventListener('click', function (e) { if (downOutside && outside(e)) e.target.close(); downOutside = false; });
 
-  // ---- verdict on one gateway seat --------------------------------------
-  var vd = $('verdict-dialog'), vcall = null;
-  function lines(id) { return $(id).value.split('\n').map(function (s) { return s.trim(); }).filter(Boolean); }
-  document.addEventListener('click', function (e) {
-    var b = e.target.closest('button.seat');
-    if (!b) return;
-    vcall = b.dataset.call;
-    $('v-errors').textContent = ''; $('v-done').textContent = '';
-    get('/api/gateway-seat?call=' + encodeURIComponent(vcall)).then(function (s) {
-      if (!s.ok) { listErrors($('v-errors'), s.errors); vd.showModal(); return; }
-      $('v-title').textContent = s.alias + ' · ' + s.seat;
-      $('v-meta').textContent = s.model + ' · ' + s.status + ' in ' + s.seconds + 's · ' + s.at.slice(0, 16).replace('T', ' ') + ' · ' + s.call;
-      $('v-prompt').textContent = s.prompt;
-      $('v-answer').textContent = s.answer || (s.error ? 'Error: ' + s.error : 'Empty reply: usually a token budget, not incapacity.');
-      document.querySelectorAll('input[name=v-useful]').forEach(function (r) {
-        r.checked = s.useful !== null && r.value === (s.useful ? 'yes' : 'no');
+  // ---- a gateway request, docked beside Collections' list (serve.gateway_card,
+  // serve.gateway_request): every seat's answer with Useful / Not useful beside
+  // it; Read opens all of it with its claims to mark. Under them, the request
+  // to send again from your own app.
+  var rq = null;                        // the request shown
+  function rqLines(box) { return box.value.split('\n').map(function (s) { return s.trim(); }).filter(Boolean); }
+  function rqSnip(lang) {
+    var body = {model: rq.model, messages: [{role: 'user', content: rq.prompt}]}, url = rq.gateway + '/chat/completions';
+    $('rq-snip').textContent = lang === 'python'
+      ? '# pip install openai\nfrom openai import OpenAI\n\nbench = OpenAI(base_url=' + JSON.stringify(rq.gateway)
+        + ', api_key="local", timeout=900)\nreply = bench.chat.completions.create(model=' + JSON.stringify(rq.model)
+        + ',\n    messages=[{"role": "user", "content": ' + JSON.stringify(rq.prompt) + '}])\nprint(reply.choices[0].message.content)'
+      : "curl " + url + " \\\n  -H 'Content-Type: application/json' \\\n  -d '"
+        + JSON.stringify(body).split("'").join("'\\''") + "'";
+    $('rq-langs').querySelectorAll('[data-lang]').forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.lang === lang)); });
+  }
+  function rqSeat(s) {
+    var li = el('li', {'data-call': s.call}), head = el('span');
+    head.appendChild(el('span', {class: 'alias'}, s.alias));
+    if (s.seat !== 'member') head.appendChild(el('span', {class: 'chip'}, s.seat));
+    head.appendChild(el('span', {class: 'chip ' + ({ok: 'ok', empty: 'warn', error: 'err'}[s.status] || '')},
+                        s.status === 'ok' ? Math.round(s.seconds) + ' s' : s.status));
+    var acts = el('span', {class: 'acts'});
+    if (s.status === 'error') acts.appendChild(el('span', {class: 'muted'}, 'nothing to judge'));
+    else if (s.useful === null) {
+      [['Useful', true], ['Not useful', false]].forEach(function (u) {
+        var b = el('button', {type: 'button', class: 'btn small', 'data-useful': String(u[1])}, u[0]);
+        acts.appendChild(b);
       });
-      $('v-note').value = s.note; $('v-real').value = s.real.join('\n'); $('v-false').value = s.false.join('\n');
-      vd.showModal();
+    } else acts.appendChild(el('span', {class: 'chip ' + (s.useful ? 'ok' : 'err')}, s.useful ? '✓ Useful' : '✗ Not useful'));
+    if (s.status !== 'error') acts.appendChild(el('button', {type: 'button', class: 'linkish', 'data-read': ''}, 'Read'));
+    li.appendChild(head); li.appendChild(acts);
+    li.appendChild(el('span', {class: 'why'}, (s.answer || s.error || 'Empty reply: usually a token budget, not incapacity.').slice(0, 280)));
+    return li;
+  }
+  function rqShow(panel) {
+    $('rq-errors').textContent = '';
+    return get('/api/gateway-request?panel=' + encodeURIComponent(panel)).then(function (r) {
+      if (!r.ok) { listErrors($('rq-errors'), r.errors); return; }
+      rq = r;
+      $('rq-title').textContent = r.key + ' asked ' + r.model;
+      $('rq-meta').textContent = [r.at.slice(0, 16).replace('T', ' '), plural(r.seats.length, 'seat'), r.shape, r.panel]
+        .filter(Boolean).join(' · ') + (r.skipped.length ? ' · not asked: ' + r.skipped.join(', ') : '');
+      $('rq-prompt').textContent = r.prompt;
+      var list = $('rq-seats'); list.textContent = '';
+      r.seats.forEach(function (s) { list.appendChild(rqSeat(s)); });
+      rqSnip('curl');
+      document.querySelectorAll('#g-requests tr.g-row').forEach(function (tr) { tr.classList.toggle('in-hand', tr.dataset.panel === panel); });
+      var c = $('c-form'); if (c && c.open) c.close();
+      $('request-dock').setAttribute('open', '');
     });
-  });
-  $('v-close').addEventListener('click', function () { vd.close(); });
-  $('v-save').addEventListener('click', function () {
-    var pick = document.querySelector('input[name=v-useful]:checked');
-    $('v-errors').textContent = ''; $('v-done').textContent = '';
-    var useful = pick ? pick.value === 'yes' : null, call = vcall;
-    post('/api/verdict', {call: call, useful: useful, note: $('v-note').value,
-                          real: lines('v-real'), false: lines('v-false')}).then(function (r) {
-      if (!r.ok) { listErrors($('v-errors'), r.errors); return; }
-      // The seat's chip as serve.gateway_card draws it: ✓ useful, ✗ not, no mark still owed.
-      var said = {true: ['useful', ' ✓'], false: ['not useful', ' ✗'], null: ['verdict owed', '']}[useful];
-      document.querySelectorAll('button.seat').forEach(function (chip) {
-        if (chip.dataset.call !== call) return;
-        var owed = $('g-owed'), was = / [✓✗]$/.test(chip.textContent);
-        chip.textContent = chip.textContent.replace(/ [✓✗]$/, '') + said[1];
-        chip.title = chip.title.replace(/(useful|not useful|verdict owed)( · [^·]*)$/, said[0] + '$2');
-        if (owed && was !== (useful !== null)) {
-          var n = Number(owed.dataset.n) + (was ? 1 : -1);
-          owed.dataset.n = n; owed.textContent = plural(n, 'verdict') + ' owed';
-        }
+  }
+  function rqOwed(tr, change) {             // the row's Owed, and the card's count, after a verdict
+    var owed = $('g-owed'), cell = tr && tr.querySelector('td.num[data-sort]');
+    if (!cell || !change) return;
+    var n = Math.max(0, Number(cell.dataset.sort) + change);
+    cell.dataset.sort = n; cell.innerHTML = n ? '<span class="chip warn">' + n + '</span>' : '<span class="muted">—</span>';
+    if (owed) { owed.dataset.n = Number(owed.dataset.n) + change; owed.textContent = plural(Number(owed.dataset.n), 'verdict') + ' owed'; }
+  }
+  function rqJudge(li, body) {
+    var s = rq.seats.find(function (x) { return x.call === li.dataset.call; }), was = s.useful;
+    $('rq-errors').textContent = '';
+    return post('/api/verdict', Object.assign({call: s.call, note: '', real: [], false: []}, body)).then(function (r) {
+      if (!r.ok) { listErrors($('rq-errors'), r.errors); return; }
+      Object.assign(s, body);
+      li.replaceWith(rqSeat(s));
+      rqOwed(document.querySelector('#g-requests tr.in-hand'), (s.useful === null) - (was === null));
+      ownChange();
+    }).catch(function (err) { $('rq-errors').textContent = String(err); });
+  }
+  document.addEventListener('click', function (e) {
+    var tr = e.target.closest('#g-requests tr.g-row');
+    if (tr) { rqShow(tr.dataset.panel); return; }
+    var dock = e.target.closest('#request-dock');
+    if (!dock) return;
+    var li = e.target.closest('li[data-call]'), b = e.target.closest('button');
+    if (!b) return;
+    if (b.id === 'rq-close') { dock.close(); dock.removeAttribute('open'); return; }
+    if (b.dataset.lang) { rqSnip(b.dataset.lang); return; }
+    if (b.dataset.useful) { rqJudge(li, {useful: b.dataset.useful === 'true'}); return; }
+    if (b.hasAttribute('data-read')) {
+      var open = li.querySelector('.read');
+      if (open) { open.remove(); return; }
+      var s = rq.seats.find(function (x) { return x.call === li.dataset.call; });
+      var box = el('div', {class: 'read'}), id = 'rq-' + s.call.replace(/\W/g, '-');
+      box.appendChild(el('pre', {class: 'log answer'}, s.answer || s.error || 'Empty reply.'));
+      var pickBox = el('div', {class: 'choices'});
+      [['Useful', true], ['Not useful', false]].forEach(function (u) {
+        pickBox.appendChild(el('button', {type: 'button', class: 'btn small', 'aria-pressed': String(s.useful === u[1]), 'data-pick': String(u[1])}, u[0]));
       });
-      vd.close(); ownChange();
-    }).catch(function (err) { $('v-errors').textContent = String(err); });
+      box.appendChild(pickBox);
+      [['note', 'Note', s.note, 'input'], ['real', 'Findings it got right, verified', s.real.join('\n'), 'textarea'],
+       ['false', 'Claims it made that are not true', s.false.join('\n'), 'textarea']].forEach(function (f) {
+        box.appendChild(el('label', {class: 'field', for: id + '-' + f[0]}, f[1]));
+        var x = el(f[3], {id: id + '-' + f[0], 'data-f': f[0], autocomplete: 'off'}); x.value = f[2]; if (f[3] === 'textarea') x.rows = 2;
+        box.appendChild(x);
+      });
+      box.appendChild(el('p', {class: 'rules'}, 'One sentence per line. suite/mine.py turns these into benchmark tasks.'));
+      box.appendChild(el('button', {type: 'button', class: 'btn primary small', 'data-save': ''}, 'Save verdict'));
+      li.appendChild(box);
+      return;
+    }
+    if (b.dataset.pick) { b.parentNode.querySelectorAll('[data-pick]').forEach(function (x) { x.setAttribute('aria-pressed', String(x === b)); }); return; }
+    if (b.hasAttribute('data-save')) {
+      var chosen = li.querySelector('[data-pick][aria-pressed="true"]');
+      if (!chosen) { $('rq-errors').textContent = 'Choose Useful or Not useful first.'; return; }
+      var f = function (k) { return li.querySelector('[data-f="' + k + '"]'); };
+      rqJudge(li, {useful: chosen.dataset.pick === 'true', note: f('note').value, real: rqLines(f('real')), false: rqLines(f('false'))});
+    }
+  });
+  document.addEventListener('keydown', function (e) {
+    var tr = e.key === 'Enter' && e.target.closest && e.target.closest('#g-requests tr.g-row');
+    if (tr) rqShow(tr.dataset.panel);
   });
 
   // ---- Quota (serve.quotas_page): a tile per connection, from quota-data

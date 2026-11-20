@@ -1,10 +1,10 @@
-"""Write CLIENTS.md from the dashboard's Clients page, so each app's set-up is in
+"""Write CLIENTS.md from the dashboard's Connect page, so each app's set-up is in
 the repository for people and agents to read, and never drifts from the page.
 
     python scripts/clients_doc.py           # write CLIENTS.md
     python scripts/clients_doc.py --check   # fail if CLIENTS.md is not what it would write (check.py)
 
-One source: serve.client_setups, the function the Clients page draws. The page
+One source: serve.client_setups, the function the Connect page draws. The page
 fills in this install (its address, its collections, a key made on the spot);
 here they are the defaults a fresh install has: the server at 127.0.0.1:8122,
 collections `core` and `fast`, and every call needing a gateway key, read from
@@ -46,7 +46,7 @@ def render() -> str:
     root = serve.DEFAULT_SERVER
     out = ["# Setting up clients",
            "",
-           "Every app Benchwarmers has a ready set-up for, as the dashboard's **Clients** page shows it,"
+           "Every app Benchwarmers has a ready set-up for, as the dashboard's **Connect** page shows it,"
            " written out for people and for agents setting an app up. The page fills in your own install:"
            " its address, your collections and a gateway key made on the spot. Here they are a fresh"
            f" install's: the server at `{root}`, the collections `core` and `fast`, and a gateway key"
@@ -62,7 +62,7 @@ def render() -> str:
            "## The gateway key",
            "",
            "When every call needs a key (`BENCHWARMERS_REQUIRE_KEYS=1`, or an admin token), make one on"
-           " Settings or the Clients page. Most set-ups read it from"
+           " Settings or the Connect page. Most set-ups read it from"
            f" `{serve.KEY_ENV}`:",
            ""]
     for s in serve._env_snips(serve.KEY_ENV):
@@ -87,7 +87,7 @@ def main() -> int:
         if not OUT.exists() or OUT.read_text(encoding="utf-8") != text:
             print("CLIENTS.md is not what serve.client_setups gives: run python scripts/clients_doc.py")
             return 1
-        print("CLIENTS.md matches the Clients page")
+        print("CLIENTS.md matches the Connect page")
         return 0
     OUT.write_text(text, encoding="utf-8", newline="\n")
     print(f"wrote {OUT.name}")

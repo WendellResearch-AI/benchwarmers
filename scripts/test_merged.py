@@ -131,8 +131,9 @@ def main() -> int:
         said = merge_ask["messages"][1]["content"]
         assert merge_ask["messages"][0]["content"] == gateway.MERGE_SYSTEM
         assert "say hi" in said and "answer from m1" in said and "answer from m2" in said, said
-        # The dashboard finds the merger in the call log, so its verdict dialog opens.
-        assert serve.gateway_seat(merger["call"])["seat"] == "merger"
+        # The dashboard finds the merger in the call log, so it is judged in the request's side pane.
+        shown = serve.gateway_request(merger["call"].rsplit(".", 1)[0])
+        assert [s["seat"] for s in shown["seats"]][-1] == "merger", shown
 
         # 3. The merger fails (body field this time): every answer, a note, the failed merger logged.
         collection(merger="broken")

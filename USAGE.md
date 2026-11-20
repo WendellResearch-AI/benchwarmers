@@ -215,7 +215,7 @@ claude
 
 Each conversation is one offload per model that answered it; a verdict is
 optional, and the Gateway card lists route conversations apart from the
-panels. The Clients page has the other agents' set-ups; GATEWAY.md, "Route
+panels. The Connect page has the other agents' set-ups; GATEWAY.md, "Route
 mode", has the limits.
 
 **A coding agent** connects over MCP instead: the Claude Code plugin

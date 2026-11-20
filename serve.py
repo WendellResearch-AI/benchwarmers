@@ -1266,7 +1266,7 @@ def save_endpoint(name: str, base: str, secret: str, who: str = "ui", extra: dic
         errors.append("name: 2-32 lower-case letters, digits or '-', e.g. openrouter")
     elif new and name in data:
         errors.append(f"there is already an endpoint named {name}: give this one its own name, e.g."
-                      f" {free_name(name)}, or use Change key on {name}")
+                      f" {free_name(name)}, or open {name} to give it a new key")
     if not re.fullmatch(r"https?://[^\s\"'<>]+", base):
         errors.append("base URL must start http:// or https://, e.g. https://openrouter.ai/api/v1")
     on_it = [r["alias"] for r in endpoints.registry() if r["endpoint"] == name]
@@ -1293,28 +1293,30 @@ def save_endpoint(name: str, base: str, secret: str, who: str = "ui", extra: dic
     listing = entry.get("models_url") or base + "/models"
     import urllib.error
     import urllib.request
+    # `key`, what the test found of the key (check_endpoint keeps it): proven, unproven,
+    # none (none sent), refused (a 401 or 403); "down" when the list did not answer.
     try:
         count = len(endpoints.list_models(entry, secret))
     except urllib.error.HTTPError as exc:
-        return {"ok": False, "errors": [f"{listing} answered {exc.code}"
-                                        + (" — check the key" if exc.code in (401, 403) else "")
-                                        + "; nothing saved"]}
+        return {"ok": False, "key": "refused" if exc.code in (401, 403) else "down",
+                "errors": [f"{listing} answered {exc.code}"
+                           + (" — check the key" if exc.code in (401, 403) else "") + "; nothing saved"]}
     except Exception as exc:                           # noqa: BLE001
-        return {"ok": False, "errors": [f"could not list {listing} ({type(exc).__name__}:"
-                                        f" {exc}); nothing saved"]}
+        return {"ok": False, "key": "down", "errors": [f"could not list {listing} ({type(exc).__name__}:"
+                                                       f" {exc}); nothing saved"]}
     # A LISTING PROVES THE URL, NOT ALWAYS THE KEY. OpenRouter lists its
     # models to anyone, so a wrong key sails through the test above. Asked
     # once without a key: if that works too, say plainly the key is unproven.
-    note = ""
+    note, proof = "", "none"
     if secret:
         try:
             with urllib.request.urlopen(listing, timeout=15):
-                note = (" It lists models without a key, so the key itself is only"
-                        " checked by the first call to one of its models.")
+                note, proof = (" It lists models without a key, so the key itself is only"
+                               " checked by the first call to one of its models."), "unproven"
         except Exception:                              # noqa: BLE001
-            note = " The key was checked: the list needs it."
+            note, proof = " The key was checked: the list needs it.", "proven"
     if test_only:
-        return {"ok": True, "errors": [], "served": count, "note": note.strip()}
+        return {"ok": True, "errors": [], "served": count, "note": note.strip(), "key": proof}
     if secret and secret != endpoints.keys().get(entry["key"]):
         endpoints.set_key(entry["key"], secret)
     if admin and endpoints.kind(name, {name: entry}) == "hub":
@@ -1326,6 +1328,40 @@ def save_endpoint(name: str, base: str, secret: str, who: str = "ui", extra: dic
     _log_change(datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
                 who, "", "endpoint", None, f"{name} {base}")
     return {"ok": True, "errors": [], "served": count, "note": note.strip()}
+
+
+def endpoint_providers() -> dict:
+    """models.dev's providers with an API base, for Add's Provider box: its id
+    (the name it suggests), name, base URL and docs, and the endpoint already
+    at that base, if one is."""
+    import sources
+    have = {e["base"].rstrip("/"): n for n, e in endpoints.load().items()}
+    rows = [{"id": pid, "name": p.get("name") or pid, "base": p["api"].rstrip("/"), "doc": p.get("doc") or "",
+             "have": have.get(p["api"].rstrip("/"), "")}
+            for pid, p in (sources.cached("modelsdev") or {}).items()
+            if isinstance(p, dict) and str(p.get("api") or "").startswith("http")]
+    return {"ok": True, "errors": [], "providers": sorted(rows, key=lambda r: r["name"].lower())}
+
+
+ENDPOINT_CHECKS = DATA / "config" / "endpoint-checks.json"
+CHECK_SAYS = {"proven": ("key proven", "ok"), "unproven": ("key unproven", ""), "none": ("no key sent", ""),
+              "refused": ("key refused", "err"), "down": ("not answering", "err")}
+
+
+def check_endpoint(name: str) -> dict:
+    """Check now: the endpoint's list asked with its stored key, then without,
+    as the key form's test does (save_endpoint, test_only), and what it found
+    kept in config/endpoint-checks.json for the Endpoints page. Saves nothing
+    else."""
+    data = endpoints.load()
+    if name not in data:
+        return {"ok": False, "errors": [f"no endpoint named {name!r}"]}
+    r = save_endpoint(name, data[name]["base"], "", test_only=True)
+    found = {"at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"), "state": r.get("key", "down"),
+             "models": r.get("served"), "said": (r.get("note") or " ".join(r.get("errors") or []))[:300]}
+    import locked
+    locked.update(ENDPOINT_CHECKS, lambda d: d.update({name: found}))
+    return {"ok": True, "errors": [], "name": name, **found}
 
 
 def remove_endpoint(name: str, who: str = "ui", with_models: bool = False) -> dict:
@@ -3952,26 +3988,15 @@ def gateway_card(limit: int = 30) -> str:
     except Exception:                                  # noqa: BLE001
         judged = {}
     owed = seats_total = 0
-    body = ["<table><thead><tr>", th("When"), th("Collection"), th("Asked by"), th("Explorer shape"),
-            th("Seats"), th("Time", True), "</tr></thead><tbody>"]
+    body = ["<table id='g-requests'><thead><tr>", th("When"), th("Collection"), th("Asked by"),
+            th("Seats"), th("Owed", True), th("Time", True), "</tr></thead><tbody>"]
     for r in records:
-        chips, row_owed = [], 0
-        for seat in r.get("seats", []):
-            seats_total += 1
-            verdict = judged.get(seat.get("call"))
-            if verdict is None:
-                row_owed += 1
-            mark = {True: " ✓", False: " ✗", None: ""}[verdict]
-            css = {"ok": "ok", "empty": "warn", "error": "err"}.get(seat.get("status"), "")
-            why = (f"{seat.get('seat')} · {seat.get('status')} in {seat.get('seconds')}s · "
-                   + ({True: "useful", False: "not useful", None: "verdict owed"}[verdict])
-                   + f" · {seat.get('call')}")
-            # A button: it opens the answer with the verdict form (bench.js).
-            chips.append(f"<button type='button' class='chip {css} seat' data-call='{esc(seat.get('call', ''))}'"
-                         f" title='{esc(why)}'>{esc(seat.get('alias', ''))}{mark}</button>")
-        # Members an image could not be sent to: not asked, so no call and no verdict.
-        chips += [f"<span class='chip muted' title='{esc('not asked: ' + str(k.get('why', '')))}'>"
-                  f"{esc(k.get('alias', ''))} –</span>" for k in r.get("skipped", []) if isinstance(k, dict)]
+        seats = r.get("seats", [])
+        answered = sum(s.get("status") == "ok" for s in seats)
+        # Owed: a seat that answered (ok or empty) with no verdict yet; a failure has nothing to judge.
+        row_owed = sum(judged.get(s.get("call")) is None and s.get("status") != "error" for s in seats)
+        seats_total += len(seats)
+        skipped = [k for k in r.get("skipped", []) if isinstance(k, dict)]
         owed += row_owed
         # The request's own time: its seats ran at once, so the slowest of
         # them, then the merge (a merger seat answers after the rest).
@@ -3981,39 +4006,51 @@ def gateway_card(limit: int = 30) -> str:
         took = (f"<td class='num' data-sort='{panel + merge:.1f}' title='slowest seat {panel:.1f}s"
                 f"{f' + merge {merge:.1f}s' if merge else ''}'>{panel + merge:.0f}s</td>" if secs
                 else "<td class='num muted' data-sort='-1'>—</td>")
+        said = f"{len(seats)} seat{'s' * (len(seats) != 1)} · {answered} answered"
+        not_asked = "".join(f"; not asked: {k.get('alias', '')} ({k.get('why', '')})" for k in skipped)
         body.append(
-            f"<tr><td class='mono' data-sort='{esc(r.get('at', ''))}'>{esc(r.get('at', '')[:16].replace('T', ' '))}</td>"
+            f"<tr class='g-row' data-panel='{esc(r.get('panel', ''))}' tabindex='0'>"
+            f"<td class='mono' data-sort='{esc(r.get('at', ''))}'>{esc(r.get('at', '')[:16].replace('T', ' '))}</td>"
             f"<td class='mono'>{esc(r.get('model', ''))}</td>"
             f"<td class='mono'>{esc(r.get('key') or '—')}</td>"
-            f"<td title='{esc(r.get('shape_by', ''))}'>{esc(r.get('shape', ''))}</td>"
-            f"<td>{' '.join(chips)}</td>{took}</tr>")
+            f"<td title='{esc(r.get('shape', '') + not_asked)}'>{esc(said)}</td>"
+            f"<td class='num' data-sort='{row_owed}'>"
+            + (f"<span class='chip warn'>{row_owed}</span>" if row_owed else "<span class='muted'>—</span>")
+            + f"</td>{took}</tr>")
     if not records:
         body.append("<tr><td colspan='6' class='muted'>No gateway requests yet. Call a collection"
                     f" at <code>{esc(gateway_url())}</code>.</td></tr>")
     body.append("</tbody></table>")
     key = """<dl>
-      <dt>Seats</dt><dd>Every model that answered the request, members first, then
-        explorers, then the merger if the reply was merged. Green answered, amber came back empty, red failed. ✓ judged
-        useful, ✗ judged not useful; no mark means the verdict is still owed.
-        Hover a chip for its seat, timing and call id; click it to read the answer
-        and record a verdict. A grey chip with a dash is a member not asked: the request
-        carried images it cannot take, or it is a vision specialist and the request
-        carried none. Hover it for why.</dd>
-      <dt>Asked by</dt><dd>The gateway key that made the request, or <code>local</code>
-        when no key is asked for.</dd>
-      <dt>Time</dt><dd>How long the caller waited: the seats run at once, so the
-        slowest of them, plus the merge when the reply was merged. Hover for the two
-        parts; a chip's own time is on the chip.</dd>
-      <dt>Verdicts owed</dt><dd>A chip with no mark. Each is recorded as an unjudged
-        offload, so rotation still counts it; a verdict tells the router whether
+      <dt>A request</dt><dd>Open one to read every seat's answer beside the list and
+        judge it there: members first, then explorers, then the merger if the reply
+        was merged. Under the answers, the same request to send again from your own app.</dd>
+      <dt>Asked by</dt><dd>The gateway key or app name that made the request, or
+        <code>local</code> when it sent neither.</dd>
+      <dt>Owed</dt><dd>Seats that answered with no verdict yet. Each is recorded as an
+        unjudged offload, so rotation still counts it; a verdict tells the router whether
         it helped. The orchestrator that called can also record one:
         <code>python metrics/offload.py verdict &lt;call id&gt; --useful</code>.</dd>
-      <dt>Explorer shape</dt><dd>Which models could fill explorer seats; hover for
-        how it was chosen (set on the collection, or a decision model's label).</dd>
+      <dt>Time</dt><dd>How long the caller waited: the seats run at once, so the
+        slowest of them, plus the merge when the reply was merged.</dd>
     </dl>"""
+    dock = ("<dialog class='dock' id='request-dock' aria-labelledby='rq-title'>"
+            "<div class='bar'><p>Request</p></div><div class='dock-body'>"
+            "<h2 class='dock-head title' id='rq-title' tabindex='-1'></h2><p class='sub' id='rq-meta'></p>"
+            "<details><summary>The question</summary><pre class='log answer' id='rq-prompt'></pre></details>"
+            "<h3>Answers</h3><ul class='items answers' id='rq-seats'></ul>"
+            "<p class='rules'>Judge an answer after checking it: models have agreed, three at once, on a bug that"
+            " did not exist. Read opens all of it, with its claims to mark right or wrong.</p>"
+            "<h3>Ask it again from anywhere</h3><div class='choices' id='rq-langs'>"
+            "<button class='btn' type='button' aria-pressed='true' data-lang='curl'>curl</button>"
+            "<button class='btn' type='button' aria-pressed='false' data-lang='python'>Python</button></div>"
+            "<div class='snip'><div class='snip-head'><span class='mono'>this request</span>"
+            "<button class='btn small' type='button' data-copy='rq-snip'>Copy</button></div>"
+            "<pre class='log' id='rq-snip'></pre></div><div class='errors' id='rq-errors' role='alert'></div></div>"
+            "<div class='dock-foot'><button class='btn' type='button' id='rq-close'>Close</button></div></dialog>")
     return card("Gateway", f"The last {len(records)} bench-gateway requests:"
                 f" {seats_total} seats, <span id='g-owed' data-n='{owed}'>{owed} verdict{'s' * (owed != 1)} owed</span>.",
-                "".join(body) + route_table(judged), key)
+                "".join(body) + route_table(judged), key) + dock
 
 
 def route_table(judged: dict, limit: int = 30) -> str:
@@ -4058,31 +4095,33 @@ def route_table(judged: dict, limit: int = 30) -> str:
     return "".join(rows)
 
 
-def gateway_seat(call: str) -> dict:
-    """One seat of a logged gateway request, with its latest verdict, for the
-    verdict dialog. Searched from the log's end, where a recent seat is: the
-    log runs to 50 MB, read whole each time the dialog opened."""
-    panel = call.rsplit(".", 1)[0]
-    for line in _from_end(DATA / "runs" / "gateway" / "calls.jsonl"):
-        if not panel or f'"{panel}"' not in line:           # skip without parsing
+def gateway_request(panel: str) -> dict:
+    """One logged gateway request, every seat with its answer and latest
+    verdict, for Collections' side pane. Searched from the log's end, where a
+    recent request is: the log runs to 50 MB. The latest verdict per call wins
+    (offload.entries is oldest first)."""
+    for line in _from_end(DATA / "runs" / "gateway" / "calls.jsonl") if panel else ():
+        if f'"{panel}"' not in line:
             continue
         try:
             r = json.loads(line)
         except ValueError:
             continue
-        seat = next((s for s in r.get("seats", []) if s.get("call") == call), None)
-        if seat is None:
+        if r.get("panel") != panel:
             continue
         from offload import entries
-        last = next((e for e in reversed(entries()) if e.get("call") == call), {})
-        return {"ok": True, "call": call, "model": r.get("model", ""), "at": r.get("at", ""),
-                "prompt": r.get("prompt", "")[:20000], "seat": seat.get("seat", ""),
-                "alias": seat.get("alias", ""), "status": seat.get("status", ""),
-                "seconds": seat.get("seconds"), "answer": seat.get("answer", ""),
-                "error": seat.get("error", ""), "useful": last.get("useful"),
-                "note": last.get("note", ""),
-                "real": last.get("real") or [], "false": last.get("false") or []}
-    return {"ok": False, "errors": [f"no gateway seat with call id {call!r}"]}
+        last = {e["call"]: e for e in entries() if str(e.get("call", "")).startswith(panel + ".")}
+        return {"ok": True, "panel": panel, "model": r.get("model", ""), "at": r.get("at", ""), "gateway": gateway_url(),
+                "key": r.get("key") or "local", "shape": r.get("shape", ""), "prompt": r.get("prompt", "")[:20000],
+                "skipped": [k.get("alias", "") for k in r.get("skipped", []) if isinstance(k, dict)],
+                "seats": [{"call": s.get("call", ""), "seat": s.get("seat", ""), "alias": s.get("alias", ""),
+                           "status": s.get("status", ""), "seconds": s.get("seconds"),
+                           "answer": s.get("answer", "")[:40000], "error": s.get("error", ""),
+                           "useful": last.get(s.get("call"), {}).get("useful"),
+                           "note": last.get(s.get("call"), {}).get("note", ""),
+                           "real": last.get(s.get("call"), {}).get("real") or [],
+                           "false": last.get(s.get("call"), {}).get("false") or []} for s in r.get("seats", [])]}
+    return {"ok": False, "errors": [f"no gateway request {panel!r}"]}
 
 
 def record_verdict(call: str, useful, note: str, real, false) -> dict:
@@ -4463,6 +4502,13 @@ def collections_tab() -> str:
         "<p class='rules'>Left off <code>GET /v1/models</code> and the list agents choose from, so an"
         " agent picking for itself never spends it. For the expensive ones you decide to run: say"
         " <code>bench/&lt;name&gt;</code> and it runs. Not a lock: anyone who knows the name can call it.</p>"
+        # A saved one: the call to test it from your own app (bench.js fillForm); its answers come back
+        # under Gateway, beside the list.
+        f"<div id='c-try' data-gateway='{esc(gateway_url())}' hidden><h3>Test it from your app</h3><div class='snip'><div class='snip-head'>"
+        "<span class='mono'>curl</span><button class='btn small' type='button' data-copy='c-try-snip'>Copy</button>"
+        "</div><pre class='log' id='c-try-snip'></pre></div><p class='rules'>Its answers show under Gateway as a"
+        " request, to judge there. To set an app up for good, use <a href='/clients' data-go='clients'>Connect</a>."
+        "</p></div>"
         "</div><div class='dock-foot'>"
         "<div class='errors' id='c-errors' role='alert'></div><div class='done' id='c-done'></div>"
         "<button class='btn primary' id='c-save'>Save collection</button>"
@@ -4518,7 +4564,7 @@ SECTIONS = (("Observe", (("suite", "Benchmarks", "benchmarks_tab"),
                          ("models", "Models benched", "models_page"),
                          ("collections", "Collections", "collections_and_gateway"),
                          ("discover", "Discover new models", "discover_card"),
-                         ("clients", "Clients setup", "clients_page"))),
+                         ("clients", "Connect", "clients_page"))),
             ("Control", (("settings", "Settings", "settings_page"),
                          ("info", "Info", "info_page"))))
 TABS = tuple(page for _, pages in SECTIONS for page in pages)
@@ -4532,6 +4578,8 @@ BAR_TOOLS = {
                   " aria-label='Find an endpoint or a model it serves' data-none='No endpoint or model matches'>"
                   "<span class='spring'></span>"
                   "<span class='done' id='el-done' role='status'></span><span class='errors' id='el-errors' role='alert'></span>"
+                  "<button class='btn' type='button' id='e-check-all' title='Asks each endpoint for its list, one at"
+                  " a time, with its key and without'>Check all</button>"
                   "<button class='btn primary' type='button' id='e-add'>Add an endpoint</button>"),
     "quotas": ("<span class='spring'></span><span class='done' id='q-done' role='status'></span>"
                "<span class='errors' id='q-errors' role='alert'></span><button class='btn' type='button' id='q-all'"
@@ -4596,12 +4644,20 @@ def _fields(pairs: list) -> str:
     return "\n".join(f"{k.ljust(width)}  {v}" for k, v in pairs)
 
 
-def client_setups(root: str, cols: list, keys: bool) -> list[dict]:
+WAYS = {"model": "As its model", "panel": "As a second opinion", "both": "Both",
+        "merged": "One merged reply", "all": "Every seat's reply"}
+
+
+def client_setups(root: str, cols: list, keys: bool, way: str = "both", label: str = "") -> list[dict]:
     """Every client's panel: what it gets, its snippets (_snip), where they
     go, the one thing to watch for and the docs they follow. `root`: the
     server, without /v1; `cols`: (name, context window or None, sees images)
     for each collection offered, the first being the one a single-model field
-    names; `keys`: whether every call needs a gateway key."""
+    names; `keys`: whether its calls send a gateway key (from KEY_ENV).
+    `way` (WAYS, the Connect page's choice): "model", the app on a collection
+    in route mode; "panel", the panel as MCP tools beside its own model; "both";
+    for chat apps "merged" or "all". `label`: with no key, the app's name sent
+    as its key, so its calls are told apart (guard.gateway_caller)."""
     base, mcp, env = root + "/v1", root + "/mcp", KEY_ENV
     fast = next((n for n, _, _ in cols if n == "fast"), cols[0][0])
     # (model, collection, context window, output budget, sees images)
@@ -4609,6 +4665,10 @@ def client_setups(root: str, cols: list, keys: bool) -> list[dict]:
             for n, c, eyes in cols]
     model, ctx, out = rows[0][0], rows[0][2], rows[0][3]
     q = json.dumps                       # a quoted string, read the same by JSON, TOML and YAML
+    use_m, use_p = way in ("model", "both", "merged", "all"), way in ("panel", "both", "merged", "all")
+    lab = "" if keys else label          # sent where an app takes the key as text
+    token = lab or "local"
+    reply = "" if way == "all" else ":merged"
 
     def js(data) -> str:
         return json.dumps(data, indent=2)
@@ -4619,16 +4679,21 @@ def client_setups(root: str, cols: list, keys: bool) -> list[dict]:
     def when(text: str):
         return text if keys else None
 
+    def only(flag: bool, *blocks) -> list:
+        return list(blocks) if flag else []
+
     opencode = {"$schema": "https://opencode.ai/config.json",
-                "provider": {"benchwarmers": {
+                **({"provider": {"benchwarmers": {
                     "npm": "@ai-sdk/openai-compatible", "name": "Benchwarmers",
-                    "options": {"baseURL": base, **({"apiKey": f"{{env:{env}}}"} if keys else {})},
+                    "options": {"baseURL": base, **({"apiKey": f"{{env:{env}}}"} if keys else
+                                                    {"apiKey": lab} if lab else {})},
                     "models": {m: {"name": f"{n} (route)", "limit": {"context": c, "output": o}}
-                               for m, n, c, o, _ in rows}}},
-                "mcp": {"benchwarmers": {
+                               for m, n, c, o, _ in rows}}}} if use_m else {}),
+                **({"mcp": {"benchwarmers": {
                     "type": "remote", "url": mcp, "enabled": True, "oauth": False,
-                    **({"headers": {"Authorization": f"Bearer {{env:{env}}}"}} if keys else {}),
-                    "timeout": 900_000}}}
+                    **({"headers": {"Authorization": f"Bearer {{env:{env}}}"}} if keys else
+                       {"headers": {"Authorization": f"Bearer {lab}"}} if lab else {}),
+                    "timeout": 900_000}}} if use_p else {})}
     vscode = [{"name": "Benchwarmers", "vendor": "customendpoint", "apiKey": "${input:benchwarmersKey}",
                "apiType": "chat-completions",
                "models": [{"id": m, "name": f"{n} (Benchwarmers)", "url": base + "/chat/completions",
@@ -4637,38 +4702,46 @@ def client_setups(root: str, cols: list, keys: bool) -> list[dict]:
     vscode_mcp = {**({"inputs": [{"type": "promptString", "id": "benchwarmers-key",
                                   "description": "Benchwarmers gateway key", "password": True}]} if keys else {}),
                   "servers": {"benchwarmers": {"type": "http", "url": mcp, **(
-                      {"headers": {"Authorization": "Bearer ${input:benchwarmers-key}"}} if keys else {})}}}
-    codex = lines(f"model = {q(model)}", 'model_provider = "benchwarmers"', f"model_context_window = {ctx}",
-                  'web_search = "disabled"', "",
-                  "[model_providers.benchwarmers]", 'name = "Benchwarmers"', f"base_url = {q(base)}",
-                  when(f'env_key = "{env}"'), 'wire_api = "responses"', "",
-                  "[mcp_servers.benchwarmers]", f"url = {q(mcp)}", when(f'bearer_token_env_var = "{env}"'),
-                  "tool_timeout_sec = 900")
-    zed = {"language_models": {"openai_compatible": {"benchwarmers": {
+                      {"headers": {"Authorization": "Bearer ${input:benchwarmers-key}"}} if keys else
+                      {"headers": {"Authorization": f"Bearer {lab}"}} if lab else {})}}}
+    codex = lines(*(f"model = {q(model)}", 'model_provider = "benchwarmers"', f"model_context_window = {ctx}",
+                    'web_search = "disabled"', "",
+                    "[model_providers.benchwarmers]", 'name = "Benchwarmers"', f"base_url = {q(base)}",
+                    when(f'env_key = "{env}"'), 'wire_api = "responses"')[:None if use_m else 0],
+                  "" if use_m and use_p else None,
+                  *("[mcp_servers.benchwarmers]", f"url = {q(mcp)}", when(f'bearer_token_env_var = "{env}"'),
+                    "tool_timeout_sec = 900")[:None if use_p else 0])
+    zed = {**({"language_models": {"openai_compatible": {"benchwarmers": {
                "api_url": base,
                "available_models": [{"name": m, "display_name": f"{n} (Benchwarmers)", "max_tokens": c,
                                      "max_output_tokens": o,
                                      "capabilities": {"tools": True, "images": eyes, "parallel_tool_calls": False,
                                                       "prompt_cache_key": False}}
-                                    for m, n, c, o, eyes in rows]}}},
-           "context_servers": {"benchwarmers": {"url": mcp, **(
-               {"headers": {"Authorization": f"Bearer {KEY_HOLDER}"}} if keys else {})}}}
+                                    for m, n, c, o, eyes in rows]}}}} if use_m else {}),
+           **({"context_servers": {"benchwarmers": {"url": mcp, **(
+               {"headers": {"Authorization": f"Bearer {KEY_HOLDER}"}} if keys else
+               {"headers": {"Authorization": f"Bearer {lab}"}} if lab else {})}}} if use_p else {})}
     secret = f"${{{{ secrets.{env} }}}}"
-    continue_ = lines("name: Benchwarmers", "version: 0.0.1", "schema: v1", "models:",
-                      *(lines(f"  - name: {q(n + ' (Benchwarmers)')}", "    provider: openai", f"    model: {q(m)}",
-                              f"    apiBase: {q(base)}", when(f"    apiKey: {secret}"),
-                              "    roles: [chat, edit, apply]",
-                              f"    capabilities: [tool_use{', image_input' if eyes else ''}]",
-                              "    defaultCompletionOptions:", f"      contextLength: {c}", f"      maxTokens: {o}")
-                        for m, n, c, o, eyes in rows),
-                      "mcpServers:", "  - name: benchwarmers", "    type: streamable-http", f"    url: {q(mcp)}",
-                      when("    requestOptions:"), when("      headers:"),
-                      when(f"        Authorization: Bearer {secret}"))
+    continue_ = lines("name: Benchwarmers", "version: 0.0.1", "schema: v1",
+                      *(("models:", *(lines(f"  - name: {q(n + ' (Benchwarmers)')}", "    provider: openai",
+                                            f"    model: {q(m)}", f"    apiBase: {q(base)}",
+                                            f"    apiKey: {secret}" if keys else
+                                            f"    apiKey: {q(lab)}" if lab else None,
+                                            "    roles: [chat, edit, apply]",
+                                            f"    capabilities: [tool_use{', image_input' if eyes else ''}]",
+                                            "    defaultCompletionOptions:", f"      contextLength: {c}",
+                                            f"      maxTokens: {o}")
+                                      for m, n, c, o, eyes in rows)) if use_m else ()),
+                      *(("mcpServers:", "  - name: benchwarmers", "    type: streamable-http", f"    url: {q(mcp)}",
+                         *(("    requestOptions:", "      headers:",
+                            f"        Authorization: Bearer {secret if keys else lab}") if keys or lab else ()))
+                        if use_p else ()))
     cline_mcp = {"mcpServers": {"benchwarmers": {"type": "streamableHttp", "url": mcp, **(
-        {"headers": {"Authorization": f"Bearer {KEY_HOLDER}"}} if keys else {}), "timeout": 900}}}
+        {"headers": {"Authorization": f"Bearer {KEY_HOLDER if keys else lab}"}} if keys or lab else {}),
+        "timeout": 900}}}
     librechat = lines("endpoints:", "  custom:", '    - name: "Benchwarmers"',
-                      f'      apiKey: "{"${" + env + "}" if keys else "local"}"', f"      baseURL: {q(base)}",
-                      "      models:", f"        default: [{', '.join(q(f'bench/{n}:merged') for n, _, _ in cols)}]",
+                      f'      apiKey: "{"${" + env + "}" if keys else token}"', f"      baseURL: {q(base)}",
+                      "      models:", f"        default: [{', '.join(q(f'bench/{n}{reply}') for n, _, _ in cols)}]",
                       "        fetch: true", "      titleConvo: false", '      modelDisplayLabel: "Benchwarmers"')
     goose = {"name": "benchwarmers", "engine": "openai", "display_name": "Benchwarmers",
              "description": "Benchwarmers collections, one model per conversation (route mode)",
@@ -4677,10 +4750,11 @@ def client_setups(root: str, cols: list, keys: bool) -> list[dict]:
              "supports_streaming": True, "requires_auth": keys}
     goose_ext = lines("extensions:", "  benchwarmers:", "    type: streamable_http", "    name: benchwarmers",
                       "    enabled: true", f"    uri: {q(mcp)}",
-                      f"    headers: {{Authorization: {q('Bearer ' + KEY_HOLDER)}}}" if keys else "    headers: {}",
+                      f"    headers: {{Authorization: {q('Bearer ' + KEY_HOLDER)}}}" if keys else
+                      f"    headers: {{Authorization: {q('Bearer ' + lab)}}}" if lab else "    headers: {}",
                       "    timeout: 900")
-    # Your own code (Python): the key from the environment, as every file here; "local" where none is asked.
-    key_py = f"os.environ[{q(env)}]" if keys else q("local")
+    # Your own code (Python): the key from the environment, as every file here; a name or "local" where none is asked.
+    key_py = f"os.environ[{q(env)}]" if keys else q(token)
     auth_py = f'"headers": {{"Authorization": "Bearer " + {key_py}}}' if keys else ""
     imp_os = "import os\n" if keys else ""
     llm_py = f"llm = ChatOpenAI(base_url={q(base)}, api_key={key_py},\n                 model={q(model)})"
@@ -4723,7 +4797,7 @@ def client_setups(root: str, cols: list, keys: bool) -> list[dict]:
                    "        print(result.final_output)\n\n\nasyncio.run(main())")
     plugin_at = ("" if root == DEFAULT_SERVER else f", so set it to <code>{esc(root)}</code>")
     any_text = "" if keys else " Keys are not asked for here, so any text works."
-    return [
+    apps = [
         {"id": "opencode", "name": "opencode",
          "gets": "An agent with its tools on any collection (route mode), and the panel's ask and verdict as MCP tools.",
          "where": "<code>~/.config/opencode/opencode.json</code>, or <code>opencode.json</code> in a project; merge"
@@ -4744,7 +4818,8 @@ def client_setups(root: str, cols: list, keys: bool) -> list[dict]:
          "where": "<code>chatLanguageModels.json</code>: in the chat's model picker, Manage Models, Add Models,"
                   " Custom Endpoint; add the object to the list there. <code>mcp.json</code>: the command"
                   " <b>MCP: Open User Configuration</b>. VS Code asks for the key once and keeps it." + any_text,
-         "blocks": [_snip("chatLanguageModels.json", "json", js(vscode)), _snip("mcp.json", "json", js(vscode_mcp))],
+         "blocks": [*only(use_m, _snip("chatLanguageModels.json", "json", js(vscode))),
+                    *only(use_p, _snip("mcp.json", "json", js(vscode_mcp)))],
          "watch": "Keep <code>toolCalling: true</code>: VS Code hides a model without it from the agent picker."
                   " Restart VS Code if the models do not appear.",
          "docs": [("https://code.visualstudio.com/docs/copilot/customization/language-models", "language models"),
@@ -4763,7 +4838,7 @@ def client_setups(root: str, cols: list, keys: bool) -> list[dict]:
          "where": "<code>settings.json</code>: the command <b>zed: open settings file</b>. Zed reads the key from"
                   " <code>BENCHWARMERS_API_KEY</code>, named after the provider id, or from the provider's settings"
                   " screen; never from settings.json." + any_text,
-         "blocks": [_snip("settings.json", "json", js(zed)), *_env_snips("BENCHWARMERS_API_KEY")],
+         "blocks": [_snip("settings.json", "json", js(zed)), *(_env_snips("BENCHWARMERS_API_KEY") if use_m else [])],
          "watch": ("settings.json takes no variable, so the MCP header holds the key as text: replace"
                    f" <code>{esc(KEY_HOLDER)}</code> there yourself, and keep the file out of synced dotfiles."
                    if keys else "Zed asks for a key even where none is needed: set the variable to any text."),
@@ -4786,16 +4861,17 @@ def client_setups(root: str, cols: list, keys: bool) -> list[dict]:
                  " MCP tools too.",
          "where": "Cline: its settings, API Provider. Kilo Code: Settings, Providers, Custom provider. Cline's MCP:"
                   " the MCP Servers icon, Configure, Configure MCP Servers." + any_text,
-         "blocks": [_snip("Cline", "text", _fields([("API Provider", "OpenAI Compatible"), ("Base URL", base),
-                                                    ("API Key", KEY_HOLDER), ("Model ID", model),
-                                                    ("Context Window Size", ctx), ("Max Output Tokens", out),
-                                                    ("Image Support", "on" if rows[0][4] else "off")]), True),
-                    _snip("Kilo Code", "text", _fields([("Provider ID", "benchwarmers"),
-                                                        ("Display name", "Benchwarmers"),
-                                                        ("Provider API", "OpenAI Compatible"), ("Base URL", base),
-                                                        ("API key", KEY_HOLDER if keys else "(leave empty)"),
-                                                        ("Models", ", ".join(m for m, *_ in rows))]), True),
-                    _snip("Cline: cline_mcp_settings.json", "json", js(cline_mcp))],
+         "blocks": [*only(use_m, _snip("Cline", "text", _fields([
+                        ("API Provider", "OpenAI Compatible"), ("Base URL", base),
+                        ("API Key", KEY_HOLDER if keys else token), ("Model ID", model),
+                        ("Context Window Size", ctx), ("Max Output Tokens", out),
+                        ("Image Support", "on" if rows[0][4] else "off")]), True),
+                                     _snip("Kilo Code", "text", _fields([
+                        ("Provider ID", "benchwarmers"), ("Display name", "Benchwarmers"),
+                        ("Provider API", "OpenAI Compatible"), ("Base URL", base),
+                        ("API key", KEY_HOLDER if keys else lab or "(leave empty)"),
+                        ("Models", ", ".join(m for m, *_ in rows))]), True)),
+                    *only(use_p, _snip("Cline: cline_mcp_settings.json", "json", js(cline_mcp)))],
          "watch": "Keep <code>\"type\": \"streamableHttp\"</code>: without it Cline tries the old SSE transport."
                   " Its <code>timeout</code> is in seconds (60 unless set).",
          "docs": [("https://docs.cline.bot/provider-config/openai-compatible", "Cline: OpenAI Compatible"),
@@ -4807,13 +4883,16 @@ def client_setups(root: str, cols: list, keys: bool) -> list[dict]:
          "where": f"The plugin finds the server at <code>BENCHWARMERS_URL</code>, <code>{DEFAULT_SERVER}</code>"
                   f" unless set{plugin_at}" + (f", and sends <code>{env}</code>." if keys else ".")
                   + " Route mode: the shell you start <code>claude</code> from." + any_text,
-         "blocks": [_snip("In Claude Code: the plugin", "text",
-                          "/plugin marketplace add WendellResearch-AI/benchwarmers\n"
-                          "/plugin install benchwarmers@benchwarmers"),
-                    _snip("Claude Code on a collection: a shell", "sh",
-                          lines(f"export ANTHROPIC_BASE_URL={root}", f"export ANTHROPIC_API_KEY='{KEY_HOLDER}'",
+         "blocks": [*only(use_p, _snip("In Claude Code: the plugin", "text",
+                                       "/plugin marketplace add WendellResearch-AI/benchwarmers\n"
+                                       "/plugin install benchwarmers@benchwarmers")),
+                    *only(lab and use_p, _snip("The plugin's name for this app: in the shell you start claude from",
+                                               "sh", f"export {env}={lab}")),
+                    *only(use_m, _snip("Claude Code on a collection: a shell", "sh",
+                          lines(f"export ANTHROPIC_BASE_URL={root}",
+                                f"export ANTHROPIC_API_KEY='{KEY_HOLDER if keys else token}'",
                                 f"export ANTHROPIC_MODEL={model}",
-                                f"export ANTHROPIC_DEFAULT_HAIKU_MODEL=bench/{fast}:route", "claude"), True)],
+                                f"export ANTHROPIC_DEFAULT_HAIKU_MODEL=bench/{fast}:route", "claude"), True))],
          "watch": "The plugin's Stop hook needs the server on the same machine; with none running, every turn"
                   " ends with a hook error.",
          "docs": [("https://github.com/WendellResearch-AI/benchwarmers#from-claude-code-and-other-agents",
@@ -4826,10 +4905,10 @@ def client_setups(root: str, cols: list, keys: bool) -> list[dict]:
          "where": "Your code, with Python 3.10 or later and the packages on each snippet's first line. Any other"
                   " framework that takes an OpenAI-compatible model (a base URL, a key, a model name) is set up the"
                   " same way." + (f" The key comes from <code>{env}</code>." if keys else ""),
-         "blocks": [_snip("LangChain: an agent with your tools", "python", lc_agent),
-                    _snip("LangChain: a panel's merged answer, as one step", "python", lc_panel),
-                    _snip("LangChain: the panel as tools (MCP)", "python", lc_mcp),
-                    _snip("OpenAI Agents SDK: an agent with the panel as tools", "python", oa_agents)],
+         "blocks": [*only(use_m, _snip("LangChain: an agent with your tools", "python", lc_agent),
+                                 _snip("LangChain: a panel's merged answer, as one step", "python", lc_panel)),
+                    *only(use_p, _snip("LangChain: the panel as tools (MCP)", "python", lc_mcp),
+                                 _snip("OpenAI Agents SDK: an agent with the panel as tools", "python", oa_agents))],
          "watch": "A panel refuses a request that carries tools, so an agent's model is always <code>:route</code>"
                   " and <code>:merged</code> is for a step without them. A panel takes minutes: keep the long"
                   " timeouts (in seconds), and <code>max_retries=0</code> on a panel, as a retry runs every seat"
@@ -4846,8 +4925,8 @@ def client_setups(root: str, cols: list, keys: bool) -> list[dict]:
          "where": "Each app's settings, as an OpenAI-compatible (custom) provider. LibreChat:"
                   " <code>librechat.yaml</code>"
                   + (f", with <code>{env}</code> in its <code>.env</code>." if keys else ".") + any_text,
-         "blocks": [_snip("Any of them", "text", _fields([("Base URL", base), ("API key", KEY_HOLDER),
-                                                          ("Model", f"bench/{cols[0][0]}:merged")]), True),
+         "blocks": [_snip("Any of them", "text", _fields([("Base URL", base), ("API key", KEY_HOLDER if keys else token),
+                                                          ("Model", f"bench/{cols[0][0]}{reply}")]), True),
                     _snip("LibreChat: librechat.yaml", "yaml", librechat)],
          "watch": "An app in Docker reaches this machine at another address than 127.0.0.1, and that host:port"
                   " goes in <code>BENCH_ALLOWED_HOSTS</code>. Turn automatic titles off: each runs a whole panel.",
@@ -4860,8 +4939,8 @@ def client_setups(root: str, cols: list, keys: bool) -> list[dict]:
                   " <code>%APPDATA%\\Block\\goose\\config\\</code>."
                   + (f" goose reads the provider's key from <code>{env}</code>, never from config.yaml." if keys
                      else ""),
-         "blocks": [_snip("custom_providers/benchwarmers.json", "json", js(goose)),
-                    _snip("config.yaml", "yaml", goose_ext)],
+         "blocks": [*only(use_m, _snip("custom_providers/benchwarmers.json", "json", js(goose))),
+                    *only(use_p, _snip("config.yaml", "yaml", goose_ext))],
          "watch": ("The extension's header holds the key as text: replace"
                    f" <code>{esc(KEY_HOLDER)}</code> there yourself." if keys else
                    "<code>timeout</code> is in seconds; goose's usual 300 can end a long panel."),
@@ -4869,76 +4948,212 @@ def client_setups(root: str, cols: list, keys: bool) -> list[dict]:
                   ("https://goose-docs.ai/docs/getting-started/using-extensions", "extensions"),
                   ("https://goose-docs.ai/docs/guides/config-files", "config files")]},
     ]
+    for a in apps:          # the ways each app can use Benchwarmers (the Connect page's choice), its usual first
+        # Your own code's panel-as-tools snippets run an agent on a collection too: "both", never alone.
+        a["ways"] = ("merged", "all") if a["id"] == "chat" else ("model", "both") if a["id"] == "code" else \
+            ("panel", "model", "both") if a["id"] == "claude-code" else ("model", "panel", "both")
+    return apps
 
 
-def clients_page() -> str:
-    """Clients: the apps down the left, the one chosen beside them (bench.js
-    pick), the first on arrival: what it gets, its base URL, model and key, where
-    its set-up goes and the snippets (client_setups) from this install's address,
-    collections and whether keys are asked for, each with Copy. In the panel
-    beside the page, what holds for every app, and the gateway key: one made
-    there is shown once and goes only into this page's blocks marked data-key
-    (bench.js)."""
-    root = gateway_url().removesuffix("/v1")
+# What each way means, as the Connect page says it under its choice.
+WAY_SAYS = {"model": "One member of the collection answers each turn and runs {app}'s tools. The conversation stays"
+                     " with that member, and moves to another if it fails.",
+            "panel": "{app} keeps its own model and gets two tools: <i>ask</i> puts a question to every seat in the"
+                     " collection, <i>verdict</i> says which answers helped.",
+            "both": "The collection as its model, and the panel as tools beside it.",
+            "merged": "Every seat answers, then one model writes a single reply: where they agreed, where they"
+                      " differed, and who said what.",
+            "all": "Each seat's answer in turn, under its model's name, in one message."}
+CONNECT_NAMES = {"code": "my-agent", "chat": "chat-app"}     # an app's usual name, where its id is not one
+
+
+def _connect_cols() -> list:
+    """(name, context window, sees images) per collection an app may be given, core first."""
     offered = sorted((n, c) for n, c in bench_collections.load().items() if not c.get("ad_hoc"))
-    offered.sort(key=lambda nc: nc[0] != "core")                   # core first, where there is one
+    offered.sort(key=lambda nc: nc[0] != "core")
     cols = []
     for n, c in offered:
         together = bench_collections.described(n, c).get("together") or {}
-        cols.append((n, together.get("context_window"), "vision" in (together.get("capabilities") or [])))
+        cols.append((n, together.get("context_window"), "vision" in (together.get("capabilities") or []),
+                     len(c.get("members") or [])))
+    return cols
+
+
+def _docker_host() -> str:
+    return f"host.docker.internal:{PORT}"
+
+
+def connect_setup(app: str, way: str = "", collection: str = "", where: str = "here", name: str = "",
+                  keyed: bool = False) -> dict:
+    """One app's set-up as the Connect page's choices make it (client_setups
+    for the one collection and way, the app's name or key, the address it is
+    reached at): the HTML that goes under the choices."""
+    cols = _connect_cols()
+    if not cols:
+        return {"ok": False, "errors": ["no collection yet: make one on Collections"]}
+    col = next((c for c in cols if c[0] == collection), cols[0])
+    keys = guard.keys_required() or bool(keyed)
+    label = name if guard.KEY_NAME.match(name or "") else ""
+    root = gateway_url().removesuffix("/v1")
+    if where == "docker" and not guard.public_url():
+        root = "http://" + _docker_host()
+    c = next((a for a in client_setups(root, [col[:3]], keys, "both", label) if a["id"] == app), None)
+    if c is None:
+        return {"ok": False, "errors": [f"no app called {app!r}"]}
+    way = way if way in c["ways"] else c["ways"][0]
+    c = next(a for a in client_setups(root, [col[:3]], keys, way, label) if a["id"] == app)
+    note = ""
+    if where == "docker" and _docker_host() not in guard._env("BENCH_ALLOWED_HOSTS"):
+        note = ("<p class='note'>From inside Docker this machine is <code>host.docker.internal</code>, which the"
+                f" gateway refuses until it is allowed: set <code>BENCH_ALLOWED_HOSTS={esc(_docker_host())}</code>"
+                " and restart Benchwarmers. <b>Not set yet.</b></p>")
+    # With a key, the files name KEY_ENV and never hold it: the lines that set it come first.
+    env = (f"<p class='where'>Its key goes in <code>{KEY_ENV}</code>, which the lines below read:</p>"
+           + "".join(_snip_html(c["id"] + "-env", i, s) for i, s in enumerate(_env_snips(KEY_ENV)))) if keys else ""
+    html = (note + env + f"<p class='where'>{c['where']}</p>"
+            + "".join(_snip_html(c["id"], i, s) for i, s in enumerate(c["blocks"]))
+            + f"<p class='watch'><b>Watch for:</b> {c['watch']}</p>"
+            + "<p class='rules'>Written from " + ", ".join(ext_link(u, t) for u, t in c["docs"])
+            + f", read {CLIENTS_READ}" + (f": {c['docs_note']}" if c.get("docs_note") else ".") + "</p>")
+    return {"ok": True, "errors": [], "html": html, "way": way}
+
+
+_CALLERS: dict = {}
+
+
+def gateway_callers() -> dict:
+    """Who called the gateway lately (calls.jsonl's panels, routes.jsonl's
+    turns): per caller (a key's name, an app's name, or local) its newest call
+    and how many today. Built once per change to either log.
+    ponytail: the newest 300 panels and 3000 turns; an app quiet for longer
+    drops off the list."""
+    from itertools import islice
+    logs = ((DATA / "runs" / "gateway" / "calls.jsonl", 300), (DATA / "runs" / "gateway" / "routes.jsonl", 3000))
+    stamp = tuple((p.stat().st_mtime, p.stat().st_size) if p.exists() else 0 for p, _ in logs)
+    if _CALLERS.get("stamp") == stamp:
+        return _CALLERS["callers"]
+    today, out = datetime.date.today().isoformat(), {}
+    for path, limit in logs:
+        for line in islice(_from_end(path), limit):
+            try:
+                r = json.loads(line)
+            except ValueError:
+                continue
+            at = str(r.get("at") or "")
+            c = out.setdefault(r.get("key") or "local", {"at": "", "model": "", "by": "", "today": 0})
+            c["today"] += at.startswith(today)
+            if at > c["at"]:
+                by = r.get("alias") or ", ".join(s.get("alias", "") for s in r.get("seats") or []
+                                                  if s.get("status") == "ok" and s.get("seat") != "merger")
+                c.update(at=at, model=r.get("model", ""), by=by, tools=r.get("tool_calls") or 0)
+    _CALLERS.update(stamp=stamp, callers=out)
+    return out
+
+
+def connected_list() -> str:
+    """The apps that have called, newest first, for Connect's side panel."""
+    callers = sorted(gateway_callers().items(), key=lambda kv: kv[1]["at"], reverse=True)
+    if not callers:
+        return "<p class='muted'>No app has called yet.</p>"
+    def why(who, c) -> str:
+        return " · ".join(filter(None, (c["model"], f"{c['today']} today" if c["today"] else "",
+                                        "calls with no name" if who == "local" else "")))
+    return "<ul class='items'>" + "".join(
+        f"<li><span class='alias'>{esc(who)}</span><span class='muted'>{esc(_when(c['at']))}</span>"
+        f"<span class='why'>{esc(why(who, c))}</span></li>" for who, c in callers) + "</ul>"
+
+
+def _when(iso: str) -> str:
+    """A log's time as the page says it: the time today, else the date."""
+    return iso[11:16] if iso[:10] == datetime.date.today().isoformat() else iso[:10]
+
+
+def client_seen(name: str) -> dict:
+    """An app's newest call, for Connect's "Does it work?"."""
+    c = gateway_callers().get(name)
+    return {"ok": True, "errors": [], "seen": bool(c), **(c or {}), "when": _when(c["at"]) if c else ""}
+
+
+def clients_page() -> str:
+    """Connect: the apps down the left, the one chosen beside them (bench.js
+    pick). For each, how it uses Benchwarmers (WAYS, said in WAY_SAYS), which
+    collection, where it runs, its name and whether it has a key; its set-up
+    (connect_setup) follows those choices, and "Does it work?" waits for its
+    first call (client_seen). A key made here is shown once and goes only into
+    blocks marked data-key, never a file that may sync (bench.js). Beside the
+    page: the addresses, the apps that have called, and keys."""
+    root = gateway_url().removesuffix("/v1")
+    cols = _connect_cols()
     keys = guard.keys_required()
 
     def rows(pairs) -> str:
         return "<dl class='rows'>" + "".join(f"<dt>{k}</dt><dd>{v}</dd>" for k, v in pairs) + "</dl>"
-    if keys:
-        key = ("<h3>Gateway key</h3><div class='form-panel'><p class='rules'>Every call needs one. Make one for these"
-               f" apps and it fills in every <code>{esc(KEY_HOLDER)}</code> on this page that is not in a file: it"
-               " is shown this once and kept as a hash. Or use one you have.</p>"
-               "<label class='field' for='cl-name'>Name for a new key</label>"
-               "<input id='cl-name' placeholder='e.g. opencode' autocomplete='off'>"
-               "<div class='errors' id='cl-errors' role='alert'></div>"
-               "<div class='done' id='cl-done' hidden>Made: copy what you need now, as it is gone when this page"
-               " reloads. Settings lists it.</div>"
-               "<div class='actions'><button class='btn primary' type='button' id='cl-make'>Make a key</button></div>"
-               f"<p class='rules'>Most snippets read it from <code>{KEY_ENV}</code>:</p>"
-               + "".join(_snip_html("key", i, s) for i, s in enumerate(_env_snips(KEY_ENV))) + "</div>")
-    else:
-        key = ("<p>Keys are not asked for on this machine, so the snippets carry none where an app allows it;"
-               f" where one wants a key, any text works in place of <code>{esc(KEY_HOLDER)}</code>. Turn them on"
-               " (<a href='/settings' data-go='settings'>Settings</a>, Gateway keys) and this panel offers to make"
-               " one.</p>")
     aside = ("<aside class='facts' id='facts-clients' aria-labelledby='facts-clients-h'>"
              "<div class='bar'><h2 id='facts-clients-h'>This install</h2>"
              "<button type='button' class='linkish facts-close'>Close</button></div><div class='facts-body'>"
              + rows((("Gateway", f"<span class='mono'>{esc(root)}/v1</span>"),
-                     ("MCP server", f"<span class='mono'>{esc(root)}/mcp</span>"),
-                     ("Collections", (esc(", ".join(n for n, _ in offered)) or "none yet")
-                      + "<br><span class='muted'>ad hoc ones are left out: name one yourself to use it</span>"),
-                     ("Keys", "asked for on every call" if keys else "not asked for here")))
-             + "<p>Agents get a collection in route mode (one member with its tools,"
-             " <code>bench/&lt;collection&gt;:route</code>); chat windows a merged answer (<code>:merged</code>);"
-             " the MCP server the panel itself, as ask and verdict tools.</p>" + key + "</div></aside>")
+                     ("MCP server", f"<span class='mono'>{esc(root)}/mcp</span>")))
+             + "<h3>Connected</h3>" + connected_list()
+             + "<h3>Keys</h3>"
+             + ("<p>Every call needs one: each app's is made on its own set-up here, scoped to its collection."
+                " <a href='/settings' data-go='settings'>Settings</a> lists them.</p>" if keys else
+                "<p>An app may have a key; none must. One made here works at once, for its collection only."
+                " <a href='/settings' data-go='settings'>Settings</a> lists them.</p>"
+                "<p class='rules'>To ask every app for one, set <code>BENCHWARMERS_REQUIRE_KEYS=1</code> and restart"
+                " Benchwarmers.</p>")
+             + "</div></aside>")
     if not cols:
         return ("<div class='panel'><p>No collection yet: make one on <button class='btn' type='button'"
                 " data-go='collections'>Collections</button>, and the set-ups appear here.</p></div>" + aside)
-    apps = client_setups(root, cols, keys)
-    nav = "".join(f"<li><button type='button' aria-controls='client-{c['id']}' aria-pressed='{str(not i).lower()}'>"
-                  f"{esc(c['name'])}</button></li>" for i, c in enumerate(apps))
-    views = "".join(
-        f"<section class='client' id='client-{c['id']}' aria-labelledby='client-{c['id']}-h'{' hidden' * bool(i)}>"
-        f"<h2 id='client-{c['id']}-h'>{esc(c['name'])}</h2><p class='sub'>{c['gets']}</p><div>"
-        + rows((("Base URL", f"<span class='mono'>{esc(root)}/v1</span>"),
-                ("Model", f"<span class='mono'>bench/{esc(cols[0][0])}:{'merged' if c['id'] == 'chat' else 'route'}</span>"
-                          + (", or another collection" if len(cols) > 1 else "")),
-                ("Key", "a gateway key: make one in This install" if keys else "none needed here")))
-        + f"<p class='where'>{c['where']}</p>"
-        + "".join(_snip_html(c["id"], i, s) for i, s in enumerate(c["blocks"]))
-        + f"<p class='watch'><b>Watch for:</b> {c['watch']}</p>"
-        + "<p class='rules'>Written from " + ", ".join(ext_link(u, t) for u, t in c["docs"])
-        + f", read {CLIENTS_READ}" + (f": {c['docs_note']}" if c.get("docs_note") else ".") + "</p></div></section>"
-        for i, c in enumerate(apps))
-    return ("<p class='sub'>A ready set-up for each app, filled in from this install: copy it into the file or"
-            f" screen named.</p><div class='split'><nav aria-label='Apps'><ul>{nav}</ul></nav>{views}</div>{aside}")
+    apps = client_setups(root, [c[:3] for c in cols], keys)
+    callers = gateway_callers()
+    options = "".join(f"<option value='{esc(n)}'>{esc(n)}: {m} member{'s' * (m != 1)}</option>" for n, *_, m in cols)
+
+    def name_of(c) -> str:
+        return CONNECT_NAMES.get(c["id"], c["id"])
+
+    def nav_item(i, c) -> str:
+        seen = callers.get(name_of(c))
+        return (f"<li><button type='button' aria-controls='client-{c['id']}' aria-pressed='{str(not i).lower()}'>"
+                f"{esc(c['name'])}" + (f"<small>✓ called {esc(_when(seen['at']))}</small>" if seen else "")
+                + "</button></li>")
+
+    def view(i, c) -> str:
+        app, nm = c["id"], esc(c["name"])
+        ways = "".join(
+            f"<label class='pick'><input type='radio' name='way-{app}' value='{w}'{' checked' * (not j)}>"
+            f"<span><b>{WAYS[w]}</b><small>{WAY_SAYS[w].format(app=nm)}</small></span></label>"
+            for j, w in enumerate(c["ways"]))
+        key = ("<select data-c='key' disabled><option value='1'>a key: every call needs one</option></select>"
+               if keys else "<select data-c='key'><option value=''>none</option>"
+               "<option value='make'>make a key for it</option></select>")
+        setup = connect_setup(app, c["ways"][0], cols[0][0], "here", name_of(c))
+        return (f"<section class='client' id='client-{app}' aria-labelledby='client-{app}-h'{' hidden' * bool(i)}"
+                f" data-app='{app}'><h2 id='client-{app}-h'>{nm}</h2><div class='connect form-panel'>"
+                f"<label class='field'>How {nm} uses Benchwarmers</label><div class='ways'>{ways}</div>"
+                "<div class='connect-grid'>"
+                f"<div><label class='field'>Collection</label><select data-c='collection'>{options}</select></div>"
+                "<div><label class='field'>Where it runs</label><select data-c='where'>"
+                "<option value='here'>this machine</option><option value='docker'>in Docker</option></select></div>"
+                f"<div><label class='field'>Its name</label><input data-c='name' class='mono' value='{esc(name_of(c))}'"
+                " pattern='[a-z0-9][a-z0-9-]{1,31}' maxlength='32' autocomplete='off' spellcheck='false'></div>"
+                f"<div><label class='field'>Key</label>{key}</div></div>"
+                "<div class='key-make' hidden><label class='field'>Requests a minute"
+                " <span class='muted'>(empty for no cap)</span></label><input data-c='rpm' inputmode='numeric'"
+                " maxlength='5' autocomplete='off'><div class='actions'><button class='btn primary' type='button'"
+                " data-make-key>Make the key</button></div></div>"
+                "<div class='errors' role='alert'></div><div class='done key-done' role='status' hidden></div>"
+                + ("" if keys else "<p class='rules name-says'>With no key, the name goes in its set-up as a label:"
+                   " its calls show under that name instead of <i>local</i>.</p>")
+                + f"</div><div class='setup'>{setup.get('html', '')}</div>"
+                "<h3>Does it work?</h3><ul class='check seen' aria-live='polite'></ul>"
+                "<details class='key'><summary>Nothing after you asked?</summary><p>Most apps read their set-up when"
+                " they start: quit the app and start it again. A panel's call shows once its seats have answered,"
+                " which can take minutes. Nothing at all means it never arrived: check the address, and for an app"
+                " in Docker choose <i>in Docker</i> above.</p></details></section>")
+    nav = "".join(nav_item(i, c) for i, c in enumerate(apps))
+    views = "".join(view(i, c) for i, c in enumerate(apps))
+    return f"<div class='split'><nav aria-label='Apps'><ul>{nav}</ul></nav>{views}</div>{aside}"
 
 
 def _snip_html(group: str, i: int, s: dict) -> str:
@@ -5624,6 +5839,7 @@ def endpoints_page() -> str:
     for a, d in decide.load().items():
         on.setdefault(d["endpoint"], {})[d["served"]] = a
     tags, status, data = load_json(DATA / "config" / "provider-tags.json"), model_status(), endpoints.load()
+    checks = load_json(ENDPOINT_CHECKS)
     table, docks = [], []
     for i, e in enumerate(eps):
         mine, listed = on.get(e["name"], {}), serves.get(e["name"], {})
@@ -5652,7 +5868,7 @@ def endpoints_page() -> str:
         # Its actions (bench.js reads the endpoint from data-ep): a sign-in again
         # where it came from one; Make default and Remove on all but the default.
         signed = e["connect"]
-        acts = "<button class='btn' type='button' data-ep-act='change'>Change key</button>"
+        acts = "<button class='btn primary' type='button' data-ep-act='check'>Check now</button>"
         if signed and signed.get("flow") and signed["flow"] != "local":
             acts += "<button class='btn' type='button' data-ep-act='again'>Sign in again</button>"
         if not e["default"]:
@@ -5661,22 +5877,38 @@ def endpoints_page() -> str:
         if not e["default"]:
             acts += "<button class='linkish danger' type='button' data-ep-act='remove'>Remove</button>"
         until = (" until " + signed["expires"][:10]) if signed and signed.get("expires") and not signed.get("refreshes") else ""
-        key = (chip("key set" if e["key_set"] else "no key", "ok" if e["key_set"] else "warn")
+        # Its key as the last Check now found it (check_endpoint), else only whether one is kept.
+        check = checks.get(e["name"]) if isinstance(checks.get(e["name"]), dict) else None
+        said, css = CHECK_SAYS.get(check["state"], ("checked", "")) if check else \
+            ("key set" if e["key_set"] else "no key", "" if e["key_set"] else "warn")
+        key = (chip(said, css, (check or {}).get("said", ""))
                + ((" " + chip("sign in again", "warn") if signed.get("expired") else " " + chip("signed in" + until, "via"))
                   if signed else ""))
+        # What is wrong with it, if anything: these rows come first, the reason under the name.
+        problem = (f"{said} at {_when(check['at'])}: {check['said']}" if check and check["state"] in ("refused", "down")
+                   else "its sign-in has run out: sign in again" if signed and signed.get("expired")
+                   else f"the daily served check got no list from it since {seen}" if seen and seen != checked else "")
         name, hub = esc(e["name"]), endpoints.HUBS.get(e["hub"], "")
+        at = check["at"] if check else ""
         # The row: its name opens it (a button, for a keyboard); the models it serves
         # are what the page's filter finds it by too (bench.js applyFilter, data-find).
-        table.append(
-            f"<tr class='c-row ep-row' data-name='{name}' data-find='{esc(' '.join(sorted(set(mine) | set(listed) | set(mine.values()))))}'>"
+        table.append((not problem, i,
+            f"<tr class='c-row ep-row{' problem' * bool(problem)}' data-name='{name}'"
+            f" data-find='{esc(' '.join(sorted(set(mine) | set(listed) | set(mine.values()))))}'>"
             f"<td><button type='button' class='c-open alias' aria-label='Open endpoint {name}'>{name}</button>"
-            + (chip("default", "") if e["default"] else "") + f"</td><td class='base' title='{esc(e['base'])}'>"
+            + (chip("default", "") if e["default"] else "")
+            + (f"<span class='conn why'>{esc(problem)}</span>" if problem else "")
+            + f"</td><td class='base' title='{esc(e['base'])}'>"
             f"<span class='mono'>{esc(e['base'])}</span></td><td>{key}</td><td class='num'>{len(mine)}</td>"
-            f"<td class='num'>{now if seen else '—'}</td>{when}</tr>")
+            f"<td class='num'>{now if seen else '—'}</td>{when}"
+            f"<td class='when' data-sort='{esc(at)}'>{esc(_when(at)) if at else '<span class=muted>never</span>'}</td></tr>"))
         facts = (("Base URL", f"<span class='mono'>{esc(e['base'])}</span>"),
                  ("Kind", esc(e["kind"]) + (f", {esc(hub)}" if hub else "")),
                  ("API", esc(endpoints.APIS.get(data.get(e["name"], {}).get("api") or "chat", ""))),
                  ("Key", key),
+                 ("Checked", (f"{esc(_when(at))}: {check['models']} models listed. {esc(check['said'])}"
+                              if check and check["state"] not in ("refused", "down") else
+                              f"{esc(_when(at))}: {esc(check['said'])}") if check else "never: Check now asks it"),
                  ("Signed in", (esc(signed.get("label") or signed.get("provider", "")) + esc(until)) if signed else ""),
                  ("On the bench", f"{len(mine)} model{'s' * (len(mine) != 1)}"
                   + (", the default endpoint" if e["default"] else "")),
@@ -5686,11 +5918,23 @@ def endpoints_page() -> str:
             f"<dialog class='dock' id='ep-{i}' data-name='{name}' data-ep='{esc(json.dumps(e))}' aria-labelledby='ep-{i}-h'>"
             f"<div class='bar'><p>Endpoint</p></div><div class='dock-body'><h2 class='dock-head' id='ep-{i}-h' tabindex='-1'>{name}</h2>"
             "<dl class='rows'>" + "".join(f"<dt>{k}</dt><dd>{v}</dd>" for k, v in facts if v) + "</dl>"
+            # A new key, in place: checked against its list before it is kept (save_endpoint).
+            "<h3>A new key</h3><div class='form-panel ep-key'>"
+            f"<input type='password' data-k='key' autocomplete='off' aria-label='New key for {name}'"
+            " placeholder='paste it here'>"
+            + ("<input type='password' data-k='admin' autocomplete='off' aria-label='Admin key'"
+               " placeholder='admin key, only where it is not the API key'>" if e["hub"] in ("litellm", "cliproxy") else "")
+            + "<div class='actions'><button class='btn' type='button' data-ep-act='key'>Check and save</button></div>"
+            "<p class='rules'>Asked of its <code>/models</code> first; kept only if it answers, where"
+            " <code>llm keys set</code> keeps keys, and never shown again."
+            + (" A key pasted here replaces the sign-in." if signed else "") + "</p></div>"
             f"<h3>What it serves</h3><p class='sub'>The bench's models on it, then what the daily served check"
             " listed.</p>" + (f"<table class='serves'><tbody>{''.join(rows)}</tbody></table>" if rows else
                               "<p class='muted'>Nothing yet: no model on the bench comes through it, and the daily"
                               " served check has no list from it.</p>") + "</div>"
-            f"<div class='dock-foot'>{acts}</div></dialog>")
+            f"<div class='dock-foot'>{acts}<div class='errors' role='alert'></div>"
+            "<div class='done' role='status'></div></div></dialog>")
+    table = [row for *_, row in sorted(table, key=lambda t: t[:2])]      # problems first, else as listed
     keyed = sum(1 for e in eps if e["key_set"] and not (e["connect"] or {}).get("expired"))
     facts = (("Endpoints", f"{len(eps)}" + (f", the default {esc(default)}" if default else "")),
              ("With a key", f"{keyed} of {len(eps)}"),
@@ -5704,7 +5948,7 @@ def endpoints_page() -> str:
         "<div class='found' id='e-found' hidden><h2>Found on this machine</h2><div id='e-found-list'></div></div>"
         + ("<div class='scroll'><table class='ep-table'><thead><tr>" + th("Endpoint") + th("Base URL") + th("Key")
            + th("On the bench", True) + "<th data-sortable tabindex='0' class='num' title='models its list held when"
-           " the daily served check last asked'>Listed</th>" + th("Last listed")
+           " the daily served check last asked'>Listed</th>" + th("Last listed") + th("Checked")
            + f"</tr></thead><tbody>{''.join(table)}</tbody></table></div>" if eps else
            empty_state("No endpoint yet: every model is served from one.", step_button(),
                        "Add an endpoint pastes a key for any OpenAI-compatible API, or signs in to a provider on its"
@@ -6429,9 +6673,11 @@ def editor() -> str:
         "<button class='btn' id='o-dismiss' disabled>Dismiss model</button>"
         "<button class='btn primary' id='o-start' disabled>Onboard model</button></div>"
         "</dialog>"
-        # Add an endpoint (Manage's button), or a row's Change key: the key form alone.
-        "<dialog id='endpoint-dialog' aria-labelledby='e-title'>"
-        "<h2 id='e-title'>Add an endpoint</h2>"
+        # Add an endpoint (Endpoints' button, Discover's "easy to add"): docked beside the page, as an
+        # endpoint's own record is, a blank one: a provider from models.dev fills the name and base URL.
+        "<dialog class='dock' id='endpoint-dialog' aria-labelledby='e-title'>"
+        "<div class='bar'><p>Endpoint</p></div><div class='dock-body'>"
+        "<h2 class='dock-head title' id='e-title' tabindex='-1'>Add an endpoint</h2>"
         "<p class='served' id='e-blurb'>Paste an API key for any OpenAI-compatible API (one that lists"
         " <code>/models</code>), or pick a provider and sign in on its own page: the key it hands back is"
         " kept where a pasted one is. Only providers that publish a sign-in for other apps are listed.</p>"
@@ -6446,6 +6692,11 @@ def editor() -> str:
         "<div class='actions'><button class='btn' data-close>Cancel</button>"
         "<button class='btn primary' id='cn-go'>Sign in</button></div></div>"
         "<div id='e-form'>"
+        # A provider by name (models.dev's list, bench.js loadProviderList): its name and base URL filled in.
+        "<div id='e-prov-row'><label class='field' for='e-prov'>Provider</label>"
+        "<input id='e-prov' list='e-provs' spellcheck='false' autocomplete='off'"
+        " placeholder='type to find one; anything else, fill in below'><datalist id='e-provs'></datalist>"
+        "<p class='rules' id='e-prov-said'>From models.dev's list of providers with an OpenAI-compatible API.</p></div>"
         "<label class='field' for='e-name'>Name</label>"
         "<input id='e-name' spellcheck='false' autocomplete='off' placeholder='e.g. openrouter'>"
         "<label class='field' for='e-base'>Base URL</label>"
@@ -6470,8 +6721,8 @@ def editor() -> str:
         "<label class='field' for='e-key'>API key</label>"
         "<input id='e-key' type='password' autocomplete='off' placeholder='leave blank to keep the current one'>"
         "<p class='rules'>Stored where <code>llm keys set</code> stores it, never in the"
-        " repository and never shown again. Test asks <code>/models</code>; Save is open once it"
-        " answers. Where that list is public, the key is proven by the first real call.</p>"
+        " repository and never shown again. Check and add asks <code>/models</code> first and keeps nothing"
+        " unless it answers. Where that list is public, the key is proven by the first real call.</p>"
         # A hub's admin key, where it is not the API key (endpoints.admin_key).
         "<div id='e-admin-row' hidden><label class='field' for='e-admin'>Admin key</label>"
         "<input id='e-admin' type='password' autocomplete='off' placeholder='only where it is not the API key'>"
@@ -6479,35 +6730,13 @@ def editor() -> str:
         " CLI Proxy API's management key (always its own). Open WebUI needs none beyond an admin's"
         " API key. Kept like the API key; blank keeps the current one.</p></div>"
         "<div class='actions'><button class='btn' data-close>Cancel</button>"
-        "<button class='btn' id='e-test'>Test</button>"
-        "<button class='btn primary' id='e-save' disabled title='Test it first'>Save</button></div>"
+        "<button class='btn primary' id='e-save'>Check and add</button></div>"
         "</div>"
         # A sign-in in progress (from Add, or a row's Sign in again): where to finish it.
         "<div id='cn-wait' hidden><p class='served' id='cn-msg'></p></div>"
         "<div class='errors' id='e-errors' role='alert'></div><div class='done' id='e-done'></div>"
         "<div class='actions' id='e-after' hidden><button class='btn' data-close>Close</button></div>"
-        "</dialog>"
-        # verdict on one gateway seat
-        "<dialog id='verdict-dialog' aria-labelledby='v-title'>"
-        "<h2 id='v-title'>Verdict</h2>"
-        "<p class='served' id='v-meta'></p>"
-        "<details><summary>Prompt</summary><pre class='log answer' id='v-prompt'></pre></details>"
-        "<label class='field'>Answer</label><pre class='log answer' id='v-answer'></pre>"
-        "<p class='rules'>Judge it after checking it against the code: models have agreed,"
-        " three at once, on a bug that did not exist.</p>"
-        "<div class='pick'><label class='check'><input type='radio' name='v-useful' value='yes'> Useful</label>"
-        "<label class='check'><input type='radio' name='v-useful' value='no'> Not useful</label></div>"
-        "<label class='field' for='v-note'>Note</label>"
-        "<input id='v-note' maxlength='500' autocomplete='off' placeholder='what it found, or why not'>"
-        "<label class='field' for='v-real'>Findings it got right, verified</label>"
-        "<textarea id='v-real' rows='2'></textarea>"
-        "<label class='field' for='v-false'>Claims it made that are not true</label>"
-        "<textarea id='v-false' rows='2'></textarea>"
-        "<p class='rules'>One sentence per line. suite/mine.py turns these into benchmark tasks.</p>"
-        "<div class='errors' id='v-errors' role='alert'></div><div class='done' id='v-done'></div>"
-        "<div class='actions'><button class='btn' id='v-close'>Close</button>"
-        "<button class='btn primary' id='v-save'>Save verdict</button></div>"
-        "</dialog>")
+        "</div></dialog>")
 
 
 MAX_BODY = 1_000_000   # bytes; the largest form is a collection or an endpoint
@@ -6614,7 +6843,7 @@ class Handler(gateway.Handler):
                 self._json(200, collections_view())
             return
         read_only = {"/api/status": status_view, "/api/models": models_view,
-                     "/api/gateway-keys": gateway_keys_view}
+                     "/api/gateway-keys": gateway_keys_view, "/api/endpoint/providers": endpoint_providers}
         if path in read_only:
             try:
                 self._json(200, read_only[path]())
@@ -6628,9 +6857,17 @@ class Handler(gateway.Handler):
             res = discover_model(q.get("provider", [""])[0], q.get("model", [""])[0])
             self._json(200 if res["ok"] else 404, res)
             return
-        if self.path.startswith("/api/gateway-seat?"):
-            res = gateway_seat(q.get("call", [""])[0])
+        if self.path.startswith("/api/gateway-request?"):
+            res = gateway_request(q.get("panel", [""])[0])
             self._json(200 if res["ok"] else 404, res)
+            return
+        if self.path.startswith("/api/client-setup?"):
+            one = {k: q.get(k, [""])[0] for k in ("app", "way", "collection", "where", "name", "keyed")}
+            res = connect_setup(one["app"], one["way"], one["collection"], one["where"], one["name"], one["keyed"] == "1")
+            self._json(200 if res["ok"] else 400, res)
+            return
+        if self.path.startswith("/api/client-seen?"):
+            self._json(200, client_seen(q.get("name", [""])[0]))
             return
         if self.path == "/api/stamp":
             self._json(200, {"stamp": data_stamp()})
@@ -6761,6 +6998,7 @@ class Handler(gateway.Handler):
                "/api/connect/start": lambda p: connect_start(str(p.get("provider") or ""),
                                                              str(p.get("endpoint") or ""), bool(p.get("code"))),
                "/api/endpoint/default": lambda p: set_default(str(p.get("name") or "")),
+               "/api/endpoint/check": lambda p: check_endpoint(str(p.get("name") or "")),
                "/api/connect/poll": lambda p: connect_poll(str(p.get("id") or "")),
                "/api/connect/app": lambda p: connect_app(str(p.get("provider") or ""),
                                                          str(p.get("client_id") or "")),

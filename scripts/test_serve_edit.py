@@ -243,6 +243,29 @@ def main() -> int:
             bad.append("a VS Code model without toolCalling is hidden from the agent picker")
         if load_yaml and parsed.get(("goose", "config.yaml"), {}).get("extensions", {}).get("benchwarmers", {}).get("timeout") != 900:
             bad.append("goose's extension timeout is not 900 s")
+    # Connect's choices: each way an app offers, with or without its name as a label, still parses,
+    # leaves out the half not chosen, and sends the name only where no key is used.
+    for way in serve.WAYS:
+        for label, keys in (("", False), ("opencode", False), ("opencode", True)):
+            for c in serve.client_setups("http://127.0.0.1:8122", [("core", 200_000, False)], keys, way, label):
+                if way not in c["ways"]:
+                    continue
+                text = "\n".join(b["text"] for b in c["blocks"])
+                for b in c["blocks"]:
+                    parse = {"json": json.loads, "toml": tomllib.loads, "yaml": load_yaml,
+                             "python": lambda t: compile(t, "<snippet>", "exec")}.get(b["lang"])
+                    try:
+                        parse and parse(b["text"])
+                    except Exception as exc:            # noqa: BLE001
+                        bad.append(f"{c['id']} {way} {label!r} {b['label']} does not parse: {exc}")
+                if not c["blocks"]:
+                    bad.append(f"{c['id']} {way}: no set-up at all")
+                if way == "model" and "/mcp" in text and c["id"] != "claude-code":
+                    bad.append(f"{c['id']} model-only still carries the MCP server")
+                if way == "panel" and ":route" in text:
+                    bad.append(f"{c['id']} panel-only still carries a route model")
+                if keys and "opencode" in text.replace("opencode.ai", "").replace("opencode.json", ""):
+                    bad.append(f"{c['id']} sends the label with a key in use")
     ok = not bad
     print(("ok   " if ok else "FAIL ") + "client set-ups: JSON, TOML" + (", YAML" if load_yaml else " (YAML unread: no PyYAML)")
           + " parse, collections named, timeouts set, keys only in shell lines and fields" + ("" if ok else f" -> {bad}"))

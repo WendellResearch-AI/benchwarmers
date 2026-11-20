@@ -1,6 +1,6 @@
 # Setting up clients
 
-Every app Benchwarmers has a ready set-up for, as the dashboard's **Clients** page shows it, written out for people and for agents setting an app up. The page fills in your own install: its address, your collections and a gateway key made on the spot. Here they are a fresh install's: the server at `http://127.0.0.1:8122`, the collections `core` and `fast`, and a gateway key read from `BENCHWARMERS_KEY`. Replace them with yours.
+Every app Benchwarmers has a ready set-up for, as the dashboard's **Connect** page shows it, written out for people and for agents setting an app up. The page fills in your own install: its address, your collections and a gateway key made on the spot. Here they are a fresh install's: the server at `http://127.0.0.1:8122`, the collections `core` and `fast`, and a gateway key read from `BENCHWARMERS_KEY`. Replace them with yours.
 
 Agents get a collection in route mode (one member with its tools, `bench/<collection>:route`); chat windows a merged answer (`:merged`); the MCP server the panel itself, as ask and verdict tools. Gateway `http://127.0.0.1:8122/v1` · MCP server `http://127.0.0.1:8122/mcp`.
 
@@ -8,7 +8,7 @@ _Generated from `serve.client_setups` by `scripts/clients_doc.py`; each app's fo
 
 ## The gateway key
 
-When every call needs a key (`BENCHWARMERS_REQUIRE_KEYS=1`, or an admin token), make one on Settings or the Clients page. Most set-ups read it from `BENCHWARMERS_KEY`:
+When every call needs a key (`BENCHWARMERS_REQUIRE_KEYS=1`, or an admin token), make one on Settings or the Connect page. Most set-ups read it from `BENCHWARMERS_KEY`:
 
 **macOS, Linux: in your shell profile**
 

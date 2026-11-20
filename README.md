@@ -512,7 +512,7 @@ backs up the ones it replaces, in the data folder's `backups/`.
   with tools is refused there, not trimmed. Route mode passes turns only to
   members on chat-completions endpoints, keeps its sticky conversations in
   memory (a restart starts each on a fresh pick), and has been run end to end
-  with Claude Code; the other set-ups on the Clients page are written from
+  with Claude Code; the other set-ups on the Connect page are written from
   each app's docs, not run. Shadow seats (other members answering an agent's turn for
   evaluation) are planned, not built.
 - **Some parts are checked against fakes only.** The native Anthropic and

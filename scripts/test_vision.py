@@ -158,7 +158,7 @@ def main() -> int:
         assert "[image: https://photos.example/chair.jpg?...]" in record["prompt"], record["prompt"]
         assert record["key"] == "local" and record["skipped"] == b["skipped"]
         card = serve.gateway_card()
-        assert "blind –" in card and "not asked: does not take images" in card
+        assert "not asked: blind (does not take images" in card, card
         shown = [json.dumps(r), log.getvalue(), card] + [p.read_text(encoding="utf-8", errors="replace")
                                                          for p in TMP.rglob("*") if p.is_file()]
         for secret in (PIXEL[30:60], "SECRET123", "user:pw"):

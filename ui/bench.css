@@ -354,12 +354,37 @@ details.panel[open] > summary { margin-bottom: .75rem; }
   .split > nav ul { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 0; }
   .bar input[type=search] { order: 5; width: 100%; margin-bottom: var(--gap-2); }
 }
-/* Clients (serve.clients_page): an app's set-up beside the list, scrolling by
-   itself, its parts in up to three columns where there is room; each snippet
-   under its label and Copy button. */
+/* Connect (serve.clients_page): an app's choices, then its set-up, beside the
+   list, scrolling by itself; each snippet under its label and Copy button.
+   A way is a card: its name, then what it means; the one chosen is inked. */
 .split > section.client { overflow-y: auto; }
-.client > div { columns: 3 36rem; column-gap: var(--gap-5); }
-.client > div > * { break-inside: avoid; }
+.client .connect, .client .setup { max-width: 60rem; }
+.ways { display: grid; gap: .3rem; margin: .2rem 0 .6rem; }
+.ways .pick { grid-template-columns: auto minmax(0, 1fr); align-items: start; border: 1px solid var(--line); }
+.ways .pick small { display: block; color: var(--muted); font-size: var(--t-small); margin-top: .1rem; }
+.ways .pick:has(input:checked) { background: var(--tint); border-color: var(--ink); }
+.connect-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(14rem, 100%), 1fr)); gap: 0 1rem; }
+.connect-grid :is(select, input) { width: 100%; }
+.client .key-make { max-width: 20rem; }
+.client .key-done { margin-top: .5rem; }
+.client .setup > .note { background: var(--warn-ground); border-radius: var(--radius); padding: .6rem .75rem; max-width: 70ch; }
+.client h3 { margin: var(--gap-5) 0 var(--gap-1); }
+/* "Does it work?", and a check's lines anywhere: a mark, what came back, when. */
+ul.seen { list-style: none; margin: var(--gap-1) 0 0; padding: 0; max-width: 60rem; }
+ul.seen li { display: grid; grid-template-columns: 1.2rem minmax(0, 1fr) auto; gap: var(--gap-2); padding: 4px 0; border-top: 1px solid var(--line); }
+ul.seen li > :first-child { font-weight: 700; color: var(--ok); }
+ul.seen li.warn > :first-child { color: var(--warn); }
+ul.seen li > :last-child { color: var(--muted); font-family: var(--font-mono); }
+/* Collections' requests: a row opens the request beside the list (bench.js rqShow). */
+#g-requests tr.g-row { cursor: pointer; }
+#request-dock ul.answers .chip { margin-left: .35rem; }
+#request-dock ul.answers .read { grid-column: 1 / -1; }
+#request-dock ul.answers .read pre { max-height: 24rem; white-space: pre-wrap; }
+#request-dock ul.answers .read :is(input, textarea) { width: 100%; }
+#request-dock ul.answers .read .btn.primary { margin-top: .6rem; }
+/* Endpoints: a row with a problem comes first, its reason under its name; a new key in its record. */
+.ep-table tr.problem .why { display: block; color: var(--err); white-space: normal; }
+.ep-key input { width: 100%; margin-top: .3rem; }
 .snip { margin-top: .9rem; }
 .snip-head { display: flex; align-items: center; justify-content: space-between; gap: .5rem; color: var(--muted); overflow-wrap: anywhere; }
 .snip-head .btn { flex: none; }

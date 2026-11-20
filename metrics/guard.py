@@ -92,6 +92,9 @@ OLLAMA_ROUTES = ("/api/chat", "/api/generate", "/api/tags", "/api/version", "/ap
 # Anthropic SDK's header, and Google's (its SDKs send the header; REST
 # examples put the key in ?key=, which is taken on Gemini routes only).
 KEY_HEADERS = ("x-api-key", "x-goog-api-key")
+# Bearers that SDKs and set-up guides fill in when no key is needed: no app's name.
+PLACEHOLDERS = {"none", "dummy", "not-needed", "no-key", "nokey", "null", "empty", "key", "api-key", "apikey",
+                "sk", "sk-no-key-required", "sk-dummy", "test", "x", "xx", "xxx"}
 
 
 class Refused(Exception):
@@ -288,21 +291,31 @@ def admin_caller(headers) -> str:
 
 
 def gateway_caller(headers, query_key: str | None = None) -> str:
-    """Who is asking for a gateway route: the gateway key's name, or "local"
-    when keys are not required (any bearer is ignored then: SDKs send a dummy
-    one). Raises Refused(401), saying which of missing, malformed or unknown
-    it was. The cookie is never looked at.
+    """Who is asking for a gateway route: the gateway key's name. Raises
+    Refused(401) when keys are required, saying which of missing, malformed
+    or unknown it was. The cookie is never looked at.
+
+    When keys are not required nothing is refused: a known key still counts
+    (its name, collections and rate), so a key works the moment it is made;
+    a short name as the bearer (`opencode`, as the Connect page's set-ups send)
+    is kept as a label; anything else, SDKs' dummy keys among them, is "local".
+    A label is not a credential: it only tells apps apart in the logs.
 
     The key is the first of `Authorization: Bearer`, `x-api-key`,
     `x-goog-api-key` and `query_key` (a Gemini route's ?key=) that is sent:
     one credential is judged, never a second tried after a bad first."""
-    if not keys_required():
-        return "local"
-    challenge = {"WWW-Authenticate": 'Bearer realm="benchwarmers"'}     # RFC 6750: every 401 says how
     raw = headers.get("Authorization")
     other = next((headers.get(h) for h in KEY_HEADERS if headers.get(h) is not None), query_key)
     if raw is None and other is not None:
         raw = f"Bearer {other}"
+    if not keys_required():
+        scheme, _, value = (raw or "").strip().partition(" ")
+        value = value.strip() if scheme.lower() == "bearer" else ""
+        if name := key_name(value):
+            _touch(name)
+            return name
+        return value if KEY_NAME.match(value) and value not in PLACEHOLDERS else "local"
+    challenge = {"WWW-Authenticate": 'Bearer realm="benchwarmers"'}     # RFC 6750: every 401 says how
     if raw is None:
         raise Refused(401, "this route needs a gateway key (Authorization: Bearer <key>, or x-api-key);"
                            " make one on the dashboard's Settings page", challenge)
@@ -626,6 +639,13 @@ def _selftest() -> None:
                 # No admin token: as before keys existed, whatever is sent.
                 del os.environ["BENCHWARMERS_ADMIN_TOKEN"]
                 assert gateway_caller({}) == "local" and gateway_caller({"Authorization": "Bearer x"}) == "local"
+                # ...but a known key counts (name and scope), and a short name is kept as a label.
+                assert gateway_caller({"Authorization": f"Bearer {other}"}) == "agent"
+                assert gateway_caller({"x-api-key": other}) == "agent"
+                assert gateway_caller({"Authorization": "Bearer opencode"}) == "opencode"
+                for dummy in ("Bearer sk-dummy", "Bearer EMPTY", "Bearer dummy", "Bearer bwk_nope", "Basic opencode",
+                              "Bearer " + "a" * 40, "Bearer two words"):
+                    assert gateway_caller({"Authorization": dummy}) == "local", dummy
                 assert admin_caller({}) == "local"
                 # ...unless keys are required on this machine too; a misspelt value still asks.
                 for v in ("1", "required", "TRUE"):
