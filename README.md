@@ -40,6 +40,13 @@ have used least. Every answer comes back side by side, labelled by model and
 seat. You check them against the real work and record a verdict, and those
 verdicts decide who sits on the next panel.
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset=".github/bench-call-dark.svg">
+    <img src=".github/bench-call.svg" width="900" alt="A real call, time compressed. A terminal types bench ask core “What happens when path doesn’t exist? Python 3.12” -f load.py, and the file shows briefly: a function that opens a file in a try block, sets data to None in except OSError as err, and afterwards logs a warning that uses err. Benchwarmers seats panel p20261120-222954-eb8d on bench/core, 5 members and 2 explorers, and all seven fan out at once. The answers land in the order they really finished, each labelled by model and seat: mercury-3 (member, 2.1 s) says err is cleared when the except block ends, so log.warning raises NameError; Beam-1.0-501B-A23B (member, 3.5 s) says it logs a warning and returns None; gemini-3.8-flash (7.5 s) and big-pickle (8.1 s) say UnboundLocalError; the explorers gemma-4-31b-it (11.9 s) and Qwen3.8-27B (12.5 s) say it logs a warning and returns None; and kimi-k3.1-pro (96.4 s) says UnboundLocalError, nothing logged. The verdicts: 4 useful and 3 confidently wrong, because Python deletes err when the except block ends; they go on the record, and the bench trusts them less next time.">
+  </picture>
+</p>
+
 **What it is best at:**
 
 - **Asking several models at once.** One request, in the OpenAI, Anthropic,
@@ -74,6 +81,23 @@ the set-up.
 | Councils and ensembles | OpenRouter Fusion, OmniRoute's fusion, LLM Council, Mixture-of-Agents | Several models, then a judge or chairman writes one answer | Keeps every answer, because who said what is the evidence; one merged summary only if you ask |
 | Side-by-side chat | Open WebUI, LMArena | Several answers shown together, thumbs up or down for a leaderboard | Records a verdict per answer, with its false claims, from you or the calling agent, and routes by them |
 | Evaluation harnesses | promptfoo, Inspect, SWE-bench | Score models offline on fixed test sets | Scores them on your real work and your own code, and keeps rotating new models in |
+
+**The whole loop in one tool.** Each of those does one part well. Benchwarmers
+asks, keeps every answer, takes your verdict and acts on it, in one place:
+
+✅ yes · 🟡 partly or differently · ❌ no
+
+| | **Benchwarmers** | Gateways and routers | Councils | Side-by-side chat | Evaluation harnesses |
+|---|---|---|---|---|---|
+| One prompt, every answer back, labelled by model | ✅ | 🟡 a judge writes one answer | 🟡 one final answer | ✅ | ✅ in a report |
+| Agents with tools, with failover | ✅ route mode | ✅ | ❌ | ❌ | ❌ |
+| New models rotate in on their own | ✅ explorer seats | 🟡 some explore a share of requests | ❌ | 🟡 from a pool you set | ❌ |
+| A verdict on each answer, with its false claims | ✅ | ❌ | 🟡 models rank each other | 🟡 thumbs up or down | 🟡 assertions you write |
+| Verdicts decide who answers next | ✅ | ❌ | ❌ | 🟡 a leaderboard | ❌ |
+| Agents judge answers too, over MCP | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Tests from your own code | ✅ bugs planted in your repos | 🟡 suites you write | ❌ | ❌ | ✅ tests you write |
+| Health probes, dead models retired, free-tier limits kept | ✅ | ✅ | ❌ | ❌ | ❌ |
+| Hundreds of providers, accounts pooled | 🟡 any OpenAI-compatible API or hub; runs on top of a gateway | ✅ | ❌ | ❌ | ❌ |
 
 <p align="center">
   <picture>
@@ -271,11 +295,6 @@ backs up the ones it replaces, in the data folder's `backups/`.
   afterwards, for evaluation) are opt-in (`shadow_rate` in `config/gateway.json`) and
   compare the shape of the answers (text or tool calls, which tools, arguments that
   parse), not whether either was right.
-- **Some parts are checked against fakes only.** The native Anthropic and
-  Gemini endpoints, and the LiteLLM, CLI Proxy API, OmniRoute, freellmapi,
-  one-api and new-api hub adapters, are built
-  from those APIs' documentation and source and tested against fake servers,
-  not yet against the real services.
 - **A merged reply arrives in one piece** once the merger has finished; the
   seats before it stream as they finish.
 - **A late seat's answer is not in the reply.** A seat still answering a

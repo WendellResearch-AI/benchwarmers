@@ -1,0 +1,166 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="494" viewBox="0 0 900 494" role="img" aria-labelledby="bench-call-title bench-call-desc">
+<title id="bench-call-title">A real Benchwarmers call: one command, 7 seats at once, then verdicts</title>
+<desc id="bench-call-desc">A terminal types: bench ask core "What happens when path doesn't exist? Python 3.12" -f load.py. The file load.py is a Python function that opens a file inside try, sets data to None in except OSError as err, and afterwards logs a warning that uses err. Benchwarmers seats panel p20261120-222954-eb8d on bench/core: 5 members and 2 explorers, all asked at once, and every answer comes back labelled by model and seat, in the order they finished: member mercury-3 at 2.1 s: err is cleared when the except block ends, so log.warning raises NameError (useful); member Beam-1.0-501B-A23B at 3.5 s: Caught as OSError: data is None, so it logs a warning with err, returns None (confidently wrong); member gemini-3.8-flash at 7.5 s: Python deletes err on leaving the except block: log.warning raises UnboundLocalError (useful); member big-pickle at 8.1 s: err is cleared after the except block: UnboundLocalError, and nothing is logged (useful); explorer 2 gemma-4-31b-it-router.requesty.ai at 11.9 s: Caught by the OSError block; it logs a warning with the error, returns None (confidently wrong); explorer Qwen3.8-27B at 12.5 s: Caught as OSError: the warning is logged and the function returns None (confidently wrong); member kimi-k3.1-pro at 96.4 s: err is deleted after the block: UnboundLocalError; nothing logged, no None (useful). Verdicts: 4 useful · 3 confidently wrong (Python deletes err when the except block ends) They go on the record, and the bench trusts them less next time. Real times, played compressed.</desc>
+<defs><clipPath id="typed"><rect x="51" y="52" width="813" height="26"/></clipPath></defs>
+<style>
+text{font-family:ui-monospace,SFMono-Regular,Consolas,'Liberation Mono',monospace}.bg{fill:#f6efe3}.pn{fill:#fffaf3}.fr{fill:#fffaf3;stroke:#c9ae86}.cc{fill:#f6efe3;stroke:#c9ae86}.ru{stroke:#c9ae86}.dot{fill:#c9ae86}.s,.sf{fill:#1a1410}.b{fill:#4c4136}.m{fill:#7a6a59}.a{fill:#990000}.g{fill:#3f7a24}.cm{fill:#4c4136;fill-opacity:0.05;stroke:#4c4136;stroke-opacity:.55}.hl{fill:#990000;fill-opacity:0.06;stroke:#990000}.ce{fill:#990000;fill-opacity:0.06;stroke:#990000;stroke-dasharray:5 4}.lm{fill:none;stroke:#4c4136;stroke-width:1.4}.le{fill:none;stroke:#990000;stroke-width:1.4;stroke-dasharray:4 3}.gt{fill:#3f7a24;fill-opacity:0.07}.wa{fill:#fffaf3;fill-opacity:0.6}.ln{transform-origin:41px 107px}.tr{opacity:0}.k{animation:19s ease-out infinite both}.all{animation:out 19s linear infinite}.pu{animation:pu 1.2s ease-in-out infinite}@keyframes out{0%,96.32%{opacity:1}98.95%,100%{opacity:0}}@keyframes pu{50%{opacity:.3}}
+.r1 .ln{animation-name:l1}.r1 .cd{animation-name:s1}.r1 .th{animation-name:t1}.r1 .ld{animation-name:d1}.r1 .vd{animation-name:v1}
+.r2 .ln{animation-name:l2}.r2 .cd{animation-name:s2}.r2 .th{animation-name:t2}.r2 .ld{animation-name:d2}.r2 .vd{animation-name:v2}
+.r3 .ln{animation-name:l3}.r3 .cd{animation-name:s3}.r3 .th{animation-name:t3}.r3 .ld{animation-name:d3}.r3 .vd{animation-name:v3}
+.r4 .ln{animation-name:l4}.r4 .cd{animation-name:s4}.r4 .th{animation-name:t4}.r4 .ld{animation-name:d4}.r4 .vd{animation-name:v4}
+.r5 .ln{animation-name:l5}.r5 .cd{animation-name:s5}.r5 .th{animation-name:t5}.r5 .ld{animation-name:d5}.r5 .vd{animation-name:v5}
+.r6 .ln{animation-name:l6}.r6 .cd{animation-name:s6}.r6 .th{animation-name:t6}.r6 .ld{animation-name:d6}.r6 .vd{animation-name:v6}
+.r7 .ln{animation-name:l7}.r7 .cd{animation-name:s7}.r7 .th{animation-name:t7}.r7 .ld{animation-name:d7}.r7 .vd{animation-name:v7}
+@keyframes typer{0%,2.11%{opacity:1;transform:none;animation-timing-function:steps(77,end)}14.26%,100%{opacity:1;transform:translateX(600.6px)}}
+@keyframes caret{0%,14.79%{opacity:1}15.58%,100%{opacity:0}}
+@keyframes file{0%,12.53%{opacity:0;transform:translateY(6px)}14.11%,22.16%{opacity:1;transform:none}22.95%,100%{opacity:0}}
+@keyframes head{0%,16.37%{opacity:0;transform:translateY(4px)}17.95%,100%{opacity:1;transform:none}}
+@keyframes dot{0%,17.16%{opacity:0}18.74%,100%{opacity:1}}
+@keyframes l1{0%,22.68%{opacity:0;transform:scale(.15)}24.26%,100%{opacity:1;transform:none}}
+@keyframes s1{0%,22.95%{opacity:0;transform:translateX(-18px)}24.79%,100%{opacity:1;transform:none}}
+@keyframes t1{0%,23.47%{opacity:0}24.53%,36.53%{opacity:1}37.32%,100%{opacity:0}}
+@keyframes d1{0%,37.05%{opacity:0;transform:translateY(3px)}38.9%,100%{opacity:1;transform:none}}
+@keyframes v1{0%,67.92%{opacity:0}69.76%,100%{opacity:1}}
+@keyframes l2{0%,23.32%{opacity:0;transform:scale(.15)}24.89%,100%{opacity:1;transform:none}}
+@keyframes s2{0%,23.58%{opacity:0;transform:translateX(-18px)}25.42%,100%{opacity:1;transform:none}}
+@keyframes t2{0%,24.11%{opacity:0}25.16%,39.67%{opacity:1}40.46%,100%{opacity:0}}
+@keyframes d2{0%,40.19%{opacity:0;transform:translateY(3px)}42.03%,100%{opacity:1;transform:none}}
+@keyframes v2{0%,68.55%{opacity:0}70.39%,100%{opacity:1}}
+@keyframes h2{0%,40.19%{opacity:0}40.98%{opacity:1}45.98%,68.55%{opacity:.45}69.34%,100%{opacity:1}}
+@keyframes l3{0%,23.95%{opacity:0;transform:scale(.15)}25.53%,100%{opacity:1;transform:none}}
+@keyframes s3{0%,24.21%{opacity:0;transform:translateX(-18px)}26.05%,100%{opacity:1;transform:none}}
+@keyframes t3{0%,24.74%{opacity:0}25.79%,45.02%{opacity:1}45.81%,100%{opacity:0}}
+@keyframes d3{0%,45.55%{opacity:0;transform:translateY(3px)}47.39%,100%{opacity:1;transform:none}}
+@keyframes v3{0%,69.18%{opacity:0}71.02%,100%{opacity:1}}
+@keyframes l4{0%,24.58%{opacity:0;transform:scale(.15)}26.16%,100%{opacity:1;transform:none}}
+@keyframes s4{0%,24.84%{opacity:0;transform:translateX(-18px)}26.68%,100%{opacity:1;transform:none}}
+@keyframes t4{0%,25.37%{opacity:0}26.42%,46.86%{opacity:1}47.65%,100%{opacity:0}}
+@keyframes d4{0%,47.39%{opacity:0;transform:translateY(3px)}49.23%,100%{opacity:1;transform:none}}
+@keyframes v4{0%,69.81%{opacity:0}71.65%,100%{opacity:1}}
+@keyframes l5{0%,25.21%{opacity:0;transform:scale(.15)}26.79%,100%{opacity:1;transform:none}}
+@keyframes s5{0%,25.47%{opacity:0;transform:translateX(-18px)}27.32%,100%{opacity:1;transform:none}}
+@keyframes t5{0%,26%{opacity:0}27.05%,48.71%{opacity:1}49.5%,100%{opacity:0}}
+@keyframes d5{0%,49.23%{opacity:0;transform:translateY(3px)}51.07%,100%{opacity:1;transform:none}}
+@keyframes v5{0%,70.44%{opacity:0}72.28%,100%{opacity:1}}
+@keyframes h5{0%,49.23%{opacity:0}50.02%{opacity:1}55.02%,70.44%{opacity:.45}71.23%,100%{opacity:1}}
+@keyframes l6{0%,25.84%{opacity:0;transform:scale(.15)}27.42%,100%{opacity:1;transform:none}}
+@keyframes s6{0%,26.11%{opacity:0;transform:translateX(-18px)}27.95%,100%{opacity:1;transform:none}}
+@keyframes t6{0%,26.63%{opacity:0}27.68%,50.55%{opacity:1}51.34%,100%{opacity:0}}
+@keyframes d6{0%,51.07%{opacity:0;transform:translateY(3px)}52.92%,100%{opacity:1;transform:none}}
+@keyframes v6{0%,71.07%{opacity:0}72.92%,100%{opacity:1}}
+@keyframes h6{0%,51.07%{opacity:0}51.86%{opacity:1}56.86%,71.07%{opacity:.45}71.86%,100%{opacity:1}}
+@keyframes l7{0%,26.47%{opacity:0;transform:scale(.15)}28.05%,100%{opacity:1;transform:none}}
+@keyframes s7{0%,26.74%{opacity:0;transform:translateX(-18px)}28.58%,100%{opacity:1;transform:none}}
+@keyframes t7{0%,27.26%{opacity:0}28.32%,64.23%{opacity:1}65.02%,100%{opacity:0}}
+@keyframes d7{0%,64.76%{opacity:0;transform:translateY(3px)}66.6%,100%{opacity:1;transform:none}}
+@keyframes v7{0%,71.71%{opacity:0}73.55%,100%{opacity:1}}
+@keyframes vl{0%,73.28%{opacity:0;transform:translateY(4px)}75.39%,100%{opacity:1;transform:none}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important}}
+</style>
+<rect width="900" height="494" rx="8" class="bg"/>
+<rect x="16" y="16" width="868" height="462" rx="6" class="fr" stroke-width="1.2"/>
+<path d="M16 42H884" class="ru" stroke-width=".8"/>
+<circle cx="34" cy="29" r="4" class="dot"/><circle cx="48" cy="29" r="4" class="dot"/><circle cx="62" cy="29" r="4" class="dot"/>
+<text x="864" y="33" font-size="9" class="m" text-anchor="end" letter-spacing="0.14em">A REAL CALL · TIME COMPRESSED</text>
+<text x="36" y="70" font-size="13" class="a" font-weight="700">$</text>
+<g class="all">
+<!-- the command, typed -->
+<text x="52" y="70" font-size="13" class="s" textLength="600.6" lengthAdjust="spacing">bench ask core "What happens when path doesn't exist? Python 3.12" -f load.py</text>
+<g clip-path="url(#typed)"><g class="k tr" style="animation-name:typer"><rect x="52" y="55" width="605" height="22" class="pn"/><g class="k tr" style="animation-name:caret"><rect x="52" y="58" width="8" height="15" class="sf"/></g></g></g>
+<!-- the file sent with -f, shown briefly -->
+<g class="k tr" style="animation-name:file"><rect x="583" y="82" width="281" height="150" rx="6" class="cc" stroke-width="1"/><text x="596" y="98" font-size="8" class="a" letter-spacing="0.14em">LOAD.PY</text><text x="596" y="114" font-size="9.5" class="b" xml:space="preserve">def load(path):</text><text x="596" y="126" font-size="9.5" class="b" xml:space="preserve">    try:</text><text x="596" y="138" font-size="9.5" class="b" xml:space="preserve">        with open(path) as fh:</text><text x="596" y="150" font-size="9.5" class="b" xml:space="preserve">            data = fh.read()</text><text x="596" y="162" font-size="9.5" class="b" xml:space="preserve">    except OSError as err:</text><text x="596" y="174" font-size="9.5" class="b" xml:space="preserve">        data = None</text><text x="596" y="186" font-size="9.5" class="b" xml:space="preserve">    if data is None:</text><text x="596" y="198" font-size="9.5" class="b" xml:space="preserve">        log.warning("could not read %s: %s",</text><text x="596" y="210" font-size="9.5" class="b" xml:space="preserve">                    path, err)</text><text x="596" y="222" font-size="9.5" class="b" xml:space="preserve">    return data</text></g>
+<!-- the panel's header -->
+<g class="k" style="animation-name:head"><text x="36" y="96" font-size="12" class="b"><tspan class="m">Panel </tspan><tspan class="s">p20261120-222954-eb8d</tspan><tspan class="m"> · </tspan><tspan class="s">bench/core</tspan><tspan class="m"> · </tspan><tspan class="b">5 members</tspan><tspan class="m"> + </tspan><tspan class="a">2 explorers</tspan></text></g>
+<circle cx="41" cy="107" r="3" class="k sf" style="animation-name:dot"/>
+<!-- row 1: member · mercury-3 · ok · 2.1 s · useful; lands at 7.04 s -->
+<g class="r1">
+<path d="M41 107Q41 135 74 135" class="k ln lm"/>
+<g class="k cd">
+<rect x="74" y="116" width="790" height="38" rx="5" class="cm" stroke-width="1.2"/>
+<g class="k vd"><rect x="74" y="116" width="790" height="38" rx="5" class="gt"/><rect x="77" y="120" width="3" height="30" rx="1.5" class="g"/></g>
+<text x="88" y="131" font-size="11" class="m">member</text>
+<text x="170" y="131" font-size="12" class="s" font-weight="600">mercury-3</text>
+<g class="k tr th"><text x="850" y="131" font-size="11" class="m pu" text-anchor="end">thinking…</text></g>
+<g class="k ld"><text x="850" y="131" font-size="11" class="b" text-anchor="end"><tspan class="b">✓ ok</tspan><tspan class="m"> · </tspan><tspan class="s">2.1 s</tspan></text><text x="88" y="146" font-size="12" class="b">err is cleared when the except block ends, so log.warning raises NameError.</text></g>
+<text x="850" y="146" font-size="11" class="k g" text-anchor="end" font-weight="700" style="animation-name:v1">✓ useful</text>
+</g></g>
+<!-- row 2: member · Beam-1.0-501B-A23B · ok · 3.5 s · wrong; lands at 7.64 s -->
+<g class="r2">
+<path d="M41 107Q41 179 74 179" class="k ln lm"/>
+<g class="k cd">
+<rect x="74" y="160" width="790" height="38" rx="5" class="cm" stroke-width="1.2"/>
+<text x="88" y="175" font-size="11" class="m">member</text>
+<text x="170" y="175" font-size="12" class="s" font-weight="600">Beam-1.0-501B-A23B</text>
+<g class="k tr th"><text x="850" y="175" font-size="11" class="m pu" text-anchor="end">thinking…</text></g>
+<rect x="74" y="160" width="790" height="38" rx="5" class="k hl" stroke-width="2" style="animation-name:h2"/>
+<g class="k ld"><text x="850" y="175" font-size="11" class="b" text-anchor="end"><tspan class="b">✓ ok</tspan><tspan class="m"> · </tspan><tspan class="s">3.5 s</tspan></text><text x="88" y="190" font-size="12" class="a" font-weight="600">Caught as OSError: data is None, so it logs a warning with err, returns None.</text></g>
+<text x="850" y="190" font-size="11" class="k a" text-anchor="end" font-weight="700" style="animation-name:v2">✗ confidently wrong</text>
+</g></g>
+<!-- row 3: member · gemini-3.8-flash · ok · 7.5 s · useful; lands at 8.65 s -->
+<g class="r3">
+<path d="M41 107Q41 223 74 223" class="k ln lm"/>
+<g class="k cd">
+<rect x="74" y="204" width="790" height="38" rx="5" class="cm" stroke-width="1.2"/>
+<g class="k vd"><rect x="74" y="204" width="790" height="38" rx="5" class="gt"/><rect x="77" y="208" width="3" height="30" rx="1.5" class="g"/></g>
+<text x="88" y="219" font-size="11" class="m">member</text>
+<text x="170" y="219" font-size="12" class="s" font-weight="600">gemini-3.8-flash</text>
+<g class="k tr th"><text x="850" y="219" font-size="11" class="m pu" text-anchor="end">thinking…</text></g>
+<g class="k ld"><text x="850" y="219" font-size="11" class="b" text-anchor="end"><tspan class="b">✓ ok</tspan><tspan class="m"> · </tspan><tspan class="s">7.5 s</tspan></text><text x="88" y="234" font-size="12" class="b">Python deletes err on leaving the except block: log.warning raises UnboundLocalError.</text></g>
+<text x="850" y="234" font-size="11" class="k g" text-anchor="end" font-weight="700" style="animation-name:v3">✓ useful</text>
+</g></g>
+<!-- row 4: member · big-pickle · ok · 8.1 s · useful; lands at 9.00 s -->
+<g class="r4">
+<path d="M41 107Q41 267 74 267" class="k ln lm"/>
+<g class="k cd">
+<rect x="74" y="248" width="790" height="38" rx="5" class="cm" stroke-width="1.2"/>
+<g class="k vd"><rect x="74" y="248" width="790" height="38" rx="5" class="gt"/><rect x="77" y="252" width="3" height="30" rx="1.5" class="g"/></g>
+<text x="88" y="263" font-size="11" class="m">member</text>
+<text x="170" y="263" font-size="12" class="s" font-weight="600">big-pickle</text>
+<g class="k tr th"><text x="850" y="263" font-size="11" class="m pu" text-anchor="end">thinking…</text></g>
+<g class="k ld"><text x="850" y="263" font-size="11" class="b" text-anchor="end"><tspan class="b">✓ ok</tspan><tspan class="m"> · </tspan><tspan class="s">8.1 s</tspan></text><text x="88" y="278" font-size="12" class="b">err is cleared after the except block: UnboundLocalError, and nothing is logged.</text></g>
+<text x="850" y="278" font-size="11" class="k g" text-anchor="end" font-weight="700" style="animation-name:v4">✓ useful</text>
+</g></g>
+<!-- row 5: explorer 2 · gemma-4-31b-it-router.requesty.ai · ok · 11.9 s · wrong; lands at 9.35 s -->
+<g class="r5">
+<path d="M41 107Q41 311 74 311" class="k ln le"/>
+<g class="k cd">
+<rect x="74" y="292" width="790" height="38" rx="5" class="ce" stroke-width="1.2"/>
+<text x="88" y="307" font-size="11" class="a">explorer 2</text>
+<text x="170" y="307" font-size="12" class="s" font-weight="600">gemma-4-31b-it-router.requesty.ai</text>
+<g class="k tr th"><text x="850" y="307" font-size="11" class="m pu" text-anchor="end">thinking…</text></g>
+<rect x="74" y="292" width="790" height="38" rx="5" class="k hl" stroke-width="2" style="animation-name:h5"/>
+<g class="k ld"><text x="850" y="307" font-size="11" class="b" text-anchor="end"><tspan class="b">✓ ok</tspan><tspan class="m"> · </tspan><tspan class="s">11.9 s</tspan></text><text x="88" y="322" font-size="12" class="a" font-weight="600">Caught by the OSError block; it logs a warning with the error, returns None.</text></g>
+<text x="850" y="322" font-size="11" class="k a" text-anchor="end" font-weight="700" style="animation-name:v5">✗ confidently wrong</text>
+</g></g>
+<!-- row 6: explorer · Qwen3.8-27B · ok · 12.5 s · wrong; lands at 9.70 s -->
+<g class="r6">
+<path d="M41 107Q41 355 74 355" class="k ln le"/>
+<g class="k cd">
+<rect x="74" y="336" width="790" height="38" rx="5" class="ce" stroke-width="1.2"/>
+<text x="88" y="351" font-size="11" class="a">explorer</text>
+<text x="170" y="351" font-size="12" class="s" font-weight="600">Qwen3.8-27B</text>
+<g class="k tr th"><text x="850" y="351" font-size="11" class="m pu" text-anchor="end">thinking…</text></g>
+<rect x="74" y="336" width="790" height="38" rx="5" class="k hl" stroke-width="2" style="animation-name:h6"/>
+<g class="k ld"><text x="850" y="351" font-size="11" class="b" text-anchor="end"><tspan class="b">✓ ok</tspan><tspan class="m"> · </tspan><tspan class="s">12.5 s</tspan></text><text x="88" y="366" font-size="12" class="a" font-weight="600">Caught as OSError: the warning is logged and the function returns None.</text></g>
+<text x="850" y="366" font-size="11" class="k a" text-anchor="end" font-weight="700" style="animation-name:v6">✗ confidently wrong</text>
+</g></g>
+<!-- row 7: member · kimi-k3.1-pro · ok · 96.4 s · useful; lands at 12.30 s -->
+<g class="r7">
+<path d="M41 107Q41 399 74 399" class="k ln lm"/>
+<g class="k cd">
+<rect x="74" y="380" width="790" height="38" rx="5" class="cm" stroke-width="1.2"/>
+<g class="k vd"><rect x="74" y="380" width="790" height="38" rx="5" class="gt"/><rect x="77" y="384" width="3" height="30" rx="1.5" class="g"/></g>
+<text x="88" y="395" font-size="11" class="m">member</text>
+<text x="170" y="395" font-size="12" class="s" font-weight="600">kimi-k3.1-pro</text>
+<g class="k tr th"><text x="850" y="395" font-size="11" class="m pu" text-anchor="end">thinking…</text></g>
+<g class="k ld"><text x="850" y="395" font-size="11" class="b" text-anchor="end"><tspan class="b">✓ ok</tspan><tspan class="m"> · </tspan><tspan class="s">96.4 s</tspan></text><text x="88" y="410" font-size="12" class="b">err is deleted after the block: UnboundLocalError; nothing logged, no None.</text></g>
+<text x="850" y="410" font-size="11" class="k g" text-anchor="end" font-weight="700" style="animation-name:v7">✓ useful</text>
+</g></g>
+<!-- the verdicts -->
+<g class="k" style="animation-name:vl">
+<text x="36" y="444" font-size="12" class="b"><tspan class="m">Verdicts: </tspan><tspan class="g" font-weight="700">4 useful</tspan><tspan class="m"> · </tspan><tspan class="a" font-weight="700">3 confidently wrong</tspan><tspan class="b"> (Python deletes err when the except block ends)</tspan></text>
+<text x="36" y="462" font-size="12" class="b"><tspan class="m">They go on the record, and the bench trusts them less next time.</tspan></text>
+</g>
+</g>
+</svg>
