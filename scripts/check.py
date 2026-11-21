@@ -109,8 +109,11 @@ def main() -> int:
         print(f"{'ok   ' if ok else 'FAIL '} {script}  ({time.monotonic() - started:.0f}s)")
         if not ok:
             failed.append(script)
-            # 40: test_client's whole report, so a CI log names the failing scenario.
-            print("\n".join("      " + line for line in out.splitlines()[-40:]))
+            # 40: test_client's whole report, so a CI log names the failing scenario; and every
+            # FAIL line above those, so a long report's failure is never cut off.
+            lines = out.splitlines()
+            print("\n".join("      " + line for line in
+                            [ln for ln in lines[:-40] if ln.lstrip().startswith("FAIL")] + lines[-40:]))
     print(f"\n{len(failed)} failed: {', '.join(failed)}" if failed else "\nall checks pass")
     return 1 if failed else 0
 

@@ -5438,7 +5438,10 @@ def gateway_callers() -> dict:
     drops off the list."""
     from itertools import islice
     logs = ((DATA / "runs" / "gateway" / "calls.jsonl", 300), (DATA / "runs" / "gateway" / "routes.jsonl", 3000))
-    stamp = tuple((p.stat().st_mtime, p.stat().st_size) if p.exists() else 0 for p, _ in logs)
+    # The file's identity too: a log made afresh with the same size in the same clock tick (about
+    # 15 ms on Windows) would otherwise be taken for the one it replaced.
+    stamp = tuple((s.st_mtime_ns, s.st_size, s.st_ino) if (s := p.stat() if p.exists() else None) else 0
+                  for p, _ in logs)
     if _CALLERS.get("stamp") == stamp:
         return _CALLERS["callers"]
     today, out = datetime.date.today().isoformat(), {}

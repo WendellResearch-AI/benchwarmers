@@ -182,13 +182,21 @@ def local_servers() -> None:
         connect.LOCAL["openwebui"]["ports"] = (shared, port["newapi"])  # as `open-webui serve` and its image
         connect.LOCAL["hung"] = {"label": "Hung", "ports": (hung.getsockname()[1],), "kind": "local", "docs": "https://x"}
 
-        def found(**kw) -> dict:
-            return {f["id"]: f for f in connect.detect(**kw)}
-
         start = time.time()
-        got = found()
+        connect.detect()
         # 0.5 s per probe: a hung port that held it up would take far longer; CI runners are slow.
         assert time.time() - start < 5, "a hung port held detection up"
+        # The rest checks what each server is taken for, not how fast: the hung port goes, and a
+        # probe gets 3 s, as a loaded CI runner can take more than the 0.5 s default to answer.
+        del connect.LOCAL["hung"]
+
+        def detect(**kw) -> list:
+            return connect.detect(**{"timeout": 3.0, **kw})
+
+        def found(**kw) -> dict:
+            return {f["id"]: f for f in detect(**kw)}
+
+        got = found()
         assert set(got) == set(alone), got   # 8080 as llama.cpp, 8317 as CLI Proxy API, 20128 OmniRoute, 3000 new-api
         assert got["llamacpp"]["port"] == shared and got["lmstudio"]["models"] == 3, got
         for sid in ("jan", "litellm", "cliproxy", "thinkwatch", "claude-code-router", "freellmapi", "newapi"):
@@ -209,11 +217,11 @@ def local_servers() -> None:
         for g in groups:
             for sid in g:
                 SHAPES[port[sid]] = shapes[sid]
-                on = {f["id"] for f in connect.detect() if f["port"] == port[sid]}
+                on = {f["id"] for f in detect() if f["port"] == port[sid]}
                 assert on == ({"llamacpp"} if sid == "llamafile" else {sid}), (sid, on)
         for sid in ("openwebui", "oneapi", "newapi"):              # 3000: Open WebUI's image among them
             SHAPES[port["newapi"]] = shapes[sid]
-            on = {f["id"] for f in connect.detect() if f["port"] == port["newapi"]}
+            on = {f["id"] for f in detect() if f["port"] == port["newapi"]}
             assert on == {sid}, (sid, on)
         hub = found()["openwebui"]                                # (8317 is AstrLink now, 8080 Open WebUI)
         assert (hub["kind"], hub["hub"], hub["key"]) == ("hub", "openwebui", True), hub
@@ -262,7 +270,7 @@ def local_servers() -> None:
                                      (4, at["llamafile"], "Qwen3.5-9B.llam", "./Qwen3.5-9B.llamafile --server"),
                                      (5, at["gpt4all"], "chat", "/home/u/gpt4all/bin/chat")]
         os.environ["OLLAMA_HOST"] = f"0.0.0.0:{at['ollama']}"
-        moved = {(f["id"], f["port"]): f for f in connect.detect()}
+        moved = {(f["id"], f["port"]): f for f in detect()}
         assert {("lmstudio", at["lmstudio"]), ("vllm", at["vllm"]), ("ollama", at["ollama"]),
                 ("llamafile", at["llamafile"]), ("gpt4all", at["gpt4all"])} <= set(moved), moved
         assert at["other"] not in {p for _, p in moved}, moved
