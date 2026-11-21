@@ -220,9 +220,14 @@ one-line note (`bench.note`). A streaming client gets the merged answer in one
 piece once the merge is done (Streaming).
 
 A verdict is `POST /bench/verdict` with `{"call", "useful": true|false, "note",
-"real": [...], "false": [...]}`, `offload.py verdict <call id>`, or the verdict
+"real": [...], "false": [...], "evidence", "caught": true|false}`, `offload.py verdict <call id>`, or the verdict
 dialog in the dashboard's Collections tab, under Gateway (click a seat). Sending the same verdict
-twice writes nothing.
+twice writes nothing. `evidence` says what disproved the false claims (a
+file:line, a command and its output); without it they cost the model nothing
+and are not mined into suite tasks, since the caller can be wrong too.
+Verdicts from before the field count as they were. `caught` marks a seat that
+found something the caller had not, counted per model on Benchmarks › Real
+work: the measure of what the second opinions are worth.
 
 A client that weighs its seats by how they have done reads the verdicts back:
 `GET /bench/record?collection=bench/vision&task=thicken slab faces` answers
@@ -391,7 +396,8 @@ let the record speak: 5 useful of 5 goes before 10 of 30, and one lucky
 verdict does not go before 9 of 10. A useful answer is worth the share of
 its listed claims that held (1 with none listed), so one false claim among
 nine real ones costs a tenth. A not-useful answer is worth nothing, and one
-that lists a false claim counts as a second miss. Ties go to verified suite
+that lists a false claim counts as a second miss. False claims count only
+with evidence (above). Ties go to verified suite
 findings, then to a connection already paid for. Members cooling down after
 a rate limit go last. One new conversation in four goes instead to the
 member whose record is oldest, so the record does not narrow to one model.

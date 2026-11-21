@@ -3180,7 +3180,7 @@
   function rqJudge(li, body) {
     var s = rq.seats.find(function (x) { return x.call === li.dataset.call; }), was = s.useful;
     $('rq-errors').textContent = '';
-    return post('/api/verdict', Object.assign({call: s.call, note: '', real: [], false: []}, body)).then(function (r) {
+    return post('/api/verdict', Object.assign({call: s.call, note: '', real: [], false: [], evidence: '', caught: false}, body)).then(function (r) {
       if (!r.ok) { listErrors($('rq-errors'), r.errors); return; }
       Object.assign(s, body);
       li.replaceWith(rqSeat(s));
@@ -3210,12 +3210,18 @@
       });
       box.appendChild(pickBox);
       [['note', 'Note', s.note, 'input'], ['real', 'Findings it got right, verified', s.real.join('\n'), 'textarea'],
-       ['false', 'Claims it made that are not true', s.false.join('\n'), 'textarea']].forEach(function (f) {
+       ['false', 'Claims it made that are not true', s.false.join('\n'), 'textarea'],
+       ['evidence', 'What disproved them (a file:line, a command and its output)', s.evidence || '', 'input']].forEach(function (f) {
         box.appendChild(el('label', {class: 'field', for: id + '-' + f[0]}, f[1]));
         var x = el(f[3], {id: id + '-' + f[0], 'data-f': f[0], autocomplete: 'off'}); x.value = f[2]; if (f[3] === 'textarea') x.rows = 2;
         box.appendChild(x);
       });
-      box.appendChild(el('p', {class: 'rules'}, 'One sentence per line. suite/mine.py turns these into benchmark tasks.'));
+      var caught = el('input', {type: 'checkbox', id: id + '-caught', 'data-f': 'caught'}); caught.checked = !!s.caught;
+      var caughtL = el('label', {class: 'check', for: id + '-caught'});
+      caughtL.append(caught, ' It found something I had not');
+      box.appendChild(caughtL);
+      box.appendChild(el('p', {class: 'rules'}, 'One sentence per line. suite/mine.py turns these into benchmark tasks;'
+        + ' a false claim counts against the model only with what disproved it.'));
       box.appendChild(el('button', {type: 'button', class: 'btn primary small', 'data-save': ''}, 'Save verdict'));
       li.appendChild(box);
       return;
@@ -3225,7 +3231,8 @@
       var chosen = li.querySelector('[data-pick][aria-pressed="true"]');
       if (!chosen) { $('rq-errors').textContent = 'Choose Useful or Not useful first.'; return; }
       var f = function (k) { return li.querySelector('[data-f="' + k + '"]'); };
-      rqJudge(li, {useful: chosen.dataset.pick === 'true', note: f('note').value, real: rqLines(f('real')), false: rqLines(f('false'))});
+      rqJudge(li, {useful: chosen.dataset.pick === 'true', note: f('note').value, real: rqLines(f('real')), false: rqLines(f('false')),
+                   evidence: f('evidence').value.trim(), caught: f('caught').checked});
     }
   });
   document.addEventListener('keydown', function (e) {
@@ -4159,7 +4166,8 @@
             title: function (r) {
               return r.model + '\nhelped ' + r.useful + ' of ' + r.judged + ' judged (' + Math.round(r.p * 100) + '%; '
                 + r.offloads + ' offloads)\nlikely between ' + Math.round(r.lo * 100) + '% and ' + Math.round(r.hi * 100) + '%'
-                + (r.real || r.false ? '\nverified findings ' + r.real + ', false claims ' + r.false : '');
+                + (r.real || r.false ? '\nverified findings ' + r.real + ', false claims ' + r.false : '')
+                + (r.caught ? '\ncaught what the caller missed ' + r.caught + ' time' + (r.caught === 1 ? '' : 's') : '');
             }}),
           Plot.text(R, {x: 'hi', y: 'model', dx: 8, textAnchor: 'start', fill: ink, fontSize: 11, text: n})
         ]

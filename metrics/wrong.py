@@ -90,7 +90,7 @@ def table(scored: dict[str, dict] | None = None) -> dict[str, dict]:
         if e.get("useful") is not None:
             row = out[e["model"]]
             row["reviews"] += 1
-            row["review_false"] += len(e.get("false") or [])
+            row["review_false"] += len(e.get("false") or []) if offload.backed(e) else 0
     return dict(out)
 
 

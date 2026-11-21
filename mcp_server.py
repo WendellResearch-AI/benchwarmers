@@ -42,7 +42,8 @@ RULES = (
     " and keeps every answer. Rules: (1) ask a collection, not a favourite model; list_collections says"
     " what each is for. (2) Verify before acting on anything a seat says: seats fail together, so"
     " agreement is not evidence. (3) Send a verdict per seat you judged, with the claims it got right"
-    " in `real` and the untrue ones in `false`. (4) Name every seat that answered, by model and seat,"
+    " in `real`, the untrue ones in `false` with what disproved them in `evidence`, and `caught` when it"
+    " found something you had not. (4) Name every seat that answered, by model and seat,"
     " including errors, empty replies and late seats. An empty reply from a reasoning model is usually its token"
     " budget, not incapacity. Good uses: exhaustive enumeration over real files, adversarial review."
     " Keep the design and the decisions yourself.")
@@ -81,7 +82,8 @@ TOOLS = [
      "description": "Judge one seat's answer by its call id, once you have checked it against the source. One"
                     " per seat you judged. List the claims it got right in `real` and the claims that are"
                     " untrue in `false`, one sentence each: they feed routing and the 'confidently wrong'"
-                    " record, so a note alone is not enough.",
+                    " record, so a note alone is not enough. A false claim counts against the model only"
+                    " with `evidence`, what disproved it. Set `caught` when it found something you had not.",
      "inputSchema": {"type": "object", "required": ["call", "useful"], "additionalProperties": False,
                      "properties": {
                          "call": {"type": "string", "description": "The seat's call id, e.g. p20261022-101500-ab12.member1."},
@@ -90,7 +92,12 @@ TOOLS = [
                          "real": {"type": "array", "items": {"type": "string"},
                                   "description": "Claims it made that are true, one sentence each."},
                          "false": {"type": "array", "items": {"type": "string"},
-                                   "description": "Claims it made that are untrue, one sentence each."}}},
+                                   "description": "Claims it made that are untrue, one sentence each."},
+                         "evidence": {"type": "string",
+                                      "description": "What disproved the false claims: a file:line, or a command"
+                                                     " and its output. Without it they cost the model nothing."},
+                         "caught": {"type": "boolean",
+                                    "description": "true: it found something you had not found yourself."}}},
      "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True,
                      "openWorldHint": False}},
     {"name": "pending_verdicts",
@@ -257,7 +264,8 @@ def pending_verdicts(args: dict, conn: Conn) -> list[str]:
     return [json.dumps({"hookSpecificOutput": {"hookEventName": "Stop", "additionalContext": (
         f"Benchwarmers: {len(due)} seat{'s' * (len(due) != 1)} from this session's panels"
         f" {'have' if len(due) != 1 else 'has'} no verdict yet: {', '.join(due)}. Send a verdict for each"
-        " seat you judged (the verdict tool, with its true claims in `real` and untrue ones in `false`),"
+        " seat you judged (the verdict tool, with its true claims in `real`, untrue ones in `false` and what"
+        " disproved them in `evidence`),"
         " or say in one line why not.")}})]
 
 
@@ -267,10 +275,13 @@ def verdict(args: dict, conn: Conn) -> list[str]:
     if not isinstance(args.get("useful"), bool):
         raise ToolError("`useful` must be true or false")
     body = {"call": args["call"].strip(), "useful": args["useful"], "note": args.get("note") or "",
-            "real": args.get("real") or [], "false": args.get("false") or []}
+            "real": args.get("real") or [], "false": args.get("false") or [],
+            **{k: args[k] for k in ("evidence", "caught") if args.get(k) is not None}}
     http(conn, "POST", "/bench/verdict", body)
+    unbacked = " (no evidence, so they do not count against it)" if body["false"] and not body.get("evidence") else ""
     return [f"Recorded {body['call']}: {'useful' if body['useful'] else 'not useful'},"
-            f" {len(body['real'])} real, {len(body['false'])} false."]
+            f" {len(body['real'])} real, {len(body['false'])} false{unbacked}"
+            f"{', caught what you missed' if body.get('caught') else ''}."]
 
 
 HANDLERS = {"list_collections": list_collections, "ask": ask, "verdict": verdict,

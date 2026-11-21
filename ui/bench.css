@@ -380,7 +380,7 @@ ul.seen li > :last-child { color: var(--muted); font-family: var(--font-mono); }
 #request-dock ul.answers .chip { margin-left: .35rem; }
 #request-dock ul.answers .read { grid-column: 1 / -1; }
 #request-dock ul.answers .read pre { max-height: 24rem; white-space: pre-wrap; }
-#request-dock ul.answers .read :is(input, textarea) { width: 100%; }
+#request-dock ul.answers .read :is(input:not([type=checkbox]), textarea) { width: 100%; }
 #request-dock ul.answers .read .btn.primary { margin-top: .6rem; }
 /* Endpoints: a row with a problem comes first, its reason under its name; a new key in its record. */
 .ep-table tr.problem .why { display: block; color: var(--err); white-space: normal; }

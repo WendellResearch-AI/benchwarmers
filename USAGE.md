@@ -438,9 +438,12 @@ the Collections page (the Gateway card lists recent requests: click a seat),
 or:
 
     curl http://127.0.0.1:8122/bench/verdict -H "Content-Type: application/json" \
-      -d '{"call": "<call id>", "useful": true, "note": "found the real bug", "real": ["..."], "false": ["..."]}'
+      -d '{"call": "<call id>", "useful": true, "note": "found the real bug", "real": ["..."], "false": ["..."], "evidence": "...", "caught": true}'
 
-`real` and `false` list the specific claims you verified either way. False
+`real` and `false` list the specific claims you verified either way, and
+`evidence` what disproved the false ones (a file:line, a command and its
+output); without it they cost the model nothing, since you can be wrong about
+a seat too. `caught` says the seat found something you had not. False
 claims feed **Confidently wrong** on Benchmarks, and verdicts together decide
 who sits on the next panel. Agreement between models is not evidence: they
 are often wrong together.

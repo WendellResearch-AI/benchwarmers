@@ -52,7 +52,11 @@ you missed.
 5. **Send a verdict per seat you judged** with `verdict`: its call id,
    `useful`, a short note, and the claims it got right in `real` and the
    untrue ones in `false`, one sentence each. The claims feed routing and the
-   "confidently wrong" record; a note alone does not.
+   "confidently wrong" record; a note alone does not. Put what disproved the
+   false claims in `evidence` (a file:line, a command and its output): you can
+   be wrong about a seat too, so without it they cost the model nothing. Set
+   `caught` when the seat found something you had not; that count is what
+   says the second opinions are worth asking for.
 
 An **empty reply from a reasoning model** is almost always its token budget
 (reasoning counts against `max_tokens`), not incapacity: say so, and judge it

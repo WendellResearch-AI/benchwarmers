@@ -153,9 +153,12 @@ def main() -> int:
     assert r["isError"] and "prompt" in r["content"][0]["text"], r
 
     r = c.tool("verdict", call="p1.member1", useful=True, note="checked", real=["a true claim"], false=["x"])
-    assert not r["isError"] and "1 real, 1 false" in r["content"][0]["text"], r
+    assert not r["isError"] and "1 real, 1 false (no evidence" in r["content"][0]["text"], r
     assert SEEN[-1][1:3] == ("/bench/verdict", {"call": "p1.member1", "useful": True, "note": "checked",
                                                 "real": ["a true claim"], "false": ["x"]}), SEEN[-1]
+    r = c.tool("verdict", call="p1.member1", useful=True, false=["x"], evidence="a.py:3", caught=True)
+    assert "1 false, caught what you missed." in r["content"][0]["text"], r
+    assert SEEN[-1][2]["evidence"] == "a.py:3" and SEEN[-1][2]["caught"] is True, SEEN[-1]
     assert c.tool("verdict", call="p1.member1")["isError"]          # useful is required
 
     # The Stop hook's tool: the call ids in the session's transcript (each once), the server says which

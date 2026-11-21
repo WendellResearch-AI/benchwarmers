@@ -2784,14 +2784,14 @@ def work_rows() -> list[dict]:
 
 
 def _work_rows() -> list[dict]:
-    from offload import entries, summary
+    from offload import backed, entries, summary
     live, claims = on_bench(), {}
     for e in entries():
         c = claims.setdefault(e["model"], [0, 0])
         c[0] += len(e.get("real") or [])
-        c[1] += len(e.get("false") or [])
+        c[1] += len(e.get("false") or []) if backed(e) else 0
     return [{"model": m, "offloads": s["offloads"], "judged": s["judged"], "useful": s["useful"],
-             "real": claims.get(m, [0, 0])[0], "false": claims.get(m, [0, 0])[1]}
+             "caught": s["caught"], "real": claims.get(m, [0, 0])[0], "false": claims.get(m, [0, 0])[1]}
             for m, s in sorted(summary().items()) if m in live and s["judged"]]
 
 
@@ -3728,18 +3728,23 @@ def work_card() -> str:
     """How often real offloads helped."""
     rows = work_rows()
     body = ["<table><thead><tr>", th("Model"), th("Offloads", True), th("Judged", True), th("Helped", True),
-            th("Likely between", True), th("Verified findings", True), th("False claims", True), "</tr></thead><tbody>"]
+            th("Likely between", True), th("Caught", True), th("Verified findings", True), th("False claims", True),
+            "</tr></thead><tbody>"]
     for r in sorted(rows, key=lambda r: (-_wilson(r["useful"], r["judged"])[0], -r["judged"])):
         lo, hi = _wilson(r["useful"], r["judged"])
         body.append(f"<tr><td>{named(r['model'])}</td><td class='num'>{r['offloads']}</td><td class='num'>{r['judged']}</td>"
                     f"<td class='num' data-sort='{r['useful'] / r['judged']:.3f}'>{r['useful']}/{r['judged']}</td>"
                     f"<td class='num' data-sort='{lo:.3f}'>{lo * 100:.0f}–{hi * 100:.0f}%</td>"
+                    f"<td class='num'>{r['caught'] or '—'}</td>"
                     f"<td class='num'>{r['real']}</td><td class='num'>{r['false']}</td></tr>")
     body.append("</tbody></table>")
     how = ("<p>Work handed to a model through the bench and judged afterwards. The dot is the share that helped,"
            " sized by how many were judged; the line is where the true share likely sits (a 95% Wilson interval:"
            " wide for 3 of 3, narrow for 40 of 50). Ranked by the low end of that line, so a few lucky answers do"
-           " not outrank many good ones. The dashed line is every model's work together.</p>")
+           " not outrank many good ones. The dashed line is every model's work together.</p>"
+           "<p>Caught: answers that found something the caller had not, which is what a second opinion is for."
+           " False claims count only when the verdict says what disproved them (or predates that field), so a"
+           " caller's unproven word costs a model nothing.</p>")
     return chart_card("Real work", "How often a model helped when given real work that was checked afterwards.",
                       "chart-work", "".join(body), how)
 
@@ -4149,15 +4154,19 @@ def gateway_request(panel: str) -> dict:
                            "useful": last.get(s.get("call"), {}).get("useful"),
                            "note": last.get(s.get("call"), {}).get("note", ""),
                            "real": last.get(s.get("call"), {}).get("real") or [],
-                           "false": last.get(s.get("call"), {}).get("false") or []} for s in r.get("seats", [])]}
+                           "false": last.get(s.get("call"), {}).get("false") or [],
+                           "evidence": last.get(s.get("call"), {}).get("evidence") or "",
+                           "caught": bool(last.get(s.get("call"), {}).get("caught"))} for s in r.get("seats", [])]}
     return {"ok": False, "errors": [f"no gateway request {panel!r}"]}
 
 
-def record_verdict(call: str, useful, note: str, real, false) -> dict:
+def record_verdict(call: str, useful, note: str, real, false, evidence="", caught=False) -> dict:
     """offload.verdict from the dashboard: same log, same rules."""
     errors = []
     if not isinstance(useful, bool):
         errors.append("choose useful or not useful")
+    if not isinstance(evidence or "", str) or not isinstance(caught or False, bool):
+        errors.append("evidence must be text and caught true or false")
     claims = {}
     for key, value in (("real", real), ("false", false)):
         if not isinstance(value or [], list) or not all(isinstance(x, str) for x in value or []):
@@ -4169,7 +4178,8 @@ def record_verdict(call: str, useful, note: str, real, false) -> dict:
     import offload
     try:
         e = offload.verdict(call, useful, " ".join(str(note or "").split())[:500],
-                            claims["real"], claims["false"], replace=True)
+                            claims["real"], claims["false"], replace=True,
+                            evidence=" ".join((evidence or "").split())[:1000], caught=bool(caught))
     except KeyError as exc:
         return {"ok": False, "errors": [str(exc.args[0])]}
     return {"ok": True, "changed": [f"{e['model']} {'useful' if useful else 'not useful'}"], "sync": ""}
@@ -7495,7 +7505,7 @@ class Handler(gateway.Handler):
                    str(p.get("connection") or ""), str(p.get("axis") or "")),
                "/api/verdict": lambda p: record_verdict(str(p.get("call") or ""), p.get("useful"),
                                                         str(p.get("note") or ""), p.get("real"),
-                                                        p.get("false")),
+                                                        p.get("false"), p.get("evidence"), p.get("caught")),
                "/api/gateway-settings": lambda p: save_gateway_settings(
                    p.get("max_calls"), p.get("max_explorers"), pick_collection=p.get("pick_collection", KEEP),
                    pick_confidence=p.get("pick_confidence", KEEP)),

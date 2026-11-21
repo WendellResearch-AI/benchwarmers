@@ -56,11 +56,14 @@ caller then checks the answers against the real code — agreement between seats
 is not a verdict, they fail together — and records one per call id:
 
     python metrics/offload.py verdict <call id> --useful --note "..." \\
-        --real "<a finding it got right>" --false "<a claim it made that is untrue>"
+        --real "<a finding it got right>" --false "<a claim it made that is untrue>" \\
+        --evidence "<what disproved it>" [--caught]
     POST /bench/verdict {"call": "<call id>", "useful": true, "note": "...",
-                         "real": ["..."], "false": ["..."]}
+                         "real": ["..."], "false": ["..."], "evidence": "...", "caught": true}
 
-The real/false claims are what `suite/mine.py` turns into suite tasks.
+The real/false claims are what `suite/mine.py` turns into suite tasks. A false
+claim counts against the model only with `evidence` (offload.backed); `caught`
+marks a seat that found something the caller had not.
 
 The verdict replaces the unjudged entry, and route.py's evidence — which
 explorers are due, which models earn a place in a collection — reads it.
@@ -741,7 +744,8 @@ def run_collection(name: str, messages: list[dict], nominated: list[str] | None 
              "seats": [{k: s[k] for k in SEAT_KEYS} for s in record["seats"]],
              # A path, not a URL: the same server answered, whichever port or
              # proxy the caller came through (the dashboard serves these routes too).
-             "verdict": 'POST /bench/verdict {"call", "useful": true|false, "note", "real": [...], "false": [...]}',
+             "verdict": ('POST /bench/verdict {"call", "useful": true|false, "note", "real": [...], "false": [...],'
+                         ' "evidence", "caught": true|false}'),
              **({"skipped": skipped} if skipped else {}), **({"picked": picked} if picked else {})}
     if merged:
         try:
@@ -1287,9 +1291,14 @@ class Handler(BaseHTTPRequestHandler):
             lists = {k: body.get(k) or [] for k in ("real", "false")}
             if not all(isinstance(v, list) and all(isinstance(s, str) for s in v) for v in lists.values()):
                 return self._error(400, '"real" and "false" must be lists of one-sentence claims')
+            if not isinstance(body.get("evidence") or "", str):
+                return self._error(400, '"evidence" must be text: what disproved the false claims')
+            if body.get("caught") is not None and not isinstance(body["caught"], bool):
+                return self._error(400, '"caught" must be true or false')
             try:
                 e = offload.verdict(str(body.get("call", "")), body["useful"], str(body.get("note") or ""),
-                                    lists["real"], lists["false"])
+                                    lists["real"], lists["false"], evidence=body.get("evidence") or None,
+                                    caught=body.get("caught"))
             except KeyError as exc:
                 return self._error(404, exc.args[0])
             return self._json(200, {"ok": True, "recorded": e})

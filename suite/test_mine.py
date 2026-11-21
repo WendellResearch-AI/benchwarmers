@@ -15,7 +15,9 @@ with tempfile.TemporaryDirectory() as tmp:
     prompt = "Review this.\n\n===== pkg/a.py\nx = 1\n\n===== git diff b.py\n-y\n+z\n"
     mine.CALLS.write_text(json.dumps({"panel": "pX", "model": "bench/core", "prompt": prompt}) + "\n")
     mine.offload.add("m1", "t", None, "", "pX.member1")
-    mine.offload.verdict("pX.member1", True, "", ["x is set to one"], ["x is never set"])
+    mine.offload.verdict("pX.member1", True, "", ["x is set to one"], ["x is never set"], evidence="a.py:1 sets it")
+    mine.offload.add("m2", "t", None, "", "pX.member2")                  # alleged, nothing to disprove it: not mined
+    mine.offload.verdict("pX.member2", False, "", None, ["x is a string"])
 
     assert mine.files_in(prompt) == {"pkg-a.py": "x = 1\n", "git-diff-b.py": "-y\n+z\n"}
     ids = mine.draft("pX")

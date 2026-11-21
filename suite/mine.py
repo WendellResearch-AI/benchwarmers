@@ -75,12 +75,15 @@ def files_in(prompt: str) -> dict[str, str]:
 
 
 def claims_for(panel: str) -> list[tuple[str, bool, str]]:
-    """(claim, is_true, seat call id) from every judged seat of the call."""
+    """(claim, is_true, seat call id) from every judged seat of the call. A
+    false claim with nothing said to disprove it is left out (offload.backed):
+    a task built on it would teach the suite the caller's mistake."""
     seen, out = set(), []
     for e in offload.entries():
         if not str(e.get("call", "")).startswith(panel + "."):
             continue
-        for text, truth in [(c, True) for c in e.get("real", [])] + [(c, False) for c in e.get("false", [])]:
+        false = e.get("false", []) if offload.backed(e) else []
+        for text, truth in [(c, True) for c in e.get("real", [])] + [(c, False) for c in false]:
             if text.lower() not in seen:
                 seen.add(text.lower())
                 out.append((text, truth, e["call"]))

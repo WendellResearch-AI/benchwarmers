@@ -15,4 +15,4 @@ Follow the `benchwarmers` skill. In short:
 3. Call `ask` with the collection and that prompt. Add `merged: true` only if the user asked for one answer.
 4. Check every claim a seat makes against the real source before you repeat it or act on it. Agreement between seats is not evidence.
 5. Report: name every seat that answered, by model and seat (member, explorer, stand-in for a held member), including errors, empty replies and seats still answering (`late`), and say which claims held up and which did not.
-6. Send one `verdict` per seat you judged, by its call id, with the true claims in `real` and the untrue ones in `false`.
+6. Send one `verdict` per seat you judged, by its call id, with the true claims in `real`, the untrue ones in `false` with what disproved them in `evidence`, and `caught: true` when it found something you had not.

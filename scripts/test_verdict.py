@@ -93,6 +93,21 @@ def bench_field() -> None:
     assert not any("bench" in c for c in chunks[:-1]), chunks
     said = "".join(c["choices"][0]["delta"].get("content", "") for c in chunks)
     assert all(s["call"] in said for s in chunks[-1]["bench"]["seats"]), said
+    seat = b["seats"][0]["call"]
+    for body in ({"evidence": ["a list"]}, {"caught": "yes"}):                 # POST /bench/verdict's new fields
+        req = urllib.request.Request(url.replace("/v1/chat/completions", "/bench/verdict"),
+                                     json.dumps({"call": seat, "useful": False, **body}).encode(),
+                                     {"Content-Type": "application/json"})
+        try:
+            urllib.request.urlopen(req)
+            raise AssertionError(f"{body} was accepted")
+        except urllib.error.HTTPError as exc:
+            assert exc.code == 400, (body, exc.code)
+    req = urllib.request.Request(url.replace("/v1/chat/completions", "/bench/verdict"),
+                                 json.dumps({"call": seat, "useful": False, "false": ["f"], "evidence": "a.py:1",
+                                             "caught": True}).encode(), {"Content-Type": "application/json"})
+    e = json.loads(urllib.request.urlopen(req).read())["recorded"]
+    assert (e["evidence"], e["caught"], offload.backed(e)) == ("a.py:1", True, True), e
     srv.shutdown()
 
 
@@ -118,7 +133,8 @@ def ranking() -> None:
     def judge(model: str, judged: int, useful: int, false: int = 0) -> None:
         for i in range(judged):                   # the false claims go on not-useful verdicts: worse than no use
             offload.add(model, "t (bench/core, review)", None, "member; ok", f"k.{model}.{i}")
-            offload.verdict(f"k.{model}.{i}", i < useful, "", false=["untrue"] if judged - i <= false else None)
+            offload.verdict(f"k.{model}.{i}", i < useful, "", false=["untrue"] if judged - i <= false else None,
+                            evidence="x.py:1 says otherwise" if judged - i <= false else None)
     for model, judged, useful, false in (("five", 5, 5, 0), ("thirty", 30, 10, 0), ("lucky", 1, 1, 0),
                                          ("steady", 10, 9, 0), ("honest", 5, 3, 0), ("liar", 5, 3, 1)):
         judge(model, judged, useful, false)
@@ -131,10 +147,43 @@ def ranking() -> None:
     # A useful verdict is worth the share of its claims that held: one false of ten costs a tenth.
     for model, useful, real, false in (("mostly", True, 9, 1), ("clean", True, 0, 0), ("nope", False, 0, 0)):
         offload.add(model, "t (bench/core, review)", None, "member; ok", f"k.{model}")
-        offload.verdict(f"k.{model}", useful, "", [f"real {i}" for i in range(real)] or None, ["untrue"] * false or None)
+        offload.verdict(f"k.{model}", useful, "", [f"real {i}" for i in range(real)] or None, ["untrue"] * false or None,
+                        evidence="x.py:1" if false else None)
     s = offload.summary()
-    assert abs(offload.score(s["mostly"]) - offload.score(s["clean"])) < 0.02, s["mostly"]
+    assert s["mostly"]["credit"] == 0.9 and abs(offload.score(s["mostly"]) - offload.score(s["clean"])) < 0.02, s["mostly"]
     assert gateway.route_order(["nope", "mostly"]) == ["mostly", "nope"]
+
+
+def evidence() -> None:
+    """A false claim counts only with what disproved it (or from before the field); caught is counted."""
+    import mine
+    for call, model in (("e1.member1", "proven"), ("e1.member2", "alleged"), ("e1.member3", "finder")):
+        offload.add(model, "t (bench/core, review)", None, "member; ok", call)
+    offload.verdict("e1.member1", False, "", false=["it leaks"], evidence="pool.py:12 closes it")
+    offload.verdict("e1.member2", False, "", false=["it races"])
+    offload.verdict("e1.member3", True, "", real=["the off-by-one"], caught=True)
+    with offload.LOG.open("a", encoding="utf-8") as fh:                          # a verdict from before the field
+        fh.write(json.dumps({"date": "2026-11-01", "model": "old", "task": "t", "useful": False, "note": "",
+                             "call": "e0.member1", "false": ["old claim"]}) + "\n")
+    s = offload.summary()
+    assert (s["proven"]["wrong"], s["alleged"]["wrong"], s["old"]["wrong"]) == (1, 0, 1), s
+    assert offload.score(s["alleged"]) > offload.score(s["proven"])              # an unproven word costs nothing extra
+    assert s["finder"]["caught"] == 1 and s["proven"]["caught"] == 0
+    assert next(e for e in offload.entries() if e.get("call") == "e1.member2")["evidence"] == ""
+    assert {c[0] for c in mine.claims_for("e1")} == {"it leaks", "the off-by-one"}     # the alleged one is not mined
+    assert {c[0] for c in mine.claims_for("e0")} == {"old claim"}
+    # The CLI keeps evidence and caught when not given again; the dashboard form clears them.
+    def got(call):
+        return next(e for e in offload.entries() if e.get("call") == call)
+    offload.verdict("e1.member3", True, "now with a note")
+    assert got("e1.member3")["caught"] is True
+    offload.verdict("e1.member1", False, "noted")
+    assert got("e1.member1")["evidence"] == "pool.py:12 closes it"
+    assert serve.record_verdict("e1.member3", True, "", ["the off-by-one"], [])["ok"]
+    assert "caught" not in got("e1.member3")
+    assert serve.record_verdict("e1.member3", True, "", [], [], "", True)["ok"] and got("e1.member3")["caught"]
+    assert not serve.record_verdict("e1.member3", True, "", [], [], "", "yes")["ok"]
+    assert not serve.record_verdict("e1.member3", True, "", [], [], ["a list"], False)["ok"]
 
 
 if __name__ == "__main__":
@@ -142,4 +191,5 @@ if __name__ == "__main__":
     bench_field()
     records()
     ranking()
-    print("verdict, bench-field, record and ranking checks pass")
+    evidence()
+    print("verdict, bench-field, record, ranking and evidence checks pass")

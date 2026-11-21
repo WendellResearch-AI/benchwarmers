@@ -77,7 +77,8 @@ def entries() -> list[dict]:
 
 
 def add(model: str, task: str, useful: bool | None, note: str, call: str | None = None,
-        real: list[str] | None = None, false: list[str] | None = None) -> dict:
+        real: list[str] | None = None, false: list[str] | None = None,
+        evidence: str | None = None, caught: bool | None = None) -> dict:
     entry = {"date": dt.date.today().isoformat(), "model": model,
              "task": task, "useful": useful, "note": note}
     if call:
@@ -88,6 +89,14 @@ def add(model: str, task: str, useful: bool | None, note: str, call: str | None 
         entry["real"] = real
     if false:
         entry["false"] = false
+    # What disproved the false claims (a file:line, a command and its output).
+    # Written, even empty, whenever there are false claims, so an entry from
+    # before the field (no key) can be told from one that skipped it: backed().
+    if false or evidence:
+        entry["evidence"] = evidence or ""
+    # The seat found something the caller had not: what a second opinion is for.
+    if caught:
+        entry["caught"] = True
     LOG.parent.mkdir(parents=True, exist_ok=True)
     with LOG.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(entry) + "\n")
@@ -96,30 +105,44 @@ def add(model: str, task: str, useful: bool | None, note: str, call: str | None 
 
 def verdict(call: str, useful: bool | None, note: str,
             real: list[str] | None = None, false: list[str] | None = None,
-            replace: bool = False) -> dict:
-    """Judge one seat of a bench-gateway panel by its call id. A blank note or
-    claim list keeps the earlier one, unless `replace` (the dashboard's form,
-    which shows them for editing, so blank means cleared)."""
+            replace: bool = False, evidence: str | None = None, caught: bool | None = None) -> dict:
+    """Judge one seat of a bench-gateway panel by its call id. A blank note,
+    claim list or evidence, or no `caught`, keeps the earlier one, unless
+    `replace` (the dashboard's form, which shows them for editing, so blank
+    means cleared)."""
     found = next((e for e in reversed(entries()) if e.get("call") == call), None)
     if found is None:
         raise KeyError(f"no offload with call id {call!r}; the gateway prints them under each answer")
     if replace:
-        real, false = real or None, false or None
+        real, false, evidence, caught = real or None, false or None, evidence or None, bool(caught)
     else:
         note, real, false = note or found.get("note", ""), real or found.get("real"), false or found.get("false")
-    if (useful, note, real, false) == (found.get("useful"), found.get("note", ""), found.get("real"), found.get("false")):
+        evidence = evidence or found.get("evidence") or None
+        caught = found.get("caught", False) if caught is None else caught
+    if ((useful, note, real, false, evidence or "", bool(caught))
+            == (found.get("useful"), found.get("note", ""), found.get("real"), found.get("false"),
+                found.get("evidence") or "", found.get("caught", False))):
         return found                                   # the same verdict again writes nothing
-    return add(found["model"], found["task"], useful, note, call, real, false)
+    return add(found["model"], found["task"], useful, note, call, real, false, evidence, caught)
+
+
+def backed(e: dict) -> bool:
+    """Whether an entry's false claims count against the model: they say what
+    disproved them, or the entry predates the evidence field. A caller can be
+    wrong about a seat, so an untrue claim it alleges without proof costs the
+    seat nothing (its verdict still counts) and is not mined into a task."""
+    return bool(e.get("evidence", True))
 
 
 def summary(keep=None) -> dict[str, dict]:
-    """Per model: how often, how often it helped, and the last thing it did.
-    For score(): `credit`, what the useful verdicts are worth (each the share
-    of its listed claims that held, 1 with none listed), and `wrong`, the
-    not-useful verdicts that list a false claim. `keep`, a test on an entry,
+    """Per model: how often, how often it helped, how often it caught what the
+    caller had missed, and the last thing it did. For score(): `credit`, what
+    the useful verdicts are worth (each the share of its listed claims that
+    held, 1 with none listed), and `wrong`, the not-useful verdicts that list a
+    false claim; false claims count only when backed(). `keep`, a test on an entry,
     counts only the entries it passes (the merger reads one shape's verdicts)."""
     agg: dict[str, dict] = collections.defaultdict(
-        lambda: {"offloads": 0, "useful": 0, "judged": 0, "credit": 0.0, "wrong": 0,
+        lambda: {"offloads": 0, "useful": 0, "judged": 0, "credit": 0.0, "wrong": 0, "caught": 0,
                  "last_task": "", "last_date": ""})
     for e in entries():
         if keep and not keep(e):
@@ -129,7 +152,8 @@ def summary(keep=None) -> dict[str, dict]:
         if e.get("useful") is not None:
             a["judged"] += 1
             a["useful"] += 1 if e["useful"] else 0
-            real, false = len(e.get("real") or []), len(e.get("false") or [])
+            a["caught"] += 1 if e.get("caught") else 0
+            real, false = len(e.get("real") or []), len(e.get("false") or []) if backed(e) else 0
             a["credit"] += (real / (real + false) if real + false else 1) if e["useful"] else 0
             a["wrong"] += 1 if false and not e["useful"] else 0
         if e["date"] >= a["last_date"]:
@@ -180,15 +204,21 @@ def main() -> None:
                    help="a finding this answer got right, verified; repeatable")
     v.add_argument("--false", action="append", dest="false_claims", metavar="CLAIM",
                    help="a claim this answer made that is not true, verified; repeatable")
+    for p in (a, v):
+        p.add_argument("--evidence", help="what disproved the false claims: a file:line, a command and its output")
+        p.add_argument("--caught", action="store_true", default=None,
+                       help="it found something you had not")
     args = ap.parse_args()
 
     if args.cmd == "add":
-        e = add(args.model, args.task, args.useful, args.note, real=args.real, false=args.false_claims)
+        e = add(args.model, args.task, args.useful, args.note, real=args.real, false=args.false_claims,
+                evidence=args.evidence, caught=args.caught)
         print(f"recorded: {e['model']} — {e['task']}")
         return
     if args.cmd == "verdict":
         try:
-            e = verdict(args.call, args.useful, args.note, args.real, args.false_claims)
+            e = verdict(args.call, args.useful, args.note, args.real, args.false_claims,
+                        evidence=args.evidence, caught=args.caught)
         except KeyError as exc:
             raise SystemExit(exc.args[0])
         print(f"recorded: {e['model']} — {e['task']} — useful={e['useful']}")
@@ -200,10 +230,10 @@ def main() -> None:
         print("This is empty because it counts REAL WORK only — a benchmark "
               "run is not an offload.")
         return
-    print(f"{'model':<26} {'used':>5} {'helped':>7}  last")
+    print(f"{'model':<26} {'used':>5} {'helped':>7} {'caught':>6}  last")
     for model, a in sorted(data.items(), key=lambda kv: -kv[1]["offloads"]):
         helped = (f"{a['useful']}/{a['judged']}" if a["judged"] else "—")
-        print(f"{model:<26} {a['offloads']:>5} {helped:>7}  {a['last_task'][:44]}")
+        print(f"{model:<26} {a['offloads']:>5} {helped:>7} {a['caught'] or '—':>6}  {a['last_task'][:44]}")
 
 
 if __name__ == "__main__":

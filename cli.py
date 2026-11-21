@@ -380,7 +380,8 @@ def cmd_ask(args) -> None:
 
 def cmd_verdict(args) -> None:
     body = {"call": args.call, "useful": args.useful, "note": args.note or "",
-            "real": args.real or [], "false": args.false or []}
+            "real": args.real or [], "false": args.false or [], "evidence": args.evidence or "",
+            **({"caught": True} if args.caught else {})}
     reply = call("POST", "/bench/verdict", body)
     out(args, reply, lambda r: done(r, f"recorded {args.call}: {'useful' if args.useful else 'not useful'},"
                                        f" {len(body['real'])} real, {len(body['false'])} false"))
@@ -483,7 +484,11 @@ keeps only the answers. Then judge each seat you checked:
   bench verdict <call> --useful|--not-useful""",
     "verdict": """examples:
   bench verdict p20261022-101500-ab12.member1 --useful --note "found the real bug" \\
-      --real "refresh() races with evict()" --false "the query is injectable\"""",
+      --real "refresh() races with evict()" --false "the query is injectable" \\
+      --evidence "db.py:42 binds every value as a parameter" --caught
+
+A false claim counts against the model only with --evidence. --caught: it
+found something you had not.""",
     "model": """examples:
   bench model role mercury-3 code
   bench model rename deepseek-v4.1-flash deepseek-flash
@@ -579,6 +584,8 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--note")
     s.add_argument("--real", action="append", metavar="CLAIM", help="a claim it got right (repeatable)")
     s.add_argument("--false", action="append", metavar="CLAIM", help="a claim that is untrue (repeatable)")
+    s.add_argument("--evidence", help="what disproved the false claims: a file:line, a command and its output")
+    s.add_argument("--caught", action="store_true", help="it found something you had not")
 
     s = cmd("models", cmd_models, "the models on the bench")
     s.add_argument("--all", action="store_true", help="retired ones too")
