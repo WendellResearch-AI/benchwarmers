@@ -15,7 +15,7 @@
   <a href="https://skills.sh/wendellresearch-ai/benchwarmers/benchwarmers"><img src="https://img.shields.io/badge/skills.sh-111111" alt="On skills.sh"></a>
   <a href="https://glama.ai/mcp/servers/WendellResearch-AI/benchwarmers"><img src="https://glama.ai/mcp/servers/WendellResearch-AI/benchwarmers/badges/score.svg" alt="Benchwarmers MCP server, quality and maintenance score on Glama"></a>
   <a href="https://cursor.directory/plugins/benchwarmers"><img src="https://img.shields.io/badge/cursor.directory-111111?logo=cursor&logoColor=white" alt="On cursor.directory"></a>
-  <a href="#from-claude-code-and-other-agents"><img src="https://img.shields.io/badge/Antigravity-plugin-3186FF?labelColor=111111&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjEyIDE3IDg2IDgwIj48cGF0aCBkPSJNODkuNyA5My43YzQuNjcgMy41IDExLjY3IDEuMTcgNS4yNS01LjI1Qzc1LjcgNjkuNzggNzkuNzggMTguNDUgNTUuODcgMTguNDVTMzYuMDMgNjkuNzggMTYuNzggODguNDVjLTcgNyAuNTggOC43NSA1LjI1IDUuMjVDNDAuMTIgODEuNDUgMzguOTUgNTkuODYgNTUuODcgNTkuODZTNzEuNjIgODEuNDUgODkuNyA5My43WiIgZmlsbD0iIzMxODZGRiIvPjxtYXNrIGlkPSJtIiBtYXNrVW5pdHM9InVzZXJTcGFjZU9uVXNlIiB4PSIxMyIgeT0iMTgiIHdpZHRoPSI4NSIgaGVpZ2h0PSI3OCI%2BPHBhdGggZD0iTTg5LjcgOTMuN2M0LjY3IDMuNSAxMS42NyAxLjE3IDUuMjUtNS4yNUM3NS43IDY5Ljc4IDc5Ljc4IDE4LjQ1IDU1Ljg3IDE4LjQ1UzM2LjAzIDY5Ljc4IDE2Ljc4IDg4LjQ1Yy03IDcgLjU4IDguNzUgNS4yNSA1LjI1QzQwLjEyIDgxLjQ1IDM4Ljk1IDU5Ljg2IDU1Ljg3IDU5Ljg2UzcxLjYyIDgxLjQ1IDg5LjcgOTMuN1oiIGZpbGw9IiNmZmYiLz48L21hc2s%2BPGcgbWFzaz0idXJsKCNtKSI%2BPGcgZmlsdGVyPSJ1cmwoI2EpIj48ZWxsaXBzZSBjeD0iOTYuNDkiIGN5PSIzNS4xMiIgcng9IjI5LjUiIHJ5PSIzMC4xNSIgdHJhbnNmb3JtPSJyb3RhdGUoNzYuOTIgOTYuNDkgMzUuMTIpIiBmaWxsPSIjRkM0MTNEIi8%2BPC9nPjxnIGZpbHRlcj0idXJsKCNiKSI%2BPGVsbGlwc2UgY3g9IjkuMDMiIGN5PSI0MS42NiIgcng9IjMwLjgzIiByeT0iMzkuOTQiIHRyYW5zZm9ybT0icm90YXRlKDc0LjEzIDkuMDMgNDEuNjYpIiBmaWxsPSIjMDBCOTVDIi8%2BPC9nPjxnIGZpbHRlcj0idXJsKCNjKSI%2BPGVsbGlwc2UgY3g9Ijc1Ljc1IiBjeT0iMTA0LjgyIiByeD0iMjkuMDIiIHJ5PSIyNy45NCIgdHJhbnNmb3JtPSJyb3RhdGUoNzYuOTIgNzUuNzUgMTA0LjgyKSIgZmlsbD0iIzMxODZGRiIvPjwvZz48ZyBmaWx0ZXI9InVybCgjZCkiPjxlbGxpcHNlIGN4PSIzMy41NyIgY3k9IjM1LjQiIHJ4PSIzMy41NyIgcnk9IjM1LjQiIHRyYW5zZm9ybT0ibWF0cml4KC0uNDEgLjkxMiAtLjkxMiAtLjQxIDEwMS4yNSAtMTUuMTcpIiBmaWxsPSIjRkJCQzA0Ii8%2BPC9nPjwvZz48ZGVmcz48ZmlsdGVyIGlkPSJhIiB4PSIyOCIgeT0iLTMzIiB3aWR0aD0iMTM3IiBoZWlnaHQ9IjEzNiIgZmlsdGVyVW5pdHM9InVzZXJTcGFjZU9uVXNlIj48ZmVHYXVzc2lhbkJsdXIgc3RkRGV2aWF0aW9uPSIxOC44Ii8%2BPC9maWx0ZXI%2BPGZpbHRlciBpZD0iYiIgeD0iLTYzIiB5PSItMjMiIHdpZHRoPSIxNDQiIGhlaWdodD0iMTI5IiBmaWx0ZXJVbml0cz0idXNlclNwYWNlT25Vc2UiPjxmZUdhdXNzaWFuQmx1ciBzdGREZXZpYXRpb249IjE2Ii8%2BPC9maWx0ZXI%2BPGZpbHRlciBpZD0iYyIgeD0iMTYiIHk9IjQ0IiB3aWR0aD0iMTE5IiBoZWlnaHQ9IjEyMSIgZmlsdGVyVW5pdHM9InVzZXJTcGFjZU9uVXNlIj48ZmVHYXVzc2lhbkJsdXIgc3RkRGV2aWF0aW9uPSIxNS4yIi8%2BPC9maWx0ZXI%2BPGZpbHRlciBpZD0iZCIgeD0iLTgiIHk9Ii02MSIgd2lkdGg9IjEyNyIgaGVpZ2h0PSIxMjQiIGZpbHRlclVuaXRzPSJ1c2VyU3BhY2VPblVzZSI%2BPGZlR2F1c3NpYW5CbHVyIHN0ZERldmlhdGlvbj0iMTMuOCIvPjwvZmlsdGVyPjwvZGVmcz48L3N2Zz4%3D" alt="Antigravity plugin"></a>
+  <a href="USAGE.md#from-claude-code-and-other-agents"><img src="https://img.shields.io/badge/Antigravity-plugin-3186FF?labelColor=111111&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjEyIDE3IDg2IDgwIj48cGF0aCBkPSJNODkuNyA5My43YzQuNjcgMy41IDExLjY3IDEuMTcgNS4yNS01LjI1Qzc1LjcgNjkuNzggNzkuNzggMTguNDUgNTUuODcgMTguNDVTMzYuMDMgNjkuNzggMTYuNzggODguNDVjLTcgNyAuNTggOC43NSA1LjI1IDUuMjVDNDAuMTIgODEuNDUgMzguOTUgNTkuODYgNTUuODcgNTkuODZTNzEuNjIgODEuNDUgODkuNyA5My43WiIgZmlsbD0iIzMxODZGRiIvPjxtYXNrIGlkPSJtIiBtYXNrVW5pdHM9InVzZXJTcGFjZU9uVXNlIiB4PSIxMyIgeT0iMTgiIHdpZHRoPSI4NSIgaGVpZ2h0PSI3OCI%2BPHBhdGggZD0iTTg5LjcgOTMuN2M0LjY3IDMuNSAxMS42NyAxLjE3IDUuMjUtNS4yNUM3NS43IDY5Ljc4IDc5Ljc4IDE4LjQ1IDU1Ljg3IDE4LjQ1UzM2LjAzIDY5Ljc4IDE2Ljc4IDg4LjQ1Yy03IDcgLjU4IDguNzUgNS4yNSA1LjI1QzQwLjEyIDgxLjQ1IDM4Ljk1IDU5Ljg2IDU1Ljg3IDU5Ljg2UzcxLjYyIDgxLjQ1IDg5LjcgOTMuN1oiIGZpbGw9IiNmZmYiLz48L21hc2s%2BPGcgbWFzaz0idXJsKCNtKSI%2BPGcgZmlsdGVyPSJ1cmwoI2EpIj48ZWxsaXBzZSBjeD0iOTYuNDkiIGN5PSIzNS4xMiIgcng9IjI5LjUiIHJ5PSIzMC4xNSIgdHJhbnNmb3JtPSJyb3RhdGUoNzYuOTIgOTYuNDkgMzUuMTIpIiBmaWxsPSIjRkM0MTNEIi8%2BPC9nPjxnIGZpbHRlcj0idXJsKCNiKSI%2BPGVsbGlwc2UgY3g9IjkuMDMiIGN5PSI0MS42NiIgcng9IjMwLjgzIiByeT0iMzkuOTQiIHRyYW5zZm9ybT0icm90YXRlKDc0LjEzIDkuMDMgNDEuNjYpIiBmaWxsPSIjMDBCOTVDIi8%2BPC9nPjxnIGZpbHRlcj0idXJsKCNjKSI%2BPGVsbGlwc2UgY3g9Ijc1Ljc1IiBjeT0iMTA0LjgyIiByeD0iMjkuMDIiIHJ5PSIyNy45NCIgdHJhbnNmb3JtPSJyb3RhdGUoNzYuOTIgNzUuNzUgMTA0LjgyKSIgZmlsbD0iIzMxODZGRiIvPjwvZz48ZyBmaWx0ZXI9InVybCgjZCkiPjxlbGxpcHNlIGN4PSIzMy41NyIgY3k9IjM1LjQiIHJ4PSIzMy41NyIgcnk9IjM1LjQiIHRyYW5zZm9ybT0ibWF0cml4KC0uNDEgLjkxMiAtLjkxMiAtLjQxIDEwMS4yNSAtMTUuMTcpIiBmaWxsPSIjRkJCQzA0Ii8%2BPC9nPjwvZz48ZGVmcz48ZmlsdGVyIGlkPSJhIiB4PSIyOCIgeT0iLTMzIiB3aWR0aD0iMTM3IiBoZWlnaHQ9IjEzNiIgZmlsdGVyVW5pdHM9InVzZXJTcGFjZU9uVXNlIj48ZmVHYXVzc2lhbkJsdXIgc3RkRGV2aWF0aW9uPSIxOC44Ii8%2BPC9maWx0ZXI%2BPGZpbHRlciBpZD0iYiIgeD0iLTYzIiB5PSItMjMiIHdpZHRoPSIxNDQiIGhlaWdodD0iMTI5IiBmaWx0ZXJVbml0cz0idXNlclNwYWNlT25Vc2UiPjxmZUdhdXNzaWFuQmx1ciBzdGREZXZpYXRpb249IjE2Ii8%2BPC9maWx0ZXI%2BPGZpbHRlciBpZD0iYyIgeD0iMTYiIHk9IjQ0IiB3aWR0aD0iMTE5IiBoZWlnaHQ9IjEyMSIgZmlsdGVyVW5pdHM9InVzZXJTcGFjZU9uVXNlIj48ZmVHYXVzc2lhbkJsdXIgc3RkRGV2aWF0aW9uPSIxNS4yIi8%2BPC9maWx0ZXI%2BPGZpbHRlciBpZD0iZCIgeD0iLTgiIHk9Ii02MSIgd2lkdGg9IjEyNyIgaGVpZ2h0PSIxMjQiIGZpbHRlclVuaXRzPSJ1c2VyU3BhY2VPblVzZSI%2BPGZlR2F1c3NpYW5CbHVyIHN0ZERldmlhdGlvbj0iMTMuOCIvPjwvZmlsdGVyPjwvZGVmcz48L3N2Zz4%3D" alt="Antigravity plugin"></a>
   <a href="#docker-and-hosting"><img src="https://img.shields.io/badge/Docker-compose-2496ED?logo=docker&logoColor=white" alt="Runs in Docker"></a>
   <a href="https://render.com/deploy?repo=https://github.com/WendellResearch-AI/benchwarmers"><img src="https://img.shields.io/badge/Render-deploy-8A05FF?logo=render&logoColor=white" alt="Deploy to Render in one click"></a>
   <br>
@@ -63,12 +63,10 @@ verdicts decide who sits on the next panel.
   from what providers say and enforced, and one endpoint for every app, over
   any OpenAI-compatible provider or hub, or Anthropic's and Gemini's own APIs.
 
-**Not another gateway.** Gateways such as OmniRoute, freellmapi, LiteLLM and
-OpenRouter choose where a request goes by availability, quota, cost and speed.
-Benchwarmers finds out which of your models is *right*, and ranks them by that.
-It sits happily on top of one: the gateway keeps the accounts and quotas,
-Benchwarmers keeps the evidence. [COMPARISON.md](COMPARISON.md) has the
-side-by-side tables and the set-up.
+**Not another gateway.** Gateways choose where a request goes by quota, cost
+and speed; Benchwarmers finds out which of your models is *right*, and runs
+happily on top of one. [COMPARISON.md](COMPARISON.md) has the full tables and
+the set-up.
 
 | Related tools | Examples | What they do | What Benchwarmers does differently |
 |---|---|---|---|
@@ -80,7 +78,7 @@ side-by-side tables and the set-up.
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset=".github/flow-dark.svg">
-    <img src=".github/flow.svg" width="900" alt="Your app or agent asks the gateway for one of your collections. The gateway seats a panel: the collection's members, always seated, and an explorer that rotates in the model unused longest. Every answer comes back side by side, labelled by model and seat. You check them against the real work and record a verdict. Verdicts, daily health probes and the review suite make up the bench's record, which chooses who sits on the next panel.">
+    <img src=".github/flow.svg" width="900" alt="Your app or agent (opencode, VS Code, Zed, Codex, Continue, goose, or any OpenAI, Anthropic, Gemini or Ollama-format client, set up from the Connect page) asks the gateway for one of your collections. In a panel, bench/&lt;collection&gt;, the collection's members, always seated, and explorer seats that rotate in the model unused longest all answer, and every answer comes back side by side, labelled by model and seat, once two have answered and the rest have had 60 seconds more (a late seat is still recorded), or as one summary with :merged, whose merger sees Source 1, Source 2 rather than model names. In route mode, bench/&lt;collection&gt;:route, for agents with tool calls, one member takes each turn, ranked by verdict score and kept for the conversation, the next member takes over on a 429, an error or silence, and an optional shadow seat answers the same turn in the background, for evaluation only. You or the calling agent check the answers against the real work and record a verdict per call: useful or not, with its real and false claims. The bench's record of calls and verdicts, daily health probes and the review suite chooses who sits on the next panel and ranks the members for route mode.">
   </picture>
 </p>
 
@@ -88,9 +86,8 @@ side-by-side tables and the set-up.
 
 - [Try it](#try-it)
 - [How it works](#how-it-works)
-- [Asking a panel](#asking-a-panel)
-- [From the command line](#from-the-command-line)
-- [From Claude Code and other agents](#from-claude-code-and-other-agents)
+- [Use it from your apps](#use-it-from-your-apps)
+- [Where to read more](#where-to-read-more)
 - [The suite](#the-suite)
 - [Docker and hosting](#docker-and-hosting)
 - [What leaves your machine](#what-leaves-your-machine)
@@ -99,397 +96,129 @@ side-by-side tables and the set-up.
 - [Development](#development)
 - [Licence](#licence)
 
-Day-to-day use (the dashboard's pages, connecting apps, onboarding in bulk) is
-in [USAGE.md](USAGE.md). Running it on a server or a hosting platform is in
-[HOSTING.md](HOSTING.md). A coding agent setting it up for someone should start
-with [AGENTS.md](AGENTS.md).
-
 ## Try it
 
 **Version 1.1.** It runs with Python 3.11 or later on Windows, macOS and
-Linux, from PyPI, npm, a checkout or Docker. Report rough edges as issues, and
-read the code where these pages are thin.
-
-**Quickest**, with Python 3.11+ installed, from PyPI:
+Linux. The app is the Python standard library: nothing else to install.
 
     pipx install benchwarmers        # or: uv tool install benchwarmers
     benchwarmers                     # or try it first, without installing: uvx benchwarmers
 
-or from npm, with Node 18+ as well:
+or `npx @wendellresearch-ai/benchwarmers`, with Node 18+ as well. Either way
+you get the same command, `benchwarmers`, and its short name `bench`. It keeps
+your data in your user profile (`BENCHWARMERS_HOME` to choose another folder)
+and opens the dashboard on http://localhost:8122. Then:
 
-    npx @wendellresearch-ai/benchwarmers
+1. **Add an endpoint.** Sign in with a provider on its own page (OpenRouter,
+   NanoGPT, Hugging Face, Pollinations, your ChatGPT plan, GitHub Models, a
+   local Ollama), paste a key for any OpenAI-compatible API or hub (Anthropic
+   and Gemini through their own APIs too), or pick a model server already
+   running on this machine under "Found on this machine".
+2. **Onboard a few models.** Tick one or several: each is registered, probed
+   and run through the suite, one at a time.
+3. **Make a collection** on the Collections page: the models a panel always
+   includes, and what it is for.
+4. **Connect an app** on the Connect page, or ask the gateway yourself
+   ([below](#use-it-from-your-apps)).
 
-Either way you get the same two commands, `benchwarmers` and its short name
-`bench`. It keeps your data in your user profile (`BENCHWARMERS_HOME` to
-choose another folder), sets it up on the first run, and opens the dashboard
-on http://localhost:8122, where steps 3 to 5 below continue. The built-in
-model client makes every call, so nothing else needs installing. No
-dependencies either way: the app is the Python standard library.
-
-**From source:**
-
-1. **Get the code** and a Python 3.11+ environment:
-
-       git clone https://github.com/WendellResearch-AI/benchwarmers
-       cd benchwarmers
-       python -m venv .venv             # nothing to pip install: the standard library is enough
-
-   The built-in model client (`metrics/client.py`) makes every call. The
-   [`llm`](https://llm.datasette.io/) CLI is an alternative for its plugins:
-   install it in the venv and choose it on Settings (or `BENCH_CLIENT=llm`,
-   which wins).
-
-2. **Make a data folder.** Everything that is yours (endpoints, model
-   registrations, collections, verdicts, probe history, task answers) lives
-   there, never in the code:
-
-       python scripts/init.py           # or: python scripts/init.py <folder>
-
-   It starts the folder from `examples/` (in your OS's per-user data folder
-   unless you name one) and points the checkout at it with a
-   `.benchwarmers-home` file; `BENCHWARMERS_HOME` overrides that. With
-   `--endpoint NAME BASE_URL --key` it also adds a first endpoint and asks for
-   its key, which goes to the key file in llm's user folder (`keys.json`,
-   shared with the `llm` CLI if you have it, not needed otherwise), never into
-   the data folder. `BENCHWARMERS_KEY_<NAME>` in the environment works too.
-   To move an install to another machine, Settings → Export and import takes
-   the folder as one .zip (settings only, or everything; the endpoints' keys
-   only if you tick them) and imports it on the other install, saving what it
-   replaces to `backups/` first.
-
-3. **Start the dashboard.** With no endpoint yet it opens on adding one: sign
-   in with a provider on its own page (OpenRouter, NanoGPT, Hugging Face,
-   Pollinations, your ChatGPT plan, GitHub Models, or a local Ollama), or paste
-   an API key for any OpenAI-compatible API, a hub such as Open WebUI or
-   LiteLLM included. Anthropic and Gemini keys can also be called through
-   those providers' own APIs (the API choice in the same dialog). Only providers that publish a sign-in for other apps are
-   offered; adding one is an entry in `metrics/connect.py` (its docstring says
-   how). A model server already running on this machine, at its usual port or
-   any other its process is listening on, is offered under "Found on this
-   machine", its address and kind filled in: Ollama, LM Studio, Jan, GPT4All,
-   llama.cpp, llamafile, LocalAI, vLLM, Strata and Project Maya; AstrLink,
-   opencodex, ThinkWatch Lite, Claude Code Router, Bifrost and 9router as
-   gateways; Open WebUI, LiteLLM, CLI Proxy API and OmniRoute as hubs, which
-   the bench can add a model to; freellmapi, one-api and new-api as hubs it
-   reads (their quota, and one-api's and new-api's channels). Routers and
-   combos (OmniRoute's combos and `auto`, freellmapi's `auto`,
-   `auto:<profile>` and `fusion`) are kept out of onboarding, since a verdict
-   is about one model.
-
-       python serve.py                  # http://localhost:8122
-
-4. **Onboard a few models** from it ("Onboard a model"): tick one or several;
-   each is registered, probed and run through the suite, one at a time, with
-   the progress beside the button. **Quick** probes now and leaves the suite
-   to the scheduled passes; **+ ad hoc** (with Full or Quick) keeps the bench
-   from ever calling the model on its own afterwards, for a metered or trial
-   key. Tick **Vision
-   model** for one that reads images and little else: it sits only for
-   questions about images, and is tested on the vision tasks, not the code ones.
-
-5. **Make a collection** on the Collections page (the models a panel always
-   includes, and what it is for). The dashboard answers the gateway's routes on
-   its own port (`http://127.0.0.1:8122/v1`); `python gateway.py` runs the
-   gateway alone on `http://127.0.0.1:8123/v1`.
+From a checkout it is `git clone`, `python scripts/init.py` for a data folder,
+and `python serve.py`; [AGENTS.md](AGENTS.md) has every step and option, and
+Docker is [below](#docker-and-hosting).
 
 ## How it works
 
 - **Collections and seats.** A collection names the models a panel always
-  includes and the shape of work it is for (review, design, enumeration...).
-  Each call adds explorer seats chosen by how long a model has gone unused, so
-  the bench keeps learning about models a router would stop asking. A member
-  that is out of quota or rate-limited keeps its place while an explorer
-  stands in for it until it is back. A collection can set its own calls per
-  request and explorers, and one marked ad hoc (an expensive one, say) runs
-  only when a request names it.
-- **Verdicts.** Each seat's answer carries a call id. Once you have checked an
-  answer against the real work, record whether it was useful, and which of its
-  claims were real or false. Verdicts, not vibes, decide the next panel; a
-  model that is often confidently wrong shows as that.
-- **The catalog.** Context window, output limit, tools, vision and price come
-  from models.dev for the provider that actually serves a model, then
-  OpenRouter's public catalog and FreeLLMAPI, and anything you set by hand.
-- **Health.** Every morning each model gets a one-word prompt; once a week, a
-  short and a long one for speed. A model that stops answering, or that its
-  endpoint no longer serves, is retired automatically after one confirming
-  call, with the evidence kept, and can be restored in one click. A model
-  that is only out of quota until a stated reset is not counted against. The
-  built-in scheduler runs all of this once Settings switches it on; a fresh
-  install spends no calls until then.
-- **Benchmarks.** One page of reports: bugs found against false alarms, who
-  is confidently wrong, real work that helped, each model against its own
-  earlier scores (Trend), whether each provider was there when the bench
-  called it (Uptime: busy, unreachable and timed out count as down; your own
-  quota and pacing are left out), and speed. Each report shares as an image or
-  its table. [BENCHMARKS.md](BENCHMARKS.md) says how to read them.
-- **Decision models.** A model that answers typed questions with a
-  probability (Mercury Decide, say) labels a request's shape, picks a
-  collection for a request that names none (when it is sure, and the reply
-  says so), and classes an error no rule knows. Each is measured daily on
-  questions the bench's own data answers, and each use asks the one that does
-  best.
-- **Rate limits and usage.** Limits come from providers' rate-limit headers
-  and error messages, and from what you set per connection or model
-  (requests a minute, day or month; tokens a minute or day). They are kept per
-  connection, since models behind one key share them, and enforced: a call
-  waits when the wait fits, or is refused before it goes out. Every call lands
-  in a monthly usage ledger with its tokens. Quota management has a tile per
-  provider showing what is left, when it resets and who is resting. OpenRouter,
-  xKiro, Requesty, the sign-ins in CLI Proxy API or OmniRoute, and what
-  freellmapi, one-api and new-api say is left are read live, at no cost to
-  quota. Nothing is taken from a provider's docs; NVIDIA's own stated figures
-  are read from its site and watched for changes.
-- **Discover.** FreeLLMAPI's free catalog, with models.dev for the details
-  and paid models it lacks, merged into one list of models worth adding,
-  smartest first, each with the routes this install has to it and links to
-  its pages on both. Each Open WebUI connection's own model list adds what a
-  provider serves before either catalog lists it; **Refresh lists** fetches
-  them all now rather than at the daily fetch.
+  includes and the kind of work it is for. Each call adds explorer seats,
+  chosen by how long a model has gone unused, so the bench keeps learning
+  about models a router would stop asking. A member out of quota keeps its
+  place while an explorer stands in.
+- **Two ways to ask.** A **panel** returns every seat's answer, without
+  waiting for the slowest: once two have answered, the rest get 60 seconds. In
+  **route mode** an agent's turns go to one member at a time, ranked by its
+  verdicts, with failover.
+- **Verdicts.** Each answer carries a call id. Once you have checked it,
+  record whether it was useful and which claims were real or false. Verdicts,
+  not vibes, rank the models; one that is often confidently wrong shows as
+  that.
+- **Health and limits.** A daily one-word probe, a weekly speed test, and a
+  model that stops answering retired automatically, evidence kept, restored in
+  one click. Rate limits come from what providers say and from what you set,
+  and are enforced before a call goes out; every call lands in a usage ledger.
+- **Benchmarks.** Bugs found against false alarms, who is confidently wrong,
+  real work that helped, each model against its own earlier scores, uptime and
+  speed, on one page ([BENCHMARKS.md](BENCHMARKS.md)).
+- **Discover.** Free and paid models worth adding, from FreeLLMAPI's catalog,
+  models.dev and your hubs' own lists, smartest first.
 
-## Asking a panel
+## Use it from your apps
 
-Any OpenAI-compatible client works: ask for the model `bench/<collection>`.
+- **Any OpenAI-compatible client:** ask for the model `bench/<collection>` at
+  `http://127.0.0.1:8122/v1`. The reply carries every seat's answer, and each
+  seat's call id in its `bench` field; `bench/<collection>:merged` returns one
+  summary instead. The same panel answers in the Anthropic, Gemini, Responses
+  and Ollama formats.
 
-    curl http://127.0.0.1:8122/v1/chat/completions \
-      -H "Content-Type: application/json" \
-      -d '{"model": "bench/<collection>", "messages": [{"role": "user", "content": "Where can this function return a stale value? ..."}]}'
+      curl http://127.0.0.1:8122/v1/chat/completions -H "Content-Type: application/json" \
+        -d '{"model": "bench/<collection>", "messages": [{"role": "user", "content": "Where can this return a stale value? ..."}]}'
 
-The reply carries every seat's answer in the message, and the same seats as
-data in a `bench` field: model, seat, status, seconds and a call id. It does
-not wait for the slowest seat: once two have answered, the rest get 60
-seconds, and one still answering is named `late` and recorded when it
-finishes. For a chat
-window that shows one answer, ask for `bench/<collection>:merged`: a merger
-model writes one answer saying where the seats agreed and disagreed, and every
-seat is still in `bench`. Record a verdict per call once you have checked it:
+- **Agents with tools** (Claude Code, Codex, opencode, Cline and the like):
+  `bench/<collection>:route` gives each turn to one member, ranked by its
+  verdicts, kept for the whole conversation and replaced by the next if it
+  fails.
+- **Ready set-ups:** the dashboard's **Connect** page fills in each popular
+  app's configuration from your install, and **Set it up** writes the files for
+  opencode, VS Code, Zed, Codex, Continue and goose after showing them, with a
+  copy of each file it changes. [CLIENTS.md](CLIENTS.md) has the same set-ups.
+- **As MCP tools:** a running server is an MCP server at `/mcp`, with
+  `list_collections`, `ask`, `verdict` and `pending_verdicts`. The Claude Code
+  plugin adds `/benchwarmers:ask`, a skill saying when a panel helps, and a
+  reminder of the seats still unjudged:
 
-    curl http://127.0.0.1:8122/bench/verdict -H "Content-Type: application/json" \
-      -d '{"call": "<call id>", "useful": true, "note": "found the real bug", "real": ["..."], "false": ["..."]}'
+      /plugin marketplace add WendellResearch-AI/benchwarmers
+      /plugin install benchwarmers@benchwarmers
 
-or from the dashboard. See [GATEWAY.md](GATEWAY.md) for the full contract:
-images, prompt sizes, who may call, and the reply's shape.
+- **From the command line:** `bench ask core "Review this diff" -f app.py`,
+  `bench verdict <call id> --useful`, and the rest of what the dashboard does.
 
-**Other clients.** The same panel answers in other APIs' shapes, so a client
-that speaks one of them works with the server's address as its base URL:
+Once you have checked an answer against the real work, record a verdict for its
+call: from the dashboard, `bench verdict`, the MCP `verdict` tool or
+`POST /bench/verdict`.
 
-| Format | Route | For |
-|---|---|---|
-| OpenAI chat completions | `POST /v1/chat/completions` | OpenAI SDKs, most chat apps |
-| OpenAI Responses | `POST /v1/responses` | `responses.create` clients (nothing is stored) |
-| OpenAI legacy completions | `POST /v1/completions` | tools that send a `prompt` |
-| Anthropic Messages | `POST /v1/messages` | Anthropic SDKs with `base_url` |
-| Ollama | `POST /api/chat`, `/api/generate`, `GET /api/tags` | Open WebUI's Ollama connection, Ollama apps |
-| Gemini | `POST /v1beta/models/bench/<collection>:generateContent` | Google GenAI SDKs with `base_url` |
+## Where to read more
 
-    curl http://127.0.0.1:8122/v1/messages -H "Content-Type: application/json" \
-      -d '{"model": "bench/<collection>", "max_tokens": 1024, "messages": [{"role": "user", "content": "..."}]}'
-
-Each streams when asked: the reply starts at once, and each seat's answer
-arrives as that seat finishes. A panel answers with text, so a request
-carrying tools is refused with a 400 that points to **route mode**
-(`bench/<collection>:route`, one member with its tools; see
-[below](#from-claude-code-and-other-agents)). GATEWAY.md, "Other API formats",
-has a curl for each and what is refused or ignored.
-
-## From the command line
-
-`bench` (or `benchwarmers`, the same program) does what the dashboard does,
-without it: ask and judge, and run the bench itself. It is a client of a
-running server, so the same commands work against one on another machine.
-
-    bench status                                   what is running, and where
-    bench restart                                  start it again on the code now on disk
-    bench collections                              what you can ask
-    bench ask core "Where can this return a stale value?" -f cache.py
-    git diff | bench ask core "Review this diff"   a pipe is the prompt
-    bench verdict <call id> --useful --real "the race in refresh()" --false "the SQL injection"
-
-    bench models --find mercury                    the roster, with each model's status
-    bench candidates --new                         what your endpoints serve that is not on the bench
-    bench onboard <served name> --wait             onboard it (registered, probed, scored)
-    bench model retire <alias> --reason "..."      and back: bench model restore <alias>
-    bench collection save reviewers --members a,b,c --description "adversarial review"
-    bench collection save reviewers --add d --remove a
-    bench collection save heavy-hitters --ad-hoc --max-calls 4 --max-explorers 0
-    bench endpoint add openrouter --base https://openrouter.ai/api/v1   (asks for the key, hidden)
-    bench key create my-app --collections core --rpm 30
-    bench settings scheduler run --off perf
-
-`--help` on any command lists its options with examples, and `--json` prints
-what the server answered, for scripts. `--url` points one command at another
-server. `ask` prints every seat's answer on stdout and the table of call ids to
-judge them by on stderr, so `bench ask core "..." > review.md` keeps only the
-answers. Retiring a model, deleting a collection or an endpoint and revoking a
-key ask first; `--yes` answers for a script. A key is never an argument (others
-on the machine can read those): `endpoint add` prompts for it, or reads it
-from stdin with `--key-stdin`.
-
-Another program called `bench` (the Frappe framework's) may come first on your
-PATH; type `benchwarmers` instead, which takes the same commands.
-
-| Variable | Meaning |
-| --- | --- |
-| `BENCHWARMERS_URL` | the server, default `http://127.0.0.1:8122` |
-| `BENCHWARMERS_ADMIN_TOKEN` | the server's admin token, where it has one; sent as `Authorization: Bearer` for every command but `ask`, `collections` and `verdict` |
-| `BENCHWARMERS_KEY` | a gateway key, for `ask`, `collections` and `verdict`, where keys are required |
-| `BENCHWARMERS_TIMEOUT` | seconds to wait for a panel, default 900 |
-
-Exit codes: 0 done, 1 refused or failed (the reason on stderr), 2 bad usage, 3
-no server at `BENCHWARMERS_URL`.
-
-## From Claude Code and other agents
-
-A running Benchwarmers is an MCP server at `/mcp` on its own port
-(`http://127.0.0.1:8122/mcp`; `/v1/mcp` works too), over streamable HTTP,
-with four tools: `list_collections`, `ask` (a collection, a prompt,
-optionally `merged`, `with` and `system`), `verdict` and `pending_verdicts`
-(the seats still unjudged). Nothing to start per
-client: every agent session shares the one server, behind the same Host,
-Origin and gateway-key checks as `/v1`. The tool descriptions carry the
-rules: ask a collection, not a favourite model; verify before acting; name
-every seat; send a verdict per seat you judged.
-
-**Claude Code plugin.** The plugin connects to that `/mcp` and adds a
-`/benchwarmers:ask <collection> <what to ask>` command and a `benchwarmers`
-skill saying when a panel helps (adversarial review, exhaustive enumeration
-over real files) and how to judge it:
-
-    /plugin marketplace add WendellResearch-AI/benchwarmers
-    /plugin install benchwarmers@benchwarmers
-
-It finds the server through `BENCHWARMERS_URL` (default
-`http://127.0.0.1:8122`; set it if you changed `BENCH_PORT`) and sends
-`BENCHWARMERS_KEY` where keys are required. It also adds a `Stop` hook: at
-the end of a turn it asks the server (the `pending_verdicts` tool, so nothing
-extra runs on your machine) which seats of that session's panels have no
-verdict yet, and reminds Claude of them once, as hook feedback. The server
-finds the session's panels in its transcript, so the reminder needs a server
-on the same machine; with one elsewhere the hook stays silent. A verdict sent
-any way counts, the dashboard's included. With the plugin enabled and no
-Benchwarmers running, the hook shows a hook-error notice at the end of each
-turn, as `/mcp` shows the server as failed; start the server, or disable the
-plugin for that session.
-
-**Cursor and Antigravity plugins.** The same skill, with the stdio server
-below (so they need Node and Python 3.11 or later): Cursor's is
-[on cursor.directory](https://cursor.directory/plugins/benchwarmers), and
-Antigravity's installs from the repository:
-
-    agy plugin install https://github.com/WendellResearch-AI/benchwarmers
-
-**Any other MCP client** that speaks HTTP:
-
-```json
-{"mcpServers": {"benchwarmers": {"type": "http", "url": "http://127.0.0.1:8122/mcp"}}}
-```
-
-with `"headers": {"Authorization": "Bearer <gateway key>"}` where keys are
-required. **A client that only speaks stdio**: run `benchwarmers mcp` once
-installed, `uvx benchwarmers mcp` or
-`npx -y @wendellresearch-ai/benchwarmers mcp` without installing, or `python mcp_server.py` from a
-checkout, a small process per client that calls the same server. For example:
-
-```json
-{"mcpServers": {"benchwarmers": {"command": "npx", "args": ["-y", "@wendellresearch-ai/benchwarmers", "mcp"],
-                                 "env": {"BENCHWARMERS_URL": "http://127.0.0.1:8122"}}}}
-```
-
-On native Windows, a client that cannot start `npx` itself needs
-`"command": "cmd", "args": ["/c", "npx", "-y", "@wendellresearch-ai/benchwarmers", "mcp"]`.
-
-| Variable | Meaning |
-| --- | --- |
-| `BENCHWARMERS_URL` | the server, default `http://127.0.0.1:8122` (a `/v1` on the end is fine) |
-| `BENCHWARMERS_KEY` | a gateway key from Settings, sent as `Authorization: Bearer`; needed for a server on another machine, or where keys are required |
-| `BENCHWARMERS_TIMEOUT` | seconds to wait for a panel, default 900 |
-
-**Behind an MCP aggregator** (1mcp, MetaMCP, mcp-proxy, Docker's MCP Gateway
-and the like): add `http://127.0.0.1:8122/mcp` as an HTTP (streamable HTTP)
-upstream, with the `Authorization` header where keys are required; an
-aggregator that only runs stdio servers takes `benchwarmers mcp` as above.
-Give it a request timeout of a few minutes or more, as a panel takes that
-long; 1mcp's default of 60 seconds ends most of them. With 1mcp, for example:
-
-    1mcp mcp add benchwarmers --type http --url http://127.0.0.1:8122/mcp --timeout 900000
-
-The aggregator prefixes the tool names (1mcp's are
-`benchwarmers_1mcp_ask` and so on). If you also use the Claude Code plugin,
-disable the plugin's own `benchwarmers` server in `/mcp` so the tools are not
-listed twice; the skill and `/benchwarmers:ask` keep working, though the
-command then asks before each tool call, since its pre-approved tools carry
-the plugin's names. The plugin's verdict hook calls the plugin's own server,
-so it does not work through an aggregator: with that server disabled it only
-shows a hook-error notice at the end of each turn.
-
-**An agent running on a collection.** The MCP tools ask a panel for a
-second opinion; an agent can also *be driven by* a collection, in **route
-mode** (`bench/<collection>:route`): one member, picked by its record, gets
-each turn with its tools, stays on for the whole conversation, and is
-replaced by the next member if it fails before answering. Claude Code
-points at it with `ANTHROPIC_BASE_URL=http://127.0.0.1:8122` and
-`ANTHROPIC_MODEL=bench/core:route`; Codex, opencode, Cline and other
-OpenAI-, Responses- or Ollama-speaking agents with the same base URL.
-[GATEWAY.md](GATEWAY.md), "Route mode", has the set-up and the limits.
-
-**Ready set-ups.** The dashboard's **Connect** page (Gateway) gives each
-popular app's configuration, filled in from your install's address,
-collections and MCP server, with a Copy button: opencode, VS Code chat, Codex
-CLI, Zed, Continue, Cline and Kilo Code, Claude Code, your own Python with
-LangChain or the OpenAI Agents SDK, goose, and chat apps
-(LobeHub, AnythingLLM, Cherry Studio, Chatbox, LibreChat). You choose how the
-app uses Benchwarmers (a collection as its model, the panel as tools, or
-both), which collection, and its name; **Set it up** writes the files for
-opencode, VS Code, Zed, Codex, Continue and goose itself, after showing them,
-with a copy of each file it changes; and **Does it work?** shows the app's
-first call. An app may have its own key, made there for its collection; it
-goes into the lines you copy, never into a file that may sync.
-The same set-ups are in [CLIENTS.md](CLIENTS.md), with a fresh install's
-address and collections, for reading here or handing to an agent.
+| For | Read |
+|---|---|
+| The dashboard, onboarding, collections, Connect, the CLI, MCP clients and plugins | [USAGE.md](USAGE.md) |
+| The gateway's contract: API formats, route mode, the reply, who may call | [GATEWAY.md](GATEWAY.md) |
+| Each app's set-up, ready to copy or hand to an agent | [CLIENTS.md](CLIENTS.md) |
+| A coding agent setting Benchwarmers up for you | [AGENTS.md](AGENTS.md) |
+| Reading the reports | [BENCHMARKS.md](BENCHMARKS.md) |
+| The suite, and tasks from your own code | [suite/README.md](suite/README.md) |
+| Servers and hosting platforms | [HOSTING.md](HOSTING.md) |
+| How it compares with gateways, councils and arenas | [COMPARISON.md](COMPARISON.md) |
+| What is planned | [ROADMAP.md](ROADMAP.md) |
+| Security and privacy | [SECURITY.md](SECURITY.md), [PRIVACY.md](PRIVACY.md) |
 
 <!-- The MCP Registry's proof that the PyPI package is this server (server.json):
 mcp-name: io.github.WendellResearch-AI/benchwarmers -->
 
 ## The suite
 
-Models are scored on review work: find the faulty line, or say whether a
-claim about some code is true. The repository ships a starter pack:
-
-- **Real bugs** (`suite/tasks/rebench-*`): recent fixes from public projects,
-  drawn from the SWE-rebench-V2 dataset, each paired with a control.
-- **Claims** (`suite/tasks/claim-*`): true and false statements about this
-  project's own code, with the code attached.
-
-Add your own from your repositories (`config/repos.json` in the data folder
-maps a name to a folder): `python suite/seed.py --repo <name>` plants
-realistic bugs in your real functions, each with a clean control. Private
-code makes the best tasks, because no model has trained on it. See
-[suite/README.md](suite/README.md), [suite/REBENCH.md](suite/REBENCH.md) and
-[BENCHMARKS.md](BENCHMARKS.md).
+Models are scored on review work: find the faulty line, or say whether a claim
+about some code is true. A starter pack ships with real bugs from public
+projects and claims about this project's own code; `python suite/seed.py
+--repo <name>` plants realistic bugs in your own functions, which no model has
+trained on. See [suite/README.md](suite/README.md).
 
 ## Docker and hosting
 
-One container runs the dashboard, the gateway (on the same port, at `/v1`)
-and the scheduler, with the data folder as a volume and no `llm` CLI (the
-built-in client makes every call). Put the secrets in a `.env` file beside
-`compose.yaml`:
-
-    BENCHWARMERS_ADMIN_TOKEN=<16 or more characters>
-    BENCHWARMERS_KEY_OPENROUTER=sk-or-...
-
-then `docker compose up -d` and open http://127.0.0.1:8122. The compose file
-publishes on this machine only; see its comments for a proxy.
-
-**Hosted, always on:** [HOSTING.md](HOSTING.md) compares Fly.io, Railway,
-Render and a VPS with Caddy (cost, sleep, disks, HTTPS), with a template for
-each under [deploy/](deploy/).
+One container runs the dashboard, the gateway and the scheduler, with the data
+folder as a volume: put `BENCHWARMERS_ADMIN_TOKEN` and your keys in a `.env`
+beside `compose.yaml`, then `docker compose up -d`. [HOSTING.md](HOSTING.md)
+compares Fly.io, Railway, Render and a VPS, with a template for each under
+[deploy/](deploy/).
 
 [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/WendellResearch-AI/benchwarmers)
-
-Render is one click: a paid instance with a 1 GB disk and a generated admin
-token. Fly.io is four commands from a checkout (`cp deploy/fly.toml .`,
-`fly launch --copy-config --no-deploy`, `fly secrets set
-BENCHWARMERS_ADMIN_TOKEN=...`, `fly deploy`). Railway is a few steps in its CLI
-or browser, in [HOSTING.md](HOSTING.md#railway).
 
 ## What leaves your machine
 

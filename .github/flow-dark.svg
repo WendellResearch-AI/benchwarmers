@@ -1,69 +1,109 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="960" height="464" viewBox="0 0 960 464" role="img" aria-labelledby="flow-dark-title flow-dark-desc">
-<title id="flow-dark-title">How a Benchwarmers panel works</title>
-<desc id="flow-dark-desc">Your app or agent asks the gateway for one of your collections. The gateway seats a panel: the collection's members, always seated, and an explorer that rotates in the model unused longest. Every seat answers the same prompt and every answer comes back side by side, labelled by model and seat. You check them against the real work and record a verdict. Verdicts, daily health probes and the review suite make up the bench's record, which chooses who sits on the next panel.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="656" viewBox="0 0 960 656" role="img" aria-labelledby="flow-dark-title flow-dark-desc">
+<title id="flow-dark-title">How Benchwarmers works: a panel or a route, then verdicts</title>
+<desc id="flow-dark-desc">Your app or agent, set up from the Connect page (opencode, VS Code, Zed, Codex, Continue, goose, or any OpenAI, Anthropic, Gemini or Ollama-format client), asks the gateway for one of your collections. The gateway takes one of two lanes. Panel, bench/&lt;collection&gt;: the collection's members, always seated, and explorer seats that rotate in the model unused longest all answer the same prompt; every answer comes back side by side, labelled by model and seat; once two have answered the rest get 60 seconds more, and a late seat is still recorded; with :merged, an optional merger writes one summary, reading the answers as Source 1, Source 2 and so on, not by model name. Route, bench/&lt;collection&gt;:route, for agents with tool calls: one member takes each turn, ranked by verdict score and kept for the conversation; on a 429, an error or silence the next member takes the turn; an optional shadow seat answers the same turn in the background, for evaluation only, and its answer does not go back to you. You or the calling agent check the answers against the real work and record a verdict per call: useful or not, with its real and false claims. The bench's record of calls and verdicts, daily health probes and the review suite chooses who sits on the next panel and ranks the members for route mode.</desc>
 <defs>
 <marker id="flow-dark-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#9da7b3"/></marker>
 <marker id="flow-dark-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#ff7b72"/></marker>
 </defs>
-<rect width="960" height="464" rx="8" fill="#0d1117"/>
-<path d="M208 220 H254" fill="none" stroke="#9da7b3" stroke-width="1.6" marker-end="url(#flow-dark-arrow)"/>
-<path d="M416 192 H432 Q440 192 440 184 V112 Q440 104 448 104 H462" fill="none" stroke="#9da7b3" stroke-width="1.6" marker-end="url(#flow-dark-arrow)"/>
-<path d="M416 220 H462" fill="none" stroke="#9da7b3" stroke-width="1.6" marker-end="url(#flow-dark-arrow)"/>
-<path d="M416 248 H432 Q440 248 440 256 V328 Q440 336 448 336 H462" fill="none" stroke="#9da7b3" stroke-width="1.6" marker-end="url(#flow-dark-arrow)"/>
-<path d="M640 104 H656 Q664 104 664 112 V176 Q664 184 672 184 H686" fill="none" stroke="#9da7b3" stroke-width="1.6" marker-end="url(#flow-dark-arrow)"/>
-<path d="M640 220 H686" fill="none" stroke="#9da7b3" stroke-width="1.6" marker-end="url(#flow-dark-arrow)"/>
-<path d="M640 336 H656 Q664 336 664 328 V264 Q664 256 672 256 H686" fill="none" stroke="#9da7b3" stroke-width="1.6" marker-end="url(#flow-dark-arrow)"/>
-<path d="M808 292 V326" fill="none" stroke="#9da7b3" stroke-width="1.6" marker-end="url(#flow-dark-arrow)"/>
-<path d="M688 400 H410" fill="none" stroke="#9da7b3" stroke-width="1.6" marker-end="url(#flow-dark-arrow)"/>
-<path d="M336 360 V278" fill="none" stroke="#ff7b72" stroke-width="1.6" marker-end="url(#flow-dark-arrow-accent)"/>
-<rect x="32" y="160" width="176" height="120" rx="6" fill="#0d1117"/>
-<rect x="32" y="160" width="176" height="120" rx="6" fill="#9da7b3" fill-opacity="0.12" stroke="#8b949e" stroke-width="1.6"/>
-<rect x="256" y="164" width="160" height="112" rx="6" fill="#0d1117"/>
-<rect x="256" y="164" width="160" height="112" rx="6" fill="#161b22" stroke="#f0f6fc" stroke-width="1.6"/>
-<rect x="464" y="64" width="176" height="80" rx="6" fill="#0d1117"/>
-<rect x="464" y="64" width="176" height="80" rx="6" fill="#161b22" stroke="#f0f6fc" stroke-width="1.6"/>
-<rect x="464" y="180" width="176" height="80" rx="6" fill="#0d1117"/>
-<rect x="464" y="180" width="176" height="80" rx="6" fill="#161b22" stroke="#f0f6fc" stroke-width="1.6"/>
-<rect x="464" y="296" width="176" height="80" rx="6" fill="#0d1117"/>
-<rect x="464" y="296" width="176" height="80" rx="6" fill="#ff7b72" fill-opacity="0.14" stroke="#ff7b72" stroke-width="1.6" stroke-dasharray="5 4"/>
-<rect x="688" y="148" width="240" height="144" rx="6" fill="#0d1117"/>
-<rect x="688" y="148" width="240" height="144" rx="6" fill="#161b22" stroke="#f0f6fc" stroke-width="1.6"/>
-<rect x="688" y="328" width="240" height="104" rx="6" fill="#0d1117"/>
-<rect x="688" y="328" width="240" height="104" rx="6" fill="#161b22" stroke="#f0f6fc" stroke-width="1.6"/>
-<rect x="32" y="360" width="376" height="80" rx="6" fill="#0d1117"/>
-<rect x="32" y="360" width="376" height="80" rx="6" fill="#f0f6fc" fill-opacity="0.05" stroke="#9da7b3" stroke-width="1.6"/>
-<rect x="516" y="380" width="64" height="12" rx="2" fill="#0d1117"/>
-<text x="548" y="389" font-family="ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace" font-size="8" fill="#8b949e" letter-spacing="0.14em" text-anchor="middle">VERDICT</text>
-<rect x="344" y="316" width="92" height="12" rx="2" fill="#0d1117"/>
-<text x="348" y="325" font-family="ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace" font-size="8" fill="#ff7b72" letter-spacing="0.14em" text-anchor="start">CHOOSES SEATS</text>
-<text x="120" y="188" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="16" font-weight="600" fill="#f0f6fc" text-anchor="middle">Your app or agent</text>
-<text x="120" y="212" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="middle">any OpenAI-compatible</text>
-<text x="120" y="228" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="middle">client asks for</text>
-<text x="120" y="252" font-family="ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace" font-size="12" fill="#f0f6fc" text-anchor="middle">bench/&lt;collection&gt;</text>
-<text x="336" y="196" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="16" font-weight="600" fill="#f0f6fc" text-anchor="middle">Gateway</text>
-<text x="336" y="220" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="middle">reads the collection</text>
-<text x="336" y="236" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="middle">and seats a panel</text>
-<text x="552" y="92" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="16" font-weight="600" fill="#f0f6fc" text-anchor="middle">Member</text>
-<text x="552" y="112" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="middle">in the collection,</text>
-<text x="552" y="128" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="middle">always seated</text>
-<text x="552" y="208" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="16" font-weight="600" fill="#f0f6fc" text-anchor="middle">Member</text>
-<text x="552" y="228" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="middle">another of its</text>
-<text x="552" y="244" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="middle">chosen models</text>
-<text x="552" y="324" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="16" font-weight="600" fill="#f0f6fc" text-anchor="middle">Explorer</text>
-<text x="552" y="344" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="middle">rotates in the model</text>
-<text x="552" y="360" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="middle">unused longest</text>
-<text x="808" y="176" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="16" font-weight="600" fill="#f0f6fc" text-anchor="middle">Every answer back</text>
-<text x="808" y="200" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="middle">side by side, each labelled</text>
-<text x="808" y="216" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="middle">with its model and seat</text>
-<line x1="704" y1="232" x2="912" y2="232" stroke="#9da7b3" stroke-opacity="0.40" stroke-width="0.8"/>
-<text x="808" y="256" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="600" fill="#f0f6fc" text-anchor="middle">nothing merged away</text>
-<text x="808" y="276" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="middle">or ask :merged for one summary</text>
-<text x="808" y="356" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="16" font-weight="600" fill="#f0f6fc" text-anchor="middle">You check them</text>
-<text x="808" y="380" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="middle">against the real work, then</text>
-<text x="808" y="396" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="middle">record a verdict per call:</text>
-<text x="808" y="416" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="600" fill="#f0f6fc" text-anchor="middle">useful? real or false?</text>
-<text x="220" y="388" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="16" font-weight="600" fill="#f0f6fc" text-anchor="middle">The bench's record</text>
-<text x="220" y="412" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="middle">verdicts, daily health probes, the review suite</text>
-<text x="220" y="428" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="middle">choose who sits on the next panel</text>
+<rect width="960" height="656" rx="8" fill="#0d1117"/>
+<rect x="196" y="116" width="560" height="206" rx="8" fill="#9da7b3" fill-opacity="0.05" stroke="#9da7b3" stroke-opacity="0.40" stroke-width="1.2"/>
+<rect x="196" y="340" width="560" height="182" rx="8" fill="#9da7b3" fill-opacity="0.05" stroke="#9da7b3" stroke-opacity="0.40" stroke-width="1.2"/>
+<path d="M96 90 V284" fill="none" stroke="#9da7b3" stroke-width="1.6" marker-end="url(#flow-dark-arrow)"/>
+<path d="M160 308 H168 Q176 308 176 300 V238 Q176 230 184 230 H206" fill="none" stroke="#9da7b3" stroke-width="1.6" marker-end="url(#flow-dark-arrow)"/>
+<path d="M160 354 H168 Q176 354 176 362 V424 Q176 432 184 432 H206" fill="none" stroke="#9da7b3" stroke-width="1.6" marker-end="url(#flow-dark-arrow)"/>
+<path d="M370 230 H393" fill="none" stroke="#9da7b3" stroke-width="1.6" marker-end="url(#flow-dark-arrow)"/>
+<path d="M557 230 H580" fill="none" stroke="#9da7b3" stroke-width="1.6" stroke-dasharray="4 3" marker-end="url(#flow-dark-arrow)"/>
+<path d="M744 230 H782" fill="none" stroke="#9da7b3" stroke-width="1.6" marker-end="url(#flow-dark-arrow)"/>
+<path d="M370 432 H393" fill="none" stroke="#9da7b3" stroke-width="1.6" marker-end="url(#flow-dark-arrow)"/>
+<path d="M557 455 H580" fill="none" stroke="#9da7b3" stroke-width="1.6" stroke-dasharray="4 3" marker-end="url(#flow-dark-arrow)"/>
+<path d="M557 390 H782" fill="none" stroke="#9da7b3" stroke-width="1.6" marker-end="url(#flow-dark-arrow)"/>
+<path d="M856 428 V550" fill="none" stroke="#9da7b3" stroke-width="1.6" marker-end="url(#flow-dark-arrow)"/>
+<path d="M96 552 V378" fill="none" stroke="#ff7b72" stroke-width="1.6" marker-end="url(#flow-dark-arrow-accent)"/>
+<rect x="32" y="28" width="896" height="60" rx="6" fill="#0d1117"/>
+<rect x="32" y="28" width="896" height="60" rx="6" fill="#9da7b3" fill-opacity="0.12" stroke="#8b949e" stroke-width="1.6"/>
+<line x1="258" y1="40" x2="258" y2="76" stroke="#9da7b3" stroke-opacity="0.40" stroke-width="0.8"/>
+<line x1="672" y1="40" x2="672" y2="76" stroke="#9da7b3" stroke-opacity="0.40" stroke-width="0.8"/>
+<rect x="32" y="286" width="128" height="90" rx="6" fill="#0d1117"/>
+<rect x="32" y="286" width="128" height="90" rx="6" fill="#161b22" stroke="#f0f6fc" stroke-width="1.6"/>
+<rect x="208" y="152" width="162" height="156" rx="6" fill="#0d1117"/>
+<rect x="208" y="152" width="162" height="156" rx="6" fill="#161b22" stroke="#f0f6fc" stroke-width="1.6"/>
+<rect x="218" y="186" width="142" height="44" rx="4" fill="#9da7b3" fill-opacity="0.08" stroke="#9da7b3" stroke-width="1.2"/>
+<rect x="218" y="238" width="142" height="60" rx="4" fill="#ff7b72" fill-opacity="0.14" stroke="#ff7b72" stroke-width="1.2" stroke-dasharray="5 4"/>
+<rect x="395" y="152" width="162" height="156" rx="6" fill="#0d1117"/>
+<rect x="395" y="152" width="162" height="156" rx="6" fill="#161b22" stroke="#f0f6fc" stroke-width="1.6"/>
+<line x1="407" y1="226" x2="545" y2="226" stroke="#9da7b3" stroke-opacity="0.40" stroke-width="0.8"/>
+<rect x="582" y="152" width="162" height="156" rx="6" fill="#0d1117"/>
+<rect x="582" y="152" width="162" height="156" rx="6" fill="#161b22" stroke="#9da7b3" stroke-width="1.6" stroke-dasharray="5 4"/>
+<line x1="594" y1="226" x2="732" y2="226" stroke="#9da7b3" stroke-opacity="0.40" stroke-width="0.8"/>
+<rect x="208" y="376" width="162" height="112" rx="6" fill="#0d1117"/>
+<rect x="208" y="376" width="162" height="112" rx="6" fill="#161b22" stroke="#f0f6fc" stroke-width="1.6"/>
+<rect x="395" y="376" width="162" height="112" rx="6" fill="#0d1117"/>
+<rect x="395" y="376" width="162" height="112" rx="6" fill="#161b22" stroke="#f0f6fc" stroke-width="1.6"/>
+<rect x="582" y="402" width="162" height="106" rx="6" fill="#0d1117"/>
+<rect x="582" y="402" width="162" height="106" rx="6" fill="#161b22" stroke="#9da7b3" stroke-width="1.6" stroke-dasharray="5 4"/>
+<rect x="784" y="192" width="144" height="236" rx="6" fill="#0d1117"/>
+<rect x="784" y="192" width="144" height="236" rx="6" fill="#161b22" stroke="#f0f6fc" stroke-width="1.6"/>
+<line x1="796" y1="308" x2="916" y2="308" stroke="#9da7b3" stroke-opacity="0.40" stroke-width="0.8"/>
+<rect x="32" y="552" width="896" height="78" rx="6" fill="#0d1117"/>
+<rect x="32" y="552" width="896" height="78" rx="6" fill="#f0f6fc" fill-opacity="0.05" stroke="#9da7b3" stroke-width="1.6"/>
+<text x="106" y="461" font-family="ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace" font-size="8" fill="#ff7b72" letter-spacing="0.14em" text-anchor="start">CHOOSES SEATS</text>
+<text x="106" y="474" font-family="ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace" font-size="8" fill="#ff7b72" letter-spacing="0.14em" text-anchor="start">RANKS MEMBERS</text>
+<text x="866" y="493" font-family="ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace" font-size="8" fill="#8b949e" letter-spacing="0.14em" text-anchor="start">VERDICT</text>
+<text x="56" y="53" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="16" font-weight="600" fill="#f0f6fc" text-anchor="start">Your app or agent</text>
+<text x="56" y="73" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="start">set up from the Connect page</text>
+<text x="282" y="53" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="start">opencode, VS Code, Zed, Codex, Continue, goose,</text>
+<text x="282" y="73" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="start">or any OpenAI, Anthropic, Gemini or Ollama-format client</text>
+<text x="696" y="53" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="start">asks the gateway for</text>
+<text x="696" y="73" font-family="ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace" font-size="12" fill="#f0f6fc" text-anchor="start">bench/&lt;collection&gt;</text>
+<text x="96" y="314" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="16" font-weight="600" fill="#f0f6fc" text-anchor="middle">Gateway</text>
+<text x="96" y="336" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="middle">seats a panel</text>
+<text x="96" y="352" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="middle">or routes a turn</text>
+<text x="208" y="140" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="16" font-weight="600" fill="#f0f6fc" text-anchor="start">Panel</text>
+<text x="260" y="140" font-family="ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace" font-size="12" fill="#f0f6fc" text-anchor="start">bench/&lt;collection&gt;</text>
+<text x="744" y="140" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="end">one prompt, several models</text>
+<text x="289" y="176" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="16" font-weight="600" fill="#f0f6fc" text-anchor="middle">Who sits</text>
+<text x="289" y="204" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="600" fill="#f0f6fc" text-anchor="middle">Members</text>
+<text x="289" y="220" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="middle">always seated</text>
+<text x="289" y="256" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="600" fill="#ff7b72" text-anchor="middle">Explorers</text>
+<text x="289" y="272" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="middle">rotate in the model</text>
+<text x="289" y="288" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="middle">unused longest</text>
+<text x="476" y="176" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="16" font-weight="600" fill="#f0f6fc" text-anchor="middle">Every answer back</text>
+<text x="476" y="196" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="middle">side by side, labelled</text>
+<text x="476" y="212" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="middle">by model and seat</text>
+<text x="476" y="246" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="600" fill="#f0f6fc" text-anchor="middle">two answers, then 60 s</text>
+<text x="476" y="262" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="middle">for the rest; a late seat</text>
+<text x="476" y="278" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="middle">is still recorded</text>
+<text x="663" y="176" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="16" font-weight="600" fill="#f0f6fc" text-anchor="middle">One summary</text>
+<text x="663" y="196" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="middle">optional, ask for</text>
+<text x="663" y="212" font-family="ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace" font-size="12" fill="#f0f6fc" text-anchor="middle">:merged</text>
+<text x="663" y="246" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="600" fill="#f0f6fc" text-anchor="middle">the merger sees</text>
+<text x="663" y="262" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="middle">“Source 1”, “Source 2”,</text>
+<text x="663" y="278" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="middle">not model names</text>
+<text x="208" y="364" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="16" font-weight="600" fill="#f0f6fc" text-anchor="start">Route</text>
+<text x="260" y="364" font-family="ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace" font-size="12" fill="#f0f6fc" text-anchor="start">bench/&lt;collection&gt;:route</text>
+<text x="744" y="364" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="end">for agents with tool calls</text>
+<text x="289" y="402" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="16" font-weight="600" fill="#f0f6fc" text-anchor="middle">One member</text>
+<text x="289" y="422" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="middle">takes each turn, ranked</text>
+<text x="289" y="438" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="middle">by verdict score, and is</text>
+<text x="289" y="454" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="middle">kept for the conversation</text>
+<text x="476" y="402" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="16" font-weight="600" fill="#f0f6fc" text-anchor="middle">Failover</text>
+<text x="476" y="422" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="middle">on a 429, an error</text>
+<text x="476" y="438" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="middle">or silence, the next</text>
+<text x="476" y="454" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="middle">member takes the turn</text>
+<text x="663" y="426" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="16" font-weight="600" fill="#f0f6fc" text-anchor="middle">Shadow seat</text>
+<text x="663" y="446" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="middle">optional: another member</text>
+<text x="663" y="462" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="middle">answers the same turn</text>
+<text x="663" y="478" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="middle">in the background,</text>
+<text x="663" y="494" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="600" fill="#f0f6fc" text-anchor="middle">for evaluation only</text>
+<text x="856" y="256" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="16" font-weight="600" fill="#f0f6fc" text-anchor="middle">You check them</text>
+<text x="856" y="278" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="middle">or the calling agent,</text>
+<text x="856" y="294" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="middle">against the real work</text>
+<text x="856" y="328" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="600" fill="#f0f6fc" text-anchor="middle">a verdict per call:</text>
+<text x="856" y="344" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="middle">useful or not,</text>
+<text x="856" y="360" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="middle">with its real and</text>
+<text x="856" y="376" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="middle">false claims</text>
+<text x="480" y="578" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="16" font-weight="600" fill="#f0f6fc" text-anchor="middle">The bench's record</text>
+<text x="480" y="598" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="middle">calls and verdicts, daily health probes, the review suite</text>
+<text x="480" y="614" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9da7b3" text-anchor="middle">choose who sits on the next panel and rank the members for route mode</text>
 </svg>

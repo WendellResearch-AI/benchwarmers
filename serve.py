@@ -4935,8 +4935,8 @@ def client_setups(root: str, cols: list, keys: bool, way: str = "both", label: s
                                 f"export ANTHROPIC_DEFAULT_HAIKU_MODEL=bench/{fast}:route", "claude"), True))],
          "watch": "The plugin's Stop hook needs the server on the same machine; with none running, every turn"
                   " ends with a hook error.",
-         "docs": [("https://github.com/WendellResearch-AI/benchwarmers#from-claude-code-and-other-agents",
-                   "README, From Claude Code and other agents")],
+         "docs": [("https://github.com/WendellResearch-AI/benchwarmers/blob/main/USAGE.md#from-claude-code-and-other-agents",
+                   "USAGE, From Claude Code and other agents")],
          "docs_note": "checked end to end with Claude Code 2.1.299 on 2026-10-23 (GATEWAY.md, Route mode)."},
         {"id": "code", "name": "LangChain and agent SDKs",
          "gets": "Your own Python: a LangChain (LangGraph) agent or an OpenAI Agents SDK agent on a collection with"

@@ -12,6 +12,8 @@ coding agent doing it with you); the gateway's whole contract is in
 - [Onboarding models](#onboarding-models)
 - [Collections](#collections)
 - [Connecting an app](#connecting-an-app)
+- [From the command line](#from-the-command-line)
+- [From Claude Code and other agents](#from-claude-code-and-other-agents)
 - [Recording verdicts](#recording-verdicts)
 - [Benchmarks, and sharing a report](#benchmarks-and-sharing-a-report)
 - [Discover: finding models to add](#discover-finding-models-to-add)
@@ -272,6 +274,161 @@ call ids, and `bench verdict <call id> --useful|--not-useful` judges one. The
 rest of this guide's pages have commands too (`bench models`, `bench onboard`,
 `bench collection save`, `bench endpoint add`, `bench key create`, `bench
 settings`); README, "From the command line", lists them.
+
+## From the command line
+
+`bench` (or `benchwarmers`, the same program) does what the dashboard does,
+without it: ask and judge, and run the bench itself. It is a client of a
+running server, so the same commands work against one on another machine.
+
+    bench status                                   what is running, and where
+    bench restart                                  start it again on the code now on disk
+    bench collections                              what you can ask
+    bench ask core "Where can this return a stale value?" -f cache.py
+    git diff | bench ask core "Review this diff"   a pipe is the prompt
+    bench verdict <call id> --useful --real "the race in refresh()" --false "the SQL injection"
+
+    bench models --find mercury                    the roster, with each model's status
+    bench candidates --new                         what your endpoints serve that is not on the bench
+    bench onboard <served name> --wait             onboard it (registered, probed, scored)
+    bench model retire <alias> --reason "..."      and back: bench model restore <alias>
+    bench collection save reviewers --members a,b,c --description "adversarial review"
+    bench collection save reviewers --add d --remove a
+    bench collection save heavy-hitters --ad-hoc --max-calls 4 --max-explorers 0
+    bench endpoint add openrouter --base https://openrouter.ai/api/v1   (asks for the key, hidden)
+    bench key create my-app --collections core --rpm 30
+    bench settings scheduler run --off perf
+
+`--help` on any command lists its options with examples, and `--json` prints
+what the server answered, for scripts. `--url` points one command at another
+server. `ask` prints every seat's answer on stdout and the table of call ids to
+judge them by on stderr, so `bench ask core "..." > review.md` keeps only the
+answers. Retiring a model, deleting a collection or an endpoint and revoking a
+key ask first; `--yes` answers for a script. A key is never an argument (others
+on the machine can read those): `endpoint add` prompts for it, or reads it
+from stdin with `--key-stdin`.
+
+Another program called `bench` (the Frappe framework's) may come first on your
+PATH; type `benchwarmers` instead, which takes the same commands.
+
+| Variable | Meaning |
+| --- | --- |
+| `BENCHWARMERS_URL` | the server, default `http://127.0.0.1:8122` |
+| `BENCHWARMERS_ADMIN_TOKEN` | the server's admin token, where it has one; sent as `Authorization: Bearer` for every command but `ask`, `collections` and `verdict` |
+| `BENCHWARMERS_KEY` | a gateway key, for `ask`, `collections` and `verdict`, where keys are required |
+| `BENCHWARMERS_TIMEOUT` | seconds to wait for a panel, default 900 |
+
+Exit codes: 0 done, 1 refused or failed (the reason on stderr), 2 bad usage, 3
+no server at `BENCHWARMERS_URL`.
+
+## From Claude Code and other agents
+
+A running Benchwarmers is an MCP server at `/mcp` on its own port
+(`http://127.0.0.1:8122/mcp`; `/v1/mcp` works too), over streamable HTTP,
+with four tools: `list_collections`, `ask` (a collection, a prompt,
+optionally `merged`, `with` and `system`), `verdict` and `pending_verdicts`
+(the seats still unjudged). Nothing to start per
+client: every agent session shares the one server, behind the same Host,
+Origin and gateway-key checks as `/v1`. The tool descriptions carry the
+rules: ask a collection, not a favourite model; verify before acting; name
+every seat; send a verdict per seat you judged.
+
+**Claude Code plugin.** The plugin connects to that `/mcp` and adds a
+`/benchwarmers:ask <collection> <what to ask>` command and a `benchwarmers`
+skill saying when a panel helps (adversarial review, exhaustive enumeration
+over real files) and how to judge it:
+
+    /plugin marketplace add WendellResearch-AI/benchwarmers
+    /plugin install benchwarmers@benchwarmers
+
+It finds the server through `BENCHWARMERS_URL` (default
+`http://127.0.0.1:8122`; set it if you changed `BENCH_PORT`) and sends
+`BENCHWARMERS_KEY` where keys are required. It also adds a `Stop` hook: at
+the end of a turn it asks the server (the `pending_verdicts` tool, so nothing
+extra runs on your machine) which seats of that session's panels have no
+verdict yet, and reminds Claude of them once, as hook feedback. The server
+finds the session's panels in its transcript, so the reminder needs a server
+on the same machine; with one elsewhere the hook stays silent. A verdict sent
+any way counts, the dashboard's included. With the plugin enabled and no
+Benchwarmers running, the hook shows a hook-error notice at the end of each
+turn, as `/mcp` shows the server as failed; start the server, or disable the
+plugin for that session.
+
+**Cursor and Antigravity plugins.** The same skill, with the stdio server
+below (so they need Node and Python 3.11 or later): Cursor's is
+[on cursor.directory](https://cursor.directory/plugins/benchwarmers), and
+Antigravity's installs from the repository:
+
+    agy plugin install https://github.com/WendellResearch-AI/benchwarmers
+
+**Any other MCP client** that speaks HTTP:
+
+```json
+{"mcpServers": {"benchwarmers": {"type": "http", "url": "http://127.0.0.1:8122/mcp"}}}
+```
+
+with `"headers": {"Authorization": "Bearer <gateway key>"}` where keys are
+required. **A client that only speaks stdio**: run `benchwarmers mcp` once
+installed, `uvx benchwarmers mcp` or
+`npx -y @wendellresearch-ai/benchwarmers mcp` without installing, or `python mcp_server.py` from a
+checkout, a small process per client that calls the same server. For example:
+
+```json
+{"mcpServers": {"benchwarmers": {"command": "npx", "args": ["-y", "@wendellresearch-ai/benchwarmers", "mcp"],
+                                 "env": {"BENCHWARMERS_URL": "http://127.0.0.1:8122"}}}}
+```
+
+On native Windows, a client that cannot start `npx` itself needs
+`"command": "cmd", "args": ["/c", "npx", "-y", "@wendellresearch-ai/benchwarmers", "mcp"]`.
+
+| Variable | Meaning |
+| --- | --- |
+| `BENCHWARMERS_URL` | the server, default `http://127.0.0.1:8122` (a `/v1` on the end is fine) |
+| `BENCHWARMERS_KEY` | a gateway key from Settings, sent as `Authorization: Bearer`; needed for a server on another machine, or where keys are required |
+| `BENCHWARMERS_TIMEOUT` | seconds to wait for a panel, default 900 |
+
+**Behind an MCP aggregator** (1mcp, MetaMCP, mcp-proxy, Docker's MCP Gateway
+and the like): add `http://127.0.0.1:8122/mcp` as an HTTP (streamable HTTP)
+upstream, with the `Authorization` header where keys are required; an
+aggregator that only runs stdio servers takes `benchwarmers mcp` as above.
+Give it a request timeout of a few minutes or more, as a panel takes that
+long; 1mcp's default of 60 seconds ends most of them. With 1mcp, for example:
+
+    1mcp mcp add benchwarmers --type http --url http://127.0.0.1:8122/mcp --timeout 900000
+
+The aggregator prefixes the tool names (1mcp's are
+`benchwarmers_1mcp_ask` and so on). If you also use the Claude Code plugin,
+disable the plugin's own `benchwarmers` server in `/mcp` so the tools are not
+listed twice; the skill and `/benchwarmers:ask` keep working, though the
+command then asks before each tool call, since its pre-approved tools carry
+the plugin's names. The plugin's verdict hook calls the plugin's own server,
+so it does not work through an aggregator: with that server disabled it only
+shows a hook-error notice at the end of each turn.
+
+**An agent running on a collection.** The MCP tools ask a panel for a
+second opinion; an agent can also *be driven by* a collection, in **route
+mode** (`bench/<collection>:route`): one member, picked by its record, gets
+each turn with its tools, stays on for the whole conversation, and is
+replaced by the next member if it fails before answering. Claude Code
+points at it with `ANTHROPIC_BASE_URL=http://127.0.0.1:8122` and
+`ANTHROPIC_MODEL=bench/core:route`; Codex, opencode, Cline and other
+OpenAI-, Responses- or Ollama-speaking agents with the same base URL.
+[GATEWAY.md](GATEWAY.md), "Route mode", has the set-up and the limits.
+
+**Ready set-ups.** The dashboard's **Connect** page (Gateway) gives each
+popular app's configuration, filled in from your install's address,
+collections and MCP server, with a Copy button: opencode, VS Code chat, Codex
+CLI, Zed, Continue, Cline and Kilo Code, Claude Code, your own Python with
+LangChain or the OpenAI Agents SDK, goose, and chat apps
+(LobeHub, AnythingLLM, Cherry Studio, Chatbox, LibreChat). You choose how the
+app uses Benchwarmers (a collection as its model, the panel as tools, or
+both), which collection, and its name; **Set it up** writes the files for
+opencode, VS Code, Zed, Codex, Continue and goose itself, after showing them,
+with a copy of each file it changes; and **Does it work?** shows the app's
+first call. An app may have its own key, made there for its collection; it
+goes into the lines you copy, never into a file that may sync.
+The same set-ups are in [CLIENTS.md](CLIENTS.md), with a fresh install's
+address and collections, for reading here or handing to an agent.
 
 ## Recording verdicts
 
