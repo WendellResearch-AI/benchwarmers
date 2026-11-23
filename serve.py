@@ -4699,9 +4699,9 @@ APP_WAYS = {"claude-code": ("panel", "model", "both"), "codex": ("panel", "model
 LIST_APPS = ("opencode", "vscode", "zed", "continue", "goose", "copilot-cli", "kimi", "dsh", "openwebui", "qwen")
 # Claude Code first, then the command-line agents (the likeliest use), most used first; the
 # popular apps and harnesses; your own code and other agents; the rest; chat apps last.
-APP_ORDER = ("claude-code", "codex", "copilot-cli", "antigravity", "qwen", "kimi", "aider",
+APP_ORDER = ("claude-code", "codex", "copilot-cli", "antigravity", "qwen", "kimi",
              "cursor", "vscode", "opencode", "cline", "jetbrains", "zed", "continue",
-             "code", "dsh", "goose", "openwebui", "chat")
+             "code", "dsh", "goose", "openwebui", "aider", "chat")
 
 
 def client_setups(root: str, cols: list, keys: bool, way: str = "both", label: str = "") -> list[dict]:

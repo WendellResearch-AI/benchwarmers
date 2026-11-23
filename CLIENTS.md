@@ -30,7 +30,6 @@ setx BENCHWARMERS_KEY "<your gateway key>"
 - [Antigravity CLI](#antigravity)
 - [Qwen Code](#qwen)
 - [Kimi Code CLI](#kimi)
-- [Aider](#aider)
 - [Cursor](#cursor)
 - [VS Code chat (Custom Endpoint)](#vscode)
 - [opencode](#opencode)
@@ -42,6 +41,7 @@ setx BENCHWARMERS_KEY "<your gateway key>"
 - [DeepSeek Harness](#dsh)
 - [goose](#goose)
 - [Open WebUI](#openwebui)
+- [Aider](#aider)
 - [Chat apps](#chat)
 
 <a id='claude-code'></a>
@@ -284,24 +284,6 @@ max_context_size = 128000
 **Watch for:** A provider needs a key even where none is asked for, and reads no other variable. Its MCP tool calls stop at 60 s unless `toolTimeoutMs` says otherwise: keep it. mcp.json's header holds the key as text: replace `` yourself.
 
 Written from [providers](https://www.kimi.com/code/docs/en/kimi-code-cli/configuration/providers.html), [MCP](https://www.kimi.com/code/docs/en/kimi-code-cli/customization/mcp.html), read 2026-11-23.
-
-<a id='aider'></a>
-
-## Aider
-
-Aider on a collection (route mode). It takes no MCP servers, so no panel as tools.
-
-**Where it goes:** The shell you start it from, in your project's folder.
-
-**A shell**
-
-```sh
-aider --openai-api-base http://127.0.0.1:8122/v1 --openai-api-key "$BENCHWARMERS_KEY" --model openai/bench/core:route
-```
-
-**Watch for:** The model name keeps its `openai/` prefix. Aider warns it does not know the model's context window or costs; the warning is harmless.
-
-Written from [OpenAI compatible APIs](https://aider.chat/docs/llms/openai-compat.html), read 2026-11-23.
 
 <a id='cursor'></a>
 
@@ -897,6 +879,24 @@ Model IDs  bench/core:merged, bench/fast:merged
 **Watch for:** Open WebUI in Docker reaches this machine at another address than 127.0.0.1: choose in Docker under More. If this Open WebUI is also where the bench reaches its models, never onboard the `bench/` models it now lists: a collection would call itself. With a key, Auth must be Bearer with the key filled in; Bearer left empty sends an empty header and is refused.
 
 Written from [MCP](https://docs.openwebui.com/features/extensibility/mcp), read 2026-11-23.
+
+<a id='aider'></a>
+
+## Aider
+
+Aider on a collection (route mode). It takes no MCP servers, so no panel as tools.
+
+**Where it goes:** The shell you start it from, in your project's folder.
+
+**A shell**
+
+```sh
+aider --openai-api-base http://127.0.0.1:8122/v1 --openai-api-key "$BENCHWARMERS_KEY" --model openai/bench/core:route
+```
+
+**Watch for:** The model name keeps its `openai/` prefix. Aider warns it does not know the model's context window or costs; the warning is harmless.
+
+Written from [OpenAI compatible APIs](https://aider.chat/docs/llms/openai-compat.html), read 2026-11-23.
 
 <a id='chat'></a>
 
