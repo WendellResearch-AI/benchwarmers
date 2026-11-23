@@ -510,7 +510,8 @@ window fills between its check and the call.
 The dashboard's **Connect** page has each app's set-up filled in from the
 install (Claude Code, Codex, opencode, VS Code chat, Cline, Roo Code and Kilo
 Code, LangChain and agent SDKs, Cursor, Antigravity CLI, GitHub Copilot CLI,
-Kimi Code CLI, DeepSeek Harness, Aider, Open WebUI, Zed, Continue, goose, chat
+Qwen Code, Kimi Code CLI, JetBrains AI Assistant, DeepSeek Harness, Aider, Open
+WebUI, Zed, Continue, goose, chat
 apps), each written from that app's docs on the date it shows, and writes the
 files itself for seven of them (USAGE.md, "Connecting an app"). By hand:
 

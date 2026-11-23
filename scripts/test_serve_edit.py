@@ -233,7 +233,8 @@ def main() -> int:
             alltext = "\n".join(b["text"] for b in c["blocks"])
             want = ("bench/core:merged", "bench/fast:merged") if c["id"] in ("chat", "openwebui") else \
                 () if c["ways"] == ("panel",) else \
-                ("bench/core:route",) if c["id"] in ("codex", "code", "aider") else ("bench/core:route", "bench/fast:route")
+                ("bench/core:route",) if c["id"] in ("codex", "code", "aider", "jetbrains") else \
+                ("bench/core:route", "bench/fast:route")
             bad += [f"{c['id']} lacks {w}" for w in want if w not in alltext]
         oc, cx = parsed.get(("opencode", "opencode.jsonc")), parsed.get(("codex", "config.toml"))
         cxp = parsed.get(("codex", "benchwarmers.config.toml")) or {}     # Codex's profile: the model half
@@ -253,6 +254,18 @@ def main() -> int:
             bad.append("a VS Code model without toolCalling is hidden from the agent picker")
         if load_yaml and parsed.get(("goose", "config.yaml"), {}).get("extensions", {}).get("benchwarmers", {}).get("timeout") != 900:
             bad.append("goose's extension timeout is not 900 s")
+    # Connect's logos (ui/app-logos.json) go into the page as markup: drawing elements only, or a PNG.
+    import re as _re
+    for app, mark in json.loads((serve.UI / "app-logos.json").read_text(encoding="utf-8")).items():
+        if app.startswith("_"):
+            continue
+        tags = set(_re.findall(r"<\s*/?\s*([\w:-]+)", mark.get("svg", "")))
+        attrs = set(_re.findall(r"\s([\w:-]+)=", mark.get("svg", "")))
+        if (tags - {"path", "g", "circle", "rect", "ellipse", "polygon"}
+                or attrs - {"d", "fill-rule", "clip-rule", "cx", "cy", "r", "rx", "ry", "x", "y", "width",
+                            "height", "points", "transform", "opacity", "fill-opacity"}
+                or not (mark.get("svg") or str(mark.get("png", "")).startswith("data:image/png;base64,"))):
+            bad.append(f"logo {app} holds more than a drawing: {tags} {attrs}")
     # Connect's choices: each way an app offers, with or without its name as a label, still parses,
     # leaves out the half not chosen, and sends the name only where no key is used.
     for way in serve.WAYS:

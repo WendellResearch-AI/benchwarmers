@@ -4692,12 +4692,16 @@ WAYS = {"model": "As a single model (route mode)", "panel": "As a second opinion
 # since its panel-as-tools snippets run an agent on a collection too.
 APP_WAYS = {"claude-code": ("panel", "model", "both"), "codex": ("panel", "model", "both"),
             "vscode": ("panel", "model", "both"), "copilot-cli": ("panel", "model", "both"),
+            "jetbrains": ("panel", "model", "both"),
             "code": ("both",), "chat": ("merged", "all"), "openwebui": ("merged", "all", "panel"),
             "cursor": ("panel",), "antigravity": ("panel",), "aider": ("model",)}   # what each can take
 # Whose model lists take every collection the gateway offers: no collection to choose.
-LIST_APPS = ("opencode", "vscode", "zed", "continue", "goose", "copilot-cli", "kimi", "dsh", "openwebui")
-APP_ORDER = ("claude-code", "codex", "opencode", "vscode", "cline", "code", "cursor", "antigravity",
-             "copilot-cli", "kimi", "dsh", "aider", "openwebui")                 # the rest after, as listed
+LIST_APPS = ("opencode", "vscode", "zed", "continue", "goose", "copilot-cli", "kimi", "dsh", "openwebui", "qwen")
+# Claude Code first, then the command-line agents (the likeliest use), most used first; the
+# popular apps and harnesses; your own code and other agents; the rest; chat apps last.
+APP_ORDER = ("claude-code", "codex", "copilot-cli", "antigravity", "qwen", "kimi", "aider",
+             "cursor", "vscode", "opencode", "cline", "jetbrains", "zed", "continue",
+             "code", "dsh", "goose", "openwebui", "chat")
 
 
 def client_setups(root: str, cols: list, keys: bool, way: str = "both", label: str = "") -> list[dict]:
@@ -4870,6 +4874,16 @@ def client_setups(root: str, cols: list, keys: bool, way: str = "both", label: s
                  *(lines("", f"[models.bench-{n}]", 'provider = "benchwarmers"', f"model = {q(m)}",
                          f"max_context_size = {c}") for m, n, c, _, _ in rows))
     kimi_mcp = {"mcpServers": {"benchwarmers": {"url": mcp, **bearer, "toolTimeoutMs": 900_000}}}
+    # Qwen Code: a model per collection under the openai protocol; the key from its envKey, set in
+    # settings' env block where none is asked for (the process's own wins when set).
+    qwen = {**({} if keys else {"env": {env: key_text}}),
+            **({"modelProviders": {"openai": [
+                {"id": m, "name": f"{n} (Benchwarmers)", "envKey": env, "baseUrl": base,
+                 "generationConfig": {"contextWindowSize": c, "timeout": 900_000,
+                                      **({"modalities": {"image": True}} if eyes else {})}}
+                for m, n, c, _, eyes in rows]}} if use_m else {}),
+            **({"mcpServers": {"benchwarmers": {"httpUrl": mcp, **bearer, "timeout": 900_000}}} if use_p else {})}
+    jb_mcp = {"mcpServers": {"benchwarmers": {"url": mcp}}}
     aider = (f"aider --openai-api-base {base} --openai-api-key "
              + (f'"${env}"' if keys else key_text) + f" --model openai/{model}")
     plugin_at = ("" if root == DEFAULT_SERVER else f", so set it to <code>{esc(root)}</code>")
@@ -5043,6 +5057,37 @@ def client_setups(root: str, cols: list, keys: bool, way: str = "both", label: s
                    "providers"),
                   ("https://github.com/deepseek-ai/deepseek-harness/blob/main/docs/subsystems/mcp.md", "MCP")],
          "read": "2026-11-23"},
+        {"id": "qwen", "name": "Qwen Code",
+         "gets": "Qwen Code on any collection (route mode), beside its own models in <code>/model</code>, and the"
+                 " panel as MCP tools.",
+         "where": "<code>~/.qwen/settings.json</code> (<code>%USERPROFILE%\\.qwen\\settings.json</code> on"
+                  " Windows), or <code>.qwen/settings.json</code> in a project; merge into what is there. A running"
+                  " session picks up new models by itself: <code>/model</code>."
+                  + (f" The key comes from <code>{env}</code>." if keys else ""),
+         "blocks": [_snip("settings.json", "json", js(qwen))],
+         "watch": "A remote MCP server is <code>httpUrl</code>; <code>url</code> means the old SSE transport."
+                  " Timeouts are in milliseconds."
+                  + (f" The MCP header holds the key as text: replace <code>{esc(KEY_HOLDER)}</code> yourself."
+                     if keys else ""),
+         "docs": [("https://qwenlm.github.io/qwen-code-docs/en/users/configuration/model-providers/",
+                   "model providers"),
+                  ("https://qwenlm.github.io/qwen-code-docs/en/users/features/mcp/", "MCP")],
+         "read": "2026-11-23"},
+        {"id": "jetbrains", "name": "JetBrains AI Assistant",
+         "gets": "AI Assistant's chat and agents on a collection (route mode), and the panel as MCP tools, in"
+                 " IntelliJ IDEA, PyCharm and the other JetBrains IDEs.",
+         "where": "Settings, Tools, AI Assistant: <b>Providers &amp; API keys</b> for the model (then Models"
+                  " Assignment, as an OpenAI-compatible endpoint is not assigned by itself), and <b>Model Context"
+                  " Protocol (MCP)</b>, Add, for the panel." + any_text,
+         "blocks": [*only(use_m, _snip("Third-party AI provider", "text", _fields([
+                        ("Provider", "OpenAI-compatible"), ("URL", base), ("API Key", key_text),
+                        ("Tool calling", "on"), ("Models Assignment, Core features", model)]), True)),
+                    *only(use_p, _snip("New MCP Server: JSON configuration", "json", js(jb_mcp)))],
+         "watch": "Keep Tool calling on, or the model cannot use the panel's tools."
+                  + (" Its MCP settings document no header, so with every call needing a key the panel may be"
+                     " refused: the model half works." if keys else ""),
+         "docs": [("https://www.jetbrains.com/help/ai-assistant/use-custom-models.html", "third-party models"),
+                  ("https://www.jetbrains.com/help/ai-assistant/mcp.html", "MCP")], "read": "2026-11-23"},
         {"id": "aider", "name": "Aider",
          "gets": "Aider on a collection (route mode). It takes no MCP servers, so no panel as tools.",
          "where": "The shell you start it from, in your project's folder." + any_text,
@@ -5157,9 +5202,8 @@ WAY_SAYS = {"model": "One member of the collection answers each turn and runs {a
                       " differed, and who said what.",
             "all": "Each seat's answer in turn, under its model's name, in one message."}
 CONNECT_NAMES = {"code": "my-agent", "chat": "chat-app"}     # an app's usual name, where its id is not one
-# The initials on the tile of an app Simple Icons has no mark for (clients_page's logo).
-APP_MARKS = {"codex": "Cx", "vscode": "VS", "aider": "Ai", "openwebui": "OW", "continue": "Co", "goose": "go",
-             "chat": "Ch"}
+# The initials on the tile of an app with no mark in ui/app-logos.json (clients_page's logo).
+APP_MARKS = {"chat": "Ch"}
 
 
 def _connect_cols() -> list:
@@ -5751,9 +5795,14 @@ def clients_page() -> str:
     logos = json.loads(read(UI / "app-logos.json") or "{}")
 
     def logo(app: str) -> str:
-        """Its mark from Simple Icons (ui/app-logos.json), in the text's colour; else its initials on a tile."""
-        if re.fullmatch(r"[MmLlHhVvCcSsQqTtAaZz0-9.,\- e]+", logos.get(app, "")):
-            return f"<svg class='app-logo' viewBox='0 0 24 24' aria-hidden='true'><path d='{logos[app]}'/></svg>"
+        """Its mark (ui/app-logos.json: drawing only, in the text's colour, or a small image); else its
+        initials on a tile."""
+        mark = logos.get(app) or {}
+        if mark.get("svg"):
+            return (f"<svg class='app-logo' viewBox='{esc(mark.get('viewBox', '0 0 24 24'))}' aria-hidden='true'>"
+                    f"{mark['svg']}</svg>")
+        if str(mark.get("png", "")).startswith("data:image/png;base64,"):
+            return f"<img class='app-logo' src='{mark['png']}' alt=''>"
         return f"<span class='app-logo mark' aria-hidden='true'>{esc(APP_MARKS.get(app, app[:2].title()))}</span>"
 
     def nav_item(i, c) -> str:
