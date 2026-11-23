@@ -95,7 +95,7 @@ asks, keeps every answer, takes your verdict and acts on it, in one place:
 | A verdict on each answer, with its false claims | ✅ | ❌ | 🟡 models rank each other | 🟡 thumbs up or down | 🟡 assertions you write |
 | Verdicts decide who answers next | ✅ | ❌ | ❌ | 🟡 a leaderboard | ❌ |
 | Agents judge answers too, over MCP | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Tests from your own code | ✅ bugs planted in your repos | 🟡 suites you write | ❌ | ❌ | ✅ tests you write |
+| Tests from your own code | ✅ bugs seeded in copies of your code | 🟡 suites you write | ❌ | ❌ | ✅ tests you write |
 | Health probes, dead models retired, free-tier limits kept | ✅ | ✅ | ❌ | ❌ | ❌ |
 | Hundreds of providers, accounts pooled | 🟡 any OpenAI-compatible API or hub; runs on top of a gateway | ✅ | ❌ | ❌ | ❌ |
 
@@ -122,7 +122,7 @@ asks, keeps every answer, takes your verdict and acts on it, in one place:
 
 ## Try it
 
-**Version 1.1.** It runs with Python 3.11 or later on Windows, macOS and
+**Version 1.2.** It runs with Python 3.11 or later on Windows, macOS and
 Linux. The app is the Python standard library: nothing else to install.
 
     pipx install benchwarmers        # or: uv tool install benchwarmers
@@ -190,8 +190,8 @@ Docker is [below](#docker-and-hosting).
   verdicts, kept for the whole conversation and replaced by the next if it
   fails.
 - **Ready set-ups:** the dashboard's **Connect** page fills in each popular
-  app's configuration from your install, and **Set it up** writes the files for
-  opencode, VS Code, Zed, Codex, Continue and goose after showing them, with a
+  app's configuration from your install, and **Quick setup** writes the files for
+  Claude Code, opencode, VS Code, Zed, Codex, Continue and goose after showing them, with a
   copy of each file it changes. [CLIENTS.md](CLIENTS.md) has the same set-ups.
 - **As MCP tools:** a running server is an MCP server at `/mcp`, with
   `list_collections`, `ask`, `verdict` and `pending_verdicts`. The Claude Code
@@ -231,8 +231,9 @@ mcp-name: io.github.WendellResearch-AI/benchwarmers -->
 Models are scored on review work: find the faulty line, or say whether a claim
 about some code is true. A starter pack ships with real bugs from public
 projects and claims about this project's own code; `python suite/seed.py
---repo <name>` plants realistic bugs in your own functions, which no model has
-trained on. See [suite/README.md](suite/README.md).
+--repo <name>` copies functions from your own code into test tasks, each with
+one realistic bug, which no model has trained on. Your files are only read,
+never changed. See [suite/README.md](suite/README.md).
 
 ## Docker and hosting
 

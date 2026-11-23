@@ -508,10 +508,11 @@ window fills between its check and the call.
 ### Pointing agents at a collection
 
 The dashboard's **Connect** page has each app's set-up filled in from the
-install (opencode, VS Code chat, Codex, Zed, Continue, Cline and Kilo Code,
-Claude Code, LangChain and agent SDKs, goose, chat apps), each written from that app's docs on the date
-it shows, and writes the files itself for six of them (USAGE.md, "Connecting
-an app"). By hand:
+install (Claude Code, Codex, opencode, VS Code chat, Cline, Roo Code and Kilo
+Code, LangChain and agent SDKs, Cursor, Antigravity CLI, GitHub Copilot CLI,
+Kimi Code CLI, DeepSeek Harness, Aider, Open WebUI, Zed, Continue, goose, chat
+apps), each written from that app's docs on the date it shows, and writes the
+files itself for seven of them (USAGE.md, "Connecting an app"). By hand:
 
 The base URL is the server: `http://127.0.0.1:8122` (the dashboard's port)
 or `:8123` (`gateway.py`). On this machine any key text works; elsewhere,

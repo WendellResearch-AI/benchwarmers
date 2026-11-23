@@ -2059,6 +2059,12 @@
   // as Settings' does.
   var appKeys = {}, seenTimer = null;
   function appChoice(sec, c) { var x = sec.querySelector('[data-c="' + c + '"]'); return x ? x.value : ''; }
+  // The collection is asked only where the set-up names one: not for an app whose model list
+  // takes every collection (data-list), nor for the panel as tools (serve.clients_page, LIST_APPS).
+  function colShown(sec) {
+    var way = sec.querySelector('.ways input:checked');
+    return !sec.hasAttribute('data-list') && !(way && way.value === 'panel');
+  }
   function setupAgain(sec) {
     var app = sec.dataset.app, way = sec.querySelector('.ways input:checked');
     var q = new URLSearchParams({app: app, way: way ? way.value : '', collection: appChoice(sec, 'collection'),
@@ -2096,6 +2102,7 @@
     if (!sec || !e.target.closest('.connect')) return;
     if (e.target.dataset.c === 'rpm') return;
     if (e.target.dataset.c === 'key') sec.querySelector('.key-make').hidden = e.target.value !== 'make';
+    sec.querySelector('.col-pick').hidden = !colShown(sec);
     setupAgain(sec).then(e.target.dataset.c === 'name' ? seenTick : null);
   });
   // Set up (serve.setup_plan, setup_apply): what it would write, then writing it. A choice
@@ -2151,17 +2158,18 @@
   document.addEventListener('click', function (e) {
     var b = e.target.closest('#tab-clients [data-make-key]');
     if (!b) return;
-    var sec = b.closest('section.client'), app = sec.dataset.app, name = appChoice(sec, 'name'), col = appChoice(sec, 'collection');
+    var sec = b.closest('section.client'), app = sec.dataset.app, name = appChoice(sec, 'name');
+    var col = colShown(sec) ? appChoice(sec, 'collection') : '';      // no collection asked: a key for all of them
     sec.querySelector('.errors').textContent = '';
     b.disabled = true;
-    post('/api/gateway-key', {name: name, collections: [col], rpm: appChoice(sec, 'rpm')}).then(function (r) {
+    post('/api/gateway-key', {name: name, collections: col ? [col] : [], rpm: appChoice(sec, 'rpm')}).then(function (r) {
       if (!r.ok) { listErrors(sec.querySelector('.errors'), r.errors); b.disabled = false; return; }
       appKeys[app] = r.key;
       var sel = sec.querySelector('[data-c="key"]');
       sel.textContent = ''; sel.appendChild(el('option', {value: '1'}, name + "'s key")); sel.disabled = true;
       sec.querySelector('.key-make').hidden = true;
       var done = sec.querySelector('.key-done');
-      done.textContent = 'Key made for ' + name + ', for ' + col + ' only' + (appChoice(sec, 'rpm') ? ', ' + appChoice(sec, 'rpm') + ' a minute' : '')
+      done.textContent = 'Key made for ' + name + (col ? ', for ' + col + ' only' : ', for every collection') + (appChoice(sec, 'rpm') ? ', ' + appChoice(sec, 'rpm') + ' a minute' : '')
         + '. It is in the lines below that take it: copy them now, as it is shown this once. Settings lists it and can revoke it.';
       done.hidden = false;
       setupAgain(sec); refreshPanes(['settings']);

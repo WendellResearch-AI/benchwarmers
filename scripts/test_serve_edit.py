@@ -231,8 +231,9 @@ def main() -> int:
                 if b["key"] and b["lang"] not in ("sh", "bat", "text"):
                     bad.append(f"{c['id']} {b['label']}: a key would go into a file")
             alltext = "\n".join(b["text"] for b in c["blocks"])
-            want = ("bench/core:merged", "bench/fast:merged") if c["id"] == "chat" else \
-                ("bench/core:route", "bench/fast:route") if c["id"] not in ("codex", "code") else ("bench/core:route",)
+            want = ("bench/core:merged", "bench/fast:merged") if c["id"] in ("chat", "openwebui") else \
+                () if c["ways"] == ("panel",) else \
+                ("bench/core:route",) if c["id"] in ("codex", "code", "aider") else ("bench/core:route", "bench/fast:route")
             bad += [f"{c['id']} lacks {w}" for w in want if w not in alltext]
         oc, cx = parsed.get(("opencode", "opencode.jsonc")), parsed.get(("codex", "config.toml"))
         cxp = parsed.get(("codex", "benchwarmers.config.toml")) or {}     # Codex's profile: the model half
@@ -283,12 +284,15 @@ def main() -> int:
     # Connect's Set up, in a throwaway home: each app's files written, theirs kept beside
     # them, a file with comments left alone, a second run with nothing to write.
     bad, home = [], pathlib.Path(tempfile.mkdtemp(prefix="bench-setup-home-"))
-    saved_env = {k: os.environ.get(k) for k in ("USERPROFILE", "HOME", "APPDATA", "XDG_CONFIG_HOME")}
+    saved_env = {k: os.environ.get(k) for k in ("USERPROFILE", "HOME", "APPDATA", "XDG_CONFIG_HOME",
+                                                  "CLAUDE_CONFIG_DIR")}
     os.environ.update(USERPROFILE=str(home), HOME=str(home), APPDATA=str(home / "AppData"),
-                      XDG_CONFIG_HOME=str(home / ".config"))
+                      XDG_CONFIG_HOME=str(home / ".config"), CLAUDE_CONFIG_DIR=str(home / ".claude"))
     try:
         dirs = serve._app_dirs()
-        for p, text in ((dirs["vscode"] / "chatLanguageModels.json", '[{"name": "Other", "vendor": "x"}]'),
+        assert str(dirs["claude-code"]).startswith(str(home)), dirs     # never the real ~/.claude
+        for p, text in ((dirs["claude-code"] / "settings.json", '{"theme": "dark", "enabledPlugins": {"x@y": true}}'),
+                        (dirs["vscode"] / "chatLanguageModels.json", '[{"name": "Other", "vendor": "x"}]'),
                         (dirs["zed"] / "settings.json", '// my settings\n{"theme": "One"}'),
                         (dirs["codex"] / "config.toml", 'model = "mine"\n\n[mcp_servers.other]\nurl = "x"\n'),
                         (dirs["goose"] / "config.yaml", "extensions:\n  other:\n    enabled: true\nactive_provider: x\n")):
@@ -305,6 +309,12 @@ def main() -> int:
                 bad.append(f"{app} wrote nothing")
             if serve.setup_plan(app, "both", "", "my-app")["files"]:
                 bad.append(f"{app}: a second Set up would write again")
+        cc = json.loads((dirs["claude-code"] / "settings.json").read_text(encoding="utf-8"))
+        if (cc.get("theme") != "dark" or cc["enabledPlugins"] != {"x@y": True, "benchwarmers@benchwarmers": True}
+                or cc["extraKnownMarketplaces"]["benchwarmers"]["source"]["repo"] != "WendellResearch-AI/benchwarmers"):
+            bad.append(f"Claude Code's settings merge wrong: {cc}")
+        if "env" in cc or not any("shell lines" in w for w in serve.setup_plan("claude-code", "both")["left"]):
+            bad.append("Claude Code's route mode went into settings.json, or was not left to the shell")
         vs = json.loads((dirs["vscode"] / "chatLanguageModels.json").read_text(encoding="utf-8"))
         if [e["name"] for e in vs] != ["Other", "Benchwarmers"]:
             bad.append(f"VS Code's own models not kept: {vs}")
@@ -353,9 +363,9 @@ def main() -> int:
     local_call("2030-01-01T12:00:05+01:00")
     after, page_after = serve.client_seen("codex"), serve.clients_page()
     (gw / "routes.jsonl").unlink()
-    ok = (not before["seen"] and not before.get("unnamed") and "Codex CLI<small" not in page_before
+    ok = (not before["seen"] and not before.get("unnamed") and "Codex CLI</span><small" not in page_before
           and after["seen"] and after.get("unnamed") is True and after["model"] == "bench/x"
-          and after["at"] == "2030-01-01T12:00:05+01:00" and "Codex CLI<small" in page_after)
+          and after["at"] == "2030-01-01T12:00:05+01:00" and "Codex CLI</span><small" in page_after)
     print(("ok   " if ok else "FAIL ") + "Does it work?: a call with no name after Set up counts, one before it"
           " does not" + ("" if ok else f" -> {before} {after}"))
     failures += 0 if ok else 1
@@ -448,7 +458,8 @@ def main() -> int:
     # Codex's Set up: the model as a profile, never half-switching plain `codex`; the user's
     # config.toml kept key for key, or left to them. Each file here once broke the merge.
     bad, home = [], pathlib.Path(tempfile.mkdtemp(prefix="bench-codex-home-"))
-    saved_env = {k: os.environ.get(k) for k in ("USERPROFILE", "HOME", "APPDATA", "XDG_CONFIG_HOME")}
+    saved_env = {k: os.environ.get(k) for k in ("USERPROFILE", "HOME", "APPDATA", "XDG_CONFIG_HOME",
+                                                  "CLAUDE_CONFIG_DIR")}
     os.environ.update(USERPROFILE=str(home), HOME=str(home), APPDATA=str(home / "AppData"),
                       XDG_CONFIG_HOME=str(home / ".config"))
     try:
@@ -519,7 +530,7 @@ def main() -> int:
         h = pathlib.Path(tempfile.mkdtemp(prefix="bench-setup-home-"))
         homes.append(h)
         os.environ.update(USERPROFILE=str(h), HOME=str(h), APPDATA=str(h / "AppData"),
-                          XDG_CONFIG_HOME=str(h / ".config"))
+                          XDG_CONFIG_HOME=str(h / ".config"), CLAUDE_CONFIG_DIR=str(h / ".claude"))
         return serve._app_dirs()
 
     def put(p: pathlib.Path, text: str) -> None:

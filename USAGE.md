@@ -34,7 +34,7 @@ coding agent doing it with you); the gateway's whole contract is in
 | Gateway | **Endpoints** | Where models are served from. Add an endpoint (a provider's sign-in, or any OpenAI-compatible API key), change a key, and see what each one serves. A model server running on this machine, at its usual port or any other its process is listening on (LM Studio, Jan, llama.cpp, vLLM, Open WebUI, gateways such as Bifrost, and the like), is offered under Found on this machine: Add opens the dialog with it filled in, to test and save. Also your own app registrations and rate limits per connection. |
 | | **Models** | Every model on the bench, by the connection it comes from: what it holds, its reply time and its limits. One search above every table, each table folds, and Collapse all / Expand all. Click a name for its popup: role, alias, facts, options, retire. |
 | | **Collections** | The named panels your apps ask for, and the gateway's settings. |
-| | **Connect** | Each popular app's set-up (opencode, VS Code, Codex, Zed, Continue, Cline, Kilo Code, Claude Code, LangChain and the OpenAI Agents SDK, goose, chat apps), made from your choices (how the app uses Benchwarmers, which collection, its name, a key of its own), with Copy, Set it up for the apps whose files it can write, and Does it work? for the app's first call. [CLIENTS.md](CLIENTS.md) has the set-ups for a fresh install. |
+| | **Connect** | Each popular app's set-up (Claude Code, Codex, opencode, VS Code, Cline, Roo Code, Kilo Code, LangChain and the OpenAI Agents SDK, Cursor, Antigravity, Copilot CLI, Kimi Code, DeepSeek Harness, Aider, Open WebUI, Zed, Continue, goose, chat apps), made from your choices (how the app uses Benchwarmers, which collection, its name, a key of its own), with Copy, Quick setup for the apps whose files it can write, and Does it work? for the app's first call. [CLIENTS.md](CLIENTS.md) has the set-ups for a fresh install. |
 | | **Discover** | Models worth adding, from public catalogs, with the ways this install can reach each one. |
 | Control | **Settings** | Theme, gateway keys, the scheduler, the model client, providers whose free models work only in their own app, export and import, how the install is reached (shown only), and Restart. |
 | | **Info** | The source repository, the version (linking its release), Python, data folder and counts. |
@@ -178,7 +178,7 @@ each app you choose:
   are not required. It is shown once and goes into the lines you copy (a shell
   line, a settings field), never into a file that may sync.
 
-**Set it up** (opencode, VS Code, Zed, Codex, Continue, goose) writes the
+**Quick setup** (Claude Code, opencode, VS Code, Zed, Codex, Continue, goose) writes the
 app's own files on the machine Benchwarmers runs on. It lists them first, and
 copies each file it changes to `<name>.bak-<time>` beside it. It merges into
 plain JSON, into Codex's `config.toml` (only its own tables; the model goes in
@@ -192,7 +192,7 @@ each block into the file or screen it names.
 
 **Does it work?** waits for the app's first call and says which model
 answered. A set-up that sends neither name nor key (Codex, goose's provider,
-Zed's and VS Code's models) calls as `local`: after Set it up, the next
+Zed's and VS Code's models) calls as `local`: after Quick setup, the next
 `local` call is counted as probably that app's; set up by hand, look for
 `local` under Connected in the page's side panel. What follows is the same by
 hand.
@@ -417,13 +417,16 @@ OpenAI-, Responses- or Ollama-speaking agents with the same base URL.
 
 **Ready set-ups.** The dashboard's **Connect** page (Gateway) gives each
 popular app's configuration, filled in from your install's address,
-collections and MCP server, with a Copy button: opencode, VS Code chat, Codex
-CLI, Zed, Continue, Cline and Kilo Code, Claude Code, your own Python with
-LangChain or the OpenAI Agents SDK, goose, and chat apps
-(LobeHub, AnythingLLM, Cherry Studio, Chatbox, LibreChat). You choose how the
-app uses Benchwarmers (a collection as its model, the panel as tools, or
-both), which collection, and its name; **Set it up** writes the files for
-opencode, VS Code, Zed, Codex, Continue and goose itself, after showing them,
+collections and MCP server, with a Copy button: Claude Code, Codex CLI,
+opencode, VS Code chat, Cline, Roo Code and Kilo Code, your own Python with
+LangChain or the OpenAI Agents SDK, Cursor, Antigravity CLI, GitHub Copilot
+CLI, Kimi Code CLI, DeepSeek Harness, Aider, Open WebUI, Zed, Continue, goose,
+and chat apps (LobeHub, AnythingLLM, Cherry Studio, Chatbox, Jan, Msty,
+LibreChat). You choose how the app uses Benchwarmers (a single model in route
+mode, a second opinion as MCP tools, or both; the recommended way comes
+checked), and the collection only where the set-up names one; **Quick setup**
+writes the files for Claude Code (its plugin), opencode, VS Code, Zed, Codex,
+Continue and goose itself, after showing them,
 with a copy of each file it changes; and **Does it work?** shows the app's
 first call. An app may have its own key, made there for its collection; it
 goes into the lines you copy, never into a file that may sync.

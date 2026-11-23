@@ -67,8 +67,9 @@ by normal runs until someone has read them and removed `"draft": true`.
 
 ## Seeded bugs
 
-A fourth shape, added 2026-10-17: `python suite/seed.py --count N` takes real
-functions from a private repository, changes ONE token in each (a comparison,
+A fourth shape, added 2026-10-17: `python suite/seed.py --count N` copies real
+functions from a private repository (which it only reads, never changes) into
+suite tasks, changes ONE token in each copy (a comparison,
 `and`/`or`, a returned True/False, a removed `not`, found with `tokenize` so
 strings and comments are never touched and the author's formatting survives),
 and writes the bug task plus a **control**: the same function untouched, where

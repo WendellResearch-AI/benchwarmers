@@ -332,6 +332,12 @@ details.panel[open] > summary { margin-bottom: .75rem; }
 .split > nav [aria-pressed=false]:hover { color: var(--ink); background: var(--hover); }
 .split > nav .n { font: 500 var(--t-small)/20px var(--font-mono); }
 .split > nav small { grid-column: 1 / -1; color: var(--muted); font-size: var(--t-small); font-weight: 400; }
+/* Connect: each app's mark (serve.clients_page logo) before its name, its "called" line under the name. */
+#tab-clients .split > nav button { grid-template-columns: 18px minmax(0, 1fr); align-items: center; }
+#tab-clients .split > nav small { grid-column: 2 / -1; }
+.app-logo { width: 16px; height: 16px; fill: currentColor; }
+.app-logo.mark { display: inline-grid; place-items: center; border: 1px solid currentColor; border-radius: 4px;
+  font: 600 8px/1 var(--font-mono); letter-spacing: -.02em; opacity: .8; }
 .split > section { display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: var(--gap-4) var(--pad) var(--gap-4); }
 .split > section > h2 { margin: 0; font-size: var(--t-lead); }
 .log-box { flex: 1; min-height: 0; overflow: auto; container-type: inline-size; font: var(--t-small)/1.5 var(--font-mono); border: 1px solid var(--line); border-radius: var(--radius); background: var(--paper); }
@@ -363,6 +369,10 @@ details.panel[open] > summary { margin-bottom: .75rem; }
 .ways .pick { grid-template-columns: auto minmax(0, 1fr); align-items: start; border: 1px solid var(--line); }
 .ways .pick small { display: block; color: var(--muted); font-size: var(--t-small); margin-top: .1rem; }
 .ways .pick:has(input:checked) { background: var(--tint); border-color: var(--ink); }
+.ways .rec { font-style: normal; font-size: var(--t-small); font-weight: 500; color: var(--ok); margin-left: .5rem; }
+.connect details.more { margin: .4rem 0 0; }
+.connect details.more > summary { cursor: pointer; color: var(--muted); font-size: var(--t-small); padding: .2rem 0; }
+.connect details.more[open] > summary { margin-bottom: .3rem; }
 .connect-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(14rem, 100%), 1fr)); gap: 0 1rem; }
 .connect-grid :is(select, input) { width: 100%; }
 .client .key-make { max-width: 20rem; }

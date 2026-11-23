@@ -4684,8 +4684,20 @@ def _fields(pairs: list) -> str:
     return "\n".join(f"{k.ljust(width)}  {v}" for k, v in pairs)
 
 
-WAYS = {"model": "As its model", "panel": "As a second opinion", "both": "Both",
+WAYS = {"model": "As a single model (route mode)", "panel": "As a second opinion (MCP tools)", "both": "Both",
         "merged": "One merged reply", "all": "Every seat's reply"}
+# Each app's ways, the recommended one first (the Connect page checks and marks it).
+# Apps that bring a strong model of their own keep it and take the panel beside it;
+# the ones built to run any model take both. Your own code: one set-up, both at once,
+# since its panel-as-tools snippets run an agent on a collection too.
+APP_WAYS = {"claude-code": ("panel", "model", "both"), "codex": ("panel", "model", "both"),
+            "vscode": ("panel", "model", "both"), "copilot-cli": ("panel", "model", "both"),
+            "code": ("both",), "chat": ("merged", "all"), "openwebui": ("merged", "all", "panel"),
+            "cursor": ("panel",), "antigravity": ("panel",), "aider": ("model",)}   # what each can take
+# Whose model lists take every collection the gateway offers: no collection to choose.
+LIST_APPS = ("opencode", "vscode", "zed", "continue", "goose", "copilot-cli", "kimi", "dsh", "openwebui")
+APP_ORDER = ("claude-code", "codex", "opencode", "vscode", "cline", "code", "cursor", "antigravity",
+             "copilot-cli", "kimi", "dsh", "aider", "openwebui")                 # the rest after, as listed
 
 
 def client_setups(root: str, cols: list, keys: bool, way: str = "both", label: str = "") -> list[dict]:
@@ -4839,6 +4851,27 @@ def client_setups(root: str, cols: list, keys: bool, way: str = "both", label: s
                  + f"                      model=OpenAIChatCompletionsModel(model={q(model)}, openai_client=bench))\n"
                  + f"        result = await Runner.run(agent, {ask})\n"
                    "        print(result.final_output)\n\n\nasyncio.run(main())")
+    # A header that takes no variable: the key as text (KEY_HOLDER, replaced by hand), or the app's label.
+    bearer = ({"headers": {"Authorization": f"Bearer {KEY_HOLDER if keys else lab}"}} if keys or lab else {})
+    key_text = KEY_HOLDER if keys else lab or "local"          # where a key must be given, any text without one
+    roo_mcp = {"mcpServers": {"benchwarmers": {"type": "streamable-http", "url": mcp, **bearer, "timeout": 900}}}
+    cursor = {"mcpServers": {"benchwarmers": {"url": mcp, **bearer}}}
+    agy = {"mcpServers": {"benchwarmers": {"serverUrl": mcp, **bearer, "timeoutSeconds": 900}}}
+    # Copilot CLI: each collection a model named after it, sent to the gateway as its route model (wireModel).
+    copilot = {"providers": [{"name": "benchwarmers", "type": "openai", "baseUrl": base,
+                              **({"apiKey": key_text} if keys or lab else {})}],
+               "models": [{"id": n, "provider": "benchwarmers", "wireModel": m, "maxPromptTokens": c - o,
+                           "maxOutputTokens": o} for m, n, c, o, _ in rows]}
+    copilot_mcp = ("copilot mcp add --transport http --timeout 900000"
+                   + (f' --header "Authorization: Bearer {KEY_HOLDER if keys else lab}"' if keys or lab else "")
+                   + f" benchwarmers {mcp}")
+    kimi = lines("[providers.benchwarmers]", 'type = "openai"', f"base_url = {q(base)}",
+                 f'api_key_env = "{env}"' if keys else f"api_key = {q(key_text)}",
+                 *(lines("", f"[models.bench-{n}]", 'provider = "benchwarmers"', f"model = {q(m)}",
+                         f"max_context_size = {c}") for m, n, c, _, _ in rows))
+    kimi_mcp = {"mcpServers": {"benchwarmers": {"url": mcp, **bearer, "toolTimeoutMs": 900_000}}}
+    aider = (f"aider --openai-api-base {base} --openai-api-key "
+             + (f'"${env}"' if keys else key_text) + f" --model openai/{model}")
     plugin_at = ("" if root == DEFAULT_SERVER else f", so set it to <code>{esc(root)}</code>")
     any_text = "" if keys else " Keys are not asked for here, so any text works."
     apps = [
@@ -4906,27 +4939,118 @@ def client_setups(root: str, cols: list, keys: bool, way: str = "both", label: s
          "docs": [("https://docs.continue.dev/customize/model-providers/top-level/openai", "OpenAI provider"),
                   ("https://docs.continue.dev/customize/deep-dives/mcp", "MCP"),
                   ("https://docs.continue.dev/reference", "config.yaml reference")]},
-        {"id": "cline", "name": "Cline and Kilo Code",
-         "gets": "Their agent on a collection (route mode), set in their own screens; Cline takes the panel as"
-                 " MCP tools too.",
-         "where": "Cline: its settings, API Provider. Kilo Code: Settings, Providers, Custom provider. Cline's MCP:"
-                  " the MCP Servers icon, Configure, Configure MCP Servers." + any_text,
+        {"id": "cline", "name": "Cline, Roo Code and Kilo Code",
+         "gets": "Their agent on a collection (route mode), set in their own screens; Cline and Roo Code take the"
+                 " panel as MCP tools too.",
+         "where": "Cline: its settings, API Provider. Roo Code: its settings, Providers, API Provider. Kilo Code:"
+                  " Settings, Providers, Custom provider. Cline's MCP: the MCP Servers icon, Configure, Configure"
+                  " MCP Servers. Roo Code's: the MCP icon, Edit Global MCP (or Edit Project MCP for"
+                  " <code>.roo/mcp.json</code>)." + any_text,
          "blocks": [*only(use_m, _snip("Cline", "text", _fields([
                         ("API Provider", "OpenAI Compatible"), ("Base URL", base),
                         ("API Key", KEY_HOLDER if keys else token), ("Model ID", model),
                         ("Context Window Size", ctx), ("Max Output Tokens", out),
                         ("Image Support", "on" if rows[0][4] else "off")]), True),
+                                     _snip("Roo Code", "text", _fields([
+                        ("API Provider", "OpenAI Compatible"), ("Base URL", base), ("API Key", key_text),
+                        ("Model", model), ("Context Window", ctx), ("Max Output Tokens", out)]), True),
                                      _snip("Kilo Code", "text", _fields([
                         ("Provider ID", "benchwarmers"), ("Display name", "Benchwarmers"),
                         ("Provider API", "OpenAI Compatible"), ("Base URL", base),
                         ("API key", KEY_HOLDER if keys else lab or "(leave empty)"),
                         ("Models", ", ".join(m for m, *_ in rows))]), True)),
-                    *only(use_p, _snip("Cline: cline_mcp_settings.json", "json", js(cline_mcp)))],
-         "watch": "Keep <code>\"type\": \"streamableHttp\"</code>: without it Cline tries the old SSE transport."
-                  " Its <code>timeout</code> is in seconds (60 unless set).",
+                    *only(use_p, _snip("Cline: cline_mcp_settings.json", "json", js(cline_mcp)),
+                                 _snip("Roo Code: mcp_settings.json", "json", js(roo_mcp)))],
+         "watch": "The transport is spelled differently in each: <code>\"streamableHttp\"</code> for Cline,"
+                  " <code>\"streamable-http\"</code> for Roo Code; without it they try the old SSE transport. Their"
+                  " <code>timeout</code> is in seconds (60 unless set).",
          "docs": [("https://docs.cline.bot/provider-config/openai-compatible", "Cline: OpenAI Compatible"),
                   ("https://docs.cline.bot/mcp/configuring-mcp-servers", "Cline: MCP servers"),
-                  ("https://kilo.ai/docs/providers/openai-compatible", "Kilo Code: OpenAI Compatible")]},
+                  ("https://docs.roocode.com/features/mcp/using-mcp-in-roo", "Roo Code: MCP"),
+                  ("https://kilo.ai/docs/providers/openai-compatible", "Kilo Code: OpenAI Compatible")],
+         "read": "2026-11-23"},
+        {"id": "cursor", "name": "Cursor",
+         "gets": "The panel as MCP tools beside Cursor's own models.",
+         "where": "<code>~/.cursor/mcp.json</code> (<code>%USERPROFILE%\\.cursor\\mcp.json</code> on Windows) for"
+                  " every project, or <code>.cursor/mcp.json</code> in one; merge into what is there." + any_text,
+         "blocks": [_snip("mcp.json", "json", js(cursor))],
+         "watch": "Cursor's own model setting (Override OpenAI Base URL) is called from Cursor's servers, which"
+                  " cannot reach this machine, so Cursor takes the panel only."
+                  + (f" The header holds the key as text: replace <code>{esc(KEY_HOLDER)}</code> yourself."
+                     if keys else ""),
+         "docs": [("https://cursor.com/docs/context/mcp", "MCP")], "read": "2026-11-23"},
+        {"id": "antigravity", "name": "Antigravity CLI",
+         "gets": "The panel as MCP tools beside Antigravity's own Gemini model, in the CLI (<code>agy</code>) and"
+                 " the app alike.",
+         "where": "<code>~/.gemini/config/mcp_config.json</code> (the app's Copy Config File Path shows it), or"
+                  " <code>.agents/mcp_config.json</code> in a workspace; merge into what is there." + any_text,
+         "blocks": [_snip("mcp_config.json", "json", js(agy))],
+         "watch": "A remote server is <code>serverUrl</code>, not <code>url</code> or <code>httpUrl</code>."
+                  " <code>timeoutSeconds</code> replaces both its limits (300 s to connect, 180 s a tool call),"
+                  " which a panel can outlast. Its own model stays Gemini: another model needs Gemini Enterprise's"
+                  " gateway mode.",
+         "docs": [("https://antigravity.google/docs/mcp", "MCP"),
+                  ("https://antigravity.google/docs/models", "models")], "read": "2026-11-23"},
+        {"id": "copilot-cli", "name": "GitHub Copilot CLI",
+         "gets": "Copilot CLI's agent on any collection (route mode), beside GitHub's models in its picker, and the"
+                 " panel as MCP tools.",
+         "where": "<code>~/.copilot/providers.json</code> (<code>%USERPROFILE%\\.copilot\\</code> on Windows): add"
+                  " the provider and models to what is there, then start it again and pick one with"
+                  f" <code>copilot --model benchwarmers/{esc(rows[0][1])}</code> or <code>/model</code>. The MCP"
+                  " server: the command, once.",
+         "blocks": [*only(use_m, _snip("providers.json", "json", js(copilot))),
+                    *only(use_p, _snip("A shell", "sh", copilot_mcp, True))],
+         "watch": ("providers.json and the header take the key as text, never a variable: replace"
+                   f" <code>{esc(KEY_HOLDER)}</code> yourself, and keep the file private." if keys else
+                   "<code>--timeout</code> is in milliseconds: keep it long, as a panel takes minutes."),
+         "docs": [("https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/use-byok-models",
+                   "custom models"),
+                  ("https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-mcp-servers",
+                   "MCP servers")], "read": "2026-11-23"},
+        {"id": "kimi", "name": "Kimi Code CLI",
+         "gets": "Kimi Code on any collection (route mode), and the panel as MCP tools.",
+         "where": "<code>~/.kimi-code/config.toml</code> (<code>KIMI_CODE_HOME</code> moves it): add the tables;"
+                  f" start it with <code>kimi -m bench-{esc(rows[0][1])}</code>. The MCP server:"
+                  " <code>~/.kimi-code/mcp.json</code>, or <code>.kimi-code/mcp.json</code> in a trusted project,"
+                  " or <code>/mcp-config</code> inside it."
+                  + (f" The key comes from <code>{env}</code>." if keys else ""),
+         "blocks": [*only(use_m, _snip("config.toml", "toml", kimi)),
+                    *only(use_p, _snip("mcp.json", "json", js(kimi_mcp)))],
+         "watch": "A provider needs a key even where none is asked for, and reads no other variable. Its MCP"
+                  " tool calls stop at 60 s unless <code>toolTimeoutMs</code> says otherwise: keep it."
+                  + (f" mcp.json's header holds the key as text: replace <code>{esc(KEY_HOLDER)}</code> yourself."
+                     if keys else ""),
+         "docs": [("https://www.kimi.com/code/docs/en/kimi-code-cli/configuration/providers.html", "providers"),
+                  ("https://www.kimi.com/code/docs/en/kimi-code-cli/customization/mcp.html", "MCP")],
+         "read": "2026-11-23"},
+        {"id": "dsh", "name": "DeepSeek Harness",
+         "gets": "DeepSeek Harness (DSH Desktop, <code>dsh web</code>) on any collection (route mode), and the"
+                 " panel as MCP tools.",
+         "where": "In DSH: Settings, Models, Add model provider, Custom model API; then Settings, MCP. Its"
+                  " Provider ID cannot be changed later." + any_text,
+         "blocks": [*only(use_m, _snip("Custom model API", "text", _fields([
+                        ("Provider ID", "benchwarmers"), ("Base URL", base), ("Protocol", "openai-completions"),
+                        ("API key", key_text), ("Model IDs", ", ".join(m for m, *_ in rows))]), True)),
+                    *only(use_p, _snip("MCP server", "text", _fields([
+                        ("Name", "benchwarmers"), ("Transport", "streamable-http"), ("URL", mcp),
+                        *([("Header", f"Authorization: Bearer {KEY_HOLDER if keys else lab}")] if keys or lab
+                          else []),
+                        ("Tool call timeout (ms)", "900000")]), True))],
+         "watch": "A developer preview (0.2): its screens may move. Set each model's context window under Model"
+                  " options, as DSH does not ask the server. Edit through Settings rather than a patch file,"
+                  " which replaces the whole list of servers.",
+         "docs": [("https://github.com/deepseek-ai/deepseek-harness/blob/main/docs/user/guide/providers.md",
+                   "providers"),
+                  ("https://github.com/deepseek-ai/deepseek-harness/blob/main/docs/subsystems/mcp.md", "MCP")],
+         "read": "2026-11-23"},
+        {"id": "aider", "name": "Aider",
+         "gets": "Aider on a collection (route mode). It takes no MCP servers, so no panel as tools.",
+         "where": "The shell you start it from, in your project's folder." + any_text,
+         "blocks": [_snip("A shell", "sh", aider, True)],
+         "watch": "The model name keeps its <code>openai/</code> prefix. Aider warns it does not know the"
+                  " model's context window or costs; the warning is harmless.",
+         "docs": [("https://aider.chat/docs/llms/openai-compat.html", "OpenAI compatible APIs")],
+         "read": "2026-11-23"},
         {"id": "claude-code", "name": "Claude Code",
          "gets": "The panel as MCP tools, with the plugin's <code>/benchwarmers:ask</code>, its skill and its"
                  " reminder of seats still unjudged; or Claude Code itself on a collection (route mode).",
@@ -4969,9 +5093,28 @@ def client_setups(root: str, cols: list, keys: bool, way: str = "both", label: s
                   ("https://openai.github.io/openai-agents-python/models/", "Agents SDK: models"),
                   ("https://openai.github.io/openai-agents-python/mcp/", "Agents SDK: MCP")],
          "docs_note": "langchain 1.5.1, langchain-mcp-adapters 0.3.2 and openai-agents 0.25.0."},
+        {"id": "openwebui", "name": "Open WebUI",
+         "gets": "Chat with any collection, one merged reply or every seat's, from Open WebUI's model list; or"
+                 " the panel as a tool server for the models it already has.",
+         "where": ("Admin Settings, Connections, OpenAI API, the + button." if way != "panel" else
+                   "Admin Settings, Integrations, External Tool Servers, + Add Connection (Open WebUI 0.6.31 or"
+                   " later; admins only).") + any_text,
+         "blocks": [_snip("OpenAI API connection", "text", _fields([
+                        ("URL", base), ("Key", key_text),
+                        ("Model IDs", ", ".join(f"bench/{n}{reply}" for _, n, *_ in rows))]), True)
+                    if way != "panel" else
+                    _snip("External tool server", "text", _fields([
+                        ("Type", "MCP (Streamable HTTP)"), ("URL", mcp),
+                        ("Auth", f"Bearer, key {KEY_HOLDER if keys else lab}" if keys or lab else "None")]), True)],
+         "watch": "Open WebUI in Docker reaches this machine at another address than 127.0.0.1: choose"
+                  " <i>in Docker</i> under More. If this Open WebUI is also where the bench reaches its models,"
+                  " never onboard the <code>bench/</code> models it now lists: a collection would call itself."
+                  + (" With a key, Auth must be Bearer with the key filled in; Bearer left empty sends an empty"
+                     " header and is refused." if keys else ""),
+         "docs": [("https://docs.openwebui.com/features/extensibility/mcp", "MCP")], "read": "2026-11-23"},
         {"id": "chat", "name": "Chat apps",
-         "gets": "LobeHub, AnythingLLM, Cherry Studio, Chatbox and LibreChat: a chat window on a collection, one"
-                 " merged answer per question, every seat still called and recorded.",
+         "gets": "LobeHub, AnythingLLM, Cherry Studio, Chatbox, Jan, Msty and LibreChat: a chat window"
+                 " on a collection, one merged answer per question, every seat still called and recorded.",
          "where": "Each app's settings, as an OpenAI-compatible (custom) provider. LibreChat:"
                   " <code>librechat.yaml</code>"
                   + (f", with <code>{env}</code> in its <code>.env</code>." if keys else ".") + any_text,
@@ -4998,10 +5141,9 @@ def client_setups(root: str, cols: list, keys: bool, way: str = "both", label: s
                   ("https://goose-docs.ai/docs/getting-started/using-extensions", "extensions"),
                   ("https://goose-docs.ai/docs/guides/config-files", "config files")]},
     ]
-    for a in apps:          # the ways each app can use Benchwarmers (the Connect page's choice), its usual first
-        # Your own code's panel-as-tools snippets run an agent on a collection too: "both", never alone.
-        a["ways"] = ("merged", "all") if a["id"] == "chat" else ("model", "both") if a["id"] == "code" else \
-            ("panel", "model", "both") if a["id"] == "claude-code" else ("model", "panel", "both")
+    for a in apps:          # the ways each app can use Benchwarmers (the Connect page's choice), recommended first
+        a["ways"] = APP_WAYS.get(a["id"], ("both", "model", "panel"))
+    apps.sort(key=lambda a: APP_ORDER.index(a["id"]) if a["id"] in APP_ORDER else len(APP_ORDER))
     return apps
 
 
@@ -5015,18 +5157,32 @@ WAY_SAYS = {"model": "One member of the collection answers each turn and runs {a
                       " differed, and who said what.",
             "all": "Each seat's answer in turn, under its model's name, in one message."}
 CONNECT_NAMES = {"code": "my-agent", "chat": "chat-app"}     # an app's usual name, where its id is not one
+# The initials on the tile of an app Simple Icons has no mark for (clients_page's logo).
+APP_MARKS = {"codex": "Cx", "vscode": "VS", "aider": "Ai", "openwebui": "OW", "continue": "Co", "goose": "go",
+             "chat": "Ch"}
 
 
 def _connect_cols() -> list:
-    """(name, context window, sees images) per collection an app may be given, core first."""
-    offered = sorted((n, c) for n, c in bench_collections.load().items() if not c.get("ad_hoc"))
-    offered.sort(key=lambda nc: nc[0] != "core")
+    """(name, context window, sees images, members, ad hoc) per collection an app
+    may be given: core first, ad hoc ones last (the gateway runs them when named,
+    though it offers them to nobody)."""
+    offered = sorted(bench_collections.load().items())
+    offered.sort(key=lambda nc: (bool(nc[1].get("ad_hoc")), nc[0] != "core"))
     cols = []
     for n, c in offered:
         together = bench_collections.described(n, c).get("together") or {}
         cols.append((n, together.get("context_window"), "vision" in (together.get("capabilities") or []),
-                     len(c.get("members") or [])))
+                     len(c.get("members") or []), bool(c.get("ad_hoc"))))
     return cols
+
+
+def _given(app: str, cols: list, collection: str) -> list:
+    """The collections an app's set-up names: every one the gateway offers for
+    an app whose model list takes them all (LIST_APPS), else the one chosen."""
+    listed = [c[:3] for c in cols if not c[4]]
+    if app in LIST_APPS and listed:
+        return listed
+    return [next((c for c in cols if c[0] == collection), cols[0])[:3]]
 
 
 def _docker_host() -> str:
@@ -5055,7 +5211,7 @@ def connect_setup(app: str, way: str = "", collection: str = "", where: str = "h
     cols = _connect_cols()
     if not cols:
         return {"ok": False, "errors": ["no collection yet: make one on Collections"]}
-    col = next((c for c in cols if c[0] == collection), cols[0])
+    given = _given(app, cols, collection)
     keys = guard.keys_required() or bool(keyed)
     label, why = _app_label(name, keys)
     if why:
@@ -5063,11 +5219,11 @@ def connect_setup(app: str, way: str = "", collection: str = "", where: str = "h
     root = gateway_url().removesuffix("/v1")
     if where == "docker" and not guard.public_url():
         root = "http://" + _docker_host()
-    c = next((a for a in client_setups(root, [col[:3]], keys, "both", label) if a["id"] == app), None)
+    c = next((a for a in client_setups(root, given, keys, "both", label) if a["id"] == app), None)
     if c is None:
         return {"ok": False, "errors": [f"no app called {app!r}"]}
     way = way if way in c["ways"] else c["ways"][0]
-    c = next(a for a in client_setups(root, [col[:3]], keys, way, label) if a["id"] == app)
+    c = next(a for a in client_setups(root, given, keys, way, label) if a["id"] == app)
     note = ""
     if where == "docker" and _docker_host() not in guard._env("BENCH_ALLOWED_HOSTS"):
         note = ("<p class='note'>From inside Docker this machine is <code>host.docker.internal</code>, which the"
@@ -5094,7 +5250,12 @@ def connect_setup(app: str, way: str = "", collection: str = "", where: str = "h
 # <name>.bak-<time> first. Keys never go into a file: a set-up with a key reads it from
 # KEY_ENV, or says KEY_HOLDER where a header takes no variable (Zed's, goose's), and a
 # key typed there is kept (_keep_key).
-SETUP_APPS = ("opencode", "vscode", "zed", "codex", "continue", "goose")
+SETUP_APPS = ("claude-code", "opencode", "vscode", "zed", "codex", "continue", "goose")
+# Claude Code's user settings: the marketplace declared and the plugin enabled, which
+# Claude Code fetches by itself at its next start (code.claude.com/docs/en/plugins/loading).
+CLAUDE_PLUGIN = {"extraKnownMarketplaces": {"benchwarmers": {"source": {
+                     "source": "github", "repo": "WendellResearch-AI/benchwarmers"}}},
+                 "enabledPlugins": {"benchwarmers@benchwarmers": True}}
 PLUGIN_SRC = ROOT / "clients" / "opencode"
 
 
@@ -5109,6 +5270,7 @@ def _app_dirs() -> dict:
             home / "Library" / "Application Support" / "Code" / "User" if mac else xdg / "Code" / "User",
             "zed": appdata / "Zed" if win else xdg / "zed",
             "codex": home / ".codex", "continue": home / ".continue",
+            "claude-code": pathlib.Path(os.environ.get("CLAUDE_CONFIG_DIR") or home / ".claude"),
             "goose": appdata / "Block" / "goose" / "config" if win else xdg / "goose"}
 
 
@@ -5281,16 +5443,16 @@ def setup_plan(app: str, way: str = "", collection: str = "", name: str = "", ke
     cols = _connect_cols()
     if not cols:
         return {"ok": False, "errors": ["no collection yet: make one on Collections"]}
-    col = next((c for c in cols if c[0] == collection), cols[0])
+    given = _given(app, cols, collection)
     keys = guard.keys_required() or bool(keyed)
     label, why = _app_label(name, keys)
     if why:
         return {"ok": False, "errors": [why]}
     root = gateway_url().removesuffix("/v1")
-    c = next(a for a in client_setups(root, [col[:3]], keys, "both", label) if a["id"] == app)
+    c = next(a for a in client_setups(root, given, keys, "both", label) if a["id"] == app)
     way = way if way in c["ways"] else c["ways"][0]
     blocks = {b["label"]: b["text"] for b in
-              next(a for a in client_setups(root, [col[:3]], keys, way, label) if a["id"] == app)["blocks"]}
+              next(a for a in client_setups(root, given, keys, way, label) if a["id"] == app)["blocks"]}
     d, files, left, unread = _app_dirs()[app], [], [], set()
 
     def add(path: pathlib.Path, text: str, note: str = ""):
@@ -5331,6 +5493,21 @@ def setup_plan(app: str, way: str = "", collection: str = "", name: str = "", ke
         cfg = next((p for p in (d / "opencode.jsonc", d / "opencode.json") if p.exists()), None)
         if cfg and re.search(r'"benchwarmers"\s*:', read(cfg)):
             left.append(f"{cfg} names benchwarmers itself: take that out, or the two compete")
+    elif app == "claude-code":
+        path, old = d / "settings.json", read(d / "settings.json")
+        if way != "model":
+            try:
+                have = json.loads(old) if old.strip() else {}
+                if not isinstance(have, dict):
+                    raise ValueError
+                new = _merge(have, json.loads(json.dumps(CLAUDE_PLUGIN)))
+            except ValueError:
+                left.append(f"{path} is not the plain JSON object expected: add the plugin with the two /plugin lines")
+            else:
+                add(path, _dump(new), "the Benchwarmers marketplace and plugin, enabled")
+        if way != "panel":
+            left.append("Claude Code on a collection: the shell lines, by hand. In settings.json they would move"
+                        " every session onto the bench")
     else:
         targets = {"vscode": {"chatLanguageModels.json": d / "chatLanguageModels.json", "mcp.json": d / "mcp.json"},
                    "zed": {"settings.json": d / "settings.json"},
@@ -5382,7 +5559,9 @@ def setup_plan(app: str, way: str = "", collection: str = "", name: str = "", ke
                     add(path, text, "the benchwarmers extension, under extensions")
             else:
                 left.append(f"{path} exists: add the set-up to it by hand")
-    after = {"opencode": "opencode picks it up by itself; models are benchwarmers/<collection>.",
+    after = {"claude-code": "Start a new Claude Code session: it fetches the plugin by itself, and"
+                            " /benchwarmers:ask is there once it has.",
+             "opencode": "opencode picks it up by itself; models are benchwarmers/<collection>.",
              "vscode": "Reload VS Code; the models are in the chat's model picker.",
              "zed": "" if way == "panel" else
                     "Zed reads its model's key from BENCHWARMERS_API_KEY or the provider's settings screen, never"
@@ -5563,24 +5742,38 @@ def clients_page() -> str:
         return ("<div class='panel'><p>No collection yet: make one on <button class='btn' type='button'"
                 " data-go='collections'>Collections</button>, and the set-ups appear here.</p></div>" + aside)
     apps = client_setups(root, [c[:3] for c in cols], keys)
-    options = "".join(f"<option value='{esc(n)}'>{esc(n)}: {m} member{'s' * (m != 1)}</option>" for n, *_, m in cols)
+    options = "".join(f"<option value='{esc(n)}'>{esc(n)}: {m} member{'s' * (m != 1)}{' (ad hoc)' * hoc}</option>"
+                      for n, _, _, m, hoc in cols)
 
     def name_of(c) -> str:
         return CONNECT_NAMES.get(c["id"], c["id"])
+
+    logos = json.loads(read(UI / "app-logos.json") or "{}")
+
+    def logo(app: str) -> str:
+        """Its mark from Simple Icons (ui/app-logos.json), in the text's colour; else its initials on a tile."""
+        if re.fullmatch(r"[MmLlHhVvCcSsQqTtAaZz0-9.,\- e]+", logos.get(app, "")):
+            return f"<svg class='app-logo' viewBox='0 0 24 24' aria-hidden='true'><path d='{logos[app]}'/></svg>"
+        return f"<span class='app-logo mark' aria-hidden='true'>{esc(APP_MARKS.get(app, app[:2].title()))}</span>"
 
     def nav_item(i, c) -> str:
         seen = client_seen(name_of(c), c["id"])
         why = " title='a call with no name, after Set up: probably this app'" * seen["unnamed"]
         return (f"<li><button type='button' aria-controls='client-{c['id']}' aria-pressed='{str(not i).lower()}'>"
-                f"{esc(c['name'])}" + (f"<small{why}>✓ called {esc(seen['when'])}</small>" if seen["seen"] else "")
+                f"{logo(c['id'])}<span>{esc(c['name'])}</span>"
+                + (f"<small{why}>✓ called {esc(seen['when'])}</small>" if seen["seen"] else "")
                 + "</button></li>")
 
     def view(i, c) -> str:
         app, nm = c["id"], esc(c["name"])
+        # The first is checked; "Recommended" only where there is a choice to make.
         ways = "".join(
             f"<label class='pick'><input type='radio' name='way-{app}' value='{w}'{' checked' * (not j)}>"
-            f"<span><b>{WAYS[w]}</b><small>{WAY_SAYS[w].format(app=nm)}</small></span></label>"
+            f"<span><b>{WAYS[w]}</b>{'<em class=rec>Recommended</em>' * (not j and len(c['ways']) > 1)}"
+            f"<small>{WAY_SAYS[w].format(app=nm)}</small></span></label>"
             for j, w in enumerate(c["ways"]))
+        # The collection is asked only where the set-up names one (bench.js colShown keeps this up).
+        one_col = app not in LIST_APPS and c["ways"][0] != "panel"
         # A key already made under its name: its set-up reads it from KEY_ENV (a label of a key's name is not kept).
         made = guard.gateway_keys().get(name_of(c))
         key = ("<select data-c='key' disabled><option value='1'>a key: every call needs one</option></select>"
@@ -5589,10 +5782,15 @@ def clients_page() -> str:
                "<select data-c='key'><option value=''>none</option><option value='make'>make a key for it</option></select>")
         setup = connect_setup(app, c["ways"][0], cols[0][0], "here", name_of(c), bool(made))
         return (f"<section class='client' id='client-{app}' aria-labelledby='client-{app}-h'{' hidden' * bool(i)}"
-                f" data-app='{app}'><h2 id='client-{app}-h'>{nm}</h2><div class='connect form-panel'>"
+                f" data-app='{app}'{' data-list' * (app in LIST_APPS)}><h2 id='client-{app}-h'>{nm}</h2>"
+                f"<div class='connect form-panel'>"
                 f"<label class='field'>How {nm} uses Benchwarmers</label><div class='ways'>{ways}</div>"
                 "<div class='connect-grid'>"
-                f"<div><label class='field'>Collection</label><select data-c='collection'>{options}</select></div>"
+                f"<div class='col-pick'{' hidden' * (not one_col)}><label class='field'>Collection</label>"
+                f"<select data-c='collection'>{options}</select></div></div>"
+                # The rest has a default that suits most: folded away, open where every call needs a key.
+                f"<details class='more'{' open' * keys}><summary>More: where it runs, its name, a key</summary>"
+                "<div class='connect-grid'>"
                 "<div><label class='field'>Where it runs</label><select data-c='where'>"
                 "<option value='here'>this machine</option><option value='docker'>in Docker</option></select></div>"
                 f"<div><label class='field'>Its name</label><input data-c='name' class='mono' value='{esc(name_of(c))}'"
@@ -5603,12 +5801,12 @@ def clients_page() -> str:
                 " <span class='muted'>(empty for no cap)</span></label><input data-c='rpm' inputmode='numeric'"
                 " maxlength='5' autocomplete='off'><div class='actions'><button class='btn primary' type='button'"
                 " data-make-key>Make the key</button></div></div>"
-                "<div class='errors' role='alert'></div><div class='done key-done' role='status' hidden></div>"
                 + ("" if keys else "<p class='rules name-says'>With no key, the name goes in its set-up as a label:"
                    " its calls show under that name instead of <i>local</i>.</p>")
-                + "</div>" + (
+                + "</details><div class='errors' role='alert'></div>"
+                "<div class='done key-done' role='status' hidden></div></div>" + (
                     # Set up: the app's own files written for it (setup_plan, setup_apply, bench.js).
-                    f"<div class='set-up'><h3>Set it up for you</h3><p class='rules'>Writes {nm}'s own files on"
+                    f"<div class='set-up'><h3>Quick setup</h3><p class='rules'>Writes {nm}'s own files on"
                     " the machine Benchwarmers runs on, for the account it runs as, with these choices; any file it"
                     " changes is copied beside itself first. Shows what it will write before it does."
                     + (" opencode gets Benchwarmers' plugin: every collection, kept current, with no list to edit."

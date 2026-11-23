@@ -61,7 +61,7 @@ an agent is routed to, not just a leaderboard.
 | **Untried models get a turn** | ✅ Explorer seats: the least-used models rotate into every panel | 🟡 `auto/smart` routes 10% of requests to explore | ❌ | ❌ | ❌ |
 | **A verdict on each answer** | ✅ Useful or not, with the real and false claims | ❌ Quality is how the call behaved; an evaluator hook exists, but we found nothing in its source that fills it | ❌ | ❌ | ❌ |
 | **Verdicts change routing** | ✅ They rank members for agents (route mode) and build the "confidently wrong" record | ❌ | ❌ | ❌ | ❌ |
-| **Tests on your own code** | ✅ Bugs planted in your own repositories, each with a clean control | 🟡 Eval suites you write; their pass rates can steer routing (opt-in) | ❌ | ❌ | ❌ |
+| **Tests on your own code** | ✅ Bugs seeded in test copies of your own code (your files are only read), each with a clean control | 🟡 Eval suites you write; their pass rates can steer routing (opt-in) | ❌ | ❌ | ❌ |
 | **Agents (tool calling)** | ✅ Route mode: one member per conversation, failover before the first token | ✅ | ✅ | ✅ | ✅ |
 | **Agents judge the answers too** | ✅ MCP `ask`, `verdict` and `pending_verdicts`, and a Claude Code hook for unjudged answers | ❌ Many MCP tools, none for judging an answer | ❌ | ❌ | ❌ |
 | **Dead models** | ✅ Daily probes; retired after one confirming call, with the evidence; restored in one click | 🟡 Circuit breakers exclude a failing model for a while | 🟡 Key health checks, cooldowns | 🟡 Cooldowns | 🟡 Provider health is part of routing |
